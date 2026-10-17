@@ -104,7 +104,7 @@ object Envelope {
  * GET or by POST with a form body (the `formPost` extension). Authentication is checked here once;
  * only `getOpenSubsonicExtensions` is open, as the OpenSubsonic spec requires.
  */
-class RestApi(private val users: Users, private val handlers: Map<String, Handler>, private val open: Set<String>) {
+class RestApi(private val users: Users, private val handlers: Map<String, Handler>, private val open: Set<String>, private val clientAddresses: com.legitimateapps.dulcet.server.auth.ClientAddresses = com.legitimateapps.dulcet.server.auth.ClientAddresses()) {
     private val log = LoggerFactory.getLogger(RestApi::class.java)
     private val failures = LinkedHashMap<String, Pair<Int, Long>>()
     private fun blocked(peer: String): Boolean = synchronized(failures) {
@@ -158,7 +158,7 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
             return
         }
         val reply: Node = try {
-            val user = if (method in open) anonymous else authenticate(merged, call.request.local.remoteHost)
+            val user = if (method in open) anonymous else authenticate(merged, clientAddresses.resolve(call))
             when (val result = handler(Call(call, method, merged, format, callback, user, body))) {
                 is Reply.Envelope -> result.node
                 Reply.Handled -> return

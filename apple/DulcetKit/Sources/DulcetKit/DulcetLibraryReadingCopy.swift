@@ -49,6 +49,7 @@ enum DulcetReaderCopy {
         switch window.coverage {
         case .open:
             guard window.freshness.isOffline || window.order == .localView else { return nil }
+            if !window.freshness.isOffline { return DulcetStrings.libraryLoadedScope(window.items.count) }
             let shown = window.items.count
             let kind = countKind(window.items)
             if let total = window.total, total > shown {
@@ -69,7 +70,8 @@ enum DulcetReaderCopy {
 
     /// "Available offline" above a list sorted on this device while offline (§16.14).
     static func orderLine(_ window: DulcetLibraryWindow) -> String? {
-        window.order == .localView ? DulcetStrings.readerAvailableOffline : nil
+        guard window.order == .localView else { return nil }
+        return window.freshness.isOffline ? DulcetStrings.readerAvailableOffline : DulcetStrings.libraryLocalOrder
     }
 
     /// The label of a search's scope (§16.15); nil when the server answered and nothing needs

@@ -31,17 +31,17 @@ class AndroidProductionSearchAppConformanceTest {
         assertSingleCharacterLocalRows()
         compose.onNodeWithTag("search.query").performTextInput("ulcet")
         compose.waitUntil(timeoutMillis = 15_000) {
-            compose.onAllNodesWithText("Dulcet Health Probe", substring = true)
-                .fetchSemanticsNodes().isNotEmpty()
+            compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
+                .rows.any { it.item.title == "Dulcet Health Probe" }
         }
         val serverOnly = compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
             .assertMergedOrder(environment)
-        compose.onNodeWithTag("search.result.0").assertTextContains(environment.overlap.title)
-        compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
-        compose.onNodeWithTag("search.result.2").assertTextContains(serverOnly.title)
-        compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet Health Probe")
+        result(0).assertTextContains(environment.overlap.title)
+        result(1).assertTextContains(environment.localOnly.title)
+        result(2).assertTextContains(serverOnly.title)
+        result(0).assertTextContains("Dulcet Health Probe")
         assertNull(shadowOf(app).nextStartedActivity, "Rendering must not activate a result")
-        compose.onNodeWithTag("search.result.1").performClick()
+        result(1).performClick()
         val routed = assertNotNull(shadowOf(app).nextStartedActivity)
         // The local-only row is a track: activating it plays it through this app's own player entry,
         // carrying the opaque id exactly as the row had it (album and artist rows open library pages).
@@ -63,14 +63,31 @@ class AndroidProductionSearchAppConformanceTest {
         for (canary in canaries) assertFalse(redacted.contains(canary), "Query canary leaked")
         println("CONF-41 OBSERVED production app query: cached replacement index=0 local-only index=1 server-only index=2 opaque activation unchanged")
     }
-    private fun assertSingleCharacterLocalRows() {
-        compose.waitUntil(timeoutMillis = 5_000) {
-            compose.onAllNodesWithText("Dulcet local only", substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet")
-        compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
-        compose.onNodeWithTag("search.result.2").assertDoesNotExist()
-        println("CONF-41 OBSERVED first-character query returns committed local library rows")
+    /** Publication ranking is checked separately from the lazy grouped visual order. */
+    private fun result(index: Int): SemanticsNodeInteraction {
+        val tag = "search.result.$index"
+        compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag(tag))
+        return compose.onNodeWithTag(tag)
     }
 
+    private fun assertSingleCharacterLocalRows() {
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
+                .rows.any { it.item.id == environment.localOnly.id }
+        }
+        val state = compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
+        assertEquals(com.legitimateapps.dulcet.core.AndroidLibrarySearchScope.DeviceWhileServerPending, state.scope,
+            "A first-character query is answered from the device")
+        assertFalse(state.serverPending, "No server answer is coming for one character")
+        assertTrue(state.rows.isNotEmpty() && state.rows.all {
+            it.source == com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource.Device
+        }, "Every first-character result is a committed device row")
+        val ids = state.rows.map { it.item.id }
+        assertEquals(ids.size, ids.toSet().size, "No row is shown twice")
+        assertEquals(1, ids.count { it == environment.overlap.id })
+        assertEquals(1, ids.count { it == environment.localOnly.id })
+        result(0).assertTextContains("Dulcet")
+        result(1).assertTextContains(environment.localOnly.title)
+        println("CONF-41 OBSERVED first-character query returns committed local library rows (${state.rows.size} device rows)")
+    }
 }

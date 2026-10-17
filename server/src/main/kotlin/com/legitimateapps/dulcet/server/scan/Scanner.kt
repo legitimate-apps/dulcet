@@ -213,28 +213,39 @@ class Scanner(
             // A full retag keeps the album identity. Many-to-one changes merge onto a
             // deterministic survivor; a split gets separate random successors.
             val oldAlbums = oldGroups.groupBy { it.second }
+            // Reconciliation compares each former group's members with the current catalog.
+            // Read that catalog once: querying SQLite inside the group comparisons makes a
+            // small incremental scan perform millions of statements on a large library.
+            val currentTracks = query("SELECT id,album_id,mbz_album_id FROM track") {
+                Triple(it.string("id"), it.string("album_id"), it.stringOrNull("mbz_album_id"))
+            }
+            val albumByTrack = currentTracks.associate { it.first to it.second }.toMutableMap()
+            val releaseByTrack = currentTracks.associate { it.first to it.third }
             val unresolved = query("SELECT DISTINCT album_id FROM track") { it.string("album_id") }
                 .filter { id -> long("SELECT COUNT(*) FROM api_group_identity WHERE type='album' AND id=?",id) == 0L }
             for (candidate in unresolved) {
                 val complete = oldAlbums.filter { (_, members) ->
-                    val next = members.mapNotNull { string("SELECT album_id FROM track WHERE id=?", it.first) }.distinct()
+                    val next = members.mapNotNull { albumByTrack[it.first] }.distinct()
                     next == listOf(candidate)
                 }.keys.sortedWith(compareBy(::issued).thenBy { it })
                 val id = complete.firstOrNull() ?: java.util.UUID.randomUUID().toString()
                 execute("INSERT OR IGNORE INTO api_album_issued(id) VALUES(?)",id)
                 execute("INSERT INTO api_group_identity(type,key,id) VALUES('album',?,?) ON CONFLICT(type,key) DO UPDATE SET id=excluded.id",candidate,id)
                 execute("UPDATE track SET album_id=? WHERE album_id=?",id,candidate)
+                albumByTrack.replaceAll { _, album -> if (album == candidate) id else album }
             }
             // A release can acquire an existing key before a complete retag is considered above.
             // Include the former complete groups too, so that the oldest issued id still wins.
             val releaseGroups = query("SELECT DISTINCT album_id,mbz_album_id FROM track WHERE mbz_album_id IS NOT NULL AND mbz_album_id<>''") {
                 it.string("mbz_album_id") to it.string("album_id")
             }.groupBy({ it.first }, { it.second })
+            val completeAlbumsByRelease = oldAlbums.mapNotNull { (id, members) ->
+                val release = releaseByTrack[members.first().first]?.takeIf { it.isNotEmpty() }
+                if (release != null && members.all { releaseByTrack[it.first] == release }) release to id else null
+            }.groupBy({ it.first }, { it.second })
             val releaseMerges = LinkedHashMap<String,String>()
             for ((release, current) in releaseGroups) {
-                val complete = oldAlbums.filter { (_,members) ->
-                    members.all { member -> string("SELECT mbz_album_id FROM track WHERE id=?",member.first) == release }
-                }.keys
+                val complete = completeAlbumsByRelease[release].orEmpty()
                 val candidates = (current + complete).distinct()
                 candidates.forEach { execute("INSERT OR IGNORE INTO api_album_issued(id) VALUES(?)",it) }
                 val survivor = candidates.minWithOrNull(compareBy(::issued).thenBy { it }) ?: continue

@@ -605,6 +605,11 @@ internal class MyLibrary(
         reader.scope.launch { guardedSuspend { refresh() } }
     }
 
+    internal fun preferencesChanged() {
+        reader.checkConfined()
+        changed()
+    }
+
     private fun changed() {
         listeners.toList().forEach { listener -> guarded(Unit) { listener() } }
     }
@@ -672,9 +677,18 @@ internal class MyLibrary(
             syncState = syncState,
             lastError = lastError,
             lastReadAtWall = state?.readAtWall,
-            albums = albums.sortedWith(order(sort, { it.rank }, { it.record.title }, { it.record.rawId })),
-            artists = artists.sortedWith(order(sort, { it.rank }, { it.record.name }, { it.record.rawId })),
-            songs = songs.sortedWith(order(sort, { it.rank }, { it.record.title }, { it.record.rawId })),
+            albums = reader.applyMyLibraryCategory(albums.sortedWith(order(sort, { it.rank }, { it.record.title }, { it.record.rawId })), "myLibrary.albums", { it.record.rawId }, { it.rank }, if (sort == MyLibrarySort.RecentlyAdded) "recentlyAdded" else "title") { entry ->
+                val r = entry.record
+                LibraryItem.Album(r.rawId, r.title, r.credits.firstOrNull()?.name, r.credits.firstOrNull()?.artistRawId, r.year, r.genre, r.durationMilliseconds, r.songCount, r.artworkKey, r.userState.starred, r.userState.userRating, r.userState.playCount, false, r.releaseTypes, r.originalReleaseDate, discographyGroup(r.releaseTypes))
+            },
+            artists = reader.applyMyLibraryCategory(artists.sortedWith(order(sort, { it.rank }, { it.record.name }, { it.record.rawId })), "myLibrary.artists", { it.record.rawId }, { it.rank }, if (sort == MyLibrarySort.RecentlyAdded) "recentlyAdded" else "title") { entry ->
+                val r = entry.record
+                LibraryItem.Artist(r.rawId, r.name, r.albumCount, r.artworkKey, r.userState.starred, r.userState.userRating)
+            },
+            songs = reader.applyMyLibraryCategory(songs.sortedWith(order(sort, { it.rank }, { it.record.title }, { it.record.rawId })), "myLibrary.songs", { it.record.rawId }, { it.rank }, if (sort == MyLibrarySort.RecentlyAdded) "recentlyAdded" else "title") { entry ->
+                val r = entry.record
+                LibraryItem.Track(r.rawId, r.title, r.albumRawId, r.albumTitle, r.credits.firstOrNull()?.name, r.credits.firstOrNull()?.artistRawId, r.discNumber, r.trackNumber, r.durationMilliseconds, r.sourceContainer, r.artworkKey, r.userState.starred, r.userState.userRating, r.userState.playCount, reader.trackPlayability(r.rawId, reader.downloads.downloadedTrackRawIds(cache.serverId)), false)
+            },
             memberIds = members,
             albumsWithMemberSongs = memberTrackAlbums,
             complete = state?.complete == true,

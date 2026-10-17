@@ -286,7 +286,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
             call.response.headers.append("Access-Control-Expose-Headers","Retry-After")
         }
         try {
-            checkBuckets(call,listOf("ip:${call.request.local.remoteHost}"))
+            checkBuckets(call,listOf("ip:${ctx.config.clientAddresses.resolve(call)}"))
             maintenance()
             if(call.request.queryParameters.names().any { it.lowercase() in setOf("token","access_token","refresh_token","authorization","password","p","t","s","api_key","apikey") }) throw OAuthFailure("invalid_request")
             action()

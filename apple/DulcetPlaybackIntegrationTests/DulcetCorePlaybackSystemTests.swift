@@ -1001,6 +1001,205 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(fixture.engine.count("prepare"), preparesBefore, "an edit starts nothing")
     }
 
+    // MARK: Listening session (spec §12.13 sleep timer, §12.8 crossfade, §14.8 AutoPlay)
+
+    /// End of track: the boundary stops instead of handing over. The next entry is prepared and
+    /// never played, nothing is preloaded across the stop, and the timer is spent.
+    func testASleepTimerAtTheEndOfTheTrackStopsWithTheNextEntryPreparedAndClears() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "b")
+
+        fixture.controller.setSleepTimer(.endOfTrack)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.sleepTimer?.choice, .endOfTrack)
+        await fixture.waitFor {
+            fixture.engine.commands.contains { $0.kind == "discard" && $0.attempt == preload.attempt.rawValue }
+        }
+        XCTAssertTrue(
+            fixture.engine.commands.contains { $0.kind == "discard" && $0.attempt == preload.attempt.rawValue },
+            "the stop point owns the boundary: the engine must not hand over into b"
+        )
+        let preloadsAfterStopPoint = fixture.engine.count("preload")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(fixture.engine.count("preload"), preloadsAfterStopPoint, "and nothing is preloaded again")
+
+        let playsBefore = fixture.engine.count("play")
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+        let next = try await fixture.waitForPrepare(rawID: "b", after: preparesBefore)
+        fixture.emit(.ready(attemptID: next, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.current.id.rawID == "b" }
+        try await Task.sleep(for: .milliseconds(200))
+
+        let stopped = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(stopped.current.id.rawID, "b", "the next entry waits, ready")
+        XCTAssertFalse(stopped.isPlaying)
+        XCTAssertEqual(fixture.engine.count("play"), playsBefore, "and is not played")
+        XCTAssertNil(stopped.sleepTimer, "the timer is spent")
+    }
+
+    /// Signing out takes an end-of-track timer with it, in the core too: the next session's
+    /// boundary hands over as usual instead of stopping with no timer shown.
+    func testSigningOutClearsAnEndOfTrackStopPoint() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "b")
+        fixture.controller.setSleepTimer(.endOfTrack)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.sleepTimer?.choice, .endOfTrack)
+        await fixture.waitFor {
+            fixture.engine.commands.contains { $0.kind == "discard" && $0.attempt == preload.attempt.rawValue }
+        }
+        let preloadsBefore = fixture.engine.count("preload")
+
+        fixture.controller.disconnect()
+        fixture.controller.configure(account: account(provider))
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let replayed = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
+        fixture.emit(.ready(attemptID: replayed, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: replayed, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.engine.count("preload") > preloadsBefore }
+        XCTAssertGreaterThan(fixture.engine.count("preload"), preloadsBefore, "a left-over stop point would own the boundary")
+        XCTAssertNil(fixture.controller.currentPresentation.nowPlaying?.sleepTimer)
+    }
+
+    /// A timed choice fades the level through `setVolume`, pauses at the deadline and puts the
+    /// level back for the next play. Cancelling another one leaves playback alone.
+    func testATimedSleepTimerFadesPausesAndRestoresTheLevel() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.sleepTimerTiming = (minute: 40, fade: 500) // 15 "minutes" = 600 ms
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+
+        fixture.controller.setSleepTimer(.minutes15)
+        let set = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying?.sleepTimer)
+        XCTAssertEqual(set.choice, .minutes15)
+        XCTAssertNotNil(set.endsAt, "a timed choice shows when it ends")
+        XCTAssertEqual(fixture.engine.count("pause"), 0)
+
+        await fixture.waitFor { fixture.engine.count("pause") == 1 }
+        let commands = fixture.engine.commands
+        let pauseIndex = try XCTUnwrap(commands.firstIndex { $0.kind == "pause" }, "the deadline pauses")
+        let fade = commands[..<pauseIndex].filter { $0.kind == "volume" }.compactMap(\.position)
+        XCTAssertFalse(fade.isEmpty, "the level falls before the pause")
+        XCTAssertEqual(fade, fade.sorted(by: >), "and only falls")
+        XCTAssertLessThan(try XCTUnwrap(fade.last), 1)
+        let after = commands[(pauseIndex + 1)...].filter { $0.kind == "volume" }.compactMap(\.position)
+        XCTAssertEqual(after, [1], "the level is restored once the music is paused")
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.sleepTimer == nil }
+        XCTAssertNil(fixture.controller.currentPresentation.nowPlaying?.sleepTimer)
+
+        // A second timer, cancelled before its fade, never pauses or touches the level.
+        let volumesBefore = fixture.engine.count("volume")
+        fixture.controller.setSleepTimer(.minutes60)
+        fixture.controller.setSleepTimer(nil)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(fixture.engine.count("pause"), 1)
+        XCTAssertEqual(fixture.engine.count("volume"), volumesBefore)
+        XCTAssertNil(fixture.controller.currentPresentation.nowPlaying?.sleepTimer)
+    }
+
+    /// Crossfade is pushed per attempt only where the core asks for an overlap: never between
+    /// two entries of the album being played, and at the join into something else.
+    func testCrossfadeIsSentOnlyForABoundaryBetweenDifferentAlbums() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "x"])
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "dulcet.tests.crossfade.\(UUID().uuidString)"))
+        let settings = DulcetCoreListeningSettings(defaults: defaults)
+        settings.setListeningPreference(DulcetListeningPreference(autoplayEnabled: false, crossfadeSeconds: 6))
+        fixture.controller.listeningSettings = settings
+
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        _ = try await fixture.waitForPreload(rawID: "b")
+        XCTAssertEqual(fixture.engine.count("crossfade"), 0, "a and b are one album: gapless")
+
+        // Play Next from search puts another album's track after a.
+        fixture.controller.edit(.playNext(fixture.addition(["x"])))
+        await fixture.waitFor { fixture.engine.count("crossfade") == 1 }
+        let sent = try XCTUnwrap(fixture.engine.commands.last { $0.kind == "crossfade" })
+        XCTAssertEqual(sent.attempt, first.rawValue, "for the current attempt")
+        XCTAssertEqual(try XCTUnwrap(sent.position), 6, accuracy: 0.001)
+
+        // Off again: one undo to zero for the same attempt, and nothing after that.
+        settings.setListeningPreference(DulcetListeningPreference(autoplayEnabled: false, crossfadeSeconds: 0))
+        await fixture.waitFor { fixture.engine.count("crossfade") == 2 }
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "crossfade" }?.position, 0)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(fixture.engine.count("crossfade"), 2)
+    }
+
+    /// Play Next and Add to Queue into a playing queue are confirmed, each addition its own
+    /// notice; an addition that starts an empty player is not.
+    func testQueueAdditionsAreConfirmedOnlyWhenTheyJoinAQueue() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "x"])
+        let store = try XCTUnwrap(fixture.store)
+        store.editQueue(.playNext(fixture.addition(["x"])))
+        let started = try await fixture.waitForPrepare(rawID: "x")
+        XCTAssertNil(store.snapshot.queueEditConfirmation, "starting playback is its own feedback")
+        fixture.emit(.ready(attemptID: started, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying != nil }
+
+        store.editQueue(.playNext(fixture.addition(["a"])))
+        await fixture.waitFor { store.snapshot.queueEditConfirmation != nil }
+        let playNext = try XCTUnwrap(store.snapshot.queueEditConfirmation)
+        XCTAssertEqual(playNext.placement, .playNext)
+        XCTAssertEqual(playNext.trackCount, 1)
+        XCTAssertEqual(playNext.title, "Track a")
+
+        store.editQueue(.playLater(fixture.addition(["a", "b"])))
+        await fixture.waitFor { store.snapshot.queueEditConfirmation?.sequence != playNext.sequence }
+        let later = try XCTUnwrap(store.snapshot.queueEditConfirmation)
+        XCTAssertEqual(later.placement, .addToQueue)
+        XCTAssertEqual(later.trackCount, 2)
+        XCTAssertGreaterThan(later.sequence, playNext.sequence)
+        XCTAssertEqual(
+            fixture.controller.currentPresentation.nowPlaying?.queueEntries.map(\.track.id.rawID),
+            ["x", "a", "a", "b"],
+            "Play Next lands after the current entry and Add to Queue at the end"
+        )
+    }
+
+    /// With AutoPlay on and the queue on its last entry, the core's request is answered once.
+    /// The fixture's server does not listen; every source fails and is skipped (only refused
+    /// credentials end the search), so the answer is an empty list and adds nothing.
+    func testAutoplayAsksOnceWhenTheQueueRunsOutAndNotWhenItIsOff() async throws {
+        let fixture = makeFixture(tracks: ["only"])
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "dulcet.tests.autoplay.\(UUID().uuidString)"))
+        let settings = DulcetCoreListeningSettings(defaults: defaults)
+        settings.setListeningPreference(DulcetListeningPreference(autoplayEnabled: false, crossfadeSeconds: 0))
+        fixture.controller.listeningSettings = settings
+
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "only")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(fixture.controller.autoplayLog, [], "off asks nothing")
+
+        settings.setListeningPreference(DulcetListeningPreference(autoplayEnabled: true, crossfadeSeconds: 0))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while fixture.controller.autoplayLog.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(fixture.controller.autoplayLog, ["answered:0"], "one request, answered from the account's server")
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.queueEntries.count, 1)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.autoplayActive, true,
+                       "on, with Shuffle and Repeat off")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(fixture.controller.autoplayLog.count, 1, "a key is answered once")
+    }
+
     // MARK: Fixture
 
     private func account(_ providerInstanceID: String) -> DulcetPlaybackAccount {
@@ -1344,6 +1543,17 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
             outcome = .completed(commandID: commandID, result: .withoutData)
         case let .seek(commandID, position):
             entry = .init(kind: "seek", attempt: nil, session: nil, title: nil, position: position)
+            outcome = .completed(commandID: commandID, result: .withoutData)
+        case let .pause(commandID):
+            entry = .init(kind: "pause", attempt: nil, session: nil, title: nil)
+            outcome = .completed(commandID: commandID, result: .withoutData)
+        case let .setVolume(commandID, volume):
+            // `position` carries the level, so a test reads the fade as numbers.
+            entry = .init(kind: "volume", attempt: nil, session: nil, title: nil, position: volume)
+            outcome = .completed(commandID: commandID, result: .withoutData)
+        case let .setCrossfade(commandID, attemptID, duration):
+            entry = .init(kind: "crossfade", attempt: attemptID.rawValue, session: nil, title: nil,
+                          position: duration)
             outcome = .completed(commandID: commandID, result: .withoutData)
         default:
             entry = .init(kind: "other", attempt: nil, session: nil, title: nil)

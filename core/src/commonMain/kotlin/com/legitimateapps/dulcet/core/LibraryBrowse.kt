@@ -62,6 +62,8 @@ internal data class LibraryTrack(
     val sourceContainer: AudioContainer?,
     val mediaSourceId: String?,
     val artworkKey: String?,
+    /** The track's album, when the server named it. */
+    val albumRawId: String? = null,
 )
 
 /**
@@ -427,7 +429,7 @@ internal class LibraryBrowser private constructor(
     }
 }
 
-private fun Throwable.asLibraryError(): DomainError = when (this) {
+internal fun Throwable.asLibraryError(): DomainError = when (this) {
     // TimeoutCancellationException IS a CancellationException, so it has to be answered first or
     // a deadline that fired reads as "the user cancelled".
     is TimeoutCancellationException -> DomainError.Transport.Timeout
@@ -647,18 +649,7 @@ internal fun parseAlbum(
     if (rawId != summary.id.rawId) malformed()
     val tracks = album.arrayOrEmpty("song").map { element ->
         val track = element as? JsonObject ?: malformed()
-        LibraryTrack(
-            id = ProviderItemId(providerInstanceId, track.requiredOpaqueId("id")),
-            title = track.requiredString("title"),
-            credits = track.credit(providerInstanceId, CreditRole.Artist),
-            albumTitle = track.string("album"),
-            discNumber = track.int("discNumber"),
-            trackNumber = track.int("track"),
-            duration = track.duration(),
-            sourceContainer = track.libraryAudioContainer(),
-            mediaSourceId = null,
-            artworkKey = track.optionalOpaqueId("coverArt"),
-        )
+        track.libraryTrack(providerInstanceId)
     }
     return LibraryAlbum(
         id = summary.id,
@@ -676,6 +667,21 @@ internal fun parseAlbum(
         tracksLoaded = true,
     )
 }
+
+/** One OpenSubsonic `song` object as a track; a song without an id or title is malformed. */
+internal fun JsonObject.libraryTrack(providerInstanceId: String): LibraryTrack = LibraryTrack(
+    id = ProviderItemId(providerInstanceId, requiredOpaqueId("id")),
+    title = requiredString("title"),
+    credits = credit(providerInstanceId, CreditRole.Artist),
+    albumTitle = string("album"),
+    discNumber = int("discNumber"),
+    trackNumber = int("track"),
+    duration = duration(),
+    sourceContainer = libraryAudioContainer(),
+    mediaSourceId = null,
+    artworkKey = optionalOpaqueId("coverArt"),
+    albumRawId = optionalOpaqueId("albumId"),
+)
 
 private fun JsonObject.libraryAudioContainer(): AudioContainer? {
     string("suffix")?.lowercase()?.let { suffix ->
@@ -934,7 +940,33 @@ private fun JsonObject.readerAlbum(): CacheAlbumRecord = CacheAlbumRecord(
     songCount = int("songCount")?.takeIf { it >= 0 },
     artworkKey = optionalOpaqueId("coverArt"),
     userState = readerUserState(withPlays = true),
+    releaseTypes = arrayOrEmpty("releaseTypes").mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+    originalReleaseDate = (get("originalReleaseDate") as? JsonObject)?.let { date ->
+        val year = date.int("year")?.takeIf { it in 1..9999 } ?: return@let null
+        val month = date.int("month")?.takeIf { it in 1..12 }
+        val day = date.int("day")?.takeIf { it in 1..31 }
+        year.toString().padStart(4, '0') + (month?.let { "-" + it.toString().padStart(2, '0') } ?: "") +
+            (if (month != null) day?.let { "-" + it.toString().padStart(2, '0') } ?: "" else "")
+    },
 )
+
+internal fun parseReaderAllSongs(body: String): List<CacheTrackRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val result = payload["searchResult3"] as? JsonObject ?: malformed()
+    return result.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
+}
+
+internal fun parseReaderRandomSongs(body: String): List<CacheTrackRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val result = payload["randomSongs"] as? JsonObject ?: malformed()
+    return result.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
+}
+
+internal fun parseReaderTopSongs(body: String): List<CacheTrackRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val top = payload["topSongs"] as? JsonObject ?: malformed()
+    return top.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
+}
 
 private fun JsonObject.readerTrack(albumRawId: String?): CacheTrackRecord = CacheTrackRecord(
     rawId = requiredOpaqueId("id"),

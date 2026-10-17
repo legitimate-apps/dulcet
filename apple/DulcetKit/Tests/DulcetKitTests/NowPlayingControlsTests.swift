@@ -141,16 +141,16 @@ func theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform() {
     #expect(!withheld.contains(.rating), "no stars while the reader does not hold the track's account")
 #if os(macOS)
     // The Mac's heart and stars are in the window's toolbar, so the footer never draws a second set.
-    #expect(offered == [.airPlay, .lyrics, .upNext])
-    #expect(Player.footerControls(offersFavourite: true, showsQueueToggle: false) == [.airPlay, .lyrics])
+    #expect(offered == [.airPlay, .sleepTimer, .lyrics, .upNext])
+    #expect(Player.footerControls(offersFavourite: true, showsQueueToggle: false) == [.airPlay, .sleepTimer, .lyrics])
 #elseif os(tvOS)
     // Apple TV: the heart, its stars beside it, then lyrics, all reached by focus under the transport.
-    #expect(offered == [.favourite, .rating, .lyrics])
-    #expect(withheld == [.lyrics])
+    #expect(offered == [.favourite, .rating, .sleepTimer, .lyrics])
+    #expect(withheld == [.sleepTimer, .lyrics])
 #else
-    #expect(offered == [.favourite, .rating, .airPlay, .lyrics, .upNext])
-    #expect(Player.footerControls(offersFavourite: true, showsQueueToggle: false) == [.favourite, .rating, .airPlay, .lyrics])
-    #expect(withheld == [.airPlay, .lyrics, .upNext])
+    #expect(offered == [.favourite, .rating, .airPlay, .sleepTimer, .lyrics, .upNext])
+    #expect(Player.footerControls(offersFavourite: true, showsQueueToggle: false) == [.favourite, .rating, .airPlay, .sleepTimer, .lyrics])
+    #expect(withheld == [.airPlay, .sleepTimer, .lyrics, .upNext])
 #endif
 }
 
@@ -166,9 +166,9 @@ func theNowPlayingStarsSitBesideTheHeartOnTheirOwnRowWhereAPhoneCannotFitThemAll
 #if os(iOS)
     // Five 44-point stars, the heart and three 44-point controls do not fit a phone's width in one
     // row, so the track's own marks take the first row and the rest keep the second.
-    #expect(rows == [[.favourite, .rating], [.airPlay, .lyrics, .upNext]])
+    #expect(rows == [[.favourite, .rating], [.airPlay, .sleepTimer, .lyrics, .upNext]])
     #expect(Player.footerRows(Player.footerControls(offersFavourite: false, showsQueueToggle: true))
-        == [[.airPlay, .lyrics, .upNext]], "no empty marks row without a reader")
+        == [[.airPlay, .sleepTimer, .lyrics, .upNext]], "no empty marks row without a reader")
 #else
     #expect(rows == [offered], "one row where it fits")
 #endif

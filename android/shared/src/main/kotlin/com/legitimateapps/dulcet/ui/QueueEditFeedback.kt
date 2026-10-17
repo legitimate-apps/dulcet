@@ -24,8 +24,10 @@ public fun queueEditRefused(context: Context) {
  * return to this one -- says it again. Apple has no such moment: its queue is in place at once.
  */
 @Composable
-public fun DroppedAdditionsNotice(playback: AndroidPlaybackController?, dropped: AndroidDroppedAdditions?) {
+public fun DroppedAdditionsNotice(playback: AndroidPlaybackController?, dropped: AndroidDroppedAdditions?,
+    confirmation: com.legitimateapps.dulcet.core.AndroidQueueConfirmation? = null) {
     val context = LocalContext.current
+    QueueConfirmationNotice(confirmation) { sequence -> playback?.dismissQueueConfirmation(sequence) == true }
     LaunchedEffect(playback, dropped?.sequence) {
         val notice = dropped ?: return@LaunchedEffect
         val controller = playback ?: return@LaunchedEffect
@@ -34,5 +36,18 @@ public fun DroppedAdditionsNotice(playback: AndroidPlaybackController?, dropped:
         if (!controller.dismissDroppedAdditions(notice.sequence)) return@LaunchedEffect
         Toast.makeText(context, context.resources.getQuantityString(R.plurals.queue_additions_dropped,
             notice.trackCount, notice.trackCount), Toast.LENGTH_LONG).show()
+    }
+}
+
+/** Render only an applied, unclaimed edit; playback itself is the feedback for an empty queue. */
+@Composable
+public fun QueueConfirmationNotice(confirmation: com.legitimateapps.dulcet.core.AndroidQueueConfirmation?,
+    claim: (Long) -> Boolean) {
+    val context = LocalContext.current
+    LaunchedEffect(confirmation?.sequence) {
+        val notice = confirmation ?: return@LaunchedEffect
+        if (!claim(notice.sequence)) return@LaunchedEffect
+        Toast.makeText(context, if (notice.insertion == com.legitimateapps.dulcet.core.AndroidQueueInsertion.PlayNext)
+            R.string.queue_confirm_next else R.string.queue_confirm_added, Toast.LENGTH_SHORT).show()
     }
 }

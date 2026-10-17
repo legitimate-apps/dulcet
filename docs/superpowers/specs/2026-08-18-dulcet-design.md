@@ -1330,7 +1330,9 @@ both additive, seeded with nothing, and not protected data.
   `cache_playlist` rows of every fixture that holds the columns schema 7 added — a cache table, so
   not protected data, but a column a schema added is compared with data — each again with a
   negative control. From schema 9 it also compares the re-derivable `my_library_item` and
-  `my_library_state` rows. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
+  `my_library_state` rows. From schema 10 it also compares `library_depth_entry` rows, with seeded
+  account-scoped preferences, pins and recents and controls that reject overwrites, deletion and
+  account loss. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
   files; from schema 8 the gate also builds the schema from the current `.sq` files alone, requires
   that build to equal the snapshot (so an empty difference is the instrument agreeing, not the
   instrument reading nothing) and requires the newest fixture to equal it object for object
@@ -1339,8 +1341,9 @@ both additive, seeded with nothing, and not protected data.
   by hand: `tools/generate_migration_fixture.py --to N` copies fixture N−1, applies
   `migrations/<N−1>.sqm` as shipped, sets the schema version, adds that version's seed rows and
   vacuums; `--check` regenerates into a temporary directory and requires the committed fixture to
-  be byte-identical. It writes only with SQLite 3.51.0, the build that wrote v4–v9 (v1–v3 were
-  written by 3.50.6; none reserves bytes per page), and refuses any other, since a different build
+  be byte-identical. Writing and byte checks require the recorded SQLite build for that fixture:
+  3.51.0 for v4–v9 and 3.54.0 for v10 (v1–v3 were written by 3.50.6; none reserves bytes per page).
+  They refuse another build, since a different build
   lays pages out differently (revision 104, item 23). That byte check is local; CI runs
   `--all --check-semantic` in the parity gate, which any SQLite build can answer: it regenerates
   every generated fixture and compares the normalised schema, `user_version`, every table's rows and
@@ -1922,7 +1925,10 @@ assumed, because the protocol does not expose the cap:
 - The budget resets when the account's capability set is refreshed (§10.2).
 
 `preloadNext` resolves and validates the next plan while the current one plays; the transition emits
-`AdvancedToPreloaded`, which is a **session boundary** (§12.1).
+`AdvancedToPreloaded`, which is a **session boundary** (§12.1). On Apple, a positive
+`setCrossfade` duration for the current attempt moves that boundary to `duration` before its end:
+`EndedNaturally` at the observed outgoing position, immediately followed by `AdvancedToPreloaded`,
+once each; the outgoing tail reports nothing. Zero retains the ordinary AVQueuePlayer boundary.
 
 **How the core and a shell share the boundary (revision 106).** A shell asks the core to register
 the preloaded session (`preloadNext(sessionId)`) only once the current session has reported
@@ -1957,6 +1963,20 @@ Gapless *output* is not a toolkit checkbox: `AVQueuePlayer` and ExoPlayer concat
 seamless boundaries also depend on encoder delay/padding metadata, decoder behavior, container, and
 whether a transcoder produced a clean boundary. Gapless is therefore an **empirically measured,
 per-format, per-path capability** recorded in `FEATURES.yml`, not a claimed feature.
+
+**Crossfade (2026-10-16).** A device setting, Off or one to twelve whole seconds (default Off). The
+**core decides every boundary**: `PlaybackQueueSnapshot.crossfadeIntoNext` is the overlap for the
+boundary after the current entry, and it is zero -- gapless, exactly as above -- when crossfade is
+off, when nothing different follows, under repeat-one, when a sleep-timer stop point (§12.13) owns
+the boundary, when the outgoing track is shorter than three times the length, and between two
+entries of one album. OpenSubsonic does not say which albums are gapless, so an album played through
+keeps every join it was mastered with; two entries are one album when both carry the same album id,
+or, failing that, when both came from playing the same album. A shell tells its engine the overlap
+for the **current attempt** (`setCrossfade` on Apple), only when it is above zero or undoes an
+earlier non-zero value for that attempt, so a gapless boundary sees no new command at all. The
+engine overlaps only into a preload it holds. **Scrobble rules do not move:** the outgoing attempt
+reports `EndedNaturally` once, at the moment the overlap begins, then `AdvancedToPreloaded`; its
+fading tail reports nothing (§15).
 
 ### 12.9 Audio session, focus, and route policy
 
@@ -2476,6 +2496,36 @@ that it reads the node is ASSUMED from the node's semantics.
   which rule 3's reasoning depends on and nothing counts.
 - Run the Android Skip Probe proofs in `core-ci`'s emulator legs. They are opt-in
   (`dulcetSkipProbe=true`) because the legs' server is not seeded with the Skip Probe album.
+
+### 12.13 Sleep timer
+
+Choices: 15, 30, 45 or 60 minutes, the end of the current track, or the end of the queue. The
+timer belongs to the device's playback controller, not to a screen, so it survives the app going to
+the background, and it is never persisted: a relaunch has no timer.
+
+- **Timed choices count down on the monotonic clock** (§12.1 "two clocks"). The core's
+  `SleepTimerCountdown` is pure: the shell feeds it monotonic milliseconds and reads the remaining
+  time, the fade gain and expiry. The last ten seconds fade the output level linearly to silence
+  through the engine's volume command; at the deadline the shell pauses (an ordinary pause: the
+  session is paused, not ended, so nothing about the play changes) and restores the level, so the
+  next Play is at full volume. The wall-clock end time a surface shows ("until 23:40") is display
+  only.
+- **End of track and end of queue are queue stop points** (`setStopPoint`). The core owns them,
+  because only the core knows where a boundary is: at a stop point it does not hand over (no
+  preload is registered across it, and one already registered is discarded), and when the current
+  entry ends naturally it selects the entry that would have played next and starts it **paused**
+  (`shouldAutoPlay = false`), so Play carries on from there; with nothing after it the queue
+  finishes as in §14.3. End of queue stops before the first AutoPlay entry (§14.8) and asks AutoPlay
+  for nothing. The transition carries `stopPointReached`, and the timer is then spent.
+- Cancelling a timer restores the level and clears any stop point. Setting a new choice replaces
+  the old one.
+
+**Android presentation.** Phone listening options are in Up Next. Android TV opens listening
+options from a focused button below the artwork; the remote selects AutoPlay, sleep and crossfade
+through buttons and scrollable dialogs. Both use the playback service for the timer and settings.
+Play Next and Add to Queue use the existing brief toast notice, claimed once after application;
+an empty-player addition starts playback without an extra notice. TV queue editing uses named
+Move Up/Down and Remove actions in place of swipe gestures.
 
 ---
 
@@ -3153,6 +3203,31 @@ another id while a sign-out is open is left saved, and only the old id's record 
 removed. On Android the store's delete takes no id, so the id check and the delete run together on
 the main thread, as every production save does. As defence in depth, the TV form abandons its
 attempt when it leaves the screen, so an answer arriving after that saves nothing.
+
+### 14.8 AutoPlay
+
+When the queue is about to run out, it keeps playing similar music **from the person's own server,
+never from anywhere else**. A device setting, on by default; Up Next shows an AutoPlay section with
+the switch.
+
+- **The core decides when to ask.** With AutoPlay on and Shuffle and Repeat off, once one entry or
+  none follows the current one, `takeAutoplayRequest()` hands out one request: a key, the seed (the
+  queue's last entry), every track id already queued, and a count of ten. Each key is handed out
+  once. The shell answers it with `appendAutoplay(key, items)`; an empty answer is valid, and the
+  same key is not asked again until the queue changes at its end. An answer to a key the queue has
+  moved past changes nothing. If the queue finished while a request was outstanding, the answer's
+  first entry starts on arrival; a request made after the queue finished only appends.
+- **Candidates, on OpenSubsonic (`/rest`)**, are tried in turn until enough new tracks are found:
+  `getSimilarSongs2` for the seed's artist and `getSimilarSongs` for the seed, `getTopSongs` for the
+  artist, then `getRandomSongs` in the seed's genre and finally from the whole library. A source that
+  fails or is not offered is skipped; refused credentials end the search. Dulcet Server serves the
+  same requests from its own library (§29), so the chain is the same on every server.
+- **AutoPlay entries stay last.** They are marked `isAutoplay`; Add to Queue inserts before the first
+  upcoming one, so the person's additions and AutoPlay's never interleave, and Play Next goes after
+  the current entry as always. Switching AutoPlay off, or turning Shuffle or Repeat on, removes the
+  AutoPlay entries that have not played; the current one plays on.
+- AutoPlay entries are ordinary plays: scrobbles, resume positions and failures (§12.12) apply to
+  them unchanged. Offline, nothing is asked; the request waits for a connection.
 
 ---
 
@@ -7782,6 +7857,94 @@ argue against the recorded rationale — not as filling in a blank.
 local artist and genre neighbours instead of always returning an empty container (§29.1).
 They require no external similarity service. Source permissions constrain both seed metadata
 and returned songs; unknown or invisible seeds return error 70.
+
+**2026-10-16 — Apple engine overlaps the preloaded boundary.**
+`DulcetAVPlayerEngine` accepts `setCrossfade` only for its current attempt and a finite,
+nonnegative duration. The value replaces the previous one and lapses at an attempt change.
+With a ready preload, a positive duration starts the handover at the outgoing media time
+`T - d`; a 50 ms media observer drives it. The engine retains the already-running outgoing
+queue as a tail that emits no playback events, creates a fresh incoming item from the preloaded
+asset and its existing loader in a new main queue, and ramps complementary linear gains using
+incoming media time. A queued `AVPlayerItem` cannot be immediately reattached to another player;
+the fresh item avoids that attachment race while retaining the preloaded asset. It never reopens or seeks
+the outgoing resource, including a non-seekable transcode. If readiness arrives within the
+window, only the remaining tail can overlap; without a ready preload the ordinary gapless
+queue boundary remains. A zero duration leaves AVQueuePlayer's existing gapless path intact.
+Both gains multiply the latest engine volume, including the sleep timer's fade. Pause, stop,
+seek, replacement, release, interruption, noisy-route pause and current-item failure dispose
+the outgoing tail. Seeking before a future boundary leaves that attempt's fade armed.
+At overlap start the outgoing attempt emits `EndedNaturally` at its observed position, then
+`AdvancedToPreloaded` exactly once; the incoming session owns Now Playing and remote commands.
+No progress, end or failure from the outgoing tail reaches the controller. The core retains
+musical-context policy and play accounting; the engine only executes the chosen boundary.
+Tests: `AVPlayerCrossfadeTests` drives local-file and resource-loader PCM through real players,
+checking boundary timing within 250 ms (five observer periods for host scheduling), concurrent
+positive rates and gains, master-volume composition, gapless reset and transport cleanup.
+OBSERVED 2026-10-16: all six suite functions (eleven argument cases) passed on macOS and an
+iPhone 17 Pro simulator running iOS 26.5; the full macOS package run passed 342 tests. The iOS
+and tvOS app and test targets compile. iPad and tvOS runtime overlap remains unobserved here.
+
+**2026-10-16 — Listening session: sleep timer, crossfade decisions, AutoPlay, queue confirmations.**
+New §12.13 (sleep timer), §14.8 (AutoPlay) and the §12.8 crossfade paragraph. The queue core gains
+stop points (`setStopPoint`: end of the current entry, end of the queue) that start the next entry
+paused and carry `stopPointReached`; AutoPlay requests handed out once by key and answered with
+`appendAutoplay`, with AutoPlay entries kept after everything the person queued; and
+`crossfadeIntoNext`, the overlap the core allows for the boundary after the current entry. Queue
+items carry the album id so the core can keep albums gapless. The Apple engine contract gains
+`setCrossfade(attemptID, duration)`; a shell sends it only for an overlap above zero or to undo
+one. Play Next and Add to Queue into a playing queue show a brief confirmation; an addition that
+starts an empty player does not, since starting playback is its own feedback.
+
+**2026-10-16 — Personal collection depth and device-only Library state.**
+The shared reader owns per-category sort/filter preferences, pins and recent searches in a new
+additive account-bound device table (schema 10). Pins intentionally live **on this device for this
+account**, including with Dulcet Server: they make no server write and do not sync between devices.
+A changed server URL or username purges this state with the seen-cache. User pins protect their
+cached metadata from eviction. Search recents are recorded on a committed search action, trimmed,
+case-folded for deduplication and limited to the latest twelve; clearing recents leaves pins intact.
+Mutation return values acknowledge queue acceptance. A failed device-state write keeps a sanitized
+error on subsequent state reads until a successful write, so a failed write cannot silently revert
+an accepted UI change through an apparently successful read.
+
+Albums retain the existing `getAlbumList2` window and scan-stamp rules: title, artist, `byYear`
+(newest first), `newest` (recently added) and `frequent` (most played). Activity lists remain single
+pages; they never claim whole-library coverage. `byYear` excludes albums whose server supplies no
+year. Optional OpenSubsonic `releaseTypes` and `originalReleaseDate` survive the cache and both
+bridges. An artist's discography is newest first, using original date then year, with Albums,
+EPs & Singles, Compilations and Appears On groups when the server supplies the corresponding
+metadata/credits; untyped releases remain Albums, and undated releases follow dated ones.
+
+Songs uses empty-query `search3`, requesting only songs and paging with `songCount`/`songOffset`
+through the same guarded reader window. A server that rejects this enumeration leaves explicitly
+cached, open-coverage device songs visible; a successful empty response with known device songs
+also offers that labelled local view without asserting current server membership. Local title,
+artist, play-count and text filtering cover the loaded window, not an unseen catalog; the UI states
+that scope. Complete one-response categories and Dulcet Server My Library use the shared local
+sort/filter policy; My Library recently-added order uses membership rank. Unknown play counts,
+release dates and unsupported playlist favorites are never invented.
+
+Downloaded contains actual completed download identities resolved against pinned track metadata,
+works offline and updates when downloads change; merely cached tracks are excluded. Downloaded
+album/artist filters use those track relationships. tvOS retains its existing no-durable-downloads
+policy, so its shell offers no Downloaded entry or filter; Android TV supports downloads.
+`artistTopSongs` calls `getTopSongs` with the
+artist's name when online and falls back to this account's cached plays and stars when unavailable
+or empty. It does not label an unplayed alphabetical sample as Top Songs. Shuffle All online
+requests a fresh `getRandomSongs` selection on every action, with a bounded queue of up to 500
+server-selected songs; every server song is eligible without enumerating a mirror. Offline and
+personal-collection shuffle uses the displayed available collection and states its scope.
+
+OBSERVED core evidence: `LibraryDepthTest` exercises isolation, persistence, recent-search bounds,
+metadata ordering, pin eviction protection, local offline collections, Top Songs fallback, guarded
+song offsets, bounded random selection and category filters. Platform screen evidence is recorded
+separately in `FEATURES.yml`; these core tests do not claim simulator or emulator UI verification.
+
+**2026-10-16 — Opt-in trusted proxy client addresses.**
+Dulcet Server accepts an operator-configured `trusted-proxies` list of literal addresses/CIDRs,
+empty by default. Only a trusted socket peer may supply a forwarded client identity. REST failed-login,
+Dulcet API and OAuth IP limits share the resolver described in §29.1; reverse proxies must sanitize
+forwarded headers. OBSERVED: `ClientAddressesTest` and real-CIO `TrustedProxyIntegrationTest` cover
+configuration, spoofing, multi-hop boundaries and isolation across the three limiters.
 
 **2026-10-16 — Required CI exercises My Library against disposable Dulcet Server.**
 The automated-server boundary includes local disposable Dulcet Server as well as Navidrome;
@@ -13460,6 +13623,17 @@ them.
   and `dulcetLibrary` 1.
 - Authentication accepts token plus salt and plain or `enc:` passwords. Passwords are kept with
   AES-GCM under a key in the data folder, because token authentication needs the plaintext.
+- Client-address trust is opt-in: `trusted-proxies` / `DULCET_TRUSTED_PROXIES` is a comma-separated
+  list of literal IPv4/IPv6 proxy addresses or CIDRs, empty by default. Invalid entries fail startup.
+  An untrusted socket peer, or the empty default, ignores every forwarded-address header. A trusted
+  peer permits `CF-Connecting-IP`, then `X-Real-IP`, then the right-most untrusted hop of
+  `X-Forwarded-For` after skipping trusted hops from the right. The same resolved address keys
+  OpenSubsonic failed-login, Dulcet API IP and OAuth IP limits. Equivalent IP spellings share keys.
+  Malformed/repeated selected headers or malformed chains fail closed to the socket peer, without
+  falling through to lower-priority headers; all-trusted chains also use the peer. Inputs are
+  bounded to 8 KiB and 64 hops, with no hostname resolution, ports, brackets or IPv6 zones.
+  The operator trusts only controlled proxies that overwrite/strip these headers; forwarded
+  host/scheme are not trusted by this setting. Reverse-proxy setup is in the server README.
 - Request parameters are parsed by the server itself, without a parameter limit. A playlist replace
   sends one `songId` per entry, and Ktor's parser would keep only the first 1000.
 

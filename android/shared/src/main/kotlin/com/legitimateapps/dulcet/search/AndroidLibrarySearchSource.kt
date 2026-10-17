@@ -20,9 +20,19 @@ public class AndroidLibrarySearchSource(context: Context, account: SearchAccount
     override fun open(listener: (AndroidLibrarySearchPublication) -> Unit): SearchSourceHandle {
         val search = reader.openSearch(listener)
         return object : SearchSourceHandle {
+            override var recentSearchError: String? = null
+                private set
             override fun updateQuery(text: String) = search.updateQuery(text)
             override fun refresh() = search.refresh()
             override fun close() = search.close()
+            override fun recentSearches(completion: (List<String>) -> Unit) {
+                reader.libraryDepthState { state ->
+                    recentSearchError = state.errorKind
+                    completion((0 until state.recentSearchCount).map(state::recentSearch))
+                }
+            }
+            override fun recordSearch(text: String) { reader.recordSearch(text) }
+            override fun clearRecentSearches() { reader.clearRecentSearches() }
         }
     }
 }

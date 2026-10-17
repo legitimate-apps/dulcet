@@ -226,5 +226,69 @@
             <string>%d changes haven’t reached your server yet. Send them before signing out, or sign out and discard them.</string>
         </dict>
     </dict>
+    <key>player.sleepTimer.minutes</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@minutes@</string>
+        <key>minutes</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d minute</string>
+            <key>other</key>
+            <string>%d minutes</string>
+        </dict>
+    </dict>
+    <key>settings.crossfade.seconds</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@seconds@</string>
+        <key>seconds</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d second</string>
+            <key>other</key>
+            <string>%d seconds</string>
+        </dict>
+    </dict>
+    <key>queue.confirm.playNext.count</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@songs@</string>
+        <key>songs</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d song will play next</string>
+            <key>other</key>
+            <string>%d songs will play next</string>
+        </dict>
+    </dict>
+    <key>queue.confirm.addToQueue.count</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@songs@</string>
+        <key>songs</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>Added %d song to Up Next</string>
+            <key>other</key>
+            <string>Added %d songs to Up Next</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

@@ -16,10 +16,14 @@ public struct DulcetQueueEntryID: Hashable, Sendable, CustomStringConvertible {
 public struct DulcetQueueEntry: Identifiable, Hashable, Sendable {
     public let id: DulcetQueueEntryID
     public let track: DulcetTrack
+    /// Added by AutoPlay (spec §14.8) rather than by the person: shown in its own section, after
+    /// everything the person queued.
+    public let isAutoplay: Bool
 
-    public init(id: DulcetQueueEntryID, track: DulcetTrack) {
+    public init(id: DulcetQueueEntryID, track: DulcetTrack, isAutoplay: Bool = false) {
         self.id = id
         self.track = track
+        self.isAutoplay = isAutoplay
     }
 }
 
@@ -76,7 +80,11 @@ public protocol DulcetQueueEditing: AnyObject {
 public struct DulcetUpNextModel: Sendable, Hashable {
     public let history: [DulcetQueueEntry]
     public let current: DulcetQueueEntry?
+    /// What the person queued, after the current entry.
     public let upcoming: [DulcetQueueEntry]
+    /// What AutoPlay queued after everything the person did (spec §14.8). The queue keeps these
+    /// last: Add to Queue lands before them, so the two never interleave.
+    public let autoplay: [DulcetQueueEntry]
     public let sourceDisplayName: String?
 
     public init(nowPlaying: DulcetNowPlaying?) {
@@ -84,20 +92,25 @@ public struct DulcetUpNextModel: Sendable, Hashable {
             history = []
             current = nil
             upcoming = []
+            autoplay = []
             sourceDisplayName = nil
             return
         }
         let entries = nowPlaying.queueEntries
         sourceDisplayName = nowPlaying.sourceDisplayName
+        let following: [DulcetQueueEntry]
         if let index = nowPlaying.currentEntryIndex, entries.indices.contains(index) {
             history = Array(entries[..<index])
             current = entries[index]
-            upcoming = Array(entries[(index + 1)...])
+            following = Array(entries[(index + 1)...])
         } else {
             history = []
             current = nil
-            upcoming = entries
+            following = entries
         }
+        let split = following.firstIndex(where: \.isAutoplay) ?? following.endIndex
+        upcoming = Array(following[..<split])
+        autoplay = Array(following[split...])
     }
 
     /// The entries before the current one, nearest first: the order a history is read in. It is
@@ -120,6 +133,11 @@ public struct DulcetUpNextModel: Sendable, Hashable {
 
     public func removeIntents(atOffsets offsets: IndexSet) -> [DulcetQueueEditIntent] {
         offsets.compactMap { upcoming.indices.contains($0) ? .remove(upcoming[$0].id) : nil }
+    }
+
+    /// Removes rows of the AutoPlay section.
+    public func removeAutoplayIntents(atOffsets offsets: IndexSet) -> [DulcetQueueEditIntent] {
+        offsets.compactMap { autoplay.indices.contains($0) ? .remove(autoplay[$0].id) : nil }
     }
 
     public func jumpIntent(to entry: DulcetQueueEntry) -> DulcetQueueEditIntent {

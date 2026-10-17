@@ -188,6 +188,8 @@ internal const val ROUTE_MY_ALBUMS = "mylibrary.albums"
 internal const val ROUTE_MY_SONGS = "mylibrary.songs"
 internal const val ROUTE_ALBUMS = "albums"
 internal const val ROUTE_ARTISTS = "artists"
+internal const val ROUTE_SONGS = "songs"
+internal const val ROUTE_DOWNLOADED = "downloaded"
 internal const val ROUTE_GENRES = "genres"
 internal const val ROUTE_FAVOURITES = "favourites"
 internal const val ROUTE_PLAYLISTS = "playlists"
@@ -314,12 +316,14 @@ internal fun TvLibraryEntry(
                         top == ROUTE_BROWSE -> TvLibraryHome(account, session, playback, navigator)
                         top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator)
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
+                        top == ROUTE_SONGS -> TvDeviceSongs(account, session, playback, navigator, false, playingRawId)
+                        top == ROUTE_DOWNLOADED -> TvDeviceSongs(account, session, playback, navigator, true, playingRawId)
                         top == ROUTE_GENRES -> TvGenresGrid(account, session, navigator)
                         top == ROUTE_FAVOURITES -> TvFavouritesScreen(account, session, playback, playingRawId, navigator)
                         top == ROUTE_PLAYLISTS -> TvPlaylistsGrid(account, session, navigator)
-                        top == ROUTE_MY_ARTISTS -> TvMyArtistsGrid(account, myLibrarySession, navigator)
-                        top == ROUTE_MY_ALBUMS -> TvMyAlbumsGrid(account, myLibrarySession, navigator)
-                        top == ROUTE_MY_SONGS -> TvMySongsList(account, myLibrarySession, playback, playingRawId, navigator)
+                        top == ROUTE_MY_ARTISTS -> TvMyArtistsGrid(account, session, myLibrarySession, navigator)
+                        top == ROUTE_MY_ALBUMS -> TvMyAlbumsGrid(account, session, myLibrarySession, navigator)
+                        top == ROUTE_MY_SONGS -> TvMySongsList(account, session, myLibrarySession, playback, playingRawId, navigator)
                         top == ROUTE_ACCOUNT -> TvAccountScreen(account, navigator)
                         top.startsWith(PLAYLIST) ->
                             TvPlaylistScreen(account, session, playback, playingRawId, top.removePrefix(PLAYLIST), navigator)
@@ -341,7 +345,7 @@ internal fun TvLibraryEntry(
     // On a return to the foreground the screens above are already open when start() reconnects. At
     // launch the TV shows the library, whose home rows open as it composes; each publishes its cache
     // before its own read, as the phone's do.
-    DroppedAdditionsNotice(playback, playbackState.droppedAdditions)
+    DroppedAdditionsNotice(playback, playbackState.droppedAdditions, playbackState.queueConfirmation)
     // A create in doubt is asked over whichever screen is showing, as the tvOS shell asks it.
     TvPlaylistQuestion(session)
     LibraryLifecycle(session)
@@ -458,7 +462,7 @@ internal fun TvTopBar(
         )
         TvTab(stringResource(R.string.tv_nav_search), root == ROUTE_SEARCH, "search.open", focus.search, focus,
             onClick = onSearch)
-        TvTab(stringResource(R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library, focus,
+        TvTab(stringResource(if (browse) SharedR.string.library_my_library_title else R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library, focus,
             Modifier.padding(start = 8.dp), onLibrary)
         if (browse) TvTab(stringResource(SharedR.string.library_browse), root == ROUTE_BROWSE, "browse.open", focus.browse, focus,
             Modifier.padding(start = 8.dp), onBrowse, icon = DulcetIcons.Browse)
@@ -671,7 +675,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
     // A focus returning to a row the list had scrolled past: bring that row back first. Two items
     // precede the rows: the sections with Refresh, then the connection notices.
     val returning = LocalTvRouteFocus.current?.pending?.let { HOME_ROW.find(it) }?.groupValues?.get(1)?.toIntOrNull()
-    LaunchedEffect(returning) { if (returning != null) list.scrollToItem(returning + 2) }
+    LaunchedEffect(returning) { if (returning != null) list.scrollToItem(returning + 3) }
     LazyColumn(
         Modifier.fillMaxSize().testTag("library.surface").semantics { this[LibraryObservation] = observation },
         state = list,
@@ -691,7 +695,13 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
                 TvAction(stringResource(R.string.tv_refresh), "library.refresh", icon = DulcetIcons.Refresh, onClick = session::refresh)
             }
         }
-        item { TvConnectionNotices(session, accountNotices = true) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvAction(stringResource(SharedR.string.search_group_songs), "library.view.songs") { navigator.open(ROUTE_SONGS) }
+                TvAction(stringResource(SharedR.string.library_downloaded), "library.view.downloaded") { navigator.open(ROUTE_DOWNLOADED) }
+            }
+        }
+        item { TvLibraryPins(account, session, playback, navigator); TvConnectionNotices(session, accountNotices = true) }
         itemsIndexed(rows) { index, row -> TvHomeRow(account, index, row, session, playback, navigator) }
     }
 }
@@ -776,7 +786,10 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
 
 /** The phone's `ConnectionNotices`, in the TV's type: the same statements, from the same copy. */
 @Composable
-internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false) {
+    val depth by session.depth.collectAsState()
+    if (depth?.errorKind != null) TvStatement(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
+    if (local) return
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
@@ -810,12 +823,15 @@ internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolea
  */
 @Composable
 private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator) {
+    val depth by session.depth.collectAsState()
+    if (depth == null) { TvStatement("…", "library.albums.loading"); return }
+    val filters = com.legitimateapps.dulcet.library.rememberLibraryCategory(session, "albums")
     EnterRoute()
-    val sort = rememberAlbumSort()
+    val sort = rememberAlbumSort(session)
     val order = sort.value
     val surface = rememberSurface(session, ROUTE_ALBUMS + ":" + order) { openAlbums(order) }
     TvBrowseGrid(account, session, surface, "library.albums", R.string.tv_library_albums,
-        controls = { TvAlbumSortRow(order, sort::choose) }) { item ->
+        controls = { TvAlbumSortRow(order, sort::choose); TvLibraryCategoryControls(filters, showSort = false) }) { item ->
         if (item is AndroidLibraryItem.Album) navigator.openAlbum(item.rawId)
     }
 }
@@ -864,7 +880,8 @@ private fun TvGenresGrid(account: SearchAccount, session: LibrarySession, naviga
 private fun TvArtistsGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator) {
     EnterRoute()
     val surface = rememberSurface(session, ROUTE_ARTISTS) { openArtists() }
-    TvBrowseGrid(account, session, surface, "library.artists", R.string.tv_library_artists) { item ->
+    TvBrowseGrid(account, session, surface, "library.artists", R.string.tv_library_artists,
+        controls = { TvLibraryCategoryControls(com.legitimateapps.dulcet.library.rememberLibraryCategory(session, "artists")) }) { item ->
         if (item is AndroidLibraryItem.Artist) navigator.openArtist(item.rawId)
     }
 }
@@ -901,7 +918,10 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
                 Text(stringResource(title), style = MaterialTheme.typography.displaySmall)
                 controls?.invoke()
                 TvConnectionNotices(session, accountNotices = false)
-                if (current != null) TvListStatus(current, tag, session::retry)
+                if (current != null) {
+                    TvListStatus(current, tag, session::retry)
+                    if (current.growsAtEnd()) TvAction(stringResource(SharedR.string.library_load_more), "$tag.loadMore", onClick = surface::loadMore)
+                }
             }
         }
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
@@ -918,21 +938,34 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
 private fun ReportViewport(surface: LibrarySurface, grid: LazyGridState, publication: AndroidLibraryPublication?) {
     val latest by rememberUpdatedState(publication)
     LaunchedEffect(surface, grid) {
+        var lastScroll: Pair<Int, Int>? = null
+        var lastShape: Pair<Int, Int>? = null
+        var lastFreshness: AndroidLibraryFreshness? = null
         // Re-evaluated when the window changes shape as well as on every move, as the phone's grid is:
         // a window rebased or given back to what fits the screen can show its end with nowhere left to
         // move, and must still grow; a publication changing freshness or coverage alone asks for nothing.
         snapshotFlow {
             val visible = grid.layoutInfo.visibleItemsInfo.filter { it.key is String }
-            (visible.firstOrNull()?.index to visible.lastOrNull()?.index) to latest?.let { it.items.size to it.leadingOffset }
-        }.collect { (range, _) ->
+            Triple(visible.firstOrNull()?.index to visible.lastOrNull()?.index,
+                latest?.let { it.items.size to it.leadingOffset }, latest?.freshness)
+        }.collect { (range, shape, freshness) ->
             val (first, last) = range
             val shown = latest
             if (shown == null || first == null || last == null) return@collect
             val from = (first - 1).coerceAtLeast(0)
             val to = (last - 1).coerceAtLeast(from)
+            val scroll = grid.firstVisibleItemIndex to grid.firstVisibleItemScrollOffset
+            // A status line appearing/disappearing can expose another card and nudge the scroll
+            // anchor. Record that viewport, without treating the freshness reflow as another ask.
+            val requestPages = shape != lastShape || (scroll != lastScroll && freshness == lastFreshness)
+            lastScroll = scroll
+            lastShape = shape
+            lastFreshness = freshness
             surface.setViewport(from, to)
-            if (shown.growsAtEnd() && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
-            if (shown.leadingOffset > 0 && from == 0) surface.loadBefore()
+            if (requestPages) {
+                if (shown.growsAtEnd() && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
+                if (shown.leadingOffset > 0 && from == 0) surface.loadBefore()
+            }
         }
     }
 }
@@ -944,29 +977,42 @@ private const val PAGE_AHEAD = 12
 private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, publication: AndroidLibraryPublication?, header: Int) {
     val latest by rememberUpdatedState(publication)
     LaunchedEffect(surface, list) {
+        var lastScroll: Pair<Int, Int>? = null
+        var lastShape: Pair<Int, Int>? = null
+        var lastFreshness: AndroidLibraryFreshness? = null
         // Re-evaluated when the window changes shape as well as on every move ([ReportViewport]).
         snapshotFlow {
             val visible = list.layoutInfo.visibleItemsInfo.filter { it.key is String }
-            (visible.firstOrNull()?.index to visible.lastOrNull()?.index) to latest?.let { it.items.size to it.leadingOffset }
-        }.collect { (range, _) ->
+            Triple(visible.firstOrNull()?.index to visible.lastOrNull()?.index,
+                latest?.let { it.items.size to it.leadingOffset }, latest?.freshness)
+        }.collect { (range, shape, freshness) ->
             val (first, last) = range
             val shown = latest
             if (shown == null || first == null || last == null) return@collect
             val from = (first - header).coerceAtLeast(0)
             val to = (last - header).coerceAtLeast(from)
+            val scroll = list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset
+            // A status line appearing/disappearing can expose another card and nudge the scroll
+            // anchor. Record that viewport, without treating the freshness reflow as another ask.
+            val requestPages = shape != lastShape || (scroll != lastScroll && freshness == lastFreshness)
+            lastScroll = scroll
+            lastShape = shape
+            lastFreshness = freshness
             surface.setViewport(from, to)
-            if (shown.growsAtEnd() && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
-            if (shown.leadingOffset > 0 && from == 0) surface.loadBefore()
+            if (requestPages) {
+                if (shown.growsAtEnd() && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
+                if (shown.leadingOffset > 0 && from == 0) surface.loadBefore()
+            }
         }
     }
 }
 
 /** A list's freshness and coverage, or the statement shown instead of it (the phone's `ListStatus`). */
 @Composable
-private fun TvListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit) {
+internal fun TvListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit, local: Boolean = false) {
     val resources = libraryResources()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        resources.freshnessLine(publication.freshness)?.let { line ->
+        if (!local) resources.freshnessLine(publication.freshness)?.let { line ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvStatement(line, "$tag.freshness")
                 if (publication.freshness.offersRetry()) {
@@ -974,8 +1020,10 @@ private fun TvListStatus(publication: AndroidLibraryPublication, tag: String, re
                 }
             }
         }
-        resources.coverageLine(publication)?.let { TvStatement(it, "$tag.coverage") }
-        resources.orderLine(publication)?.let { TvStatement(it, "$tag.order") }
+        if (!local) {
+            resources.coverageLine(publication)?.let { TvStatement(it, "$tag.coverage") }
+            resources.orderLine(publication)?.let { TvStatement(it, "$tag.order") }
+        }
         val freshness = publication.freshness
         when {
             freshness is AndroidLibraryFreshness.Unavailable ->
@@ -1048,6 +1096,7 @@ private fun TvAlbumScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvAction(stringResource(R.string.tv_back), "album.back", onClick = navigator.back)
                 TvAction(stringResource(R.string.tv_refresh), "album.refresh", onClick = session::refresh)
+                (publication?.header as? AndroidLibraryItem.Album)?.let { TvPinButton(session, it, "album.pin") }
             }
         }
         val current = publication
@@ -1451,7 +1500,8 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
 private fun TvPlaylistsGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator) {
     EnterRoute()
     val surface = rememberSurface(session, ROUTE_PLAYLISTS) { openPlaylists() }
-    TvBrowseGrid(account, session, surface, "library.playlists", R.string.tv_library_playlists) { item ->
+    TvBrowseGrid(account, session, surface, "library.playlists", R.string.tv_library_playlists,
+        controls = { TvLibraryCategoryControls(com.legitimateapps.dulcet.library.rememberLibraryCategory(session, "playlists")) }) { item ->
         if (item is AndroidLibraryItem.Playlist) navigator.open(PLAYLIST + item.rawId)
     }
 }
@@ -1509,6 +1559,7 @@ private fun TvPlaylistScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvAction(stringResource(R.string.tv_back), "playlist.back", onClick = navigator.back)
                 TvAction(stringResource(R.string.tv_refresh), "playlist.refresh", onClick = session::refresh)
+                (publication?.header as? AndroidLibraryItem.Playlist)?.let { TvPinButton(session, it, "playlist.pin") }
             }
         }
         val current = publication
@@ -1703,6 +1754,8 @@ private fun TvArtistScreen(
 ) {
     EnterRoute()
     val surface = rememberSurface(session, ARTIST + rawId) { openArtist(rawId) }
+    val topSurface = rememberSurface(session, "artistTopSongs:$rawId") { openArtistTopSongs(rawId) }
+    val topSongs by topSurface.state.collectAsState()
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
     val context = LocalContext.current
@@ -1738,8 +1791,19 @@ private fun TvArtistScreen(
     val listed = current?.itemsState == AndroidLibraryItemsState.Present
     val grid = rememberLazyGridState()
     val returning = pendingPosition("artist.album.")
-    LaunchedEffect(returning, albums.size) {
-        if (returning != null && returning < albums.size) grid.scrollToItem(returning)
+    LaunchedEffect(returning, albums.size, topSongs?.items?.size) {
+        if (returning != null && returning < albums.size) {
+            var position = if (topSongs?.items?.isNotEmpty() == true) 1 else 0
+            for (group in listOf("albums", "epsSingles", "compilations", "appearsOn")) {
+                val entries = albums.withIndex().filter { it.value.discographyGroup == group }
+                if (entries.isNotEmpty()) {
+                    position += 1
+                    val inside = entries.indexOfFirst { it.index == returning }
+                    if (inside >= 0) { grid.scrollToItem(position + inside); break }
+                    position += entries.size
+                }
+            }
+        }
     }
     // The header stands above the grid: focused actions in it must not scroll the cards, and the
     // grid cannot clip it.
@@ -1749,6 +1813,7 @@ private fun TvArtistScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvAction(stringResource(R.string.tv_back), "artist.back", onClick = navigator.back)
                 TvAction(stringResource(R.string.tv_refresh), "artist.refresh", onClick = session::refresh)
+                artist?.let { TvPinButton(session, it, "artist.pin") }
             }
             TvConnectionNotices(session, accountNotices = false)
             Row(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1793,8 +1858,28 @@ private fun TvArtistScreen(
             Modifier.fillMaxWidth().weight(1f),
             state = grid, contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-            itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
-                TvCard(account, album, "artist.album.$position", width = null) { navigator.openAlbum(album.rawId) }
+            val top = topSongs?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
+            if (top.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(SharedR.string.library_top_songs), style = MaterialTheme.typography.headlineSmall)
+                    TvStatement(stringResource(SharedR.string.library_top_songs_hint), "artist.topSongs.scope")
+                    topSongs?.let { TvListStatus(it, "artist.topSongs", session::retry) }
+                    top.take(5).forEachIndexed { index, track ->
+                        TvTrackRow(track, index, false, onPlay = {
+                            playTracks(plays, account.providerInstanceId, top, track.rawId, artist?.name.orEmpty()) { showNowPlaying(context) }
+                        }, onUnavailable = {}, tagPrefix = "artist.topSongs", byPosition = true)
+                    }
+                }
+            }
+            for (group in listOf("albums", "epsSingles", "compilations", "appearsOn")) {
+                val grouped = albums.withIndex().filter { it.value.discographyGroup == group }
+                if (grouped.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                    Text(stringResource(tvReleaseGroupTitle(group)), style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.testTag("artist.group.$group"))
+                }
+                itemsIndexed(grouped, key = { _, album -> album.value.rawId }) { _, indexed ->
+                    TvCard(account, indexed.value, "artist.album.${indexed.index}", width = null) { navigator.openAlbum(indexed.value.rawId) }
+                }
             }
         }
     }
@@ -1835,7 +1920,7 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
                 rounded = false, circle = artist)
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(item.displayTitle(), style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                item.subtitle()?.let {
+                (if (item is AndroidLibraryItem.Album) listOfNotNull(item.artistName, item.originalReleaseDate?.take(4) ?: item.year?.toString()).joinToString(" · ") else item.subtitle())?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

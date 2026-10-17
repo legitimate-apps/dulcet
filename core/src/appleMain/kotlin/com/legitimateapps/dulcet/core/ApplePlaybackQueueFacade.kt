@@ -13,12 +13,32 @@ import platform.posix.time
 import kotlin.time.TimeSource
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.nanoseconds
+import kotlin.time.Duration.Companion.seconds
 
 public class ApplePlaybackQueueItemDto(
     public val providerInstanceId: String,
     public val rawId: String,
     /** Negative means unknown. */
     public val durationMilliseconds: Long,
+    /** The item's album, when known: two entries of one album never crossfade (§12.8). */
+    public val albumRawId: String?,
+) {
+    public constructor(providerInstanceId: String, rawId: String, durationMilliseconds: Long) :
+        this(providerInstanceId, rawId, durationMilliseconds, null)
+
+    internal fun toQueueItem(): PlaybackQueueItem = PlaybackQueueItem(
+        itemId = ProviderItemId(providerInstanceId, rawId),
+        duration = durationMilliseconds.takeIf { it >= 0 }?.milliseconds,
+        albumRawId = albumRawId,
+    )
+}
+
+/** An AutoPlay request (§14.8): fetch up to [count] tracks like the seed, none of [excludedRawIds]. */
+public class ApplePlaybackAutoplayRequestDto internal constructor(
+    public val key: String,
+    public val seedRawId: String,
+    public val excludedRawIds: List<String>,
+    public val count: Int,
 )
 
 public class ApplePlaybackQueueRequestDto(
@@ -47,6 +67,7 @@ public class ApplePlaybackQueueEntryDto internal constructor(
     public val providerInstanceId: String,
     public val rawId: String,
     public val sourceDisplayName: String,
+    public val isAutoplay: Boolean = false,
 )
 
 public class ApplePlaybackCoreSessionDto internal constructor(
@@ -82,6 +103,13 @@ public class ApplePlaybackQueueSnapshotDto internal constructor(
      * predicate: the core's automatic skip asks the same question, so the shell never computes it.
      */
     public val canSkipPastCurrent: Boolean = false,
+    public val autoplayEnabled: Boolean = false,
+    /** AutoPlay is on and neither repeat nor shuffle is: Up Next shows its AutoPlay section. */
+    public val autoplayActive: Boolean = false,
+    /** `endOfTrack`, `endOfQueue`, or null when no sleep timer waits for the music. */
+    public val stopPoint: String? = null,
+    /** The overlap at the current entry's end, in milliseconds; zero is a gapless boundary. */
+    public val crossfadeIntoNextMilliseconds: Long = 0,
 )
 
 public class ApplePlaybackStartDirectiveDto internal constructor(
@@ -115,6 +143,8 @@ public class ApplePlaybackQueueTransitionDto internal constructor(
      * entry after it.
      */
     public val skippedAfterFailureQueueEntryId: String? = null,
+    /** The sleep timer's stop point was reached here; the owner ends its timer. */
+    public val stopPointReached: Boolean = false,
 )
 
 public class ApplePlaybackDeliveryConfigurationOutcomeDto internal constructor(
@@ -347,14 +377,7 @@ public class ApplePlaybackQueueClient private constructor(
         require(request.items.all { it.providerInstanceId == providerInstanceId })
         controllerOrThrow().replaceAndStart(
             PlaybackQueueRequest(
-                items = request.items.map { item ->
-                    PlaybackQueueItem(
-                        itemId = ProviderItemId(item.providerInstanceId, item.rawId),
-                        duration = item.durationMilliseconds
-                            .takeIf { it >= 0 }
-                            ?.milliseconds,
-                    )
-                },
+                items = request.items.map(ApplePlaybackQueueItemDto::toQueueItem),
                 sourceContext = QueueSourceContext(
                     kind = sourceKind,
                     sourceId = sourceId,
@@ -374,12 +397,7 @@ public class ApplePlaybackQueueClient private constructor(
             require(insertion.items.all { it.providerInstanceId == providerInstanceId })
             controllerOrThrow().enqueue(
                 PlaybackQueueInsertion(
-                    items = insertion.items.map { item ->
-                        PlaybackQueueItem(
-                            itemId = ProviderItemId(item.providerInstanceId, item.rawId),
-                            duration = item.durationMilliseconds.takeIf { it >= 0 }?.milliseconds,
-                        )
-                    },
+                    items = insertion.items.map(ApplePlaybackQueueItemDto::toQueueItem),
                     sourceContext = QueueSourceContext(
                         kind = insertion.sourceKind.toQueueSourceKind(),
                         sourceId = insertion.sourceRawId?.let {
@@ -395,6 +413,49 @@ public class ApplePlaybackQueueClient private constructor(
                 ),
             )
         }
+
+    public fun setAutoplay(enabled: Boolean): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().setAutoplay(enabled)
+    }
+
+    /** The AutoPlay request to answer now, handed out once; null when the queue wants none. */
+    public fun takeAutoplayRequest(): ApplePlaybackAutoplayRequestDto? = try {
+        controllerOrThrow().takeAutoplayRequest()?.let { request ->
+            ApplePlaybackAutoplayRequestDto(
+                key = request.key,
+                seedRawId = request.seed.rawId,
+                excludedRawIds = request.excludedRawIds.toList(),
+                count = request.count,
+            )
+        }
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** Answers AutoPlay request [key]; an empty list says nothing was found. */
+    public fun appendAutoplay(
+        key: String,
+        items: List<ApplePlaybackQueueItemDto>,
+    ): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().appendAutoplay(key, items.map(ApplePlaybackQueueItemDto::toQueueItem))
+    }
+
+    /** `endOfTrack`, `endOfQueue`, or null to clear. */
+    public fun setStopPoint(stopPoint: String?): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().setStopPoint(
+            when (stopPoint) {
+                null -> null
+                "endOfTrack" -> PlaybackStopPoint.EndOfCurrentEntry
+                "endOfQueue" -> PlaybackStopPoint.EndOfQueue
+                else -> throw IllegalArgumentException("Unknown stop point")
+            },
+        )
+    }
+
+    /** Whole seconds, 0 (off) to [PlaybackCrossfade.MAXIMUM_SECONDS]. */
+    public fun setCrossfadeSeconds(seconds: Int): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().setCrossfade(PlaybackCrossfade.decodeSeconds(seconds).seconds)
+    }
 
     public fun moveEntry(queueEntryId: String, toIndex: Int): ApplePlaybackQueueTransitionDto =
         runClosed { controllerOrThrow().move(QueueEntryId(queueEntryId), toIndex) }
@@ -1104,6 +1165,7 @@ private fun PlaybackQueueTransition.toAppleDto() = ApplePlaybackQueueTransitionD
     preloadDirective = preloadDirective?.toAppleDto(),
     discardedPreloadAttemptId = discardedPreloadAttemptId?.value,
     skippedAfterFailureQueueEntryId = skippedAfterFailure?.value,
+    stopPointReached = stopPointReached,
 )
 
 private fun PlaybackQueueStartDirective.toAppleDto() = ApplePlaybackStartDirectiveDto(
@@ -1124,6 +1186,7 @@ private fun PlaybackQueueSnapshot.toAppleDto() = ApplePlaybackQueueSnapshotDto(
             providerInstanceId = entry.itemId.providerInstanceId,
             rawId = entry.itemId.rawId,
             sourceDisplayName = entry.sourceDisplayName,
+            isAutoplay = entry.isAutoplay,
         )
     },
     currentIndex = currentIndex ?: -1,
@@ -1149,4 +1212,12 @@ private fun PlaybackQueueSnapshot.toAppleDto() = ApplePlaybackQueueSnapshotDto(
         )
     },
     canSkipPastCurrent = canSkipPastCurrent,
+    autoplayEnabled = autoplayEnabled,
+    autoplayActive = autoplayActive,
+    stopPoint = when (stopPoint) {
+        null -> null
+        PlaybackStopPoint.EndOfCurrentEntry -> "endOfTrack"
+        PlaybackStopPoint.EndOfQueue -> "endOfQueue"
+    },
+    crossfadeIntoNextMilliseconds = crossfadeIntoNext.inWholeMilliseconds,
 )

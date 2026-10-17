@@ -92,6 +92,9 @@ public class AppleLibraryReaderItem internal constructor(
     public val comment: String? = null,
     /** A playlist's visibility; null when the server did not say. */
     public val isPublic: Boolean? = null,
+    public val releaseTypes: String = "",
+    public val originalReleaseDate: String? = null,
+    public val discographyGroup: String = "albums",
 )
 
 /**
@@ -365,6 +368,7 @@ internal fun LibraryItem.toApple(providerInstanceId: String): AppleLibraryReader
         albumCount = null, discNumber = null, trackNumber = null, sourceContainer = null,
         artworkKey = artworkKey, owner = null, favourite = starred, rating = userRating,
         playCount = playCount, playability = null, detailComplete = detailComplete, metadataMissing = false,
+        releaseTypes = releaseTypes.joinToString(","), originalReleaseDate = originalReleaseDate, discographyGroup = discographyGroup,
     )
     is LibraryItem.Artist -> AppleLibraryReaderItem(
         kind = "artist", providerInstanceId = providerInstanceId, rawId = rawId, title = name,

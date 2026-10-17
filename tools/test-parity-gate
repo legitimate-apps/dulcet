@@ -103,6 +103,9 @@ def materialize(root: Path) -> None:
         # library.browse cites the core reader's own conformance tests for CONF-82 and CONF-87,
         # whose rules the disposable corpus cannot reach; the gate looks their names up here.
         "core/src/commonTest",
+        # Android listening sessions cite the controller and Media3 host seams directly.
+        # Their declarations must exist in the synthetic baseline before mutations run.
+        "core/src/androidHostTest",
     )
     # Two branches adding the same directory here is a real merge outcome, and copytree's
     # FileExistsError names a temp path rather than the duplicate. Say which entry it is.
@@ -1005,6 +1008,14 @@ passing_cases = """\
             name="conf08EnforcesRedirectCredentialPolicy[macosArm64]" time="0.1" />
   <testcase classname="DulcetKitTests"
             name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="staleAndInvalidCrossfadeCommandsAreRejectedAndZeroKeepsGapless" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="staleAndInvalidCrossfadeCommandsAreRejectedAndZeroKeepsGapless" time="0.1" />
   <testcase classname="DulcetKitTests"
             name="accountPresentationTransitionsGivenConnectorOutcomes" time="0.1" />
   <testcase classname="DulcetKitTests"

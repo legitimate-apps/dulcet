@@ -124,7 +124,7 @@ class TvPlaybackActivity : ComponentActivity() {
                 val state by remember(playback) { playback?.state ?: MutableStateFlow(AndroidPlaybackState()) }
                     .collectAsStateWithLifecycle()
                 TvNowPlaying(account, state, playback)
-                DroppedAdditionsNotice(playback, state.droppedAdditions)
+                DroppedAdditionsNotice(playback, state.droppedAdditions, state.queueConfirmation)
             }
         }
     }
@@ -232,7 +232,9 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
     } else {
         null
     }
-    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite, lyrics, rating, saved)
+    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite, lyrics, rating, saved,
+        listening = playback?.let { controller -> { TvListeningSessionButton(state, controller::setAutoplay,
+            controller::setSleepTimer, controller::setCrossfade) } })
 }
 
 /** Lean-back Now Playing for [state]; null [playback] before the service is bound or without an account. */
@@ -245,6 +247,7 @@ internal fun TvNowPlayingScreen(
     lyrics: (@Composable () -> Unit)? = null,
     rating: TvPlayerRating? = null,
     saved: TvPlayerSaved? = null,
+    listening: (@Composable () -> Unit)? = null,
 ) {
     val playFocus = remember { FocusRequester() }
     // The lyrics take Up Next's place while on (§18.4); the setting outlives a track change.
@@ -265,6 +268,7 @@ internal fun TvNowPlayingScreen(
                             MaterialTheme.colorScheme.inverseOnSurface, MaterialTheme.typography.titleMedium,
                             Modifier.matchParentSize())
                     }
+                    listening?.invoke()
                 }
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
                     Text(stringResource(if (playback == null) R.string.tv_player_needs_account else R.string.tv_player_heading),
@@ -504,6 +508,9 @@ private fun TvUpNext(state: AndroidPlaybackState, playback: TvPlayerActions?) {
     val options = stringResource(SharedR.string.queue_entry_options)
     LazyColumn(Modifier.fillMaxWidth().height(180.dp).testTag("tv.player.upnext"), state = list) {
         itemsIndexed(state.queue, key = { _, entry -> entry.queueEntryId }) { position, entry ->
+            if (entry.isAutoplay && (position == 0 || !state.queue[position - 1].isAutoplay)) {
+                Text(stringResource(SharedR.string.listening_autoplay), style = MaterialTheme.typography.titleMedium)
+            }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 ListItem(
                     selected = position == state.currentIndex,

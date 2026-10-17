@@ -39,6 +39,7 @@ import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.AndroidLibrarySeenCounts
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
+import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidPlaylistOutcome
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.library.LibraryConnectionState
@@ -709,7 +710,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
                 throw AssertionError("${failure.message}; playback=${playback.state.value}; answered=${proxy.log()}", failure)
             }
             val state = playback.state.value
-            assertEquals(expected, state.queue.map { it.track.rawId }, "the queue is the album, in the server's order")
+            assertOwnQueue(expected, state, "the queue is the album, in the server's order")
             assertEquals(1, state.currentIndex, "playing from the selected track")
             afterPlay()
             assertNoCredentialLeak()
@@ -1030,7 +1031,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             playback.state.value.queue.isNotEmpty()
         }
         val state = playback.state.value
-        assertEquals(order, state.queue.map { it.track.rawId }, "the queue is the playlist, in its own order, duplicates kept")
+        assertOwnQueue(order, state, "the queue is the playlist, in its own order, duplicates kept")
         assertEquals(2, state.currentIndex, "playing from the entry selected, the second of the song's two entries")
         afterPlay()
         assertNoCredentialLeak()
@@ -1961,6 +1962,18 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     }
 
     // ---- Instruments ------------------------------------------------------------------------------
+
+    /**
+     * The person's own entries are [expected], in order. AutoPlay is on by default and asks as soon as
+     * one entry or none follows the current one (spec §14.8), so its answer may already be appended
+     * when this reads the queue; whatever it added must come after the person's entries.
+     */
+    private fun assertOwnQueue(expected: List<String>, state: AndroidPlaybackState, message: String) {
+        val own = state.queue.takeWhile { !it.isAutoplay }
+        assertEquals(expected, own.map { it.track.rawId }, message)
+        assertTrue(state.queue.drop(own.size).all { it.isAutoplay },
+            "$message: only AutoPlay entries follow the person's own; queue=${state.queue}")
+    }
 
     /** Credentials ride in the query string; nothing the app logged may carry them (docs/TRAPS.md trap 12). */
     private fun assertNoCredentialLeak() {

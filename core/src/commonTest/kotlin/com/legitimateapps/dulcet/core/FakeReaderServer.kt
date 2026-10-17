@@ -39,6 +39,8 @@ internal class FakeReaderServer(albumCount: Int = 250, tracksPerAlbum: Int = 2) 
     val events: MutableList<String> get() = eventLog
     private val eventLog = mutableListOf<String>()
 
+    var responseOverride: ((Request) -> LibraryEndpointResponse?)? = null
+
     /** Called after a request is recorded and before it is answered. */
     var beforeRespond: (Request) -> Unit = {}
 
@@ -79,7 +81,7 @@ internal class FakeReaderServer(albumCount: Int = 250, tracksPerAlbum: Int = 2) 
                 gate.await()
             }
             beforeRespond(request)
-            return respond(request)
+            return responseOverride?.invoke(request) ?: respond(request)
         } catch (failure: CancellationException) {
             cancelled += 1
             throw failure
