@@ -2329,8 +2329,11 @@ final class DulcetiOSUITests: XCTestCase {
         }
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
-        guard bar.waitForExistence(timeout: 10) else {
-            XCTFail("Closing the player must bring the bar back: " + app.debugDescription)
+        // The bar remains in the accessibility tree beneath the full-screen player on iPad.
+        // Its existence alone let a read return while the player still obscured the drag source.
+        let dismissed = NSPredicate { _, _ in !close.exists && bar.isHittable }
+        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: dismissed, object: nil)], timeout: 10) == .completed else {
+            XCTFail("Closing the player must dismiss it and uncover the bar: " + app.debugDescription)
             return nil
         }
         print("DULCET UP NEXT read=\(labels)")

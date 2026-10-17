@@ -231,6 +231,22 @@ control reaches the correct focused album but remains unverified: on local tvOS 
 failed. The driver retains that assertion and the independent membership/offline checks.
 No Library product implementation was changed for these navigation-driver corrections.
 
+A controlled main-branch comparison (`fa2ec5e6`, with only the corrected test driver and its
+pre-Home tab order) reached the same closed TV membership menu on the same local Xcode 27 /
+tvOS 26.5 setup. That control failed in 40.064 seconds. It establishes that the local failure
+is not unique to the Listen Now product change; it does not establish a toolchain cause.
+
+The later hosted iPad run passed all three Library controls and Home, then exposed a separate
+legacy album-drag driver error: after tapping Close, the full-screen player still covered the
+album, but the helper accepted the underlying mini-player's existence as dismissal. Its
+retained recording confirms that state. The helper now requires the Close control to disappear
+and the bar to become hittable. The corrected iPad drag passed **1/1 without skips in 89.863
+seconds**, with a single drag adding all three tracks in album order and leaving no context
+menu open. The individual xcresult execution guard and JUnit confirmed the method. No player
+or playback implementation changed. The same helper passed the iPhone album-drag control
+**1/1 without skips in 109.909 seconds**; its execution guard and JUnit also required the actual
+method to pass.
+
 The hosted iPad job in [run 39002864991](https://github.com/legitimate-apps/dulcet/actions/runs/39002864991)
 failed before UI execution when its disposable Navidrome readiness check timed out during the
 initial scan. It supplies no iPad driver result. Local iPad verification then passed all three controls on iOS 26.5, without skips:
