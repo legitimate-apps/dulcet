@@ -14,4 +14,6 @@ try:
 finally:
     subprocess.run(['adb', '-s', 'emulator-5554', 'pull',
                     f'/data/local/tmp/dulcet-listen-now-{package}',
-                    str(Path(os.environ['RUNNER_TEMP']) / 'listen-now-fallback-shots')], check=False)
+                    str(Path(os.environ['RUNNER_TEMP']) / 'listen-now-fallback-shots')], check=True)
+    photos = list((Path(os.environ['RUNNER_TEMP']) / 'listen-now-fallback-shots').rglob('listen-now-*.jpg'))
+    assert len(photos) >= 3, f'Expected retained Home photographs, observed {len(photos)}'

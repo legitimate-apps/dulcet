@@ -54,8 +54,16 @@ class ListenNowEmulatorProofTest {
             val source = java.io.File(context.getExternalFilesDir(null), "design-tour")
             val destination = "/data/local/tmp/dulcet-listen-now-${context.packageName}"
             val instrumentation = InstrumentationRegistry.getInstrumentation()
-            instrumentation.uiAutomation.executeShellCommand("mkdir -p $destination && cp $source/listen-now-*.jpg $destination/").use { fd ->
+            fun shell(command: String) = instrumentation.uiAutomation.executeShellCommand(command).use { fd ->
                 java.io.FileInputStream(fd.fileDescriptor).bufferedReader().use { it.readText() }
+            }
+            // executeShellCommand runs a command directly: shell operators/globs are not expanded.
+            shell("mkdir -p $destination")
+            val photos = source.listFiles { file -> file.name.startsWith("listen-now-") && file.extension == "jpg" }.orEmpty()
+            check(photos.size == 3) { "Expected three Home photographs, observed ${photos.size}" }
+            photos.forEach { photo ->
+                val output = shell("cp ${photo.absolutePath} $destination/${photo.name}")
+                check(output.isBlank()) { "Could not retain Home photograph: $output" }
             }
         }
     }

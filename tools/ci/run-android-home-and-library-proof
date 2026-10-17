@@ -28,7 +28,9 @@ finally:
     if Path(results).exists():
         shutil.copytree(results, evidence / 'results', dirs_exist_ok=True)
     subprocess.run(['adb', '-s', 'emulator-5554', 'pull',
-                    f'/data/local/tmp/dulcet-listen-now-{package}', str(evidence / 'shots')], check=False)
+                    f'/data/local/tmp/dulcet-listen-now-{package}', str(evidence / 'shots')], check=True)
+    photos = list((evidence / 'shots').rglob('listen-now-*.jpg'))
+    assert len(photos) >= 3, f'Expected retained Home photographs, observed {len(photos)}'
 
 subprocess.run(base + [f'-Pandroid.testInstrumentationRunnerArguments.class={library_class}',
                        '-Pandroid.testInstrumentationRunnerArguments.dulcetExpectSplit=true'], check=True)
