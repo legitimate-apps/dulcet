@@ -12,7 +12,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 
-/** Sleep-timer stop points, AutoPlay and crossfade policy in the core queue (§12.8, §12.13, §14.4). */
+/** Sleep-timer stop points, AutoPlay and crossfade policy in the core queue (§12.8, §12.13, §14.8). */
 class PlaybackListeningSessionTest {
     // ---- Up Next: Play Next / Add to Queue around AutoPlay --------------------------------------
 
@@ -67,7 +67,10 @@ class PlaybackListeningSessionTest {
         // An answer that found nothing is not asked again until the queue's end changes.
         fixture.controller.appendAutoplay(ask.key, emptyList())
         assertNull(fixture.controller.takeAutoplayRequest())
+        // Adding one entry changes the end but leaves two after the current one: not low.
         fixture.controller.enqueue(insertion(listOf("d"), QueueInsertionMode.Append))
+        assertNull(fixture.controller.takeAutoplayRequest())
+        fixture.controller.next()
         assertEquals("d", assertNotNull(fixture.controller.takeAutoplayRequest()).seed.rawId)
     }
 
@@ -355,7 +358,7 @@ class PlaybackListeningSessionTest {
     fun autoplaySearchWalksSimilarTopGenreThenRandomSkippingExclusions() = runTest {
         val requests = mutableListOf<String>()
         val transport = LibraryEndpointTransport { endpoint, parameters ->
-            requests += "$endpoint ${parameters.toSortedMap()}"
+            requests += "$endpoint ${parameters.entries.sortedBy { it.key }.joinToString(prefix = "{", postfix = "}") { "${it.key}=${it.value}" }}"
             LibraryEndpointResponse(200, when (endpoint) {
                 "getSong" -> ok(""""song":{"id":"seed","title":"Seed","artistId":"ar1","artist":"Artist","genre":"Jazz"}""")
                 "getSimilarSongs2" -> ok(""""similarSongs2":{"song":[${song("seed")},${song("s1")},${song("queued")}]}""")

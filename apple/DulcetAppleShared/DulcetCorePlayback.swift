@@ -323,7 +323,7 @@ final class DulcetCoreStreamingQuality: DulcetStreamingQualitySetting {
     }
 }
 
-/// The device's listening settings (spec §14.4 AutoPlay, §12.8 crossfade), saved on this device.
+/// The device's listening settings (spec §14.8 AutoPlay, §12.8 crossfade), saved on this device.
 /// AutoPlay is on until the person turns it off; crossfade is off until they choose a length.
 @MainActor
 final class DulcetCoreListeningSettings: DulcetListeningSetting {

@@ -2598,6 +2598,146 @@
           "reason": "The TV offers the choice on its Account screen, below Sign out. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. The control and the hand-off are Robolectric evidence; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5). The cap is also driven end to end on an API 34 Android TV emulator in core-ci (AndroidTvEmulatorStreamingQualityProofTest): the server's own answer is read at a relay in front of it, transcoded with the cap and the FLAC original without it; it executed and passed, one testcase with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The cap is written to the settings store directly there; choosing it through the Account screen is the Robolectric rows' claim. No physical device was used."
         }
       }
+    },
+    {
+      "id": "playback.sleep_timer",
+      "title": "Sleep timer: 15/30/45/60 minutes, end of track, end of queue",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1213-sleep-timer",
+      "gates": [
+        "account:authenticated"
+      ],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testASleepTimerAtTheEndOfTheTrackStopsWithTheNextEntryPreparedAndClears, testATimedSleepTimerFadesPausesAndRestoresTheLevel) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The menu is in the Now Playing footer. Not yet driven through the app's UI against a server, so the cell stays partial."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "The same controller and menu as macOS (footer of Now Playing). Not yet driven through the iPhone app's UI; the controller tests run on macOS only."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "As iOS; not yet driven through the iPad app's UI."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "The menu is in the Now Playing control row, reached by the remote; not yet driven by the remote on a simulator."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Android phone wiring is a separate change stacked on this one."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Android TV wiring is a separate change stacked on this one."
+        }
+      }
+    },
+    {
+      "id": "playback.crossfade",
+      "title": "Crossfade between tracks of different albums, off or 1-12 seconds; albums stay gapless",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#128-gapless-and-preload",
+      "gates": [
+        "account:authenticated"
+      ],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testCrossfadeIsSentOnlyForABoundaryBetweenDifferentAlbums) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The setting is in Settings and on the Connection screen. The overlap itself is the AVPlayer engine's, a separate change stacked on this one; until it lands the engine refuses the command and every boundary stays gapless."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Setting on the Connection screen; controller as macOS. Overlapping output depends on the stacked engine change."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "As iOS."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Setting on the Connection screen; overlapping output depends on the stacked engine change."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Android phone wiring is a separate change stacked on this one."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Android TV wiring is a separate change stacked on this one."
+        }
+      }
+    },
+    {
+      "id": "playback.autoplay",
+      "title": "AutoPlay: similar music from the person's own server when the queue runs out",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#148-autoplay",
+      "gates": [
+        "account:authenticated"
+      ],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testAutoplayAsksOnceWhenTheQueueRunsOutAndNotWhenItIsOff) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The candidate chain (getSimilarSongs2, getSimilarSongs, getTopSongs, random in genre, random) is PlaybackListeningSessionTest's over a recorded transport; it is not yet run against the disposable server, and the Up Next section with its switch is not yet driven through the UI."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Up Next shows an AutoPlay section with its switch; controller as macOS. Not yet driven through the iPhone app's UI."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "As iOS."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Up Next shows the AutoPlay section with its switch, reached by the remote; not yet driven on a simulator."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Android phone wiring is a separate change stacked on this one."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Android TV wiring is a separate change stacked on this one."
+        }
+      }
+    },
+    {
+      "id": "queue.edit",
+      "title": "Play Next, Add to Queue, reorder and remove in Up Next, with a brief confirmation",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#141-the-queue-lives-in-the-core",
+      "gates": [
+        "account:authenticated"
+      ],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testQueueAdditionsAreConfirmedOnlyWhenTheyJoinAQueue, testPlayNextIntoAnEmptyPlayerStartsPlaybackAndIntoAQueueStartsNothing, testAMoveAgainstAPresentationThatHidesAnEntryLandsWhereTheListShowsIt) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. Play Next lands after the current entry and Add to Queue at the end of what the person queued, before any AutoPlay entries; the confirmation is a notice above the player that VoiceOver announces. Not yet driven end to end through the UI with long tracks."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Context-menu Play Next / Add to Queue, drag onto the bar, and Up Next reorder and swipe-to-remove; drags onto the bar are DulcetiOSUITests' existing proofs, named and not cited here because this row also claims the confirmation, which no UI test drives yet."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "As iOS."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Context menus by long press on the remote; the confirmation is the same notice. Not yet driven by the remote for this row."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Queue edits are offered on the phone since 2026-09-30 and pinned by host tests (AndroidPlaybackControllerTest, PhoneQueueEditingTest), named and not cited; the confirmation is a separate change stacked on this one."
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Queue edits are offered on the TV and pinned by TvNowPlayingControlsTest and TvQueueAdditionTest, named and not cited; the confirmation is a separate change stacked on this one."
+        }
+      }
     }
   ]
 }

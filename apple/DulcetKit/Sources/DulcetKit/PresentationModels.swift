@@ -709,7 +709,7 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public let queueEntries: [DulcetQueueEntry]
     /// Index of the current entry within `queueEntries`, or nil when none is current.
     public let currentEntryIndex: Int?
-    /// Whether AutoPlay can add music now: it is on, and Shuffle and Repeat are off (§14.4).
+    /// Whether AutoPlay can add music now: it is on, and Shuffle and Repeat are off (§14.8).
     public let autoplayActive: Bool
     /// The sleep timer that is set, if one is (§12.13).
     public let sleepTimer: DulcetSleepTimerState?
