@@ -310,10 +310,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     @MainActor private func openAlbum(_ title: String) throws {
 #if !os(tvOS)
-        let all = app.buttons["dulcet.reader.home.recentlyAdded.all"]
-        // Browse publishes its catalog after navigation. Checking exists immediately can
-        // miss See All and leave the target offscreen in the horizontal album shelf.
-        XCTAssertTrue(all.waitForExistence(timeout: 30), "Browse must publish See All before opening its album list")
+#if os(iOS)
+        // Compact Browse has section links and a vertical Recently Added grid; it has no
+        // Recently Added See All. Regular-width Browse uses horizontal shelves instead.
+        let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
+            ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
+#else
+        let albumListLink = "dulcet.reader.home.recentlyAdded.all"
+#endif
+        let all = app.buttons[albumListLink].firstMatch
+        // Wait for the appropriate catalog link to publish before leaving Browse.
+        XCTAssertTrue(all.waitForExistence(timeout: 30), "Browse must publish its album-list link: \(albumListLink). \(app.debugDescription)")
         activate(all)
 #endif
         let tile = albumTile(title)
