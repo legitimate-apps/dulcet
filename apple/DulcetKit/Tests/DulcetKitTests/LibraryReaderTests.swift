@@ -2180,6 +2180,32 @@ func libraryDepthCategoryMutationKeepsOtherPreferenceAndRefreshesFromCore() {
 }
 
 @MainActor @Test
+func libraryDepthRapidChangesKeepAcceptedWritesAndIgnoreOlderReads() {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .deviceOnly)
+    let reader = factory.made[0]
+    reader.depthHandlers[0](DulcetLibraryDepthState(sorts: ["songs": "title"], filters: ["songs": "all"]))
+    session.setLibraryCategory("songs", sort: "artist")
+    let olderRead = reader.depthHandlers.last!
+    session.setLibraryCategory("songs", filter: "downloaded")
+    #expect(reader.depthCategories.last?.1 == "artist")
+    #expect(reader.depthCategories.last?.2 == "downloaded")
+    reader.depthHandlers.last?(DulcetLibraryDepthState(sorts: ["songs": "artist"], filters: ["songs": "downloaded"]))
+    olderRead(DulcetLibraryDepthState(sorts: ["songs": "artist"], filters: ["songs": "all"]))
+    #expect(session.libraryDepth.filters["songs"] == "downloaded")
+
+    let pinned = item("album", "one")
+    session.toggleLibraryPin(pinned)
+    let pinRead = reader.depthHandlers.last!
+    session.toggleLibraryPin(pinned)
+    #expect(reader.depthPins.map { $0.1 } == [true, false])
+    reader.depthHandlers.last?(DulcetLibraryDepthState())
+    pinRead(DulcetLibraryDepthState(pins: ["album\u{0}one"]))
+    #expect(session.libraryDepth.pins.isEmpty)
+}
+
+@MainActor @Test
 func shuffleResolutionWaitsForANewServerSampleRatherThanPlayingTheCachedQueue() {
     let factory = RecordingReaderFactory()
     let session = DulcetLibrarySession(factory: factory)

@@ -28,8 +28,11 @@ public extension DulcetLibrarySession {
     func refreshLibraryDepth() {
         guard let depth = reader as? any DulcetLibraryDepthReading else { return }
         let generation = readerGeneration
+        libraryDepthReadGeneration += 1
+        let readGeneration = libraryDepthReadGeneration
         depth.readLibraryDepth { [weak self] state in
-            guard let self, self.readerGeneration == generation else { return }
+            guard let self, self.readerGeneration == generation,
+                  self.libraryDepthReadGeneration == readGeneration else { return }
             if let error = state.error {
                 self.post(DulcetStrings.readerChangeNotSaved(DulcetStrings.readerErrorPhrase(error)))
                 return
@@ -41,8 +44,14 @@ public extension DulcetLibrarySession {
 
     func setLibraryCategory(_ category: String, sort: String? = nil, filter: String? = nil) {
         guard let depth = reader as? any DulcetLibraryDepthReading else { return }
-        if depth.setLibraryCategory(category, sort: sort ?? libraryDepth.sorts[category] ?? "title",
-                                   filter: filter ?? libraryDepth.filters[category] ?? "all") {
+        let newSort = sort ?? libraryDepth.sorts[category] ?? "title"
+        let newFilter = filter ?? libraryDepth.filters[category] ?? "all"
+        if depth.setLibraryCategory(category, sort: newSort, filter: newFilter) {
+            // The reader accepted the write. Keep the next gesture based on that write,
+            // even when the confirming read has not returned yet.
+            libraryDepth.sorts[category] = newSort
+            libraryDepth.filters[category] = newFilter
+            libraryDepthRevision += 1
             refreshLibraryDepth()
         } else { post(DulcetStrings.readerChangeNotRecorded) }
     }
@@ -51,7 +60,13 @@ public extension DulcetLibrarySession {
         guard account?.providerInstanceID == item.id.providerInstanceID,
               !(item.kind == .playlist && item.local),
               let depth = reader as? any DulcetLibraryDepthReading else { return }
-        if depth.setLibraryPin(item, pinned: !libraryDepth.isPinned(item)) { refreshLibraryDepth() }
+        let pinned = !libraryDepth.isPinned(item)
+        if depth.setLibraryPin(item, pinned: pinned) {
+            let key = "\(item.kind.rawValue)\u{0}\(item.id.rawID)"
+            if pinned { libraryDepth.pins.insert(key) } else { libraryDepth.pins.remove(key) }
+            libraryDepthRevision += 1
+            refreshLibraryDepth()
+        }
         else { post(DulcetStrings.readerChangeNotRecorded) }
     }
 
@@ -284,6 +299,10 @@ struct DulcetArtistDiscography: View {
                                          subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown)
                     }
                 }
+#if os(tvOS)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .focusSection()
+#endif
             }
         }
     }

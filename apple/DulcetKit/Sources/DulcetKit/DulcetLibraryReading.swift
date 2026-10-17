@@ -212,6 +212,7 @@ public final class DulcetLibrarySession {
 
     public internal(set) var libraryDepth = DulcetLibraryDepthState()
     public internal(set) var libraryDepthRevision = 0
+    @ObservationIgnored var libraryDepthReadGeneration = 0
     public private(set) var myLibrary = DulcetMyLibrarySnapshot()
     @ObservationIgnored private var myLibrarySubscription: (any DulcetLibraryReaderCancellable)?
 
