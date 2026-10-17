@@ -2610,19 +2610,39 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testASleepTimerAtTheEndOfTheTrackStopsWithTheNextEntryPreparedAndClears, testATimedSleepTimerFadesPausesAndRestoresTheLevel) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The menu is in the Now Playing footer. Not yet driven through the app's UI against a server, so the cell stays partial."
+          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testASleepTimerAtTheEndOfTheTrackStopsWithTheNextEntryPreparedAndClears, testATimedSleepTimerFadesPausesAndRestoresTheLevel) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The menu is in the Now Playing footer. Not yet driven through the app's UI against a server, so the cell stays partial.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "sleep-timer-app-ui-proof-macos",
+            "reason": "A UI test must set the sleep timer through this platform's app against the disposable server and observe the stop: the timed choice pausing after its fade, and end of track stopping with the next entry selected and paused. The controller tests run on macOS only and do not drive the menu."
+          }
         },
         "ios": {
           "status": "partial",
-          "reason": "The same controller and menu as macOS (footer of Now Playing). Not yet driven through the iPhone app's UI; the controller tests run on macOS only."
+          "reason": "The same controller and menu as macOS (footer of Now Playing). Not yet driven through the iPhone app's UI; the controller tests run on macOS only.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "sleep-timer-app-ui-proof-ios",
+            "reason": "A UI test must set the sleep timer through this platform's app against the disposable server and observe the stop: the timed choice pausing after its fade, and end of track stopping with the next entry selected and paused. The controller tests run on macOS only and do not drive the menu."
+          }
         },
         "ipados": {
           "status": "partial",
-          "reason": "As iOS; not yet driven through the iPad app's UI."
+          "reason": "As iOS; not yet driven through the iPad app's UI.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "sleep-timer-app-ui-proof-ipados",
+            "reason": "A UI test must set the sleep timer through this platform's app against the disposable server and observe the stop: the timed choice pausing after its fade, and end of track stopping with the next entry selected and paused. The controller tests run on macOS only and do not drive the menu."
+          }
         },
         "tvos": {
           "status": "partial",
-          "reason": "The menu is in the Now Playing control row, reached by the remote; not yet driven by the remote on a simulator."
+          "reason": "The menu is in the Now Playing control row, reached by the remote; not yet driven by the remote on a simulator.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "sleep-timer-app-ui-proof-tvos",
+            "reason": "A UI test must set the sleep timer through this platform's app against the disposable server and observe the stop: the timed choice pausing after its fade, and end of track stopping with the next entry selected and paused. The controller tests run on macOS only and do not drive the menu."
+          }
         },
         "android": {
           "status": "planned",
@@ -2728,19 +2748,39 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testAutoplayAsksOnceWhenTheQueueRunsOutAndNotWhenItIsOff) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The candidate chain (getSimilarSongs2, getSimilarSongs, getTopSongs, random in genre, random) is PlaybackListeningSessionTest's over a recorded transport; it is not yet run against the disposable server, and the Up Next section with its switch is not yet driven through the UI."
+          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testAutoplayAsksOnceWhenTheQueueRunsOutAndNotWhenItIsOff) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The candidate chain (getSimilarSongs2, getSimilarSongs, getTopSongs, random in genre, random) is PlaybackListeningSessionTest's over a recorded transport; it is not yet run against the disposable server, and the Up Next section with its switch is not yet driven through the UI.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "autoplay-app-ui-proof-macos",
+            "reason": "A UI test must play this platform's app to the end of a short queue against the disposable server and observe AutoPlay entries from that server appended in the Up Next AutoPlay section, and the switch removing them. The candidate chain is tested only over a recorded transport."
+          }
         },
         "ios": {
           "status": "partial",
-          "reason": "Up Next shows an AutoPlay section with its switch; controller as macOS. Not yet driven through the iPhone app's UI."
+          "reason": "Up Next shows an AutoPlay section with its switch; controller as macOS. Not yet driven through the iPhone app's UI.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "autoplay-app-ui-proof-ios",
+            "reason": "A UI test must play this platform's app to the end of a short queue against the disposable server and observe AutoPlay entries from that server appended in the Up Next AutoPlay section, and the switch removing them. The candidate chain is tested only over a recorded transport."
+          }
         },
         "ipados": {
           "status": "partial",
-          "reason": "As iOS."
+          "reason": "As iOS.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "autoplay-app-ui-proof-ipados",
+            "reason": "A UI test must play this platform's app to the end of a short queue against the disposable server and observe AutoPlay entries from that server appended in the Up Next AutoPlay section, and the switch removing them. The candidate chain is tested only over a recorded transport."
+          }
         },
         "tvos": {
           "status": "partial",
-          "reason": "Up Next shows the AutoPlay section with its switch, reached by the remote; not yet driven on a simulator."
+          "reason": "Up Next shows the AutoPlay section with its switch, reached by the remote; not yet driven on a simulator.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "autoplay-app-ui-proof-tvos",
+            "reason": "A UI test must play this platform's app to the end of a short queue against the disposable server and observe AutoPlay entries from that server appended in the Up Next AutoPlay section, and the switch removing them. The candidate chain is tested only over a recorded transport."
+          }
         },
         "android": {
           "status": "planned",
@@ -2763,27 +2803,57 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testQueueAdditionsAreConfirmedOnlyWhenTheyJoinAQueue, testPlayNextIntoAnEmptyPlayerStartsPlaybackAndIntoAQueueStartsNothing, testAMoveAgainstAPresentationThatHidesAnEntryLandsWhereTheListShowsIt) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. Play Next lands after the current entry and Add to Queue at the end of what the person queued, before any AutoPlay entries; the confirmation is a notice above the player that VoiceOver announces. Not yet driven end to end through the UI with long tracks."
+          "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testQueueAdditionsAreConfirmedOnlyWhenTheyJoinAQueue, testPlayNextIntoAnEmptyPlayerStartsPlaybackAndIntoAQueueStartsNothing, testAMoveAgainstAPresentationThatHidesAnEntryLandsWhereTheListShowsIt) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. Play Next lands after the current entry and Add to Queue at the end of what the person queued, before any AutoPlay entries; the confirmation is a notice above the player that VoiceOver announces. Not yet driven end to end through the UI with long tracks.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-confirmation-ui-proof-macos",
+            "reason": "A UI test must drive Play Next, Add to Queue, reorder and remove through this platform's app against the disposable server, with tracks long enough not to end during the proof, and observe the order in Up Next and the confirmation notice."
+          }
         },
         "ios": {
           "status": "partial",
-          "reason": "Context-menu Play Next / Add to Queue, drag onto the bar, and Up Next reorder and swipe-to-remove; drags onto the bar are DulcetiOSUITests' existing proofs, named and not cited here because this row also claims the confirmation, which no UI test drives yet."
+          "reason": "Context-menu Play Next / Add to Queue, drag onto the bar, and Up Next reorder and swipe-to-remove; drags onto the bar are DulcetiOSUITests' existing proofs, named and not cited here because this row also claims the confirmation, which no UI test drives yet.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-confirmation-ui-proof-ios",
+            "reason": "A UI test must drive Play Next, Add to Queue, reorder and remove through this platform's app against the disposable server, with tracks long enough not to end during the proof, and observe the order in Up Next and the confirmation notice."
+          }
         },
         "ipados": {
           "status": "partial",
-          "reason": "As iOS."
+          "reason": "As iOS.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-confirmation-ui-proof-ipados",
+            "reason": "A UI test must drive Play Next, Add to Queue, reorder and remove through this platform's app against the disposable server, with tracks long enough not to end during the proof, and observe the order in Up Next and the confirmation notice."
+          }
         },
         "tvos": {
           "status": "partial",
-          "reason": "Context menus by long press on the remote; the confirmation is the same notice. Not yet driven by the remote for this row."
+          "reason": "Context menus by long press on the remote; the confirmation is the same notice. Not yet driven by the remote for this row.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-confirmation-ui-proof-tvos",
+            "reason": "A UI test must drive Play Next, Add to Queue, reorder and remove through this platform's app against the disposable server, with tracks long enough not to end during the proof, and observe the order in Up Next and the confirmation notice."
+          }
         },
         "android": {
           "status": "partial",
-          "reason": "Queue edits are offered on the phone since 2026-09-30 and pinned by host tests (AndroidPlaybackControllerTest, PhoneQueueEditingTest), named and not cited; the confirmation is a separate change stacked on this one."
+          "reason": "Queue edits are offered on the phone since 2026-09-30 and pinned by host tests (AndroidPlaybackControllerTest, PhoneQueueEditingTest), named and not cited; the confirmation is a separate change stacked on this one.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-confirmation-ui-proof-android",
+            "reason": "A UI test must drive Play Next, Add to Queue, reorder and remove through this platform's app against the disposable server, with tracks long enough not to end during the proof, and observe the order in Up Next and the confirmation notice."
+          }
         },
         "androidtv": {
           "status": "partial",
-          "reason": "Queue edits are offered on the TV and pinned by TvNowPlayingControlsTest and TvQueueAdditionTest, named and not cited; the confirmation is a separate change stacked on this one."
+          "reason": "Queue edits are offered on the TV and pinned by TvNowPlayingControlsTest and TvQueueAdditionTest, named and not cited; the confirmation is a separate change stacked on this one.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-confirmation-ui-proof-androidtv",
+            "reason": "A UI test must drive Play Next, Add to Queue, reorder and remove through this platform's app against the disposable server, with tracks long enough not to end during the proof, and observe the order in Up Next and the confirmation notice."
+          }
         }
       }
     }
