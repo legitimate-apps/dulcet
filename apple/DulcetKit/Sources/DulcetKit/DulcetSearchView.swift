@@ -255,9 +255,12 @@ struct DulcetSearchView: View {
                 Text(selectedGroup.map(groupTitle) ?? DulcetStrings.bestMatches)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Text(DulcetStrings.searchResultCount(allResults.count))
+                Text(DulcetStrings.searchResultCount(selectedGroup.map { kind in
+                    allResults.filter { $0.kind == kind }.count
+                } ?? allResults.count))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
+                    .accessibilityIdentifier("dulcet.search.resultCount")
             }
             if let label = DulcetReaderCopy.searchScopeLabel(reader?.publication?.scope) {
                 Label(label, systemImage: "iphone")

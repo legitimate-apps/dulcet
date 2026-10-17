@@ -1944,7 +1944,7 @@ struct DulcetReaderArtistPage: View {
             DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false, titleInHeader: true) { width in
                 if let window = model.window {
                     if let header = window.header {
-                        let layout = dynamicTypeSize.isAccessibilitySize
+                        let layout = dynamicTypeSize.isAccessibilitySize || width < 600
                             ? AnyLayout(VStackLayout(alignment: .leading, spacing: DulcetSpacing.md))
                             : AnyLayout(HStackLayout(alignment: .center, spacing: DulcetSpacing.md))
                         layout {
@@ -1964,18 +1964,20 @@ struct DulcetReaderArtistPage: View {
                                         .dulcetForeground(.secondaryTextOnWindow)
                                 }
                             }
-                            Spacer(minLength: 0)
-                            DulcetLibraryPinControl(item: header)
-                            if let target = header.favouriteTarget {
-                                DulcetMyLibraryButton(target: target)
-                                DulcetFavouriteButton(
-                                    target: target,
-                                    published: header.isFavourite,
-                                    title: header.displayTitle,
-                                    size: .title2,
-                                    identifier: "dulcet.artist.favorite"
-                                )
-                                .dulcetTakesFocusOnArrival()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            HStack(spacing: DulcetSpacing.md) {
+                                DulcetLibraryPinControl(item: header)
+                                if let target = header.favouriteTarget {
+                                    DulcetMyLibraryButton(target: target)
+                                    DulcetFavouriteButton(
+                                        target: target,
+                                        published: header.isFavourite,
+                                        title: header.displayTitle,
+                                        size: .title2,
+                                        identifier: "dulcet.artist.favorite"
+                                    )
+                                    .dulcetTakesFocusOnArrival()
+                                }
                             }
                         }
 #if os(tvOS)

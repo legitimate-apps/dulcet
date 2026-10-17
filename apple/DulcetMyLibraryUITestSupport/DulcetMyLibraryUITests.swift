@@ -239,6 +239,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(songs.waitForExistence(timeout: 30))
         activate(artists)
         XCTAssertTrue(app.buttons["dulcet.search.group.all"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["dulcet.search.resultCount"].firstMatch.label, "1 result", "The selected Artists group counts its own results")
         try capture("Library-Depth-Search-Groups")
         activate(field)
         field.typeText("\n")
