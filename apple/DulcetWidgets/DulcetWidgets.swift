@@ -123,3 +123,23 @@ struct DulcetWidgets: WidgetBundle {
         #endif
     }
 }
+
+#Preview("Now Playing", as: .systemSmall) {
+    DulcetNowPlayingWidget()
+} timeline: {
+    DulcetEntry(date: .now, snapshot: .init(title: "UI Playback Canary", subtitle: "Threshold Boundary", isPlaying: true))
+}
+
+#Preview("Recently Played", as: .systemMedium) {
+    DulcetRecentWidget()
+} timeline: {
+    DulcetEntry(date: .now, snapshot: .init(title: "UI Playback Canary", subtitle: "Threshold Boundary"))
+}
+
+#if os(iOS)
+#Preview("Lock Screen", as: .accessoryRectangular) {
+    DulcetNowPlayingWidget()
+} timeline: {
+    DulcetEntry(date: .now, snapshot: .init(title: "UI Playback Canary", subtitle: "Threshold Boundary", isPlaying: true))
+}
+#endif
