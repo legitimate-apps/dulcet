@@ -682,3 +682,142 @@ The guard rejects an absent, failed or skipped method, as the earlier independen
 missing-method controls demonstrated. This passing required consumption fulfills
 the two recorded Android Downloaded promotion conditions. Only those two cells are
 now shipped; the remaining 33 new cells stay partial, and Apple TV Downloaded stays n/a.
+
+## Apple conformance repair after #336 (2026-10-17)
+
+The [original full Apple run at `128b9d39`](https://github.com/legitimate-apps/dulcet/actions/runs/39002314622)
+already contains the three reported Library failures, before the listening-session merges.
+Its Mac Library bundle ran five tests with two failures; its iPhone Library bundle ran
+seven tests with one failure. The failure diagnostics were exported and examined before
+changing the tests.
+
+- **OBSERVED — iPhone offline replay:** the failure hierarchy has Library selected and
+  Recently Added at y900.3, below the 874-point viewport and the tab bar at y791. The lazy
+  album grid has no instantiated album tile. The test already scrolled before its first
+  offline assertion, but omitted that action after relaunch. The correction requires the
+  section control to exist, the tile to be initially absent, at least one touch scroll,
+  and a hittable tile. It retains the direct-server negative membership checks both before
+  and after relaunch, and the eventual positive server membership after reconnect. The
+  fixture must also acknowledge each requested online/offline transition. A missing lazy
+  accessibility element alone did not establish loss of the durable pending add. In the
+  diagnostic run, this method passes in 132.609 seconds and logs
+  `MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=1`. All seven iPhone Library
+  methods pass the named terminal-result guard.
+- **OBSERVED — Mac pin lookup:** the original failure hierarchy contains the identified
+  `dulcet.library.pinned.title` StaticText with label `Pinned`, plus the pinned album. In
+  the [diagnostic run at `24b656e3`](https://github.com/legitimate-apps/dulcet/actions/runs/39044137148),
+  the same live typed query reports `firstMatch=false`, `indexed=true`, `count=1`. The pin
+  method then passes, including the exact heading text, persisted album and offline
+  destinations. This establishes a false negative in the first-match lookup; it does not
+  establish an internal XCTest implementation cause. The final lookup uses the same type
+  and identifier with `element(boundBy: 0)`. The diagnostic enumeration before the assertion
+  is removed so the final validation exercises that lookup without warming its query.
+- **OBSERVED — Mac grouped count:** both recordings show Artists, `1 result` and one
+  artist row. The diagnostic reports `exists=true`, an empty `label`, and `value=1 result`.
+  Mac must assert the native StaticText value. The correction waits for that exact value;
+  iOS retains the exact label check. The initial diagnostic revision also exposed an error
+  in a new, stronger row assertion: querying TableRow returns zero because SwiftUI's native
+  `SwiftUIOutlineTableView` has `AXOutline` role, as the same run's native accessibility
+  probe records. The corrected assertion scopes the results outline by its identified
+  rendered result and waits for exactly one OutlineRow, excluding the sidebar outline.
+
+The old `7b` search crash report records missing `DulcetPresentationStore` environment
+resolution through native table hosts. Production commit `eb112755` already fixes that
+on main by supplying the root store to the cell and context-menu hosts. This repair
+preserves it. In the diagnostic platform job, both argument cases of
+`MacGroupedSearchHostingTests.readerResultsRenderThroughTheRootAndNativeTable` pass;
+the Library search recordings reach the Artists table without a crash.
+
+Local `tools/typecheck-xcuitest-sources` passes all five covered UI-test directories for
+the corrected queries. The check's negative controls passed; its actual type-check caught
+an introduced invalid row API, corrected before the replacement dispatch. A type-check is compile evidence,
+not UI execution evidence.
+
+The iPhone job subsequently reaches a latent lyrics-test assumption. Its search hierarchy
+contains exactly one result, `Ogg Probe`, while Now Playing has already advanced into
+`Paging Track 008` and later another paging track. **OBSERVED:** one own search result no
+longer guarantees that the one-second fixture remains current. **ASSUMED from the
+production default and queue continuation path:** enabled AutoPlay is the source of that
+continuation; the old test never controlled or read the setting. The test correction
+chooses AutoPlay off through the actual Up Next switch, reads it back, verifies that choice
+again after the plain phase's relaunch, and restores the previous choice through the UI.
+Setup pauses and resumes the synced fixture with positive transport-state checks. Every
+existing lyrics-line, empty-state, failed-read receipt and retry assertion remains, with an
+additional exact `Ogg Probe` title assertion after its plain lyrics are shown. The production
+AutoPlay default remains on. The controlled local iPhone and iPad results below verify
+this setup through every lyrics state.
+
+The [next full diagnostic at `d3dc1bfa`](https://github.com/legitimate-apps/dulcet/actions/runs/39053289757)
+proves the three Library corrections through the complete methods: **Mac 5 tests / zero
+failures (232.835 seconds), iPad 5 / zero (448.213 seconds), iPhone 7 / zero (636.998
+seconds)**. Mac logs `MY LIBRARY PIN heading=Pinned` without diagnostic enumeration and
+`MY LIBRARY SEARCH selected=Artists count=1 result rows=1 role=outline`; Search also
+completes the recent-query relaunch checks. iPhone again logs the required real scroll.
+The full dispatch remains **red** because later checks expose the following separate
+interactions; those passing Library suites are not an all-green handoff.
+
+- **OBSERVED — lyrics setup on both iPhone and iPad:** the new setup correctly fails its
+  exact off-state assertion: the switch remains `1`. The iPhone synthesized event taps
+  `(201, 380.7)`, the center of its 370-point label-and-gap accessibility row. The recording
+  places the actual native switch at the trailing edge, leaving the tap in blank space.
+  The helper now targets the switch thumb, 24 points inside the trailing edge, and keeps
+  the exact off, persisted-off and prior-setting restoration requirements. A further local
+  failure caught the new setup inspecting Up Next before activating anything in the fresh
+  plain phase: the hierarchy has a connected account and no Now Playing bar. Activate Ogg
+  first, capture the existing preference before any possible change, and still require it
+  was already off. Both complete local device methods now pass, as recorded below. No
+  production setter or queue-restoration defect is established by these setup failures.
+- **OBSERVED — TV remote footer navigation:** the failed hierarchy places focus on a
+  nested `Other` inside Sleep Timer, between the fifth star and Lyrics. The Menu's Button
+  itself reports no focus. The test recognizes only the heart and stars as footer controls,
+  so it repeatedly presses Down from Sleep Timer. The corrected bounded path recognizes
+  that focused descendant, moves Right to Lyrics and Left back to the heart, and requires
+  positive proof that the main test traversed Sleep Timer. The shared lyrics helper uses
+  the same focus recognition. All original remote-select, lit-line, favorite and rating
+  assertions remain. The focused leased local method passes in 38.907 seconds and logs
+  `sleep-timer-traversed=true`, five presses to Lyrics, a lit English line and seven Left
+  presses back to the heart. Its xcresult has one passed test, zero failures and zero skips.
+- **OBSERVED — native playback check:** the platform leg separately fails
+  `transportChangesDisposeTheOutgoingTail(action: "replace")` because its initial wait
+  observes no overlap in 30.013 seconds, then the required snapshot is nil. The engine queue
+  responds in 0.002 seconds. This evidence was passed to the playback owner; no underlying
+  playback cause is inferred from the responsive queue alone. This branch incorporates
+  their correction lineage through `d323bebe` from #341: verified AVPlayer gain writes,
+  paused seek setup, transport commands within the observed overlap and retaining the first
+  successful wait observation, with diagnostics on failure. The owner's
+  [complete platform run](https://github.com/legitimate-apps/dulcet/actions/runs/39059014904)
+  passes at that revision, including native Mac, iPhone and TV. A authored no independent
+  playback-engine correction.
+
+Local source type-checking passes all five UI-test directories after the final plain-phase
+order correction. The complete local lyrics methods run against owned disposable Navidrome
+and its real lyrics fault proxy, using fresh leased simulators and explicit
+`-destination "id=<leased UDID>"`, with parallel testing disabled:
+
+| Local proof | Destination | Terminal result |
+| --- | --- | --- |
+| `testTheLyricsPanelShowsEveryStateOnIPhone` | iPhone 17 Pro, `230CDFB4-CFDB-42C6-9DFB-5C4B462192DB` | 1 passed / 0 failed / 0 skipped, 216.887 s |
+| `testTheLyricsPanelShowsEveryStateOnIPadOS` | iPad Pro 13-inch (M5), `A61B1383-5470-439D-A362-D5F285BEB66B` | 1 passed / 0 failed / 0 skipped, 237.715 s |
+| `testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote` | Apple TV 4K (3rd generation), tvOS 26.5, `5AEA7B30-CD53-4670-AFCA-60857D30AA4A` | 1 passed / 0 failed / 0 skipped, 38.907 s |
+
+Each iOS lyrics method logs the actual setting chain `previous=1 value=0`, relaunch
+`previous=0 value=0`, then cleanup `previous=0 value=1`. Both show a lit synced English
+line, two plain lines with exact Ogg title, the no-lyrics state, **one observed failed
+lyrics read and one new read after Try Again**. The iPad also passes the side-by-side
+panel placement checks. These are complete terminal Passed results after the cleanup
+assertion, not just the earlier proof marker. All three result bundles have zero skips.
+The owned fixtures, simulators, DerivedData and capacity leases are released afterwards.
+
+The attempted local Mac UI worker obtained build capacity but refused to reuse another
+lane's disposable server on port 4533, then released its resources before launching a
+fixture or app. This repair therefore uses hosted `apple-ci` for actual Mac UI execution.
+Its `tools/ci/run-my-library-proofs macos` uses the `DulcetMac` scheme with ad-hoc signing
+and cleared `CODE_SIGN_ENTITLEMENTS`; that path passes all five Library methods in the
+full diagnostic above. There is no new local pre-main Sandbox/XPC diagnosis or local Mac
+UI pass to claim.
+
+The combined full-conformance gate for these repaired sources is
+[run 39062783989 at `1ca0a17e`](https://github.com/legitimate-apps/dulcet/actions/runs/39062783989).
+The handoff requires successful platform, core, iPad and iPhone legs and the aggregate;
+the local focused passes do not replace that gate. No feature cell is promoted by this
+test repair.
