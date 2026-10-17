@@ -266,8 +266,17 @@ failed its proof step as described above. The remaining iPhone leg was canceled 
 still compiling its shell; the platform leg had not started. Neither supplied a native
 result. These are actual build/test failures, separate from the local host blockers.
 
-[Replacement Apple CI run 38995693756](https://github.com/legitimate-apps/dulcet/actions/runs/38995693756)
-was dispatched for `bea646f3`. The TV fix selects a tvOS-supported text-field style.
+An initial replacement Apple run was dispatched for `bea646f3`, then canceled while
+all four Mac-hosted legs were still queued: the PR boundary gate had exposed missing
+machine-readable promotion conditions in the new partial feature cells. Commit
+`7b2675e7` added **35 explicit blocked promotion conditions**, preserving every feature
+status and stating the missing platform/native evidence for each claim. The local
+boundary, promotion-condition and parity checks passed, followed by the
+[required PR parity gate](https://github.com/legitimate-apps/dulcet/actions/runs/38996397557/job/117289810238).
+
+[Current Apple CI run 38996405838](https://github.com/legitimate-apps/dulcet/actions/runs/38996405838)
+was dispatched for `7b2675e7`, which includes the same Swift and core fixes plus the
+corrected promotion conditions. The TV fix selects a tvOS-supported text-field style.
 The pinned region now provides a stable view while its reader window loads; failure
 to mount the initial empty reader content is a suspected cause, pending native
 verification. A new core offline-reopen pinned-publication regression passed **1 test
