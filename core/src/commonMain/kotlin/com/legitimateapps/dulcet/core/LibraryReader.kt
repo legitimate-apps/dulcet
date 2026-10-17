@@ -372,6 +372,7 @@ internal class LibraryReader(
                     }
                     // The screens this step revalidates, taken once: a screen opened while it runs was
                     // not revalidated by it, however fresh its own read made it (§16.14 step 3).
+                    listenNow.invalidate()
                     val revalidated = visibleHandles()
                     revalidated.forEach { it.revalidate(RevalidateCause.Reconnect) }
                     revalidateSurfaces()
@@ -754,6 +755,8 @@ internal class LibraryReader(
      * offline reader sends — the outbox's and a running reconnect's epoch read — AND [canSend] still
      * holds. So an outbox send that waited for a slot across an unreachable report is refused too.
      */
+    private val listenNow = ListenNowTransport(this)
+
     internal suspend fun send(
         endpoint: String,
         parameters: Map<String, String> = emptyMap(),
@@ -761,7 +764,7 @@ internal class LibraryReader(
         whileOffline: Boolean = false,
         issued: (Long) -> Unit = {},
     ): SentResponse =
-        permits.withPermit {
+        if (endpoint == "listenNow") listenNow.read(parameters) else permits.withPermit {
             issue(whileOffline, issued) {
                 if (maxBodyBytes == null) {
                     transport.request(endpoint, parameters)
@@ -1198,6 +1201,9 @@ internal data class LibraryReaderConfig(
 
 /** The closed set of screens of spec §16.9. Search is not here: it is §16.15's. */
 internal sealed interface LibraryQuery {
+    data class ListenNow(val shelf: ListenNowShelf) : LibraryQuery {
+        init { require(shelf.wireName.isNotEmpty()) }
+    }
     data class AlbumList(
         val type: AlbumListType,
         val fromYear: Int? = null,
