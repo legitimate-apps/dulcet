@@ -36,6 +36,8 @@ class AndroidEmulatorPlaybackConformanceTest {
                 .setClassName(context, PLAYBACK_ENTRY_ALIAS)
             ActivityScenario.launch<MainActivity>(intent).use { activity ->
                 observer.bind()
+                // This proof deliberately ends a one-entry queue; continuation has its own proof.
+                observer.onController { it.setAutoplay(false) }
                 val foreground = requireMediaTimeAdvances(observer, "foreground")
                 await("a foreground media notification") { observer.foregroundNotificationPosted() }
                 observer.unbind()

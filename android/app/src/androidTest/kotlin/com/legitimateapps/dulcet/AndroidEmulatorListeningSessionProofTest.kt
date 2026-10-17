@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Rect
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -59,7 +60,10 @@ class AndroidEmulatorListeningSessionProofTest {
                 check(checkNotNull(background.sleepRemainingMilliseconds) < beforeHome - 1_000)
                 println("SLEEP TIMER OBSERVED background=true remaining-before=$beforeHome remaining-after=${background.sleepRemainingMilliseconds} playback=${background.phase}")
                 scenario.onActivity { it.startActivity(PlaybackIntents.showNowPlaying(context)) }
-                await("Phone returns from Home") { nodes().any { it.text?.toString()?.startsWith("Sleep in ") == true } }
+                await("Phone returns from Home") { scenario.state == Lifecycle.State.RESUMED }
+                // Showing Now Playing intentionally dismisses transient sheets; reopen Up Next.
+                tapLabel("Up Next")
+                await("Sleep countdown visible again") { nodes().any { it.text?.toString()?.startsWith("Sleep in ") == true } }
                 tapLabelStarting("Sleep in ")
                 tapLabel("Cancel sleep timer")
                 await("Cancel clears service timer") { observer.state().sleepTimer == null }
