@@ -2645,19 +2645,67 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Apple engine implements complementary gains on simultaneous players, with the incoming session owning system controls from the early boundary. AVPlayerCrossfadeTests/crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds exercises local-file and resource-loader PCM; transportChangesDisposeTheOutgoingTail covers pause, stop, seek, replacement and release. Runtime results pending; production controller policy and speaker output are not claimed. Policy is pinned separately by DulcetCorePlaybackSystemTests/testCrossfadeIsSentOnlyForABoundaryBetweenDifferentAlbums and PlaybackListeningSessionTest, named here and not cited."
+          "reason": "OBSERVED 2026-10-16: the macOS DulcetKit package run passed 342 tests, including all six AVPlayerCrossfadeTests functions (eleven argument cases). Real local-file and resource-loader PCM shows simultaneous positive player rates and gains, the ordered boundary at T-d within 250 ms, master-volume composition, incoming system-control ownership, no tail events, no-range streaming without reopening the outgoing resource, five transport cleanup cases, backward-seek rearming and two pending-seek races. Existing preload and natural-boundary tests pass unchanged. This is engine evidence; controller UI and speaker output are not claimed. Policy is pinned separately by DulcetCorePlaybackSystemTests/testCrossfadeIsSentOnlyForABoundaryBetweenDifferentAlbums and PlaybackListeningSessionTest, named here and not cited.",
+          "evidence": [
+            {
+              "observes": "The engine starts concurrent players with complementary gains at the early ordered playback boundary and ignores discarded-item notifications.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds"
+            },
+            {
+              "observes": "Zero duration preserves the existing queue boundary and gain; stale attempts are rejected.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/staleAndInvalidCrossfadeCommandsAreRejectedAndZeroKeepsGapless"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-crossfade-app-process-boundary-proof-macos",
+            "reason": "An app-process proof must connect the listening preference and production controller decision to simultaneous real-player playback on this platform, including a same-album gapless boundary. Separate engine and policy tests do not prove that full path; iPad and TV additionally need their own runtime observations."
+          }
         },
         "ios": {
           "status": "partial",
-          "reason": "Same Apple engine and AVPlayerCrossfadeTests as macOS. iPhone simulator runtime results pending; controller policy and speaker output are not claimed."
+          "reason": "OBSERVED 2026-10-16 on an iPhone 17 Pro simulator, iOS 26.5: all six AVPlayerCrossfadeTests functions (eleven argument cases) passed against real AVPlayers. The suite covers simultaneous rates and gains, T-d ordered events within 250 ms, no tail events, master-volume changes, no-range streaming without reopening outgoing media, five transport cancellations, backward-seek rearming, two pending-seek races and zero-duration gapless playback. The full 320-test run passed 319 and reported one NowPlayingFitTests footer-fit failure at accessibility text size 3 in a 402-by-700 window; the engine suite passed. Controller UI and speaker output are not claimed.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-crossfade-app-process-boundary-proof-ios",
+            "reason": "An app-process proof must connect the listening preference and production controller decision to simultaneous real-player playback on this platform, including a same-album gapless boundary. Separate engine and policy tests do not prove that full path; iPad and TV additionally need their own runtime observations."
+          },
+          "evidence": [
+            {
+              "observes": "The iPhone engine runs concurrent players with master-volume-composed gains at the early ordered boundary; stale item notifications do not affect incoming playback.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds"
+            },
+            {
+              "observes": "A zero duration keeps gapless playback and the existing gain, and a stale attempt is rejected.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/staleAndInvalidCrossfadeCommandsAreRejectedAndZeroKeepsGapless"
+            }
+          ]
         },
         "ipados": {
           "status": "partial",
-          "reason": "Shared Apple engine implementation and AVPlayerCrossfadeTests; no iPad runtime execution yet. iPhone evidence does not stand for iPad."
+          "reason": "Shared Apple engine implementation and AVPlayerCrossfadeTests; no iPad runtime execution yet. iPhone evidence does not stand for iPad.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-crossfade-app-process-boundary-proof-ipados",
+            "reason": "An app-process proof must connect the listening preference and production controller decision to simultaneous real-player playback on this platform, including a same-album gapless boundary. Separate engine and policy tests do not prove that full path; iPad and TV additionally need their own runtime observations."
+          }
         },
         "tvos": {
           "status": "partial",
-          "reason": "Shared Apple engine implementation and AVPlayerCrossfadeTests; tvOS compilation pending and no TV runtime execution yet."
+          "reason": "OBSERVED 2026-10-16: DulcetTV and DulcetKitTVOSTests, including AVPlayerCrossfadeTests, passed build-for-testing for the tvOS simulator. No TV runtime execution or speaker output is claimed.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-crossfade-app-process-boundary-proof-tvos",
+            "reason": "An app-process proof must connect the listening preference and production controller decision to simultaneous real-player playback on this platform, including a same-album gapless boundary. Separate engine and policy tests do not prove that full path; iPad and TV additionally need their own runtime observations."
+          }
         },
         "android": {
           "status": "planned",

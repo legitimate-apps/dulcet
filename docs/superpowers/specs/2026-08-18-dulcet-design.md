@@ -7864,6 +7864,9 @@ musical-context policy and play accounting; the engine only executes the chosen 
 Tests: `AVPlayerCrossfadeTests` drives local-file and resource-loader PCM through real players,
 checking boundary timing within 250 ms (five observer periods for host scheduling), concurrent
 positive rates and gains, master-volume composition, gapless reset and transport cleanup.
+OBSERVED 2026-10-16: all six suite functions (eleven argument cases) passed on macOS and an
+iPhone 17 Pro simulator running iOS 26.5; the full macOS package run passed 342 tests. The iOS
+and tvOS app and test targets compile. iPad and tvOS runtime overlap remains unobserved here.
 
 **2026-10-16 — Listening session: sleep timer, crossfade decisions, AutoPlay, queue confirmations.**
 New §12.13 (sleep timer), §14.8 (AutoPlay) and the §12.8 crossfade paragraph. The queue core gains
