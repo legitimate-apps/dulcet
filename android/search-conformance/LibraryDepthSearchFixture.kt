@@ -7,7 +7,9 @@ import com.legitimateapps.dulcet.search.*
 class LibraryDepthSearchFixture : SearchSource {
     val committed = mutableListOf<String>()
     var cleared = false
+    var saveFails = false
     override fun open(listener: (AndroidLibrarySearchPublication) -> Unit): SearchSourceHandle = object : SearchSourceHandle {
+        override val recentSearchError: String? get() = if (saveFails) "storage" else null
         override fun updateQuery(text: String) {
             val rows = if (text.isBlank()) emptyList() else listOf(SearchResultType.Track, SearchResultType.Album, SearchResultType.Artist).flatMap { type ->
                 (0..4).map { index -> AndroidLibrarySearchRow(SearchResultItem(
@@ -21,7 +23,7 @@ class LibraryDepthSearchFixture : SearchSource {
         override fun refresh() = Unit
         override fun close() = Unit
         override fun recentSearches(completion: (List<String>) -> Unit) { completion(if (cleared) emptyList() else listOf("Previous search") + committed.asReversed()) }
-        override fun recordSearch(text: String) { committed += text }
+        override fun recordSearch(text: String) { if (!saveFails) committed += text }
         override fun clearRecentSearches() { cleared = true }
     }
 }

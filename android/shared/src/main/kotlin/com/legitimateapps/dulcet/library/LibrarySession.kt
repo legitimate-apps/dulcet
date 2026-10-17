@@ -108,8 +108,16 @@ public class LibrarySession internal constructor(
 
     init { refreshDepth() }
 
+    private var depthRead = 0L
+    private val chosenPins = mutableMapOf<Pair<String, String>, Boolean>()
     public fun refreshDepth() {
-        reader.libraryDepthState { mutableDepth.value = it }
+        val read = ++depthRead
+        reader.libraryDepthState {
+            if (read == depthRead) {
+                chosenPins.clear()
+                mutableDepth.value = it
+            }
+        }
     }
 
     private val chosenCategories = mutableMapOf<String, Pair<String, String>>()
@@ -124,13 +132,16 @@ public class LibrarySession internal constructor(
     public fun isPinned(item: AndroidLibraryItem): Boolean {
         val state = mutableDepth.value ?: return false
         val kind = item.pinKind() ?: return false
+        chosenPins[kind to item.rawId]?.let { return it }
         return (0 until state.pinCount).any { state.pinKind(it) == kind && state.pinRawId(it) == item.rawId }
     }
 
     public fun togglePin(item: AndroidLibraryItem) {
         if (item is AndroidLibraryItem.Playlist && item.local) return
         val kind = item.pinKind() ?: return
-        if (reader.setLibraryPin(kind, item.rawId, !isPinned(item))) {
+        val desired = !isPinned(item)
+        chosenPins[kind to item.rawId] = desired
+        if (reader.setLibraryPin(kind, item.rawId, desired)) {
             refreshDepth()
             surfaces.filter { it.key == "pinned" }.forEach { it.refresh() }
         }

@@ -90,6 +90,7 @@ internal fun MobileSearchScreen(
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
     val recents by presenter.recents.collectAsStateWithLifecycle()
+    val recentError by presenter.recentSearchError.collectAsStateWithLifecycle()
     var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -155,6 +156,7 @@ internal fun MobileSearchScreen(
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
                     .semantics { this[SearchObservation] = state },
             ) {
+                if (recentError != null) item { Text(stringResource(SharedR.string.library_depth_save_failed), Modifier.testTag("search.recents.error")) }
                 if (state.query.isBlank() && recents.isNotEmpty()) {
                     item {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

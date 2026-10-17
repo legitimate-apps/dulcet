@@ -161,6 +161,7 @@ internal fun TvSearchScreen(
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
     val recents by presenter.recents.collectAsStateWithLifecycle()
+    val recentError by presenter.recentSearchError.collectAsStateWithLifecycle()
     var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
     val resources = libraryResources()
     val queryFocus = remember { FocusRequester() }
@@ -317,6 +318,7 @@ internal fun TvSearchScreen(
                     .semantics { this[SearchObservation] = state },
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (recentError != null) item { Text(stringResource(SharedR.string.library_depth_save_failed), Modifier.testTag("search.recents.error")) }
                 if (state.query.isBlank() && recents.isNotEmpty()) {
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {

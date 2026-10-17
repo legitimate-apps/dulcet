@@ -787,6 +787,8 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
 /** The phone's `ConnectionNotices`, in the TV's type: the same statements, from the same copy. */
 @Composable
 internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+    val depth by session.depth.collectAsState()
+    if (depth?.errorKind != null) TvStatement(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()

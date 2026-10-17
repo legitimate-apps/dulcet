@@ -15,6 +15,19 @@ import org.robolectric.RobolectricTestRunner
 class MobileGroupedSearchTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun failedRecentSearchWriteIsVisibleAndASuccessfulRetryClearsIt() {
+        val source = LibraryDepthSearchFixture().apply { saveFails = true }
+        val presenter = SearchPresenter(SearchAccount("depth-search", "https://music.example.invalid", "u", "p", false), source)
+        compose.setContent { MobileSearchScreen(presenter, {}) }
+        compose.onNodeWithTag("search.recent.0").performClick()
+        compose.onNodeWithTag("search.recents.error").assertExists()
+        assertTrue(source.committed.isEmpty())
+        compose.runOnIdle { source.saveFails = false; presenter.commitQuery() }
+        compose.onNodeWithTag("search.recents.error").assertDoesNotExist()
+        assertEquals(listOf("Previous search"), source.committed)
+        presenter.close()
+    }
+
     @Test fun recentsReplayAndClearAndGroupExpansionKeepsResultIdentity() {
         val source = LibraryDepthSearchFixture()
         val presenter = SearchPresenter(SearchAccount("depth-search", "https://music.example.invalid", "u", "p", false), source)

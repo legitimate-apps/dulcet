@@ -107,6 +107,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                 TvAction(stringResource(R.string.tv_back), "library.$key.back", onClick = navigator.back)
                 Text(title, style = MaterialTheme.typography.displaySmall)
                 TvStatement(stringResource(if (downloaded) SharedR.string.library_downloaded_hint else SharedR.string.library_songs_scope), "library.$key.scope")
+                TvConnectionNotices(session, accountNotices = false)
                 TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)", "artist" to "Artist", "mostPlayed" to "Most Played"))
                 if (!downloaded && !offline) TvStatement(stringResource(SharedR.string.library_shuffle_server_hint), "library.$key.shuffle.scope")
                 TvAction(stringResource(if (offline && !downloaded) SharedR.string.library_shuffle_available else SharedR.string.library_shuffle_all), "library.$key.shuffleAll",

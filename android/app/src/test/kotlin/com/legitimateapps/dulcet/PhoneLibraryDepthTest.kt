@@ -73,6 +73,28 @@ class PhoneLibraryDepthTest {
         await { session.depth.value?.pinCount == 0 && !exists("library.pinned.item.0") }
     }
 
+    @Test fun rapidCategoryAndPinChangesKeepTheLastIntentBeforeSnapshotsReturn() {
+        host()
+        val surface = session.openAlbums(AndroidAlbumListType.AlphabeticalByName)
+        try {
+            await { surface.state.value?.items?.isNotEmpty() == true && session.depth.value != null }
+            val album = surface.state.value!!.items.first()
+            var saved: LibraryDepthState? = null
+            compose.runOnIdle {
+                session.setCategorySort("albums", "ByYear")
+                session.setCategoryFilter("albums", "favorites")
+                session.togglePin(album)
+                session.togglePin(album)
+                AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true).libraryDepthState { saved = it }
+            }
+            await { saved != null }
+            assertEquals("ByYear", saved!!.sort("albums"))
+            assertEquals("favorites", saved!!.filter("albums"))
+            assertEquals(0, saved!!.pinCount)
+            await { session.depth.value?.filter("albums") == "favorites" && session.depth.value?.pinCount == 0 }
+        } finally { surface.close() }
+    }
+
     @Test fun songsShuffleRequestsTheWholeCatalogInsteadOfShufflingTheVisiblePage() {
         host()
         compose.onNodeWithTag("library.view.songs").performClick()

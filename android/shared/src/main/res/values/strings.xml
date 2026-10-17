@@ -285,4 +285,5 @@
     <string name="library_shuffle_failed">Could not start a shuffled queue. Try again when your server is available.</string>
     <string name="library_loaded_scope">Sorting and filtering apply to the loaded part of this list. Load more to include more music.</string>
     <string name="library_sorted_device">Sorted and filtered on this device.</string>
+    <string name="library_depth_save_failed">Couldn’t save this Library choice on this device. Try the change again.</string>
 </resources>

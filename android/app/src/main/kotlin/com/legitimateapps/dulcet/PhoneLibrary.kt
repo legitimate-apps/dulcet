@@ -556,6 +556,8 @@ internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount)
  */
 @Composable
 internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+    val depth by session.depth.collectAsState()
+    if (depth?.errorKind != null) StatementText(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
