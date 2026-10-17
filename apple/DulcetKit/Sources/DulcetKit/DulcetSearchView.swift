@@ -7,6 +7,8 @@ struct DulcetSearchView: View {
 #endif
 #if os(iOS)
     @FocusState private var searchFieldFocused: Bool
+#endif
+#if os(iOS) || os(macOS)
     @Environment(DulcetPresentationStore.self) private var store
 #endif
     @State private var selectedGroup: DulcetSearchResultKind?
@@ -294,6 +296,8 @@ struct DulcetSearchView: View {
                         rank: results.firstIndex(of: result),
                         readerRow: readerRow(result.id)
                     )
+                    // AppKit hosts table cells separately from the surrounding SwiftUI tree.
+                    .environment(store)
                 }
                 .width(min: 320, ideal: 620)
 
@@ -311,6 +315,7 @@ struct DulcetSearchView: View {
                         selectedResultID = id
                         activate(id)
                     }
+                    .environment(store)
                 }
             } primaryAction: { selection in
                 guard let id = selection.first else { return }
