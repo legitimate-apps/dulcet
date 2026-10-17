@@ -68,14 +68,14 @@ class TvGenresAndAlbumSortTest {
     private fun host() {
         compose.setContent { MaterialTheme { TvLibraryEntry(account) { _, _ -> } } }
         compose.waitForIdle()
-        // Start from Home, then enter the Library whose sections this control exercises.
-        await("the Library tab") { exists("library.open") }
-        focus("library.open")
-        key(Key.DirectionCenter)
         reachSectionsFromFirstCard()
     }
 
     private fun reachSectionsFromFirstCard() {
+        // Both the ordinary host and the production-playback host start on Home.
+        await("the Library tab") { exists("library.open") }
+        focus("library.open")
+        key(Key.DirectionCenter)
         await("the first home card to take focus") { focused("library.home.0.item.0") }
         // Removing the connecting notice can leave the lazy home scrolled to its first card.
         // Reach the sections as a remote does before requesting a particular section's focus.
