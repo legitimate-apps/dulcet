@@ -311,10 +311,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func openAlbum(_ title: String) throws {
 #if !os(tvOS)
         let all = app.buttons["dulcet.reader.home.recentlyAdded.all"]
-        if all.exists { activate(all) }
+        // Browse publishes its catalog after navigation. Checking exists immediately can
+        // miss See All and leave the target offscreen in the horizontal album shelf.
+        XCTAssertTrue(all.waitForExistence(timeout: 30), "Browse must publish See All before opening its album list")
+        activate(all)
 #endif
         let tile = albumTile(title)
-#if os(macOS)
+#if !os(tvOS)
         // The sidebar is also a scroll view. Wait for catalog publication and scroll only the
         // album page; scrolling firstMatch can hide Library before the catalog finishes loading.
         let albumPage = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
@@ -326,7 +329,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(macOS)
             albumPage.scroll(byDeltaX: 0, deltaY: -450)
 #else
-            app.scrollViews.firstMatch.swipeUp()
+            albumPage.swipeUp()
 #endif
         }
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
