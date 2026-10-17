@@ -253,4 +253,22 @@
     <string name="error_capability_title">A required server capability is unavailable</string>
     <string name="error_capability_message">This server does not provide a capability required for account setup.</string>
     <string name="error_capability_recovery">Update the server or use a compatible OpenSubsonic endpoint.</string>
+    <string name="listening_options">Listening options</string>
+    <string name="listening_autoplay">AutoPlay</string>
+    <string name="listening_autoplay_hint">Similar music after your queue</string>
+    <string name="listening_autoplay_inactive">Available with Shuffle and Repeat off</string>
+    <string name="listening_sleep">Sleep timer</string>
+    <string name="listening_sleep_remaining">Sleep in %1$s</string>
+    <string name="listening_minutes">%1$d minutes</string>
+    <string name="listening_end_track">End of track</string>
+    <string name="listening_end_queue">End of queue</string>
+    <string name="listening_sleep_cancel">Cancel sleep timer</string>
+    <string name="listening_crossfade">Crossfade</string>
+    <string name="listening_crossfade_value">Crossfade: %1$d s</string>
+    <string name="listening_seconds">%1$d seconds</string>
+    <string name="listening_off">Off</string>
+    <string name="listening_autoplay_on">AutoPlay: On</string>
+    <string name="listening_autoplay_off">AutoPlay: Off</string>
+    <string name="queue_confirm_next">Playing next</string>
+    <string name="queue_confirm_added">Added to queue</string>
 </resources>

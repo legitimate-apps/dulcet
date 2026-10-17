@@ -1096,6 +1096,7 @@ public fun AndroidLibraryItem.Track.toTrack(providerInstanceId: String, album: A
         album = albumTitle ?: album?.title,
         durationMilliseconds = durationMilliseconds,
         artworkKey = artworkKey ?: album?.artworkKey,
+        albumRawId = albumRawId ?: album?.rawId,
     )
 }
 

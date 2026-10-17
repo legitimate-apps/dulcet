@@ -601,6 +601,7 @@ private class ControllerUpNextActions(private val controller: AndroidPlaybackCon
 private fun UpNextSheet(account: SearchAccount, state: AndroidPlaybackState, playback: AndroidPlaybackController, dismiss: () -> Unit) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     ModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("player.upnext")) {
+        PhoneListeningSession(state, playback::setAutoplay, playback::setSleepTimer, playback::setCrossfade)
         UpNextList(account, state, remember(playback) { ControllerUpNextActions(playback) })
     }
 }
@@ -645,6 +646,10 @@ internal fun UpNextList(account: SearchAccount?, state: AndroidPlaybackState, ac
             val canMoveUp = upcoming && position > firstUpcoming
             val canMoveDown = upcoming && position < state.queue.lastIndex
             val id = entry.queueEntryId
+            if (entry.isAutoplay && (position == 0 || !state.queue[position - 1].isAutoplay)) {
+                Text(stringResource(SharedR.string.listening_autoplay), Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                    style = MaterialTheme.typography.titleMedium)
+            }
             ListItem(
                 headlineContent = {
                     Text(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = 1,

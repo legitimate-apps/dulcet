@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import android.content.Context
+import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
@@ -70,6 +71,12 @@ public data class AndroidPlaybackState(
      * person connects, stops, or a downloaded song plays.
      */
     val needsReconnect: Boolean = false,
+    val autoplayEnabled: Boolean = true,
+    val autoplayActive: Boolean = false,
+    val crossfadeSeconds: Int = 0,
+    val sleepTimer: SleepTimerChoice? = null,
+    val sleepRemainingMilliseconds: Long? = null,
+    val queueConfirmation: AndroidQueueConfirmation? = null,
 ) {
     val hasSession: Boolean get() = playbackSessionId != null
 }
@@ -128,6 +135,7 @@ public data class AndroidTrack(
     val album: String? = null,
     val durationMilliseconds: Long? = null,
     val artworkKey: String? = null,
+    val albumRawId: String? = null,
 ) {
     init {
         require(providerInstanceId.isNotBlank())
@@ -136,7 +144,10 @@ public data class AndroidTrack(
 }
 
 /** One Up Next row. [queueEntryId] addresses it; the same song may appear more than once. */
-public data class AndroidQueueEntry(val queueEntryId: String, val track: AndroidTrack)
+public data class AndroidQueueEntry(val queueEntryId: String, val track: AndroidTrack, val isAutoplay: Boolean = false)
+
+/** An edit that has taken effect, claimed once by the foreground surface. */
+public data class AndroidQueueConfirmation(val sequence: Long, val insertion: AndroidQueueInsertion, val trackCount: Int)
 
 public enum class AndroidQueueSource { Album, Artist, Library, Search }
 
@@ -163,6 +174,27 @@ public class AndroidPlaybackController internal constructor(
         localPlans: AndroidLocalPlaybackSource?,
         serverContact: AndroidServerContact?,
     ) : this(context, account, boundaries = null, localPlans = localPlans, serverContact = serverContact)
+    private val preferences = context.applicationContext.getSharedPreferences("listening-session", Context.MODE_PRIVATE)
+    private var crossfadeSeconds = PlaybackCrossfade.decodeSeconds(preferences.getInt("crossfade-seconds", 0))
+    private val sleepCountdown = SleepTimerCountdown()
+    private var sleepTimer: SleepTimerChoice? = null
+    private val timerHandler = Handler(Looper.getMainLooper())
+    private var queueConfirmation: AndroidQueueConfirmation? = null
+    private var confirmationSequence = 0L
+    private var autoplayJob: Job? = null
+    private val autoplayTransport by lazy {
+        KtorLibraryEndpointTransport(LibraryBrowseRequest(account.providerInstanceId, account.normalizedBaseUrl,
+            account.username, account.password, account.allowLocalHttp), saltSource = null, logSink = null,
+            hostResolver = systemHostResolver())
+    }
+    private var autoplayTransportOpened = false
+    private val timerTick = object : Runnable {
+        override fun run() {
+            if (closed || sleepTimer == null) return
+            tickSleepTimer()
+            if (sleepTimer != null) timerHandler.postDelayed(this, 250)
+        }
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val store = boundaries?.store ?: DulcetDriverFactory(context.applicationContext).openDulcetDatabase()
     private val resumes = PersistentResumePositionStore(store.database)
@@ -225,44 +257,65 @@ public class AndroidPlaybackController internal constructor(
     private var skipNotice: AndroidSkipNotice? = null
     private var skipNoticeSequence = 0L
     private var consumed = AtomicLong()
-    private val mutableState = MutableStateFlow(AndroidPlaybackState())
+    private var preloadConsumed: AtomicLong? = null
+    private val mutableState = MutableStateFlow(AndroidPlaybackState(
+        autoplayEnabled = preferences.getBoolean("autoplay", true), crossfadeSeconds = crossfadeSeconds))
     public val state: StateFlow<AndroidPlaybackState> = mutableState
-    private val exo: Player = boundaries?.player ?: ExoPlayer.Builder(context.applicationContext).build().apply {
+    private val playbackContext = context.applicationContext
+    private var preloadJob: Job? = null
+    private var preloadAttempt: AttemptId? = null
+    private var preloadTriedBoundary: String? = null
+    private var preloadBlockedUntilMillis = 0L
+    private val initialPlayer: Player = boundaries?.player ?: newPlayer()
+    private fun newPlayer(handleFocus: Boolean = true): Player = ExoPlayer.Builder(playbackContext).build().apply {
         setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), handleFocus)
         setHandleAudioBecomingNoisy(true)
         repeatMode = Player.REPEAT_MODE_OFF
     }
-    private val engine = AndroidMedia3Engine(exo, onSystemPlayWhenReady = { wanted ->
-        // A headphone unplug or a lost focus pauses the player; the requested state must follow,
-        // or Pause would still be offered and the next song would start through the speaker.
+    private val sessionBridge = if (boundaries?.player == null) AndroidSwitchingSessionPlayer(initialPlayer) else null
+    private val exo: Player get() = engine.player
+    private val engine: AndroidMedia3Engine = AndroidMedia3Engine(initialPlayer, onSystemPlayWhenReady = { wanted ->
         if (!closed) { wantsPlay = wanted; publish() }
-    }, prepareSource = { plan ->
+    }, prepareSource = { plan -> preparePlaybackSource(plan, exo) },
+        createOverlapPlayer = if (boundaries?.player == null) { { newPlayer(handleFocus = false) } } else boundaries.overlapPlayer,
+        prepareOverlapSource = { plan, player -> preparePlaybackSource(plan, player) },
+        onPlayerChanged = { player, plan ->
+            activePlan = plan
+            consumed = preloadConsumed ?: AtomicLong()
+            preloadConsumed = null
+            preloadAttempt = null
+            sessionBridge?.switchTo(player)
+        },
+        onPreloadFailed = { attempt, plan, error ->
+            if (plan is RemotePlaybackWirePlan) notePreloadFailure(plan, error)
+            discardOverlap(attempt)
+        })
+
+    private fun preparePlaybackSource(plan: PlaybackPlan, player: Player) {
         val attemptConsumed = AtomicLong()
-        consumed = attemptConsumed
+        if (player === engine.player) consumed = attemptConsumed else preloadConsumed = attemptConsumed
         val count: (Long) -> Unit = { bytes -> attemptConsumed.addAndGet(bytes) }
         val item = mediaItem(plan)
         when (plan) {
-            // A download plays through the same validating data source, reading the promoted file.
             is AndroidLocalPlaybackPlan -> if (boundaries?.prepareLocalSource != null) boundaries.prepareLocalSource.invoke(plan)
-                else (exo as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(AndroidPlaybackDataSourceFactory(
+                else (player as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(AndroidPlaybackDataSourceFactory(
                     plan.local.container,
-                    AndroidLocalFilePlaybackResource(File(plan.local.absolutePath), plan.local.exactByteLength),
-                    count,
+                    AndroidLocalFilePlaybackResource(File(plan.local.absolutePath), plan.local.exactByteLength), count,
                 )).createMediaSource(item))
             is RemotePlaybackWirePlan -> if (boundaries?.prepareSource != null) boundaries.prepareSource.invoke(plan)
-                else (exo as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(
+                else (player as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(
                     AndroidPlaybackDataSourceFactory(plan, AndroidHttpPlaybackResource(account, plan, requests), count),
                 ).createMediaSource(item))
             else -> error("unsupported plan")
         }
-    })
+    }
 
     /**
      * Every transport verb a system controller can send takes the same path as an in-app command;
      * none reaches the player directly. Queue edits and media-item replacement are not offered.
      */
-    public val sessionPlayer: Player = object : ForwardingPlayer(exo) {
+    public val sessionPlayer: Player = object : ForwardingPlayer(sessionBridge ?: initialPlayer) {
         override fun play() { this@AndroidPlaybackController.play() }
         override fun pause() { this@AndroidPlaybackController.pause() }
         override fun setPlayWhenReady(value: Boolean) { if (value) play() else pause() }
@@ -302,12 +355,23 @@ public class AndroidPlaybackController internal constructor(
 
     init {
         check(Looper.myLooper() == Looper.getMainLooper())
+        if (ownsActiveQueue() || queue.activeServerId() == null) {
+            queue.setAutoplay(preferences.getBoolean("autoplay", true))
+            queue.setCrossfade(crossfadeSeconds.seconds)
+        }
         engine.setEventListener { event ->
             if (closed) return@setEventListener
             if (event is PlaybackEngineEvent.FailedBeforeStart) failure = event.error
             if (event is PlaybackEngineEvent.FailedAfterPartial) failure = event.error
+            if (event is PlaybackEngineEvent.EndedNaturally && !engine.isAdvancingOverlap)
+                preloadAttempt?.let(::discardOverlap)
             val transition = queue.recordPlaybackEvent(event)
             capture(transition.effects)
+            if (transition.stopPointReached) {
+                wantsPlay = false
+                clearSleepTimer()
+            }
+            transition.discardedPreloadAttemptId?.let(::discardOverlap)
             noteSkippedAfterFailure(transition)
             // The engine's attempt is over once it ends, fails, or the core moves on from it, and
             // the controller drops its plan. Nothing then seeks or restarts that attempt: seeks
@@ -323,6 +387,7 @@ public class AndroidPlaybackController internal constructor(
             // begins a new attempt for it (a retry) instead of addressing the failed one.
             if (failed && transition.startDirective == null) wantsPlay = false
             publish()
+            if (event is PlaybackEngineEvent.AdvancedToPreloaded) loadArtwork(checkNotNull(activePlan))
             if (event is PlaybackEngineEvent.Ready) {
                 pendingResume?.let { position ->
                     pendingResume = null
@@ -481,12 +546,14 @@ public class AndroidPlaybackController internal constructor(
                     tracks.map { track ->
                         val id = ProviderItemId(track.providerInstanceId, track.rawId)
                         PlaybackQueueItem(id, if (track.rawId == chosen.rawId && song != null) song.duration
-                            else track.durationMilliseconds?.milliseconds)
+                            else track.durationMilliseconds?.milliseconds, track.albumRawId ?: if (source == AndroidQueueSource.Album) sourceRawId else null)
                     },
                     QueueSourceContext(kind, sourceRawId?.let { ProviderItemId(account.providerInstanceId, it) },
                         sourceName.ifBlank { source.name }),
                     if (shuffle) null else startIndex, shuffle))
                 capture(transition.effects)
+                captureEdit(queue.setAutoplay(preferences.getBoolean("autoplay", true)))
+                captureEdit(queue.setCrossfade(crossfadeSeconds.seconds))
                 applyHeldAdditions()
                 val directive = transition.startDirective!!
                 // Guard: a held addition never starts anything (see applyHeldAdditions). Were one ever
@@ -675,10 +742,8 @@ public class AndroidPlaybackController internal constructor(
      * The held additions, applied to the queue just put in place in the order they were made. They are
      * all this resolution's: nothing else is ever held (see [heldAdditions]).
      *
-     * None of them starts anything. The core starts an entry from an enqueue only when it discards a
-     * preload it held a natural end for; this queue was replaced a moment ago, so it holds no preload,
-     * and Android registers none at all (the engine refuses one, spec §8). [playQueue] guards the start
-     * that follows regardless.
+     * This queue was replaced a moment ago, so no preload holds a natural end yet. The edit cannot
+     * start an entry; [playQueue] guards the start that follows regardless.
      */
     private fun applyHeldAdditions() {
         val held = heldAdditions.toList()
@@ -717,9 +782,9 @@ public class AndroidPlaybackController internal constructor(
         sourceRawId: String?,
     ): Boolean {
         tracks.forEach { remember(it) }
-        return edit {
+        val accepted = edit {
             queue.enqueue(PlaybackQueueInsertion(
-                tracks.map { PlaybackQueueItem(ProviderItemId(it.providerInstanceId, it.rawId), it.durationMilliseconds?.milliseconds) },
+                tracks.map { PlaybackQueueItem(ProviderItemId(it.providerInstanceId, it.rawId), it.durationMilliseconds?.milliseconds, it.albumRawId) },
                 QueueSourceContext(source.kind(), sourceRawId?.let { ProviderItemId(account.providerInstanceId, it) },
                     sourceName.ifBlank { source.name }),
                 when (insertion) {
@@ -727,6 +792,11 @@ public class AndroidPlaybackController internal constructor(
                     AndroidQueueInsertion.AddToQueue -> QueueInsertionMode.Append
                 }))
         }
+        if (accepted) {
+            queueConfirmation = AndroidQueueConfirmation(++confirmationSequence, insertion, tracks.size)
+            publish()
+        }
+        return accepted
     }
 
     /**
@@ -773,13 +843,13 @@ public class AndroidPlaybackController internal constructor(
 
     /**
      * Applies a queue edit. No edit is a session boundary (spec §14.1), so unlike [transition] this
-     * stops nothing and starts nothing: it republishes the queue. The core starts an entry from an
-     * edit only when the edit discards a preload it had held a natural end for, and Android registers
-     * no preload (the engine refuses one, spec §8); should that ever change, the entry starts here.
+     * stops nothing and starts nothing: it republishes the queue. If the edit discards a preload
+     * holding a natural end, the core supplies the replacement start here.
      */
     private inline fun edit(change: () -> PlaybackQueueTransition): Boolean {
         val result = try { change() } catch (_: IllegalArgumentException) { return false }
         if (result.startDirective != null) { transition(result); return true }
+        result.discardedPreloadAttemptId?.let(::discardOverlap)
         capture(result.effects)
         publish()
         fillQueueMetadata()
@@ -793,14 +863,107 @@ public class AndroidPlaybackController internal constructor(
         AndroidQueueSource.Search -> QueueSourceKind.Search
     }
 
+    private fun captureEdit(result: PlaybackQueueTransition) {
+        result.discardedPreloadAttemptId?.let(::discardOverlap)
+        capture(result.effects)
+        result.startDirective?.let(::start)
+    }
+
+    public fun setAutoplay(enabled: Boolean) {
+        if (!live()) return
+        preferences.edit().putBoolean("autoplay", enabled).apply()
+        if (ownsActiveQueue() || queue.activeServerId() == null) captureEdit(queue.setAutoplay(enabled))
+        publish()
+    }
+
+    public fun setCrossfade(seconds: Int) {
+        if (!live()) return
+        crossfadeSeconds = PlaybackCrossfade.decodeSeconds(seconds)
+        preferences.edit().putInt("crossfade-seconds", crossfadeSeconds).apply()
+        if (ownsActiveQueue() || queue.activeServerId() == null) captureEdit(queue.setCrossfade(crossfadeSeconds.seconds))
+        publish()
+    }
+
+    public fun setSleepTimer(choice: SleepTimerChoice?) {
+        if (!live() || refuseForeignQueue()) return
+        clearSleepTimer()
+        sleepTimer = choice
+        val stopPoint = when (choice) {
+            SleepTimerChoice.EndOfTrack -> PlaybackStopPoint.EndOfCurrentEntry
+            SleepTimerChoice.EndOfQueue -> PlaybackStopPoint.EndOfQueue
+            else -> null
+        }
+        captureEdit(queue.setStopPoint(stopPoint))
+        choice?.let { SleepTimerCountdown.lengthMilliseconds(it) }?.let {
+            sleepCountdown.start(it, SystemClock.elapsedRealtime())
+            timerHandler.postDelayed(timerTick, 250)
+        }
+        publish()
+    }
+
+    private fun clearSleepTimer() {
+        sleepTimer = null
+        sleepCountdown.cancel()
+        timerHandler.removeCallbacks(timerTick)
+        if (ownsActiveQueue() || queue.activeServerId() == null) captureEdit(queue.setStopPoint(null))
+        engine.setSleepGain(1.0)
+    }
+
+    internal fun tickSleepTimer() {
+        val now = SystemClock.elapsedRealtime()
+        engine.setSleepGain(sleepCountdown.gain(now))
+        if (sleepCountdown.remainingMilliseconds(now) == 0L) {
+            pause()
+            clearSleepTimer()
+        }
+        publish()
+    }
+
+    public fun dismissQueueConfirmation(sequence: Long): Boolean {
+        if (!live() || queueConfirmation?.sequence != sequence) return false
+        queueConfirmation = null
+        publish()
+        return true
+    }
+
+    private fun answerAutoplay() {
+        if (closed || !ownsActiveQueue() || !contactOpen() || autoplayJob?.isActive == true) return
+        val request = queue.takeAutoplayRequest() ?: return
+        // Start dispatched: publication must finish before an immediate fake transport answers.
+        autoplayJob = scope.launch(start = CoroutineStart.LAZY) {
+            val tracks = try {
+                boundaries?.autoplayCandidates?.invoke(request.seed.rawId, request.excludedRawIds, request.count)
+                    ?: run {
+                        autoplayTransportOpened = true
+                        AutoplayCandidateSource(account.providerInstanceId, autoplayTransport)
+                            .candidates(request.seed.rawId, request.excludedRawIds, request.count).map { track ->
+                                AndroidTrack(track.id.providerInstanceId, track.id.rawId, track.title,
+                                    track.credits.joinToString { it.name }, track.albumTitle,
+                                    track.duration.inWholeMilliseconds, track.artworkKey, track.albumRawId)
+                            }
+                    }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { emptyList() }
+            if (closed) return@launch
+            tracks.forEach(::remember)
+            captureEdit(queue.appendAutoplay(request.key, tracks.map {
+                PlaybackQueueItem(ProviderItemId(it.providerInstanceId, it.rawId), it.durationMilliseconds?.milliseconds, it.albumRawId)
+            }))
+            publish()
+        }.also { job -> job.invokeOnCompletion {
+            autoplayJob = null
+            timerHandler.post { if (!closed) answerAutoplay() }
+        }; job.start() }
+    }
+
     public fun setShuffle(enabled: Boolean) {
         if (!live() || refuseForeignQueue()) return
-        capture(queue.setShuffle(enabled).effects); publish()
+        captureEdit(queue.setShuffle(enabled)); publish()
     }
 
     public fun cycleRepeatMode() {
         if (!live() || refuseForeignQueue()) return
-        capture(queue.cycleRepeatMode().effects); publish()
+        captureEdit(queue.cycleRepeatMode()); publish()
     }
 
     private fun queueHasNext(): Boolean {
@@ -862,7 +1025,8 @@ public class AndroidPlaybackController internal constructor(
             field("artist")?.takeIf { it.isNotBlank() } ?: known?.artist,
             field("album")?.takeIf { it.isNotBlank() } ?: known?.album,
             duration?.inWholeMilliseconds ?: known?.durationMilliseconds,
-            field("coverArt")?.takeIf { it.isNotBlank() } ?: known?.artworkKey)
+            field("coverArt")?.takeIf { it.isNotBlank() } ?: known?.artworkKey,
+            field("albumId") ?: known?.albumRawId)
         remember(track)
         return Song(container, duration, track)
     }
@@ -879,7 +1043,8 @@ public class AndroidPlaybackController internal constructor(
         val known = metadata[id]
         metadata[id] = if (known == null) track else AndroidTrack(track.providerInstanceId, track.rawId,
             track.title.ifBlank { known.title }, track.artist ?: known.artist, track.album ?: known.album,
-            track.durationMilliseconds ?: known.durationMilliseconds, track.artworkKey ?: known.artworkKey)
+            track.durationMilliseconds ?: known.durationMilliseconds, track.artworkKey ?: known.artworkKey,
+            track.albumRawId ?: known.albumRawId)
     }
 
     private fun mediaItem(plan: PlaybackPlan): MediaItem {
@@ -1076,7 +1241,12 @@ public class AndroidPlaybackController internal constructor(
 
     private fun command(command: PlaybackCommand) {
         checkMain()
-        if (command is PlaybackCommand.Stop) { activePlan = null; pendingResume = null }
+        if (command is PlaybackCommand.Stop || command is PlaybackCommand.Release) {
+            preloadJob?.cancel(); preloadJob = null
+            preloadAttempt?.let { queue.discardPreload(it) }
+            preloadAttempt = null
+            activePlan = null; pendingResume = null
+        }
         val outcome = engine.executeOnPlayerThread(command)
         if (outcome is PlaybackCommandOutcome.CommandRejected) {
             val reason = outcome.reason
@@ -1096,7 +1266,7 @@ public class AndroidPlaybackController internal constructor(
         val current = session?.let { metadata[it.itemId] }
         val entries = snapshot.entries.map { entry ->
             AndroidQueueEntry(entry.queueEntryId.value, metadata[entry.itemId]
-                ?: AndroidTrack(entry.itemId.providerInstanceId, entry.itemId.rawId, ""))
+                ?: AndroidTrack(entry.itemId.providerInstanceId, entry.itemId.rawId, ""), entry.isAutoplay)
         }
         // Without a session the player still holds the last song's position; it describes nothing.
         mutableState.value = AndroidPlaybackState(current?.title.orEmpty(),
@@ -1124,7 +1294,83 @@ public class AndroidPlaybackController internal constructor(
             skipNotice = skipNotice,
             playingDownload = session != null && activePlan is AndroidLocalPlaybackPlan,
             droppedAdditions = droppedAdditions,
-            needsReconnect = needsReconnect)
+            needsReconnect = needsReconnect,
+            autoplayEnabled = snapshot.autoplayEnabled, autoplayActive = snapshot.autoplayActive,
+            crossfadeSeconds = crossfadeSeconds, sleepTimer = sleepTimer,
+            sleepRemainingMilliseconds = sleepCountdown.remainingMilliseconds(SystemClock.elapsedRealtime()),
+            queueConfirmation = queueConfirmation)
+        engine.setCrossfade(snapshot.crossfadeIntoNext.inWholeMilliseconds)
+        if (snapshot.crossfadeIntoNext.inWholeMilliseconds == 0L) preloadAttempt?.let(::discardOverlap)
+        else prepareOverlap()
+        answerAutoplay()
+    }
+
+    private fun notePreloadFailure(plan: RemotePlaybackWirePlan, error: DomainError) =
+        notePreloadResolutionFailure(error, plan.isTranscoded())
+
+    private fun notePreloadResolutionFailure(error: DomainError, isTranscoded: Boolean) {
+        wire.transcodeBudget.observeFailure(PlaybackWireRequestPurpose.Preload, isTranscoded, error)
+        if (error is DomainError.Server.Busy) preloadBlockedUntilMillis = SystemClock.elapsedRealtime() +
+            (error.retryAfter?.inWholeMilliseconds ?: 5_000L).coerceAtLeast(1_000L)
+    }
+
+    private fun discardOverlap(attempt: AttemptId) {
+        if (preloadAttempt == attempt) {
+            preloadJob?.cancel(); preloadJob = null; preloadAttempt = null; preloadConsumed = null
+        }
+        engine.executeOnPlayerThread(PlaybackCommand.DiscardPreloaded(id(), attempt))
+        val result = queue.discardPreload(attempt)
+        capture(result.effects)
+        result.startDirective?.let(::start)
+    }
+
+    /** Resolve only core-approved overlap boundaries; a zero boundary keeps the existing path. */
+    private fun prepareOverlap() {
+        if (closed || !ownsActiveQueue() || preloadAttempt != null || activePlan == null ||
+            SystemClock.elapsedRealtime() < preloadBlockedUntilMillis) return
+        if (boundaries?.player != null && boundaries.overlapPlayer == null) return
+        val snapshot = queue.snapshot()
+        val session = snapshot.currentSession ?: return
+        if (session.currentAttempt.phase != PlaybackAttemptPhase.Progressing) return
+        val next = snapshot.entries.getOrNull((snapshot.currentIndex ?: -1) + 1)
+            ?: snapshot.entries.firstOrNull()
+        val boundary = "${session.currentAttempt.attemptId}:${next?.queueEntryId}:${snapshot.crossfadeIntoNext}"
+        if (preloadTriedBoundary == boundary) return
+        preloadTriedBoundary = boundary
+        val directive = queue.preloadNext(session.playbackSessionId).preloadDirective ?: return
+        preloadAttempt = directive.attemptId
+        preloadJob = scope.launch {
+            try {
+                val local = localPlans?.localPlan(directive.itemId.rawId)
+                val plan = if (local != null) AndroidLocalPlaybackPlan(directive.playbackSessionId,
+                    directive.attemptId, directive.itemId, local)
+                else {
+                    if (!contactOpen()) { discardOverlap(directive.attemptId); return@launch }
+                    val song = loadSong(directive.itemId.rawId)
+                    val target = ANDROID_PROFILE.transcodingProfiles.first().container
+                    val request = PlaybackResolveRequest(directive.playbackSessionId, directive.attemptId,
+                        directive.itemId, song.container ?: target, false, ANDROID_PROFILE,
+                        LegacyPlaybackPreference(if (song.container == null) target else null, null))
+                        .withStreamingQuality(streamingQuality.currentQuality)
+                    when (val result = boundaries?.resolve?.invoke(request) ?: wire.resolve(request)) {
+                        is PlaybackResolutionResult.Resolved -> result.plan
+                        is PlaybackResolutionResult.Failed -> {
+                            notePreloadResolutionFailure(result.error, song.container == null || streamingQuality.currentQuality.maxBitRateKbps != null)
+                            discardOverlap(directive.attemptId); return@launch
+                        }
+                    }
+                }
+                if (closed || preloadAttempt != directive.attemptId) return@launch
+                if (plan is RemotePlaybackWirePlan && !wire.transcodeBudget.maySchedule(
+                    PlaybackWireRequestPurpose.Preload, plan.isTranscoded(),
+                    ActiveTranscodeCounts(currentPlayback = if ((activePlan as? RemotePlaybackWirePlan)?.isTranscoded() == true) 1 else 0))) {
+                    discardOverlap(directive.attemptId); return@launch
+                }
+                val outcome = engine.executeOnPlayerThread(PlaybackCommand.PreloadNext(id(), directive.attemptId, plan))
+                if (outcome is PlaybackCommandOutcome.CommandRejected) discardOverlap(directive.attemptId)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { discardOverlap(directive.attemptId) }
+        }
     }
 
     override fun close() {
@@ -1138,7 +1384,9 @@ public class AndroidPlaybackController internal constructor(
         droppedAdditions = null
         mutableState.value = mutableState.value.copy(skipNotice = null, droppedAdditions = null)
         resolution?.cancel(); startJob?.cancel(); retryDelivery.cancel(); artworkJob?.cancel(); metadataFill?.cancel()
+        timerHandler.removeCallbacks(timerTick)
         deliveries.close(); scope.cancel()
+        if (autoplayTransportOpened) autoplayTransport.close()
         sender.close(); requests.close(); wire.close(); store.close()
     }
 
@@ -1171,4 +1419,6 @@ internal class AndroidPlaybackControllerBoundaries(
     val artwork: AndroidArtworkRepository? = null,
     val localPlans: AndroidLocalPlaybackSource? = null,
     val prepareLocalSource: ((AndroidLocalPlaybackPlan) -> Unit)? = null,
+    val overlapPlayer: (() -> Player)? = null,
+    val autoplayCandidates: (suspend (String, Set<String>, Int) -> List<AndroidTrack>)? = { _, _, _ -> emptyList() },
 )

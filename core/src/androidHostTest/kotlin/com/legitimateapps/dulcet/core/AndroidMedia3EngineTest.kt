@@ -182,6 +182,69 @@ class AndroidMedia3EngineTest {
         engine.executeOnPlayerThread(PlaybackCommand.Release(commandId()))
     }
 
+    @Test fun overlappingBoundaryEndsOutgoingOnceThenTailReportsNothingAndIncomingCountsOnce() {
+        val outgoing = PlayerProbe()
+        val incoming = PlayerProbe()
+        val first = playbackPlan()
+        val second = playbackPlan(attempt = "attempt:incoming", session = "session:incoming")
+        val core = PlaybackCoreStateMachine()
+        core.startPlaying(PlaybackSessionStart(QueueEntryId("first"), first.playbackSessionId,
+            first.attemptId, first.itemId, 40.seconds))
+        core.registerPreloaded(PlaybackSessionStart(QueueEntryId("second"), second.playbackSessionId,
+            second.attemptId, second.itemId, 40.seconds))
+        val events = mutableListOf<PlaybackEngineEvent>()
+        val records = mutableListOf<RecordedPlaybackEvent>()
+        val engine = AndroidMedia3Engine(outgoing.player, prepareSource = {},
+            createOverlapPlayer = { incoming.player }, prepareOverlapSource = { _, _ -> })
+        engine.setEventListener { event ->
+            events += event
+            records += core.recordPlaybackEvent(event).effects.filterIsInstance<PlaybackCoreEffect.RecordPlaybackEvent>().map { it.event }
+        }
+        engine.setCrossfade(5_000)
+        engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), first.attemptId, first))
+        engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+        outgoing.state = Player.STATE_READY; outgoing.events()
+        assertIs<PlaybackCommandOutcome.CommandAccepted>(engine.executeOnPlayerThread(
+            PlaybackCommand.PreloadNext(commandId(), second.attemptId, second)))
+        incoming.state = Player.STATE_READY
+        repeat(70) { outgoing.position += 500; advance(500) }
+        assertEquals(1, events.filterIsInstance<PlaybackEngineEvent.EndedNaturally>().count { it.attemptId == first.attemptId })
+        assertEquals(1, events.filterIsInstance<PlaybackEngineEvent.AdvancedToPreloaded>().size)
+        assertTrue(outgoing.requested && incoming.requested, "Both players must be playing during the overlap")
+        assertNull(outgoing.listener, "The outgoing tail has no observer and cannot report its physical end")
+        repeat(5) { incoming.position += 500; advance(500) }
+        assertEquals(0.5f, outgoing.volume)
+        assertEquals(0.5f, incoming.volume)
+        repeat(5) { incoming.position += 500; advance(500) }
+        assertTrue(outgoing.released)
+        assertEquals(1f, incoming.volume)
+        repeat(65) { incoming.position += 500; advance(500) }
+        incoming.state = Player.STATE_ENDED; incoming.events()
+        assertEquals(2, events.filterIsInstance<PlaybackEngineEvent.EndedNaturally>().size)
+        assertEquals(2, records.filterIsInstance<RecordedPlaybackEvent.SubmittedPlay>().size,
+            "Outgoing and incoming progressing sessions count once each")
+        engine.executeOnPlayerThread(PlaybackCommand.Release(commandId()))
+    }
+
+    @Test fun zeroOverlapKeepsNaturalBoundaryAndDoesNotCreateASecondPlayer() {
+        val probe = PlayerProbe()
+        val events = mutableListOf<PlaybackEngineEvent>()
+        val plan = playbackPlan()
+        val engine = AndroidMedia3Engine(probe.player, prepareSource = {},
+            createOverlapPlayer = { error("Zero boundary may never allocate another player") }, prepareOverlapSource = { _, _ -> })
+        engine.setEventListener { events += it }
+        engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), plan.attemptId, plan))
+        assertIs<PlaybackCommandOutcome.CommandRejected>(engine.executeOnPlayerThread(
+            PlaybackCommand.PreloadNext(commandId(), plan.attemptId, plan)))
+        engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+        probe.state = Player.STATE_READY; probe.events()
+        repeat(79) { probe.position += 500; advance(500) }
+        assertTrue(events.none { it is PlaybackEngineEvent.EndedNaturally || it is PlaybackEngineEvent.AdvancedToPreloaded })
+        probe.position = 40_000; probe.state = Player.STATE_ENDED; probe.events()
+        assertEquals(1, events.filterIsInstance<PlaybackEngineEvent.EndedNaturally>().size)
+        engine.executeOnPlayerThread(PlaybackCommand.Release(commandId()))
+    }
+
     @Test fun platformErrorAndNestedCredentialCanariesNeverReachTheCoreEvent() {
         val fake = PlayerProbe()
         val engine = AndroidMedia3Engine(fake.player, prepareSource = {})
@@ -297,6 +360,8 @@ internal class PlayerProbe {
     val seekCommands = mutableListOf<Long>()
     var listener: Player.Listener? = null
     var state = Player.STATE_IDLE
+    var volume = 1f
+    var released = false
     var position = 0L
     var requested = false
     var suppression = Player.PLAYBACK_SUPPRESSION_REASON_NONE
@@ -310,6 +375,8 @@ internal class PlayerProbe {
             "getApplicationLooper" -> Looper.getMainLooper()
             "addListener" -> { listener = args!![0] as Player.Listener; null }
             "removeListener" -> { listener = null; null }
+            "getVolume" -> volume
+            "setVolume" -> { volume = args!![0] as Float; null }
             "getPlaybackState" -> state
             "getCurrentPosition" -> position
             "getDuration" -> 40_000L
@@ -333,7 +400,8 @@ internal class PlayerProbe {
             }
             "getAvailableCommands" -> Player.Commands.Builder().addAllCommands().build()
             "clearMediaItems" -> { onClearMediaItems(); null }
-            "prepare", "stop", "release" -> null
+            "release" -> { released = true; null }
+            "prepare", "stop" -> null
             "toString" -> "PlayerProbe"
             else -> throw AssertionError("Unmodeled Player call ${method.name}")
         }
