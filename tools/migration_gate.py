@@ -29,6 +29,7 @@ SCHEMA_INTENT_TABLES = {
     "credit",
     "genre",
     "library_starred",
+    "library_depth_entry",
     "my_library_item",
     "my_library_state",
     "playlist",
@@ -69,6 +70,7 @@ REQUIRED_IMPLEMENTED_TABLES = {
     "credit",
     "genre",
     "library_starred",
+    "library_depth_entry",
     "playlist",
     "playlist_entry",
     "queue_entry",
@@ -141,6 +143,7 @@ COMPARED_CACHE_ROWS_SINCE_VERSION = {
     "cache_playlist": 7,
     "my_library_item": 9,
     "my_library_state": 9,
+    "library_depth_entry": 10,
 }
 
 
@@ -1145,7 +1148,26 @@ CACHE_ROW_NEGATIVE_CONTROLS = (
         ("cache_playlist: compared cache rows changed",),
     ),
 )
-# Once pins exist in a released fixture they are protected rows like any other.
+# Device-only Library choices cannot be reconstructed from the server.
+LIBRARY_DEPTH_NEGATIVE_CONTROLS = (
+    (
+        "library_category_values_replaced",
+        "UPDATE library_depth_entry SET value = '[\"title\",\"all\"]' WHERE category = 'category'",
+        ("library_depth_entry: compared cache rows changed",),
+    ),
+    (
+        "library_pins_and_recents_deleted",
+        "DELETE FROM library_depth_entry WHERE category IN ('pin.album', 'search')",
+        ("library_depth_entry: compared cache rows changed",),
+    ),
+    (
+        "library_account_namespace_dropped",
+        "DELETE FROM library_depth_entry WHERE server_id = 'server:fixture-beta'",
+        ("library_depth_entry: compared cache rows changed",),
+    ),
+)
+
+# Once download/queue pins exist in a released fixture they are protected rows like any other.
 PROTECTED_PIN_NEGATIVE_CONTROLS = (
     (
         "download_pins_dropped",
@@ -1276,6 +1298,8 @@ def main() -> None:
         fixtures[compared_since], compared_since, current, CACHE_ROW_NEGATIVE_CONTROLS
     )
     prove_negative_controls(fixtures[current], current, current, STRUCTURE_NEGATIVE_CONTROLS)
+    depth_version = COMPARED_CACHE_ROWS_SINCE_VERSION["library_depth_entry"]
+    prove_negative_controls(fixtures[depth_version], depth_version, current, LIBRARY_DEPTH_NEGATIVE_CONTROLS)
     control_count = (
         len(NEGATIVE_CONTROLS)
         + len(PIN_NEGATIVE_CONTROLS)
@@ -1283,6 +1307,7 @@ def main() -> None:
         + len(UPGRADE_NEGATIVE_CONTROLS)
         + len(CACHE_ROW_NEGATIVE_CONTROLS)
         + len(STRUCTURE_NEGATIVE_CONTROLS)
+        + len(LIBRARY_DEPTH_NEGATIVE_CONTROLS)
         + 1  # latest_fixture_drift
     )
     print(
@@ -1294,6 +1319,7 @@ def main() -> None:
         f"indexes and CHECK constraints), "
         f"cache_playlist rows compared from v{compared_since} ({len(compared_rows)} rows, "
         f"{len(stated)} with the added fields stated), "
+        f"library_depth_entry rows compared from v{depth_version}, "
         f"fixture v{current} equal to the .sq schema ({latest_objects} objects), "
         f"download file reconciliation, and {control_count} explicit destructive "
         "negative controls"

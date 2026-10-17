@@ -263,6 +263,8 @@ internal data class CacheAlbumRecord(
     val songCount: Int? = null,
     val artworkKey: String? = null,
     val userState: CacheUserState = CacheUserState(),
+    val releaseTypes: List<String> = emptyList(),
+    val originalReleaseDate: String? = null,
 )
 
 internal data class CacheTrackRecord(
@@ -475,6 +477,20 @@ internal class BoundSeenCache internal constructor(
     private val rowCounts: () -> CacheRowCounts,
 ) {
     private val queries get() = database.seenCacheQueries
+    internal val depthQueries get() = database.libraryDepthQueries
+    private val releaseMetadata by lazy {
+        depthQueries.selectAlbumMetadata(serverId).executeAsList()
+            .associate { it.raw_id to decodeAlbumMetadata(it.value_) }.toMutableMap()
+    }
+    private fun releaseMetadata(rawId: String): Pair<List<String>, String?> = releaseMetadata[rawId] ?: (emptyList<String>() to null)
+    internal fun depthPut(category: String, rawId: String, value: String, sequence: Long = issue()) {
+        depthQueries.putEntry(serverId, category, rawId, value, sequence)
+        if (category == "albumMetadata") releaseMetadata[rawId] = decodeAlbumMetadata(value)
+    }
+    internal fun depthValue(category: String, rawId: String): String? =
+        depthQueries.selectEntry(serverId, category, rawId).executeAsOneOrNull()
+    internal fun localTracks(): List<CachedTrack> = depthQueries.localTracks(serverId).executeAsList().mapNotNull { track(it) }
+
 
     /**
      * Told the `dulcetInLibrary` flag of every artist, album and track a live response writes, with
@@ -616,6 +632,7 @@ internal class BoundSeenCache internal constructor(
                 raw_id = album.rawId,
             )
         }
+        depthPut("albumMetadata", album.rawId, encodeAlbumMetadata(album), stamp.issueSeq)
         replaceCredits("album", album.rawId, album.credits)
         return true
     }
@@ -1063,6 +1080,8 @@ internal class BoundSeenCache internal constructor(
             delete = { rawId ->
                 queries.deleteCredits(serverId, "album", rawId)
                 queries.deleteAlbum(serverId, rawId)
+                depthQueries.deleteEntry(serverId, "albumMetadata", rawId)
+                releaseMetadata.remove(rawId)
                 known.albums -= 1
                 albums += rawId
             },
@@ -1261,6 +1280,8 @@ internal class BoundSeenCache internal constructor(
             songCount = song_count?.toInt(),
             artworkKey = artwork_key,
             userState = CacheUserState(starred.asBoolean(), starred_at, user_rating?.toInt(), play_count, played),
+            releaseTypes = releaseMetadata(raw_id).first,
+            originalReleaseDate = releaseMetadata(raw_id).second,
         ),
         CacheRowState(fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone == 1L),
         detailComplete = detail_complete == 1L,

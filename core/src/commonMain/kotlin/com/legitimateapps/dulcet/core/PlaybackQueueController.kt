@@ -175,11 +175,15 @@ internal class PlaybackQueueController(
     private var autoplayGeneration = 0L
     /** The AutoPlay request last handed out; it is not handed out again ([takeAutoplayRequest]). */
     private var takenAutoplayKey: String? = null
+    /** The AutoPlay request last answered, found something or not; it is no longer outstanding. */
+    private var answeredAutoplayKey: String? = null
     /**
-     * The queue finished at a natural end while an AutoPlay request was outstanding: when its
-     * entries arrive, the first of them starts, as if they had been there in time.
+     * The queue finished at a natural end while this AutoPlay request was outstanding: when its
+     * entries arrive, the first of them starts, as if they had been there in time. Only that
+     * request's answer starts anything -- a later request (the setting toggled, a track added
+     * to the finished queue) is a different key and only appends.
      */
-    private var finishedAwaitingAutoplay = false
+    private var finishedAwaitingAutoplayKey: String? = null
     private var stopPoint: PlaybackStopPoint? = null
     private var crossfade: Duration = Duration.ZERO
     private var registeredPreload: RegisteredPreload? = null
@@ -353,6 +357,9 @@ internal class PlaybackQueueController(
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = queues.load(serverId)
         if (key != takenAutoplayKey || state.autoplayKey() != key) return emptyTransition()
+        answeredAutoplayKey = key
+        val awaited = finishedAwaitingAutoplayKey == key
+        finishedAwaitingAutoplayKey = null
         val present = state.entries.mapTo(mutableSetOf()) { it.providerItemId.rawId }
         val fresh = items
             .filter { it.itemId.providerInstanceId == serverId.value }
@@ -367,8 +374,7 @@ internal class PlaybackQueueController(
             ).also { remember(it, item) }
         }
         entries.forEach { queues.insert(serverId, it, QueueInsertionMode.Append) }
-        if (finishedAwaitingAutoplay && playback.currentSession == null) {
-            finishedAwaitingAutoplay = false
+        if (awaited && playback.currentSession == null) {
             val updated = queues.load(serverId)
             val current = updated.currentIndex
             if (current != null && current + 1 in updated.entries.indices) {
@@ -1037,7 +1043,8 @@ internal class PlaybackQueueController(
             return startAt(state, 0, terminalEffects)
         }
         // AutoPlay was asked for more and has not answered yet: its first entry starts on arrival.
-        finishedAwaitingAutoplay = takenAutoplayKey != null && state.autoplayKey() == takenAutoplayKey
+        val outstanding = takenAutoplayKey?.takeIf { it != answeredAutoplayKey }
+        finishedAwaitingAutoplayKey = outstanding?.takeIf { state.autoplayKey() == it }
         return finishQueue(terminalEffects)
     }
 
@@ -1118,7 +1125,7 @@ internal class PlaybackQueueController(
         registeredPreload?.let { playback.discardPreloaded(it.start.attemptId) }
         registeredPreload = null
         endHeldForPreload = false
-        finishedAwaitingAutoplay = false
+        finishedAwaitingAutoplayKey = null
         val start = newStart(entry)
         val coreTransition = when {
             playback.currentSession == null -> playback.startPlaying(start)

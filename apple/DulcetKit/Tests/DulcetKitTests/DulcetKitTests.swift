@@ -372,7 +372,7 @@ func searchFieldResolvesToIntrinsicHeightAcrossFlexibleContentStates() throws {
             onLoadMore: { _ in },
             onRetry: {},
             onActivateResult: { _ in }
-        ))
+        ).environment(store))
         view.sizingOptions = []
         view.frame = NSRect(x: 0, y: 0, width: 947, height: 728)
         view.layoutSubtreeIfNeeded()
