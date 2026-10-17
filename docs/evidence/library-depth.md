@@ -6,8 +6,9 @@ The library-depth feature rows in `FEATURES.yml` remain **partial**, except Down
 on Apple TV, which is **n/a** under the existing tvOS download policy.
 Source implementation and shared-core tests do not establish that a native screen works.
 The Android phone and TV completed-download/offline-playback proofs passed locally.
-Other runtime limits and failed attempts are recorded below. Required Apple CI and the
-Android host-test soaks are dispatched; their final results are pending.
+Other runtime limits and failed attempts are recorded below. The final Android phone
+and TV host-test soaks passed. Required Apple CI has reported a TV compile failure and
+an iPad pin-relaunch failure; its remaining legs are still in progress.
 The existing Library, My Library and Search rows retain their earlier evidence and statuses.
 
 The native surfaces cover category controls, Downloaded, pins, shuffle entry points,
@@ -202,11 +203,10 @@ reviewer did not rerun the suites:
   with zero failures or errors, including the initial asynchronous preference snapshot,
   rapid persisted category/pin intents, Downloaded local-only controls, pin/unpin and
   server-wide shuffle selection. Both production apps and both instrumented APKs rebuilt.
-  The preceding pin test timed out once after the pin had been stored but before its
-  home shortcut appeared. An isolated rerun and the complete final five-case class passed;
-  no cause is asserted for that earlier timeout. The required 20-repetition host soak
-  remains the stability gate. The final changed filters select **15 phone** and **7 TV**
-  tests per repetition; the earlier host counts overlap these cases.
+  A preceding pin test timed out after the pin had been stored but before its home
+  shortcut appeared. The initial isolated rerun and complete five-case class passed;
+  the later soak exposed the repeated failure and led to the causal regression and
+  correction recorded below. The earlier host counts overlap the soak-selected cases.
 - Native Mac production integration compiled successfully, including the final Swift
   bridge and latest Kotlin framework (`mac-integration-final.log`, observed by the owning
   implementation agent). The Mac UI attempt was blocked before test execution: all
@@ -238,16 +238,32 @@ mounted. This is a host execution blocker, not a diagnosis of an application fai
 **No simulator behavior was verified by that attempt.** Native Mac production integration
 compilation subsequently passed; the Mac UI runner was blocked before application main,
 as recorded above. The final Android phone and TV completed-download proofs passed.
-The hosted 20-repetition Android host-test soaks and required Apple CI are dispatched;
-no broad platform status is promoted on these bounded local results.
+The hosted Android host-test soak results and the incomplete Apple CI observations are
+recorded below. No broad platform status is promoted on these bounded results.
 
-## Hosted validation in progress
+## Hosted validation
 
 [Apple CI run 38993971381](https://github.com/legitimate-apps/dulcet/actions/runs/38993971381)
 was dispatched for `705a2dc0`, including the iPhone-only library-depth selector and
 execution guard. The earlier run for `14de7a41` was canceled while all four Apple
 platform/conformance legs were still queued; it supplied no native runtime result.
-No result from the replacement run is claimed yet.
+The iPad My Library suite executed **5 tests with 1 failure in 452.068 seconds**.
+`testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable` failed at
+the offline-relaunch album-row assertion. The failure accessibility hierarchy contained
+the Pinned heading, followed directly by the device-storage caption and Songs link,
+with no album row anywhere in the hierarchy. This establishes an empty rendered pinned
+region after a saved pin; it does not establish the underlying metadata or publication
+cause. The later `testLibrarySearchGroupsAndRecentQuerySurviveRelaunch` passed in
+**59.758 seconds**, a bounded iPad runtime observation from this otherwise failed suite.
+The CI execution guard and JUnit conversion did not run after the failing suite.
+
+The [Mac/core conformance job](https://github.com/legitimate-apps/dulcet/actions/runs/38993971381/job/117282299260)
+failed while building DulcetTV: `DulcetLibraryDepth.swift:207` used the `.roundedBorder`
+text-field style, which is unavailable on tvOS. It stopped before the Mac UI proof.
+The [iPad conformance job](https://github.com/legitimate-apps/dulcet/actions/runs/38993971381/job/117282299242)
+failed its proof step as described above. The iPhone and platform legs have not completed;
+no pass is claimed for them. These are actual build/test failures, separate from the
+local host blockers. A later fix requires its own validation.
 
 The hosted Mac My Library recipe targets the disposable `DulcetMyLibraryMacHost`, built
 from the production Mac and shared Swift sources. `tools/ci/run-my-library-proofs`
@@ -256,3 +272,25 @@ sets `CODE_SIGN_STYLE=Manual`, `CODE_SIGN_IDENTITY=-` and an empty
 separate from the earlier local launch blocked during sandbox initialization. A passing
 hosted UI result would establish the tested app paths under that proof host; it would
 not by itself establish signed production sandbox behavior.
+
+## Android host-soak correction and final results
+
+The [initial phone soak](https://github.com/legitimate-apps/dulcet/actions/runs/38993719454)
+at `14de7a41` executed **300 tests across 20 repetitions**: 10 repetitions passed and
+10 failed at the pinned-album home assertion. A stored pin had already been observed
+before that assertion. The implementation owner then added a regression that reproduced
+the failure before the fix (**1 test, 1 failure**), distinguishing durable pin state from
+a pinned header not composed by the phone's lazy layout. Commit `5a9b3a3c` corrected
+that phone layout and added the regression. Its local follow-up passed **16 tests with
+zero failures**: six library-depth, eight category-sort and two search tests; both phone
+APKs compiled. These regression and local-check counts are implementation-owner reports.
+
+The [replacement phone soak](https://github.com/legitimate-apps/dulcet/actions/runs/38994985757)
+at `5a9b3a3c` completed **20 passed repetitions, zero failed**, with **320 test
+executions and zero skips** (20 × 16). The existing
+[TV soak](https://github.com/legitimate-apps/dulcet/actions/runs/38993723283) at
+`14de7a41` completed **20 passed repetitions, zero failed**, with **140 test executions**
+(20 × 7). The phone correction changed only phone sources; the TV and shared sources
+are unchanged from that TV run. GitHub reports both final runs successful. These are
+hosted Android host-test observations, separate from the earlier APK-identified emulator
+completed-download proofs and from native Apple runtime behavior.
