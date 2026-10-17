@@ -35,6 +35,7 @@ Each setting can be given as `--name=value` or in the environment as `DULCET_NAM
 | `rescan-interval` | `0` (off) | Seconds between quiet change checks. |
 | `scan-on-start` | `true` | Scan once at start. |
 | `public-url` | request origin | Public server origin, such as `https://music.example`, for OAuth metadata, redirects and media URLs behind a proxy. |
+| `trusted-proxies` | empty | Comma-separated literal proxy IP addresses or IPv4/IPv6 CIDRs allowed to assert client addresses. See reverse proxy setup below. |
 | `webhook-allow-private-targets` | `false` | Allow private and loopback HTTPS webhook targets; link-local and metadata addresses remain refused. |
 | `webhook-allow-other-ports` | `false` | Allow HTTPS webhook target ports other than 443. |
 | `test-mode` | `false` | Enable the Testing profile on a disposable data directory. Data previously served without test mode refuse this setting. |
@@ -53,15 +54,52 @@ tags, and changes nothing.
 
 Put the listener behind a TLS reverse proxy before exposing it to a network: OpenSubsonic sends
 credentials in query parameters. Disable access logs containing query strings at the proxy too.
-Failed authentication is limited to ten attempts per connection IP per minute; deployments behind
-one proxy should also configure per-client limits at that proxy. The server uses the socket peer,
-not untrusted forwarded headers.
+Failed authentication is limited to ten attempts per client IP per minute. Forwarded headers are
+ignored unless the socket peer matches an explicitly configured trusted proxy.
 
 The data folder must support POSIX owner-only file permissions for creating `secret.key`.
 
 `user add <name>` prompts for a password on a terminal, or reads `DULCET_USER_PASSWORD`.
 The import command reads `DULCET_IMPORT_PASSWORD`. Prefer those paths over password arguments,
 which appear in process listings and shell history.
+
+### Behind a reverse proxy or tunnel
+
+Set `public-url` to the external origin and `trusted-proxies` to the proxy addresses **as seen by
+Dulcet's socket listener**. For example, replacing the documentation address with your proxy:
+
+```sh
+export DULCET_PUBLIC_URL=https://music.example
+export DULCET_TRUSTED_PROXIES=192.0.2.10/32,2001:db8:42::10/128
+dulcet-server serve --music=DIR --data=DIR
+```
+
+The equivalent argument is `--trusted-proxies=192.0.2.10,2001:db8:42::10`. The empty default trusts
+no forwarded headers and retains socket-peer limits. Hostnames, invalid addresses and invalid
+CIDRs are refused at startup. With Cloudflare Tunnel, the socket peer is normally the connector
+or a local network intermediary, rather than a Cloudflare edge address; check the actual peer.
+
+For a trusted peer, the shared client-address policy used by OpenSubsonic failed-login limits,
+Dulcet API IP limits and OAuth IP limits selects:
+
+1. `CF-Connecting-IP`, if present.
+2. Otherwise `X-Real-IP`, if present.
+3. Otherwise the right-most untrusted address in `X-Forwarded-For`, walking past trusted proxy hops
+   from right to left. Claims farther left cannot override that boundary.
+
+Values must be literal IPs, without ports, brackets or IPv6 zone identifiers. Equivalent IPv6 and
+IPv4-mapped forms share limiter keys. A malformed or repeated selected header, malformed chain,
+more than 64 hops, a header over 8 KiB, or a chain containing only trusted hops falls back to the
+socket peer. A malformed higher-priority header never enables a lower-priority fallback. Headers
+from an untrusted socket peer are always ignored.
+
+Only trust proxies you control, using the narrowest address list. They must overwrite or remove
+client-supplied higher-priority headers: a plain reverse proxy that only appends `X-Forwarded-For`
+must also strip incoming `CF-Connecting-IP` and overwrite or strip `X-Real-IP`. Cloudflare supplies
+`CF-Connecting-IP` for its visitor; do not allow another route to the trusted proxy to supply an
+unchecked value. Keep per-client edge limits too. Trusting all addresses would let direct clients
+choose their own limiter keys. This setting does not change authentication or trust forwarded
+host/scheme headers; `public-url` remains the canonical external origin.
 
 ## Dulcet API v1
 
