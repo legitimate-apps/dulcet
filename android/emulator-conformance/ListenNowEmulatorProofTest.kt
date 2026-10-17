@@ -49,7 +49,9 @@ class ListenNowEmulatorProofTest {
     private fun scrollTo(tag:String) {
         compose.waitUntil("$tag can be reached",30_000) {
             runCatching {
-                compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag(tag))
+                // A LazyRow's children are not searchable by its ancestor LazyColumn until
+                // that shelf is composed. Bring the shelf into view, then select its first tile.
+                compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag(tag.substringBefore(".item.")))
                 compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
             }.getOrDefault(false)
         }
