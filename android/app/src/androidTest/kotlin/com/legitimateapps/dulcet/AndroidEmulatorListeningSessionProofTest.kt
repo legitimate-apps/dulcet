@@ -7,6 +7,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.lifecycle.Lifecycle
 import com.legitimateapps.dulcet.core.SleepTimerChoice
 import com.legitimateapps.dulcet.emulator.*
 import com.legitimateapps.dulcet.playback.PlaybackIntents
@@ -58,9 +59,9 @@ class AndroidEmulatorListeningSessionProofTest {
                 check(background.sleepTimer == SleepTimerChoice.Minutes15 && background.playWhenReady)
                 check(checkNotNull(background.sleepRemainingMilliseconds) < beforeHome - 1_000)
                 println("SLEEP TIMER OBSERVED background=true remaining-before=$beforeHome remaining-after=${background.sleepRemainingMilliseconds} playback=${background.phase}")
-                scenario.onActivity { it.startActivity(PlaybackIntents.showNowPlaying(context)) }
-                // Showing Now Playing intentionally dismisses transient sheets; reopen Up Next.
-                tapLabel("Up Next")
+                // Resume the activity owned by this scenario. A different playback intent changes
+                // its identity and prevents ActivityScenario from observing its teardown.
+                scenario.moveToState(Lifecycle.State.RESUMED)
                 await("Sleep countdown visible again") { nodes().any { it.text?.toString()?.startsWith("Sleep in ") == true } }
                 tapLabelStarting("Sleep in ")
                 tapLabel("Cancel sleep timer")
