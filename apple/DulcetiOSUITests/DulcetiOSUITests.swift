@@ -3424,12 +3424,14 @@ final class DulcetiOSUITests: XCTestCase {
 
         // 2. Plain: both lines, and nothing lit.
         guard let plainApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
-                                             compact: expectedCompact) else { return }
+                                             compact: expectedCompact),
+              playFromSearch("Ogg Probe", in: plainApp, compact: expectedCompact) else { return }
+        // A fresh phase has no Now Playing bar yet: activate its fixture before opening Up Next.
+        // Read the existing choice before any change, so a lost preference still fails here.
         var persistedAutoplay: Bool?
         guard chooseAutoplayForLyrics(false, in: plainApp, capturePrevious: { persistedAutoplay = $0 }) else { return }
         XCTAssertEqual(persistedAutoplay, false, "The plain phase must inherit the explicitly disabled AutoPlay choice")
-        guard persistedAutoplay == false,
-              playFromSearch("Ogg Probe", in: plainApp, compact: expectedCompact) else { return }
+        guard persistedAutoplay == false else { return }
         // A one-second track, played from a search that matches it alone with AutoPlay proven
         // off: the finished queue keeps it as Now Playing's track (spec §14.3).
         guard openNowPlayingFromBar(in: plainApp, expectingTitle: "Ogg Probe"),
