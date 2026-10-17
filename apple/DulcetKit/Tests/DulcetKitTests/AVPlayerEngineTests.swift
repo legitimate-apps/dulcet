@@ -53,9 +53,17 @@ struct AVPlayerCrossfadeTests {
         let faded = try #require(engine.crossfadeStateForTesting())
         #expect(abs(faded.incomingVolume + faded.outgoingVolume - 0.4) < 0.02)
         #expect(faded.incomingVolume > 0 && faded.outgoingVolume > 0)
-        _ = await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0))
+        #expect(await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0)) ==
+            .completed(commandID: .init("sleep-silence"), result: .withoutData))
+        // Read the actual AVPlayers until both report silence, within the still-live tail.
+        // This keeps the exact zero-gain check and records whether either player failed it.
+        try await waitUntil("master silence did not reach both real players", engine: engine, timeout: 1) {
+            guard let state = engine.crossfadeStateForTesting() else { return false }
+            return state.incomingVolume == 0 && state.outgoingVolume == 0
+        }
         let silent = try #require(engine.crossfadeStateForTesting())
-        #expect(silent.incomingVolume == 0 && silent.outgoingVolume == 0)
+        #expect(silent.incomingVolume == 0)
+        #expect(silent.outgoingVolume == 0)
         let boundary = fixture.events.snapshot
         let endIndex = try #require(boundary.firstIndex {
             if case let .endedNaturally(id, _) = $0 { id == fixture.first.attemptID } else { false }
@@ -143,13 +151,11 @@ struct AVPlayerCrossfadeTests {
         }
         // Keep the six-second fixture before its boundary while AVFoundation finishes both
         // seeks. A loaded host can otherwise naturally advance during the forward seek, before
-        // the back command is submitted. Overlap also requires the incoming item to be ready;
-        // an unready preload is correctly allowed to fall back to the gapless boundary.
+        // the back command is submitted. AVFoundation can defer loading the queued item while
+        // paused; readiness here belongs to the item being sought, before playback resumes.
         #expect(await execute(engine, .pause(commandID: .init("pause-for-seeks"))) ==
             .completed(commandID: .init("pause-for-seeks"), result: .withoutData))
-        try await waitUntil("both items were not ready for seeking", engine: engine, timeout: 30) {
-            fixture.originalPlayer.items().count == 2 &&
-            fixture.originalPlayer.items().allSatisfy { $0.status == .readyToPlay } &&
+        try await waitUntil("current item was not ready for seeking", engine: engine, timeout: 30) {
             fixture.events.snapshot.contains {
                 if case let .ready(id, _, seekability) = $0 {
                     id == fixture.first.attemptID && seekability == .seekable
