@@ -3396,9 +3396,22 @@ final class DulcetiOSUITests: XCTestCase {
         // 2. Plain: both lines, and nothing lit.
         guard let plainApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
                                              compact: expectedCompact),
-              playFromSearch("Ogg Probe", in: plainApp, compact: expectedCompact) else { return }
+              let originalAutoplay = setLyricsProofAutoplay(false, in: plainApp, compact: expectedCompact) else { return }
+        // AutoPlay now continues even a one-track search queue. This proof needs the queue to
+        // end on its one-second plain-lyrics fixture, so choose Off through Up Next, then put
+        // the person's original setting back even when a later assertion fails.
+        var autoplayCleanupURL = configuration.serverURL
+        defer {
+            if originalAutoplay,
+               let cleanupApp = launchConnected(serverURL: autoplayCleanupURL, configuration: configuration,
+                                                 compact: expectedCompact) {
+                XCTAssertNotNil(setLyricsProofAutoplay(true, in: cleanupApp, compact: expectedCompact),
+                                "The lyrics proof must restore its original AutoPlay setting")
+            }
+        }
+        guard playFromSearch("Ogg Probe", in: plainApp, compact: expectedCompact) else { return }
         // A one-second track, played from a search that matches it alone, so it is the whole
-        // queue: the finished queue keeps it as Now Playing's track (spec §14.3). Played from its
+        // queue with AutoPlay off: the finished queue keeps it as Now Playing's track (spec §14.3). Played from its
         // album it would advance to the next track and show that track's lyrics instead.
         guard openNowPlayingFromBar(in: plainApp, expectingTitle: "Ogg Probe"),
               openLyricsPanel(in: plainApp) != nil else { return }
@@ -3431,6 +3444,9 @@ final class DulcetiOSUITests: XCTestCase {
         // 4. A failed read, then Try Again.
         guard proxyLyricsFailure(song: failing, on: true, proxy: proxy) != nil else { return }
         afterTest.append { _ = self.proxyLyricsFailure(song: failing, on: false, proxy: proxy) }
+        // Reopen the same account for cleanup: switching from the proxy URL back to the direct
+        // URL would correctly clear its account-bound queue before Up Next can restore the switch.
+        autoplayCleanupURL = proxy.url
         guard let failedApp = launchConnected(serverURL: proxy.url, configuration: configuration,
                                               compact: expectedCompact),
               // From a search that matches it alone, so the queue ends on it: played from its
@@ -3465,6 +3481,53 @@ final class DulcetiOSUITests: XCTestCase {
             + " synced-lit=\(lit.debugDescription) placement=\(placement) plain-lines=\(plainShown)"
             + " none=\(noneShown.debugDescription) failed-reads=\(afterFailure.failed)"
             + " retry-reads=\(afterRetry?.forwardedAfterDisarm ?? 0)")
+    }
+
+    /// The preceding lyrics phase left a real queue to reopen. Change its persisted AutoPlay
+    /// switch through the app, read it back, and close the player before the next search.
+    @MainActor
+    private func setLyricsProofAutoplay(_ enabled: Bool, in app: XCUIApplication, compact: Bool) -> Bool? {
+        guard openNowPlayingFromBar(in: app, expectingTitle: nil) else { return nil }
+        if compact {
+            let upNext = app.buttons["dulcet.now-playing.up-next"].firstMatch
+            guard upNext.waitForExistence(timeout: 10) else {
+                XCTFail("The lyrics precondition needs Up Next's AutoPlay setting: " + app.debugDescription)
+                return nil
+            }
+            upNext.tap()
+        }
+        let toggle = app.switches["dulcet.upNext.autoplay.toggle"].firstMatch
+        let queue = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
+        guard queue.waitForExistence(timeout: 10) else {
+            XCTFail("Up Next must render before its AutoPlay setting is changed: " + app.debugDescription)
+            return nil
+        }
+        for _ in 0..<12 {
+            if toggle.exists && toggle.isHittable { break }
+            queue.swipeUp()
+        }
+        guard toggle.exists, toggle.isHittable,
+              let value = toggle.value as? String, ["0", "1"].contains(value) else {
+            XCTFail("Up Next must expose a readable, reachable AutoPlay switch: " + app.debugDescription)
+            return nil
+        }
+        let original = value == "1"
+        if original != enabled { toggle.tap() }
+        let expected = enabled ? "1" : "0"
+        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", expected), object: toggle
+        )], timeout: 10) == .completed else {
+            XCTFail("The lyrics proof must observe AutoPlay=\(enabled) after choosing it")
+            return nil
+        }
+        print("DULCET LYRICS AUTOPLAY original=\(original) selected=\(enabled)")
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        guard close.waitForExistence(timeout: 5), close.isHittable else {
+            XCTFail("The player must close after choosing the lyrics precondition")
+            return nil
+        }
+        close.tap()
+        return original
     }
 
     /// A streaming-quality cap chosen in the iPhone Connection screen reaches the server.
