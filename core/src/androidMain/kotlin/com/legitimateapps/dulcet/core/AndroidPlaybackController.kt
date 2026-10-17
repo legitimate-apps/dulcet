@@ -1303,7 +1303,12 @@ public class AndroidPlaybackController internal constructor(
             sleepRemainingMilliseconds = sleepCountdown.remainingMilliseconds(SystemClock.elapsedRealtime()),
             queueConfirmation = queueConfirmation)
         engine.setCrossfade(snapshot.crossfadeIntoNext.inWholeMilliseconds)
-        if (snapshot.crossfadeIntoNext.inWholeMilliseconds == 0L) preloadAttempt?.let(::discardOverlap)
+        if (snapshot.crossfadeIntoNext.inWholeMilliseconds == 0L) {
+            // An intentional zero boundary (Off or a sleep stop point) cancels this choice.
+            // Turning it back on may preload again; a failure at an unchanged boundary may not.
+            preloadTriedBoundary = null
+            preloadAttempt?.let(::discardOverlap)
+        }
         else prepareOverlap()
         answerAutoplay()
     }

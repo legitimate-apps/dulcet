@@ -154,6 +154,27 @@ class AndroidMedia3ListeningSessionTest {
         }
     }
 
+    @Test fun restoringCrossfadeAfterOffOrCancelledStopPointRepreloadsTheBoundary() {
+        val incoming = mutableListOf<PlayerProbe>()
+        Fixture(overlapFactory = { PlayerProbe().also { incoming += it }.player }).use { f ->
+            f.controller.setAutoplay(false)
+            f.controller.setCrossfade(5)
+            f.play("one", "two")
+            f.progress(1)
+            assertEquals(1, incoming.size)
+            f.controller.setCrossfade(0)
+            assertTrue(incoming.single().released)
+            f.controller.setCrossfade(5)
+            assertEquals(2, incoming.size, "Off then On restores the core-approved boundary")
+            f.controller.setSleepTimer(SleepTimerChoice.EndOfTrack)
+            assertTrue(incoming.last().released)
+            f.controller.setSleepTimer(null)
+            assertEquals(3, incoming.size, "Cancelling a stop point restores overlap")
+            assertEquals(listOf("one", "two", "two", "two"), f.prepared.map { it.itemId.rawId })
+            assertEquals(0, f.controller.state.value.currentIndex)
+        }
+    }
+
     @Test fun mediaSessionBridgeFollowsTheIncomingPlayersMetadataAndIntent() {
         val context = RuntimeEnvironment.getApplication()
         val outgoing = androidx.media3.exoplayer.ExoPlayer.Builder(context).build()
@@ -172,7 +193,7 @@ class AndroidMedia3ListeningSessionTest {
         } finally { bridge.release(); outgoing.release() }
     }
 
-    private class Fixture(val overlap: PlayerProbe? = null, val candidates: suspend (String, Set<String>, Int) -> List<AndroidTrack> = { _, _, _ -> emptyList() }) : AutoCloseable {
+    private class Fixture(val overlap: PlayerProbe? = null, val overlapFactory: (() -> androidx.media3.common.Player)? = null, val candidates: suspend (String, Set<String>, Int) -> List<AndroidTrack> = { _, _, _ -> emptyList() }) : AutoCloseable {
         val probe = PlayerProbe()
         val prepared = mutableListOf<RemotePlaybackWirePlan>()
         private val context = RuntimeEnvironment.getApplication()
@@ -183,7 +204,7 @@ class AndroidMedia3ListeningSessionTest {
                 resolve = { r -> PlaybackResolutionResult.Resolved(RemotePlaybackWirePlan(r.playbackSessionId, r.attemptId,
                     r.itemId, PlaybackDeliveryPath.Legacy, PlaybackDeliveryProtocol.HttpProgressive, AudioContainer.Wav,
                     PlaybackWireTranscodeDecision.LegacyHint(null, null), endpoint = "stream", parameters = mapOf("id" to r.itemId.rawId), resolutionRequest = r)) },
-                enqueueDelivery = {}, overlapPlayer = overlap?.let { { it.player } }, autoplayCandidates = candidates))
+                enqueueDelivery = {}, overlapPlayer = overlapFactory ?: overlap?.let { { it.player } }, autoplayCandidates = candidates))
         fun play(vararg ids: String) { controller.playQueue(ids.map(::track), 0, AndroidQueueSource.Search, "Search") }
         fun end() { probe.position = 40_000; probe.state = androidx.media3.common.Player.STATE_ENDED; probe.events() }
         fun progress(seconds: Int) {
