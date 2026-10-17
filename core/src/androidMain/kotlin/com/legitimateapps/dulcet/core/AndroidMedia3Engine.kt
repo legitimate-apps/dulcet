@@ -41,6 +41,14 @@ internal class AndroidMedia3Engine(
     private var fadeLength = 0L
     private var sleepGain = 1.0
     private var userVolume = 1.0
+    // Smooth the overlap independently of the slower core progress/reporting sampler.
+    private val fader = object : Runnable {
+        override fun run() {
+            if (tail == null || released) return
+            applyGains()
+            if (tail != null) handler.postDelayed(this, 50)
+        }
+    }
     private val preloadCallbacks = object : Player.Listener {
         override fun onPlayerError(error: PlaybackException) {
             val plan = preloaded?.first ?: return
@@ -57,7 +65,7 @@ internal class AndroidMedia3Engine(
         tail?.volume = (userVolume * sleepGain * (1.0 - fraction)).toFloat()
         if (fraction >= 1.0) releaseTail()
     }
-    private fun releaseTail() { tail?.release(); tail = null }
+    private fun releaseTail() { handler.removeCallbacks(fader); tail?.release(); tail = null }
     private fun discardPreload() {
         preloaded?.second?.let { it.removeListener(preloadCallbacks); it.release() }
         preloaded = null
@@ -95,6 +103,7 @@ internal class AndroidMedia3Engine(
         callbacks.onEvents(player, Player.Events(androidx.media3.common.FlagSet.Builder()
             .add(Player.EVENT_PLAYBACK_STATE_CHANGED).build()))
         applyGains()
+        handler.postDelayed(fader, 50)
         player.play()
         return true
     }

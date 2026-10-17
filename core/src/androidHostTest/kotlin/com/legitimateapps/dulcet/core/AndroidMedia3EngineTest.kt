@@ -212,7 +212,11 @@ class AndroidMedia3EngineTest {
         assertEquals(1, events.filterIsInstance<PlaybackEngineEvent.AdvancedToPreloaded>().size)
         assertTrue(outgoing.requested && incoming.requested, "Both players must be playing during the overlap")
         assertNull(outgoing.listener, "The outgoing tail has no observer and cannot report its physical end")
-        repeat(5) { incoming.position += 500; advance(500) }
+        incoming.position += 250; advance(250)
+        assertEquals(0.05f, incoming.volume, "Fade updates between core progress samples")
+        assertEquals(0.95f, outgoing.volume)
+        repeat(4) { incoming.position += 500; advance(500) }
+        incoming.position += 250; advance(250)
         assertEquals(0.5f, outgoing.volume)
         assertEquals(0.5f, incoming.volume)
         repeat(5) { incoming.position += 500; advance(500) }
