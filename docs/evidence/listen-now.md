@@ -2,16 +2,20 @@
 
 Listen Now is the first destination for a connected or saved account on iPhone, iPad, Mac,
 Apple TV, Android phone and Android TV. First-run connection retains the existing account flow.
-The feature remains `partial` in `FEATURES.yml` until its platform runtime checks complete;
-a compilation or shared test is not a substitute for that platform's UI execution.
+The feature remains `partial` in `FEATURES.yml` while the remaining native runtime gates and
+player playlist-context integration complete. Compilation and shared tests are recorded separately
+from each platform's UI execution.
 
 ## Shared and server behavior
 
-- `HomeRecommendationsTest`: server integration tests verify imported-style song plays,
+- `HomeRecommendationsTest`: two server integration tests verify imported-style song plays,
   timestamps, stars and ratings; user and source visibility; real playlist play context;
   advertised REST/API equivalence; bounds, authentication, scopes and private ETag revalidation.
   The REST context control verifies submitted member plays, ignored private/unrelated contexts,
   no history from reads/now-playing, monotonic retry timestamps and API/REST deduplication.
+  `ImporterTest/importsStarsRatingsPlaysAndPlaylistsThroughEachMatchingRoute` additionally
+  imports the actual annotations and requires populated recent, frequent, daily and favourites
+  shelves before any new local play; imported playlists alone do not manufacture listens.
 - `ListenNowTest`: five shared reader tests verify cached home before relaunch network I/O,
   retaining it on discovery failure, playlist identity, ordinary REST fallback, and optional
   similar-song behavior. Similar-song seeds are representative songs from a recently played
@@ -92,15 +96,13 @@ not native UI execution.
 | iPhone Home | 1 passed, 0 skipped; 35.622 seconds | [Apple run 38991471536](https://github.com/legitimate-apps/dulcet/actions/runs/38991471536), retained Home JUnit/xcresult |
 | iPad Home | 1 passed, 0 skipped; 51.905 seconds | Same run, separate iPad Home JUnit/xcresult |
 | Apple TV Home and corrected Mac connection controls | Pending | [replacement native run 38995086942](https://github.com/legitimate-apps/dulcet/actions/runs/38995086942) |
-| Full core/server/API and Android integration gate | Follow the PR checks; prior full run failed legacy TV setup before server tests | [PR #329 checks](https://github.com/legitimate-apps/dulcet/pull/329/checks) |
+| Full core/server/API and Android integration gate | Passed: server 132, API conformance 60, shared JVM/Android host 2,327, Android app host 1,753; zero failures/errors/skips | [core-ci 38995786940](https://github.com/legitimate-apps/dulcet/actions/runs/38995786940), actual JUnit case counts |
 
-Run 38992589271's following TV Library split control still assumed Library was the initial
-screen; it failed, and the control now selects Library explicitly. Both Android device jobs subsequently passed in run 38993487470, including both-server Home and Library controls. Its full host matrix found eight further legacy TV genre/sort/play/playlist setup assumptions, now corrected to enter Library explicitly. These failures occurred before server tests. Neither whole workflow is
-not a green integration gate. Its initial photo pull also found no files after Gradle uninstalled
-the target. The Home proof now copies each of its three photos to a shell-owned disposable directory
-before uninstall; the host requires all three. The first copy attempt incorrectly used shell
-operators in a directly executed command and retained no files. Final photo-export validation
-is tracked by the PR checks.
+The full integration run above passed after legacy navigation controls were updated to enter
+Library explicitly from the new Home destination. Its Home test retained all three photos for
+each platform/server fixture, guarded by the host runner. The server's 132 cases include both
+Home integration cases and the real importer-to-Home check; all 60 API conformance self-tests
+passed, including the Home profile's duplicate-item negative control.
 
 Host soaks all passed 20/20 repetitions: [production Library](https://github.com/legitimate-apps/dulcet/actions/runs/38988591007)
 (two methods, 40 executions), [simple phone Search](https://github.com/legitimate-apps/dulcet/actions/runs/38991408220)
@@ -127,13 +129,21 @@ Local Apple simulator enumeration stopped responding before UI execution; no sha
 restart or host reboot was performed. The local phone emulator produced system UI ANRs and was
 stopped. Neither attempt counts as a successful UI proof. The first hosted native Home control
 correctly failed on a header-only screen: an initially empty SwiftUI shelf never received its
-reader appearance callback. Shelves now retain a concrete loading container; the replacement
-native run must observe populated content and navigation before platform promotion.
+reader appearance callback. Shelves now retain a concrete loading container; the retained
+iPhone, iPad and Mac Home controls below observed populated content and album navigation.
 
 The Mac Home test passed in 9.468 seconds using actual window captures (`capture=screen`). A later
 legacy account-connection assertion expected Library and failed, so the whole native run is not
 a green gate. Initial/saved/offline account controls now expect Listen Now; the explicit Library
 cache/reconnect control still selects Library and requires it to stay there.
+
+The replacement run's iPad My Library membership control failed before its Home step: its
+helper checked See All before catalog publication and then swiped the sidebar while the target
+remained offscreen in Browse's horizontal album row. The retained recording shows Browse
+unchanged through those swipes. The helper now waits for See All and targets the album-page
+scroll view. This navigation-driver correction still requires a native runtime rerun; Library
+product code is unchanged. The separate light/dark/largest-text and ordinary-server controls
+passed in the same iPad job.
 
 Reviewed Mac proof images:
 
