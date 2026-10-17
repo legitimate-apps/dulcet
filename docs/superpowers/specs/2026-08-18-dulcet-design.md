@@ -7850,6 +7850,13 @@ items carry the album id so the core can keep albums gapless. The Apple engine c
 one. Play Next and Add to Queue into a playing queue show a brief confirmation; an addition that
 starts an empty player does not, since starting playback is its own feedback.
 
+**2026-10-16 — Opt-in trusted proxy client addresses.**
+Dulcet Server accepts an operator-configured `trusted-proxies` list of literal addresses/CIDRs,
+empty by default. Only a trusted socket peer may supply a forwarded client identity. REST failed-login,
+Dulcet API and OAuth IP limits share the resolver described in §29.1; reverse proxies must sanitize
+forwarded headers. OBSERVED: `ClientAddressesTest` and real-CIO `TrustedProxyIntegrationTest` cover
+configuration, spoofing, multi-hop boundaries and isolation across the three limiters.
+
 **2026-10-16 — Required CI exercises My Library against disposable Dulcet Server.**
 The automated-server boundary includes local disposable Dulcet Server as well as Navidrome;
 automated writes to personal or production instances remain forbidden. The existing Apple
@@ -13518,6 +13525,17 @@ them.
   and `dulcetLibrary` 1.
 - Authentication accepts token plus salt and plain or `enc:` passwords. Passwords are kept with
   AES-GCM under a key in the data folder, because token authentication needs the plaintext.
+- Client-address trust is opt-in: `trusted-proxies` / `DULCET_TRUSTED_PROXIES` is a comma-separated
+  list of literal IPv4/IPv6 proxy addresses or CIDRs, empty by default. Invalid entries fail startup.
+  An untrusted socket peer, or the empty default, ignores every forwarded-address header. A trusted
+  peer permits `CF-Connecting-IP`, then `X-Real-IP`, then the right-most untrusted hop of
+  `X-Forwarded-For` after skipping trusted hops from the right. The same resolved address keys
+  OpenSubsonic failed-login, Dulcet API IP and OAuth IP limits. Equivalent IP spellings share keys.
+  Malformed/repeated selected headers or malformed chains fail closed to the socket peer, without
+  falling through to lower-priority headers; all-trusted chains also use the peer. Inputs are
+  bounded to 8 KiB and 64 hops, with no hostname resolution, ports, brackets or IPv6 zones.
+  The operator trusts only controlled proxies that overwrite/strip these headers; forwarded
+  host/scheme are not trusted by this setting. Reverse-proxy setup is in the server README.
 - Request parameters are parsed by the server itself, without a parameter limit. A playlist replace
   sends one `songId` per entry, and Ktor's parser would keep only the first 1000.
 
