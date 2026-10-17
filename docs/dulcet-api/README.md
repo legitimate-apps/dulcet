@@ -817,6 +817,10 @@ Reading a playlist and `submission=false` do not record playlist history. Retryi
 an older timestamp cannot move the playlist backwards or create a playlist play count.
 Continue Listening in the app resumes its existing queue at the current position.
 
+The [playlist play-context client integration contract](playlist-play-context.md) specifies
+the queue-entry provenance, submitted-play/outbox fields, account-scoped negotiation and
+transport handoff required for current app plays to populate Recently Played Playlists.
+
 ## 16. Capabilities and extensions
 
 `GET /capabilities` lists capabilities by name, each with the integer versions supported:
