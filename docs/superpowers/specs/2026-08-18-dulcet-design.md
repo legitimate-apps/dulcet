@@ -7847,8 +7847,10 @@ argue against the recorded rationale — not as filling in a blank.
 nonnegative duration. The value replaces the previous one and lapses at an attempt change.
 With a ready preload, a positive duration starts the handover at the outgoing media time
 `T - d`; a 50 ms media observer drives it. The engine retains the already-running outgoing
-queue as a tail that emits no playback events, transfers the preloaded item to a new main queue,
-and ramps complementary linear gains using incoming media time. It never reopens or seeks
+queue as a tail that emits no playback events, creates a fresh incoming item from the preloaded
+asset and its existing loader in a new main queue, and ramps complementary linear gains using
+incoming media time. A queued `AVPlayerItem` cannot be immediately reattached to another player;
+the fresh item avoids that attachment race while retaining the preloaded asset. It never reopens or seeks
 the outgoing resource, including a non-seekable transcode. If readiness arrives within the
 window, only the remaining tail can overlap; without a ready preload the ordinary gapless
 queue boundary remains. A zero duration leaves AVQueuePlayer's existing gapless path intact.

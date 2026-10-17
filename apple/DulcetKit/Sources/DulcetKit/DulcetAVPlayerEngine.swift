@@ -711,57 +711,78 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func observe(_ context: PlayerItemContext) {
+        // A crossfade reuses this context with a fresh item on the same asset. Fence on the
+        // engine queue as well as at delivery: the replaced item's callbacks may already queue.
+        let observedItem = context.item
         context.observers.append(
-            context.item.observe(\.status, options: [.initial, .new]) { [weak self, weak context] _, _ in
+            observedItem.observe(\.status, options: [.initial, .new]) { [weak self, weak context] item, _ in
                 guard let context else { return }
-                self?.enqueue { $0.itemStatusChanged(context) }
+                self?.enqueue {
+                    guard context.item === item else { return }
+                    $0.itemStatusChanged(context)
+                }
             }
         )
         context.observers.append(
-            context.item.observe(\.duration, options: [.new]) { [weak self, weak context] _, _ in
+            observedItem.observe(\.duration, options: [.new]) { [weak self, weak context] item, _ in
                 guard let context else { return }
-                self?.enqueue { $0.durationChanged(context) }
+                self?.enqueue {
+                    guard context.item === item else { return }
+                    $0.durationChanged(context)
+                }
             }
         )
         context.observers.append(
-            context.item.observe(\.seekableTimeRanges, options: [.new]) { [weak self, weak context] _, _ in
+            observedItem.observe(\.seekableTimeRanges, options: [.new]) { [weak self, weak context] item, _ in
                 guard let context else { return }
-                self?.enqueue { $0.durationChanged(context) }
+                self?.enqueue {
+                    guard context.item === item else { return }
+                    $0.durationChanged(context)
+                }
             }
         )
         let center = NotificationCenter.default
         notificationObservers.append(
             center.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,
-                object: context.item,
+                object: observedItem,
                 queue: nil
-            ) { [weak self, weak context] _ in
-                guard let context else { return }
-                self?.enqueue { $0.itemEnded(context) }
+            ) { [weak self, weak context, weak observedItem] _ in
+                guard let context, let observedItem else { return }
+                self?.enqueue {
+                    guard context.item === observedItem else { return }
+                    $0.itemEnded(context)
+                }
             }
         )
         notificationObservers.append(
             center.addObserver(
                 forName: .AVPlayerItemFailedToPlayToEndTime,
-                object: context.item,
+                object: observedItem,
                 queue: nil
-            ) { [weak self, weak context] notification in
-                guard let context else { return }
+            ) { [weak self, weak context, weak observedItem] notification in
+                guard let context, let observedItem else { return }
                 // A decode failure arrives HERE, with the item still `readyToPlay` and its
                 // `error` nil: without this the engine reported it as its own `.engine` failure.
                 let failure = (notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)
                     .map(DulcetApplePlaybackErrorSanitizer.avFoundationFailure)
-                self?.enqueue { $0.itemFailed(context, reported: failure) }
+                self?.enqueue {
+                    guard context.item === observedItem else { return }
+                    $0.itemFailed(context, reported: failure)
+                }
             }
         )
         notificationObservers.append(
             center.addObserver(
                 forName: .AVPlayerItemPlaybackStalled,
-                object: context.item,
+                object: observedItem,
                 queue: nil
-            ) { [weak self, weak context] _ in
-                guard let context else { return }
-                self?.enqueue { $0.beginBuffering(context) }
+            ) { [weak self, weak context, weak observedItem] _ in
+                guard let context, let observedItem else { return }
+                self?.enqueue {
+                    guard context.item === observedItem else { return }
+                    $0.beginBuffering(context)
+                }
             }
         )
     }
@@ -963,7 +984,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     /// Keep the existing decoder and resource loader running for the tail. Only the queued
-    /// incoming item moves to a new queue, which becomes the main player. This needs no second
+    /// incoming asset gets a fresh item in a new queue, which becomes the main player. AVPlayerItem
+    /// attachment outlives remove(_:), so reusing that item would throw during the handoff. The
+    /// asset and its loader stay preloaded; this needs no second
     /// request or seek of the outgoing stream, so non-seekable transcodes use the same path.
     /// With duration zero no item/player transfer occurs: AVQueuePlayer owns the gapless boundary.
     private func updateCrossfade(at position: TimeInterval) {
@@ -989,6 +1012,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         playerObservers.forEach { $0.invalidate() }
         playerObservers.removeAll()
         outgoingPlayer.remove(incoming.item)
+        let incomingAsset = incoming.item.asset
+        incoming.invalidate()
+        incoming.item = AVPlayerItem(asset: incomingAsset)
+        observe(incoming)
         let incomingPlayer = AVQueuePlayer(items: [incoming.item])
         incomingPlayer.volume = 0
         incomingPlayer.actionAtItemEnd = .advance
@@ -1614,7 +1641,7 @@ private final class QueueLivenessProbeResult: @unchecked Sendable {
 
 private final class PlayerItemContext: @unchecked Sendable {
     let plan: DulcetPlaybackPlan
-    let item: AVPlayerItem
+    var item: AVPlayerItem
     let loader: DulcetAVAssetResourceLoaderDelegate
     var isPreloaded: Bool
     var observers: [NSKeyValueObservation] = []

@@ -18,6 +18,7 @@ struct AVPlayerCrossfadeTests {
     func crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds() async throws {
         let fixture = try await CrossfadeFixture.start()
         let engine = fixture.engine
+        let queuedIncoming = try #require(fixture.originalPlayer.items().last)
         defer {
             engine.execute(.release(commandID: .init("cleanup"))) { _ in }
             try? FileManager.default.removeItem(at: fixture.localURL)
@@ -31,6 +32,22 @@ struct AVPlayerCrossfadeTests {
         #expect(state.outgoingPosition < 6, "the old decoder must still be before its physical end")
         #expect(abs(state.incomingVolume + state.outgoingVolume - 1) < 0.02)
         #expect(fixture.controls.publications.last?.sessionID == fixture.next.playbackSessionID)
+        let beforeDiscardedCallbacks = fixture.events.snapshot.count
+        for name in [Notification.Name.AVPlayerItemDidPlayToEndTime,
+                     .AVPlayerItemFailedToPlayToEndTime, .AVPlayerItemPlaybackStalled] {
+            NotificationCenter.default.post(name: name, object: queuedIncoming)
+        }
+        // This read drains the engine queue after the notifications above. The discarded
+        // queued item must not end, fail or buffer the context now backed by a fresh item.
+        _ = engine.crossfadeStateForTesting()
+        #expect(!fixture.events.snapshot.dropFirst(beforeDiscardedCallbacks).contains {
+            switch $0 {
+            case let .endedNaturally(id, _), let .failedBeforeStart(id, _),
+                 let .failedAfterPartial(id, _, _), let .buffering(id, _):
+                id == fixture.next.attemptID
+            default: false
+            }
+        })
         #expect(await execute(engine, .setVolume(commandID: .init("fade-master"), volume: 0.4)) ==
             .completed(commandID: .init("fade-master"), result: .withoutData))
         let faded = try #require(engine.crossfadeStateForTesting())
