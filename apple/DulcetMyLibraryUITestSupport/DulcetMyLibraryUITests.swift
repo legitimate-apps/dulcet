@@ -380,9 +380,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #elseif os(iOS)
         if connect {
             let connected = server == navidrome
-                ? app.buttons["dulcet.library.album"].firstMatch
-                : destination("browse")
-            if !connected.waitForExistence(timeout: 30) {
+                ? app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+                : awaitDestination("browse")
+            if !connected {
                 let welcome = app.buttons["Connect a Server"]
                 if welcome.exists { welcome.tap() }
                 let copy = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ")
@@ -418,15 +418,25 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // Construct the identified query even before the account publishes its sidebar.
             // Choosing a label-based Cell fallback before it exists leaves the wait on cells
             // with no label; SwiftUI exposes the destination label on their StaticText child.
-            return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
+            let identifier = "dulcet.sidebar.\(section)"
+            return app.staticTexts.allElementsBoundByIndex.first(where: { $0.identifier == identifier })
+                ?? app.staticTexts[identifier].firstMatch
         }
         let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
 #endif
     }
+    @MainActor private func awaitDestination(_ section: String) -> Bool {
+        // Re-resolve after publication: the initial iPad name-index query can miss a bound
+        // sidebar Text even while the same snapshot contains the visible Browse label.
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.destination(section).exists
+        }, object: nil)
+        return XCTWaiter.wait(for: [ready], timeout: 30) == .completed
+    }
     @MainActor private func select(_ section: String) throws {
+        XCTAssertTrue(awaitDestination(section), "Missing destination \(section)")
         let control = destination(section)
-        XCTAssertTrue(control.waitForExistence(timeout: 30), "Missing destination \(section)")
 #if os(tvOS)
         // Menu returns to the section bar from roots; from a pushed page it pops first.
         let remote = XCUIRemote.shared
@@ -494,7 +504,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let maximumScrolls = 6
 #endif
         for _ in 0..<maximumScrolls {
-            if tile.exists && tile.isHittable { break }
+            if albumTileCanBeActivated(tile) { break }
 #if os(macOS)
             albumPage.scroll(byDeltaX: 0, deltaY: -450)
 #else
@@ -502,11 +512,26 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
         }
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
-        XCTAssertTrue(tile.isHittable, "The album must be visible before activation")
+        XCTAssertTrue(albumTileCanBeActivated(tile), "The album centre must be visible before activation: " + tile.debugDescription)
 #else
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
 #endif
         activate(tile)
+#if os(iOS)
+        awaitStaticText("dulcet.album.title", content: title)
+#endif
+    }
+    @MainActor private func albumTileCanBeActivated(_ tile: XCUIElement) -> Bool {
+        guard tile.exists && tile.isHittable else { return false }
+#if os(iOS)
+        // At large text, a sliver of a tall card can be hittable with its tap centre below
+        // the iPad window. Scroll until that centre clears the navigation and bottom edges.
+        let frame = tile.frame
+        return app.windows.firstMatch.frame.insetBy(dx: 16, dy: 100)
+            .contains(CGPoint(x: frame.midX, y: frame.midY))
+#else
+        return true
+#endif
     }
     @MainActor private func activate(_ element: XCUIElement) {
 #if os(tvOS)
