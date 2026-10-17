@@ -106,6 +106,9 @@ def materialize(root: Path) -> None:
         # library.browse cites the core reader's own conformance tests for CONF-82 and CONF-87,
         # whose rules the disposable corpus cannot reach; the gate looks their names up here.
         "core/src/commonTest",
+        # Android listening sessions cite the controller and Media3 host seams directly.
+        # Their declarations must exist in the synthetic baseline before mutations run.
+        "core/src/androidHostTest",
     )
     # Two branches adding the same directory here is a real merge outcome, and copytree's
     # FileExistsError names a temp path rather than the duplicate. Say which entry it is.

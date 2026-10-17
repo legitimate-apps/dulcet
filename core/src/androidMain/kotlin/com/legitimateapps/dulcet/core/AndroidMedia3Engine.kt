@@ -13,7 +13,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 /** Media3 transport observations are translated into the existing core event vocabulary. */
 internal class AndroidMedia3Engine(
-    internal val player: Player,
+    player: Player,
     /** Sets the player's source for a streamed or a downloaded plan; the engine prepares it. */
     private val prepareSource: (PlaybackPlan) -> Unit,
     private val handler: Handler = Handler(player.applicationLooper),
@@ -25,7 +25,89 @@ internal class AndroidMedia3Engine(
      * or its Pause button and its next preparation would still assume playback was wanted.
      */
     private val onSystemPlayWhenReady: (Boolean) -> Unit = {},
+    private val createOverlapPlayer: (() -> Player)? = null,
+    private val prepareOverlapSource: ((PlaybackPlan, Player) -> Unit)? = null,
+    private val onPlayerChanged: (Player, PlaybackPlan) -> Unit = { _, _ -> },
+    private val onPreloadFailed: (AttemptId, PlaybackPlan, DomainError) -> Unit = { _, _, _ -> },
 ) : PlaybackEngine {
+    internal var player: Player = player
+        private set
+    internal var isAdvancingOverlap = false
+        private set
+    private var overlapMilliseconds = 0L
+    private var preloaded: Pair<PlaybackPlan, Player>? = null
+    private var tail: Player? = null
+    internal val isOverlapping: Boolean get() = tail != null
+    private var fadeStarted = 0L
+    private var fadeLength = 0L
+    private var sleepGain = 1.0
+    private var userVolume = 1.0
+    // Smooth the overlap independently of the slower core progress/reporting sampler.
+    private val fader = object : Runnable {
+        override fun run() {
+            if (tail == null || released) return
+            applyGains()
+            if (tail != null) handler.postDelayed(this, 50)
+        }
+    }
+    private val preloadCallbacks = object : Player.Listener {
+        override fun onPlayerError(error: PlaybackException) {
+            val plan = preloaded?.first ?: return
+            discardPreload()
+            onPreloadFailed(plan.attemptId, plan, sanitizeAndroidPlaybackFailure(error))
+        }
+    }
+    internal fun setCrossfade(milliseconds: Long) { overlapMilliseconds = milliseconds.coerceIn(0, 12_000) }
+    internal fun setSleepGain(gain: Double) { sleepGain = gain.coerceIn(0.0, 1.0); applyGains() }
+    private fun applyGains() {
+        val fraction = if (tail == null || fadeLength == 0L) 1.0 else
+            ((monotonicMillis() - fadeStarted).toDouble() / fadeLength).coerceIn(0.0, 1.0)
+        player.volume = (userVolume * sleepGain * fraction).toFloat()
+        tail?.volume = (userVolume * sleepGain * (1.0 - fraction)).toFloat()
+        if (fraction >= 1.0) releaseTail()
+    }
+    private fun releaseTail() { handler.removeCallbacks(fader); tail?.release(); tail = null }
+    private fun discardPreload() {
+        preloaded?.second?.let { it.removeListener(preloadCallbacks); it.release() }
+        preloaded = null
+    }
+    /** Only a nonzero core boundary may advance early. The tail has no reporting listener. */
+    private fun advanceOverlap(): Boolean {
+        val incoming = preloaded ?: return false
+        if (overlapMilliseconds == 0L || incoming.second.playbackState != Player.STATE_READY) return false
+        val outgoing = current ?: return false
+        val oldPosition = position
+        terminal = true
+        player.removeListener(callbacks)
+        releaseTail()
+        tail = player
+        preloaded = null
+        incoming.second.removeListener(preloadCallbacks)
+        // End while the outgoing attempt is current; advance under the registered incoming identity.
+        isAdvancingOverlap = true
+        emit(PlaybackEngineEvent.EndedNaturally(outgoing.attemptId, oldPosition))
+        player = incoming.second
+        current = incoming.first
+        ready = false; began = false; terminal = false; buffering = false; interrupted = false
+        lastPosition = 0; duration = null; startWall = null
+        fadeStarted = monotonicMillis()
+        fadeLength = overlapMilliseconds
+        // One focus owner: the detached tail ignores focus, the incoming current player owns it.
+        (tail as? androidx.media3.exoplayer.ExoPlayer)?.let { it.setAudioAttributes(it.audioAttributes, false) }
+        (player as? androidx.media3.exoplayer.ExoPlayer)?.let { it.setAudioAttributes(it.audioAttributes, true) }
+        onPlayerChanged(player, incoming.first)
+        emit(PlaybackEngineEvent.AdvancedToPreloaded(outgoing.attemptId, incoming.first.attemptId))
+        isAdvancingOverlap = false
+        player.addListener(callbacks)
+        status = PlaybackObservationStatus.Preparing
+        emit(PlaybackEngineEvent.Preparing(incoming.first.attemptId))
+        callbacks.onEvents(player, Player.Events(androidx.media3.common.FlagSet.Builder()
+            .add(Player.EVENT_PLAYBACK_STATE_CHANGED).build()))
+        applyGains()
+        handler.postDelayed(fader, 50)
+        player.play()
+        return true
+    }
     private var listener: PlaybackEngineEventListener? = null
     private var current: PlaybackPlan? = null
     private val PlaybackPlan.attemptId: AttemptId get() = checkNotNull(androidAttemptId)
@@ -91,9 +173,12 @@ internal class AndroidMedia3Engine(
                 lastPosition = player.currentPosition.coerceAtLeast(0)
             }
             if (player.playbackState == Player.STATE_ENDED) {
-                terminal = true
-                status = PlaybackObservationStatus.Stopped
-                emit(PlaybackEngineEvent.EndedNaturally(id, position))
+                if (!advanceOverlap()) {
+                    releaseTail()
+                    terminal = true
+                    status = PlaybackObservationStatus.Stopped
+                    emit(PlaybackEngineEvent.EndedNaturally(id, position))
+                }
             }
             armSampler()
         }
@@ -108,6 +193,8 @@ internal class AndroidMedia3Engine(
             if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
                 emit(PlaybackEngineEvent.RouteChanged(id, PlaybackRouteKind.Unknown, PlaybackRouteKind.Unknown, true))
             armSampler()
+            if (!playWhenReady) tail?.pause()
+            else tail?.play()
             if (reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) onSystemPlayWhenReady(playWhenReady)
         }
 
@@ -134,6 +221,7 @@ internal class AndroidMedia3Engine(
             val plan = current ?: return
             if (terminal) return
             terminal = true
+            releaseTail()
             status = PlaybackObservationStatus.Failed
             val failure = sanitizeAndroidPlaybackFailure(error)
             emit(if (began) PlaybackEngineEvent.FailedAfterPartial(plan.attemptId, position, failure)
@@ -200,12 +288,14 @@ internal class AndroidMedia3Engine(
                 is PlaybackCommand.Play -> {
                     if (current == null || terminal) return rejected()
                     player.play()
+                    tail?.play()
                     return PlaybackCommandOutcome.CommandAccepted(command.commandId)
                 }
-                is PlaybackCommand.Pause -> { if (current == null) return rejected(); player.pause() }
+                is PlaybackCommand.Pause -> { if (current == null) return rejected(); player.pause(); tail?.pause() }
                 is PlaybackCommand.Stop -> {
                     current?.takeUnless { terminal }?.let { emit(PlaybackEngineEvent.Skipped(it.attemptId, position, PlaybackSkipReason.User)) }
                     current = null
+                    discardPreload(); releaseTail()
                     player.pause(); player.stop(); player.clearMediaItems()
                     status = PlaybackObservationStatus.Stopped
                     armSampler()
@@ -213,26 +303,40 @@ internal class AndroidMedia3Engine(
                 is PlaybackCommand.Seek -> {
                     if (current == null || seekability != PlaybackSeekability.Seekable || command.position.isNegative() ||
                         !command.position.isFinite()) return rejected()
+                    releaseTail()
                     player.seekTo(command.position.inWholeMilliseconds)
+                    applyGains()
                 }
                 is PlaybackCommand.SetVolume -> {
                     if (!command.volume.isFinite() || command.volume !in 0.0..1.0) return rejected()
-                    player.volume = command.volume.toFloat()
+                    userVolume = command.volume
+                    applyGains()
                 }
                 is PlaybackCommand.SetRate -> {
                     if (!command.rate.isFinite() || command.rate <= 0 || command.rate > 2)
                         return rejected(PlaybackCommandRejectionReason.Unsupported)
                     player.setPlaybackSpeed(command.rate.toFloat())
                 }
-                // The core owns advancement. Do not let Media3 autonomously begin an unregistered
-                // session. Explicit unsupported is part of the seam's command-outcome contract.
-                // This engine holds one item at a time and never accepts a preload, so there is
-                // never a preloaded item to discard; both are refused the same way.
-                is PlaybackCommand.PreloadNext, is PlaybackCommand.DiscardPreloaded ->
-                    return rejected(PlaybackCommandRejectionReason.Unsupported)
+                is PlaybackCommand.PreloadNext -> {
+                    if (createOverlapPlayer == null || prepareOverlapSource == null || overlapMilliseconds == 0L || isOverlapping)
+                        return rejected(PlaybackCommandRejectionReason.Unsupported)
+                    if (command.plan.androidAttemptId != command.attemptId) return rejected()
+                    discardPreload()
+                    val incoming = createOverlapPlayer.invoke()
+                    preloaded = command.plan to incoming
+                    incoming.volume = 0f
+                    incoming.addListener(preloadCallbacks)
+                    prepareOverlapSource.invoke(command.plan, incoming)
+                    incoming.prepare()
+                    return PlaybackCommandOutcome.CommandAccepted(command.commandId)
+                }
+                is PlaybackCommand.DiscardPreloaded -> {
+                    if (preloaded?.first?.androidAttemptId == command.attemptId) discardPreload()
+                }
                 is PlaybackCommand.Release -> {
                     current?.let { emit(PlaybackEngineEvent.EngineTornDown(it.attemptId, PlaybackEngineTeardownReason.Released)) }
                     released = true; current = null
+                    discardPreload(); releaseTail()
                     handler.removeCallbacks(sampler); sampling = false
                     player.removeListener(callbacks); player.release()
                 }
@@ -252,6 +356,7 @@ internal class AndroidMedia3Engine(
     internal fun sample() {
         val plan = current ?: return
         if (released || terminal || !ready || !player.isPlaying || interrupted) return
+        if (tail != null) applyGains()
         val now = player.currentPosition.coerceAtLeast(0)
         if (now > lastPosition) {
             if (!began) {
@@ -264,6 +369,8 @@ internal class AndroidMedia3Engine(
                 PlaybackMonotonicTime(monotonicMillis().milliseconds)))
         }
         lastPosition = now
+        val length = duration
+        if (overlapMilliseconds > 0 && length != null && now >= length - overlapMilliseconds) advanceOverlap()
     }
 
     private fun emit(event: PlaybackEngineEvent) { listener?.onPlaybackEngineEvent(event) }

@@ -269,7 +269,7 @@ internal fun PhoneApp(
     // its reconnect's first request — comes before the screens open their windows; each window still
     // paints from the cache before its own read is issued.
     adding?.let { addition -> AddToPlaylistSheet(account, library, addition) { adding = null } }
-    DroppedAdditionsNotice(playback, playbackState.droppedAdditions)
+    DroppedAdditionsNotice(playback, playbackState.droppedAdditions, playbackState.queueConfirmation)
     LibraryLifecycle(library)
 }
 

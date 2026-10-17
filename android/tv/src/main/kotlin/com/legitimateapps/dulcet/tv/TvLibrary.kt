@@ -348,7 +348,7 @@ internal fun TvLibraryEntry(
     // On a return to the foreground the screens above are already open when start() reconnects. At
     // launch the TV shows the library, whose home rows open as it composes; each publishes its cache
     // before its own read, as the phone's do.
-    DroppedAdditionsNotice(playback, playbackState.droppedAdditions)
+    DroppedAdditionsNotice(playback, playbackState.droppedAdditions, playbackState.queueConfirmation)
     // A create in doubt is asked over whichever screen is showing, as the tvOS shell asks it.
     TvPlaylistQuestion(session)
     LibraryLifecycle(session)

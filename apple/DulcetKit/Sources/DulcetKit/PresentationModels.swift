@@ -710,6 +710,10 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public let queueEntries: [DulcetQueueEntry]
     /// Index of the current entry within `queueEntries`, or nil when none is current.
     public let currentEntryIndex: Int?
+    /// Whether AutoPlay can add music now: it is on, and Shuffle and Repeat are off (§14.8).
+    public let autoplayActive: Bool
+    /// The sleep timer that is set, if one is (§12.13).
+    public let sleepTimer: DulcetSleepTimerState?
 
     public init(
         sessionID: DulcetPlaybackSessionID? = nil,
@@ -730,7 +734,9 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         canGoNext: Bool = true,
         canGoPrevious: Bool = true,
         queueEntries: [DulcetQueueEntry] = [],
-        currentEntryIndex: Int? = nil
+        currentEntryIndex: Int? = nil,
+        autoplayActive: Bool = false,
+        sleepTimer: DulcetSleepTimerState? = nil
     ) {
         self.sessionID = sessionID
         self.current = current
@@ -751,6 +757,8 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         self.canGoPrevious = canGoPrevious
         self.queueEntries = queueEntries
         self.currentEntryIndex = currentEntryIndex
+        self.autoplayActive = autoplayActive
+        self.sleepTimer = sleepTimer
     }
 
 }
@@ -843,6 +851,9 @@ public struct DulcetSnapshot: Sendable, Hashable,
     /// sees it change says the edit did not happen, rather than leaving a gesture that did
     /// nothing unexplained.
     public let refusedQueueEdits: Int
+    /// The latest Play Next or Add to Queue that took. Surfaces confirm it briefly, once per new
+    /// `sequence`.
+    public let queueEditConfirmation: DulcetQueueEditConfirmation?
     /// The latest track the queue skipped past because it could not be played (spec §12.12).
     /// Surfaces show and announce it once per new `sequence`.
     public let playbackSkipNotice: DulcetSkippedTrackNotice?
@@ -876,6 +887,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         playbackStatus: DulcetPlaybackSurfaceStatus? = nil,
         playbackFailure: DulcetFailedPlayback? = nil,
         refusedQueueEdits: Int = 0,
+        queueEditConfirmation: DulcetQueueEditConfirmation? = nil,
         playbackSkipNotice: DulcetSkippedTrackNotice? = nil,
         searchQuery: String = "",
         searchResults: [DulcetSearchResult] = [],
@@ -905,6 +917,7 @@ public struct DulcetSnapshot: Sendable, Hashable,
         self.playbackStatus = playbackStatus ?? (nowPlaying == nil ? .unavailable : .ready)
         self.playbackFailure = playbackFailure
         self.refusedQueueEdits = refusedQueueEdits
+        self.queueEditConfirmation = queueEditConfirmation
         self.playbackSkipNotice = playbackSkipNotice
         self.searchQuery = searchQuery
         self.searchResults = searchResults

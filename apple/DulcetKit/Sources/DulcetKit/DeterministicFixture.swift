@@ -264,7 +264,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
         case .loadMoreSearchResults, .retrySearch, .downloadTrack, .requestDownload, .activateSearchResult,
-             .retryAlbumTracks, .editQueue, .reportRefusedQueueEdit:
+             .retryAlbumTracks, .editQueue, .reportRefusedQueueEdit, .setSleepTimer:
             // The fixture's albums always carry their tracks, so there is nothing to re-read.
             break
         case let .playLibrary(shuffle):

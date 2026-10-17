@@ -95,10 +95,13 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
 
                 observer.bind()
-                await("the album queued") { observer.state().queue.size == expected.size }
+                await("the album queued before any AutoPlay continuation") {
+                    observer.state().queue.count { !it.isAutoplay } == expected.size
+                }
                 val state = observer.state()
-                check(state.queue.map { it.track.rawId } == expected) {
-                    "The queue must be $ALBUM in the server's order: ${state.queue.map { it.track.rawId }} vs $expected"
+                check(state.queue.take(expected.size).map { it.track.rawId } == expected &&
+                    state.queue.drop(expected.size).all { it.isAutoplay }) {
+                    "The user queue must be $ALBUM in the server's order before AutoPlay: ${state.queue.map { it.track.rawId }} vs $expected"
                 }
                 check(state.currentIndex == 0) { "Play starts at the first track, not ${state.currentIndex}" }
                 val position = requireMediaTimeAdvances(observer, "album play")

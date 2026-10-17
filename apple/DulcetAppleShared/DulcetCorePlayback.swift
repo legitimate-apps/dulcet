@@ -322,3 +322,98 @@ final class DulcetCoreStreamingQuality: DulcetStreamingQualitySetting {
         }
     }
 }
+
+/// The device's listening settings (spec §14.8 AutoPlay, §12.8 crossfade), saved on this device.
+/// AutoPlay is on until the person turns it off; crossfade is off until they choose a length.
+@MainActor
+final class DulcetCoreListeningSettings: DulcetListeningSetting {
+    static let autoplayKey = "dulcet.autoplay"
+    static let crossfadeKey = "dulcet.crossfadeSeconds"
+
+    private let defaults: UserDefaults
+    /// Called after the person changes either setting.
+    var onChange: (@MainActor () -> Void)?
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var listeningPreference: DulcetListeningPreference {
+        DulcetListeningPreference(
+            autoplayEnabled: defaults.object(forKey: Self.autoplayKey) as? Bool ?? true,
+            crossfadeSeconds: Int(PlaybackCrossfade.shared.decodeSeconds(
+                stored: (defaults.object(forKey: Self.crossfadeKey) as? Int).map { KotlinInt(int: Int32($0)) }
+            ))
+        )
+    }
+
+    func setListeningPreference(_ preference: DulcetListeningPreference) {
+        guard preference != listeningPreference else { return }
+        defaults.set(preference.autoplayEnabled, forKey: Self.autoplayKey)
+        defaults.set(preference.crossfadeSeconds, forKey: Self.crossfadeKey)
+        onChange?()
+    }
+}
+
+/// A library track as the shells show it. Shared by the library browser and the playback
+/// controller (AutoPlay's answers), which the playback integration tests compile without the
+/// production composition.
+enum DulcetCoreLibraryTrackCopy {
+    static func track(
+        _ track: AppleLibraryTrackDto,
+        fallbackArtworkKey: String? = nil,
+        carriesAlbumID: Bool = true
+    ) -> DulcetTrack {
+        DulcetTrack(
+            id: DulcetProviderItemID(
+                providerInstanceID: track.providerInstanceId,
+                rawID: track.rawId
+            ),
+            title: track.title,
+            credits: track.credits.map(credit),
+            albumTitle: track.albumTitle,
+            discNumber: track.discNumber?.intValue,
+            trackNumber: track.trackNumber?.intValue,
+            duration: .milliseconds(track.durationMilliseconds),
+            sourceContainer: track.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:)),
+            mediaSourceID: track.mediaSourceId,
+            artwork: artwork(
+                fallbackSeed: track.rawId,
+                providerInstanceID: track.providerInstanceId,
+                artworkKey: track.artworkKey ?? fallbackArtworkKey
+            ),
+            albumID: track.albumRawId.flatMap { carriesAlbumID ? $0 : nil }.map {
+                DulcetProviderItemID(providerInstanceID: track.providerInstanceId, rawID: $0)
+            }
+        )
+    }
+
+    static func credit(_ credit: AppleLibraryCreditDto) -> DulcetCredit {
+        let role: DulcetCreditRole = credit.role == "AlbumArtist" ? .albumArtist : .artist
+        let id: DulcetProviderItemID? = if let providerInstanceID = credit.providerInstanceId,
+                    let rawID = credit.rawId {
+            DulcetProviderItemID(providerInstanceID: providerInstanceID, rawID: rawID)
+        } else {
+            nil
+        }
+        return DulcetCredit(role: role, name: credit.name, id: id)
+    }
+
+    private static func artwork(
+        fallbackSeed: String,
+        providerInstanceID: String,
+        artworkKey: String?
+    ) -> DulcetArtwork {
+        let palettes = DulcetArtworkPalette.allCases
+        let index = fallbackSeed.unicodeScalars.reduce(0) {
+            ($0 + Int($1.value)) % palettes.count
+        }
+        return DulcetArtwork(
+            seed: fallbackSeed,
+            palette: palettes[index],
+            remoteReference: artworkKey.map {
+                DulcetArtworkReference(serverID: providerInstanceID, artworkKey: $0)
+            }
+        )
+    }
+}

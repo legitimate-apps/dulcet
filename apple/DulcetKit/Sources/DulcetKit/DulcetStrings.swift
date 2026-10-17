@@ -285,6 +285,40 @@ enum DulcetStrings {
         formatted("player.skipped.track", "Couldn\u{2019}t play \u{201C}%@\u{201D}. Skipped.", title)
     }
 
+    static let sleepTimer = text("player.sleepTimer", "Sleep Timer")
+    static let sleepTimerOff = text("player.sleepTimer.off", "Off")
+    static let sleepTimerEndOfTrack = text("player.sleepTimer.endOfTrack", "End of Track")
+    static let sleepTimerEndOfQueue = text("player.sleepTimer.endOfQueue", "End of Queue")
+    static func sleepTimerMinutes(_ minutes: Int) -> String {
+        pluralized("player.sleepTimer.minutes", fallback: "%d minutes", count: minutes)
+    }
+    static func sleepTimerUntil(_ time: String) -> String {
+        formatted("player.sleepTimer.until", "Sleep timer until %@", time)
+    }
+    static let sleepTimerAfterTrack = text("player.sleepTimer.set.endOfTrack", "Sleep timer at the end of this track")
+    static let sleepTimerAfterQueue = text("player.sleepTimer.set.endOfQueue", "Sleep timer at the end of the queue")
+    static let autoplay = text("player.autoplay", "AutoPlay")
+    static let autoplayFootnote = text("player.autoplay.footnote", "When your queue ends, keep playing similar music from your server.")
+    static let autoplayPaused = text("player.autoplay.inactive", "AutoPlay is paused while Shuffle or Repeat is on.")
+    static let crossfadeTitle = text("settings.crossfade.title", "Crossfade")
+    static let crossfadeOff = text("settings.crossfade.off", "Off")
+    static let crossfadeFootnote = text("settings.crossfade.footnote", "Overlaps the end of one song with the start of the next. Songs of the same album always play gaplessly, and short songs are never overlapped.")
+    static func crossfadeSeconds(_ seconds: Int) -> String {
+        pluralized("settings.crossfade.seconds", fallback: "%d seconds", count: seconds)
+    }
+    static func queueConfirmPlayNext(title: String) -> String {
+        formatted("queue.confirm.playNext", "\u{201C}%@\u{201D} will play next", title)
+    }
+    static func queueConfirmAddToQueue(title: String) -> String {
+        formatted("queue.confirm.addToQueue", "Added \u{201C}%@\u{201D} to Up Next", title)
+    }
+    static func queueConfirmPlayNextCount(_ count: Int) -> String {
+        pluralized("queue.confirm.playNext.count", fallback: "%d songs will play next", count: count)
+    }
+    static func queueConfirmAddToQueueCount(_ count: Int) -> String {
+        pluralized("queue.confirm.addToQueue.count", fallback: "Added %d songs to Up Next", count: count)
+    }
+
     static func playbackStoppedPartway(title: String) -> String {
         formatted("player.failed.track.partway", "\u{201C}%@\u{201D} stopped partway through", title)
     }

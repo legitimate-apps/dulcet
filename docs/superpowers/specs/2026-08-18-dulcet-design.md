@@ -1961,6 +1961,20 @@ seamless boundaries also depend on encoder delay/padding metadata, decoder behav
 whether a transcoder produced a clean boundary. Gapless is therefore an **empirically measured,
 per-format, per-path capability** recorded in `FEATURES.yml`, not a claimed feature.
 
+**Crossfade (2026-10-16).** A device setting, Off or one to twelve whole seconds (default Off). The
+**core decides every boundary**: `PlaybackQueueSnapshot.crossfadeIntoNext` is the overlap for the
+boundary after the current entry, and it is zero -- gapless, exactly as above -- when crossfade is
+off, when nothing different follows, under repeat-one, when a sleep-timer stop point (§12.13) owns
+the boundary, when the outgoing track is shorter than three times the length, and between two
+entries of one album. OpenSubsonic does not say which albums are gapless, so an album played through
+keeps every join it was mastered with; two entries are one album when both carry the same album id,
+or, failing that, when both came from playing the same album. A shell tells its engine the overlap
+for the **current attempt** (`setCrossfade` on Apple), only when it is above zero or undoes an
+earlier non-zero value for that attempt, so a gapless boundary sees no new command at all. The
+engine overlaps only into a preload it holds. **Scrobble rules do not move:** the outgoing attempt
+reports `EndedNaturally` once, at the moment the overlap begins, then `AdvancedToPreloaded`; its
+fading tail reports nothing (§15).
+
 ### 12.9 Audio session, focus, and route policy
 
 Listing route and interruption events is not a policy. The normative policy:
@@ -2479,6 +2493,36 @@ that it reads the node is ASSUMED from the node's semantics.
   which rule 3's reasoning depends on and nothing counts.
 - Run the Android Skip Probe proofs in `core-ci`'s emulator legs. They are opt-in
   (`dulcetSkipProbe=true`) because the legs' server is not seeded with the Skip Probe album.
+
+### 12.13 Sleep timer
+
+Choices: 15, 30, 45 or 60 minutes, the end of the current track, or the end of the queue. The
+timer belongs to the device's playback controller, not to a screen, so it survives the app going to
+the background, and it is never persisted: a relaunch has no timer.
+
+- **Timed choices count down on the monotonic clock** (§12.1 "two clocks"). The core's
+  `SleepTimerCountdown` is pure: the shell feeds it monotonic milliseconds and reads the remaining
+  time, the fade gain and expiry. The last ten seconds fade the output level linearly to silence
+  through the engine's volume command; at the deadline the shell pauses (an ordinary pause: the
+  session is paused, not ended, so nothing about the play changes) and restores the level, so the
+  next Play is at full volume. The wall-clock end time a surface shows ("until 23:40") is display
+  only.
+- **End of track and end of queue are queue stop points** (`setStopPoint`). The core owns them,
+  because only the core knows where a boundary is: at a stop point it does not hand over (no
+  preload is registered across it, and one already registered is discarded), and when the current
+  entry ends naturally it selects the entry that would have played next and starts it **paused**
+  (`shouldAutoPlay = false`), so Play carries on from there; with nothing after it the queue
+  finishes as in §14.3. End of queue stops before the first AutoPlay entry (§14.8) and asks AutoPlay
+  for nothing. The transition carries `stopPointReached`, and the timer is then spent.
+- Cancelling a timer restores the level and clears any stop point. Setting a new choice replaces
+  the old one.
+
+**Android presentation.** Phone listening options are in Up Next. Android TV opens listening
+options from a focused button below the artwork; the remote selects AutoPlay, sleep and crossfade
+through buttons and scrollable dialogs. Both use the playback service for the timer and settings.
+Play Next and Add to Queue use the existing brief toast notice, claimed once after application;
+an empty-player addition starts playback without an extra notice. TV queue editing uses named
+Move Up/Down and Remove actions in place of swipe gestures.
 
 ---
 
@@ -3156,6 +3200,31 @@ another id while a sign-out is open is left saved, and only the old id's record 
 removed. On Android the store's delete takes no id, so the id check and the delete run together on
 the main thread, as every production save does. As defence in depth, the TV form abandons its
 attempt when it leaves the screen, so an answer arriving after that saves nothing.
+
+### 14.8 AutoPlay
+
+When the queue is about to run out, it keeps playing similar music **from the person's own server,
+never from anywhere else**. A device setting, on by default; Up Next shows an AutoPlay section with
+the switch.
+
+- **The core decides when to ask.** With AutoPlay on and Shuffle and Repeat off, once one entry or
+  none follows the current one, `takeAutoplayRequest()` hands out one request: a key, the seed (the
+  queue's last entry), every track id already queued, and a count of ten. Each key is handed out
+  once. The shell answers it with `appendAutoplay(key, items)`; an empty answer is valid, and the
+  same key is not asked again until the queue changes at its end. An answer to a key the queue has
+  moved past changes nothing. If the queue finished while a request was outstanding, the answer's
+  first entry starts on arrival; a request made after the queue finished only appends.
+- **Candidates, on OpenSubsonic (`/rest`)**, are tried in turn until enough new tracks are found:
+  `getSimilarSongs2` for the seed's artist and `getSimilarSongs` for the seed, `getTopSongs` for the
+  artist, then `getRandomSongs` in the seed's genre and finally from the whole library. A source that
+  fails or is not offered is skipped; refused credentials end the search. Dulcet Server serves the
+  same requests from its own library (§29), so the chain is the same on every server.
+- **AutoPlay entries stay last.** They are marked `isAutoplay`; Add to Queue inserts before the first
+  upcoming one, so the person's additions and AutoPlay's never interleave, and Play Next goes after
+  the current entry as always. Switching AutoPlay off, or turning Shuffle or Repeat on, removes the
+  AutoPlay entries that have not played; the current one plays on.
+- AutoPlay entries are ordinary plays: scrobbles, resume positions and failures (§12.12) apply to
+  them unchanged. Offline, nothing is asked; the request waits for a connection.
 
 ---
 
@@ -7792,6 +7861,17 @@ including cached first paint, freshness, account binding and failure retention. 
 only recent/frequent/newest/random album lists and starred content; unsupported personal shelves
 are empty and hidden. Listen Now is a first destination beside Library and Browse. Track shelves
 play through the existing queue-entry surface. Reading a home never records a play.
+**2026-10-16 — Listening session: sleep timer, crossfade decisions, AutoPlay, queue confirmations.**
+New §12.13 (sleep timer), §14.8 (AutoPlay) and the §12.8 crossfade paragraph. The queue core gains
+stop points (`setStopPoint`: end of the current entry, end of the queue) that start the next entry
+paused and carry `stopPointReached`; AutoPlay requests handed out once by key and answered with
+`appendAutoplay`, with AutoPlay entries kept after everything the person queued; and
+`crossfadeIntoNext`, the overlap the core allows for the boundary after the current entry. Queue
+items carry the album id so the core can keep albums gapless. The Apple engine contract gains
+`setCrossfade(attemptID, duration)`; a shell sends it only for an overlap above zero or to undo
+one. Play Next and Add to Queue into a playing queue show a brief confirmation; an addition that
+starts an empty player does not, since starting playback is its own feedback.
+
 **2026-10-16 — Personal collection depth and device-only Library state.**
 The shared reader owns per-category sort/filter preferences, pins and recent searches in a new
 additive account-bound device table (schema 10). Pins intentionally live **on this device for this

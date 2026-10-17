@@ -41,6 +41,8 @@ class AndroidTvEmulatorPlaybackConformanceTest {
                 .setClassName(context, TvPlaybackActivity::class.java.name)
             ActivityScenario.launch<TvPlaybackActivity>(intent).use { activity ->
                 observer.bind()
+                // This proof deliberately ends a one-entry queue; continuation has its own proof.
+                observer.onController { it.setAutoplay(false) }
                 requireMediaTimeAdvances(observer, "foreground")
 
                 // Remote control: the pause key must stop media time, and play must restart it.

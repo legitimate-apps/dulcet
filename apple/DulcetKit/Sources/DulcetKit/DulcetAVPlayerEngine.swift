@@ -341,6 +341,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             }
             player.volume = Float(volume)
             completion(.completed(commandID: commandID, result: .withoutData))
+        case let .setCrossfade(commandID, _, _):
+            // Overlapping playback is not implemented by this engine yet: every boundary stays
+            // gapless, and the owner treats the rejection as "no crossfade".
+            completion(.rejected(commandID: commandID, reason: .unsupported))
         case let .setRate(commandID, rate):
             guard rate.isFinite, rate > 0, rate <= 2 else {
                 completion(.rejected(commandID: commandID, reason: .unsupported))
