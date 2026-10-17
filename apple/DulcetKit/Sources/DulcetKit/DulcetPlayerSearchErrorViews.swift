@@ -1357,7 +1357,10 @@ struct DulcetNowPlayingSheet: View {
 
     var body: some View {
         NavigationStack {
-            Group {
+            // The toolbar belongs to this stable container, not to each playback branch.
+            // A Group distributes it to its child: short AutoPlay tracks repeatedly replace
+            // the close control while moving between the player and Preparing playback.
+            ZStack {
                 if store.snapshot.playbackFailed {
                     DulcetPlaybackFailedView(
                         failure: store.snapshot.playbackFailure,

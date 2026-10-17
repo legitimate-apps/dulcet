@@ -928,3 +928,24 @@ non-isolated, stale-phase, mismatched-device, duplicate, missing and malformed
 acknowledgments are rejected. It also checks all four test invocations use the verified
 destination. The next full gate must show the actual positive startup marker and all
 planned legs passing; its terminal receipt is maintained in PR #340.
+
+
+**iPad streaming cleanup — actual short-track toolbar replacement.** Full run
+39071376612 reaches the streaming-quality proof after its Library suite passes all
+five methods and the complete lyrics-states method passes in 276.760 seconds.
+The streaming proof fails when tapping Close Now Playing to restore Original quality.
+Its xcresult hierarchy and compressed recording show the full player visibly in
+Preparing playback, with the close chevron at the top leading edge. Three tap attempts
+cannot compute a hit point. Between those snapshots the toolbar button receives new
+accessibility identities while the short tracks advance with AutoPlay enabled.
+
+The player attached its toolbar to a `Group` containing the changing failed, playing,
+preparing and unavailable branches. **INFERENCE:** distributing the toolbar across
+those branches makes the control disappear during the synthesized tap. The correction
+attaches it to a stable `ZStack` around those branches. The streaming proof retains
+AutoPlay, the original short tracks and every server-side 96 kbps/source-bitrate check.
+It now also requires a hittable close control and positively observes dismissal before
+restoring both quality choices through the real pickers. Its advancement alternative
+reads one immutable nonempty title snapshot, so a removed title cannot masquerade as
+movement past the probe. UI-test source type-checking passes all five directories;
+runtime acceptance still requires the final full gate linked from PR #340.

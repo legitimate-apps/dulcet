@@ -3596,8 +3596,11 @@ final class DulcetiOSUITests: XCTestCase {
                     break
                 }
             }
-            if title.exists, !title.label.isEmpty, title.label != track {
-                started = "moved-past-probe to \(title.label)"
+            // Read one immutable snapshot. AutoPlay can replace the title between separate
+            // exists/label reads; an empty label from a removed title proves no advancement.
+            if let shownTitle = try? title.snapshot().label,
+               !shownTitle.isEmpty, shownTitle != track {
+                started = "moved-past-probe to \(shownTitle)"
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < playDeadline && started == nil
@@ -3621,7 +3624,16 @@ final class DulcetiOSUITests: XCTestCase {
 
         // Put both choices back, through the same screen, so later phases stream originals.
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
-        if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
+        guard close.waitForExistence(timeout: 5), close.isHittable else {
+            XCTFail("Now Playing must keep its close control reachable while the short queue advances: "
+                + app.debugDescription)
+            return
+        }
+        close.tap()
+        guard close.waitForNonExistence(timeout: 5) else {
+            XCTFail("Close Now Playing must dismiss the player before restoring streaming quality")
+            return
+        }
         guard openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: expectedCompact),
               chooseStreamingQuality("Original", row: "dulcet.streaming-quality.unmetered", in: app),
               chooseStreamingQuality("Original", row: "dulcet.streaming-quality.metered", in: app) else { return }
