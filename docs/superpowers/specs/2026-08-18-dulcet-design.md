@@ -7807,7 +7807,9 @@ release dates and unsupported playlist favorites are never invented.
 
 Downloaded contains actual completed download identities resolved against pinned track metadata,
 works offline and updates when downloads change; merely cached tracks are excluded. Downloaded
-album/artist filters use those track relationships. `artistTopSongs` calls `getTopSongs` with the
+album/artist filters use those track relationships. tvOS retains its existing no-durable-downloads
+policy, so its shell offers no Downloaded entry or filter; Android TV supports downloads.
+`artistTopSongs` calls `getTopSongs` with the
 artist's name when online and falls back to this account's cached plays and stars when unavailable
 or empty. It does not label an unplayed alphabetical sample as Top Songs. Shuffle All online
 requests a fresh `getRandomSongs` selection on every action, with a bounded queue of up to 500
