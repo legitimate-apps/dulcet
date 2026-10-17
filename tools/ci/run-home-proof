@@ -1,0 +1,53 @@
+#!/bin/bash
+# Run the production home against the already-running disposable REST fixture.
+# Called after each platform's first app proof, so it reuses its built products and simulator.
+set -euo pipefail
+: "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+mode="${1:-}"
+test_name=testListenNowLaunchAlbumAndRelaunch
+case "$mode" in
+    iphone) scheme=DulcetiOS; destination='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'; derived=DulcetiOSDerivedData; suite=DulcetiOSUITests.DulcetDesignTourUITests; target=DulcetiOSUITests/DulcetDesignTourUITests ;;
+    ipados) scheme=DulcetiOS; destination="${2:?iPad simulator destination required}"; derived=DulcetiPadOSDerivedData; suite=DulcetiOSUITests.DulcetDesignTourUITests; target=DulcetiOSUITests/DulcetDesignTourUITests ;;
+    tvos) scheme=DulcetTV; destination='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'; derived=DulcetTVDerivedData; suite=DulcetTVUITests.DulcetTVUITests; target=DulcetTVUITests/DulcetTVUITests ;;
+    macos) scheme=DulcetMac; destination='platform=macOS'; derived=DulcetMacAppTestDerivedData; suite=DulcetMacTests.DulcetMacDesignTourTest; target=DulcetMacTests/DulcetMacDesignTourTest; test_name=testDesignTour ;;
+    *) echo 'run-home-proof: mode must be iphone, ipados, tvos or macos' >&2; exit 2 ;;
+esac
+export TEST_RUNNER_DULCET_HOME_PROOF=1 TEST_RUNNER_DULCET_HOME_IDIOM="$mode"
+export TEST_RUNNER_DULCET_DESIGN_TOUR=1 TEST_RUNNER_DULCET_DESIGN_TOUR_PHASE=home
+export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533
+export TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin
+export TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password
+result="$RUNNER_TEMP/dulcet-$mode-home.xcresult"
+shots="$RUNNER_TEMP/dulcet-$mode-home-shots"
+mkdir -p "$shots"
+export TEST_RUNNER_DULCET_DESIGN_TOUR_OUT="$shots"
+# The Mac test asks the owning shell to photograph only its hosted window. Simulator tests
+# attach their own screenshots. A denied screen capture is explicitly logged as a view render.
+serve_mac_captures() {
+    local request stem window_id
+    while kill -0 "$1" 2>/dev/null; do
+        for request in "$shots"/*.request; do
+            [ -f "$request" ] || continue
+            stem="${request%.request}"
+            window_id="$(cat "$request")"
+            if [[ "$window_id" =~ ^[0-9]+$ ]] && screencapture -x -o -l"$window_id" "$stem.tmp.png" 2>/dev/null; then
+                mv "$stem.tmp.png" "$stem.png"
+            else
+                touch "$stem.fallback"
+            fi
+            rm -f "$request"
+        done
+        sleep 0.2
+    done
+}
+xcodebuild test-without-building \
+    -project apple/Dulcet.xcodeproj -scheme "$scheme" -configuration Debug \
+    -destination "$destination" -derivedDataPath "$RUNNER_TEMP/$derived" \
+    -resultBundlePath "$result" -parallel-testing-enabled NO \
+    -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 180 \
+    "-only-testing:$target/$test_name" 2>&1 | tee "$RUNNER_TEMP/dulcet-$mode-home.log" &
+proof_pid=$!
+if [ "$mode" = macos ]; then serve_mac_captures "$proof_pid"; fi
+wait "$proof_pid"
+python3 tools/verify-xcode-test-execution "$result" "$suite" "$test_name"
+python3 tools/swift-testing-junit "$result" "$RUNNER_TEMP/dulcet-$mode-home-junit/TEST-ListenNow.xml" ListenNow

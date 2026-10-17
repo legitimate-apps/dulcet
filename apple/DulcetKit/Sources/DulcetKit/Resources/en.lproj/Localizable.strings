@@ -385,3 +385,22 @@
 
 "myLibrary.refresh" = "Refresh Library";
 "myLibrary.refreshFailed" = "Couldn’t refresh your library. %@";
+
+/* Listen Now */
+"sidebar.listenNow" = "Listen Now";
+"home.title" = "Find your next listen";
+"home.body" = "Your music, ready when you are. Return to an album, revisit a favourite or explore your server.";
+"home.continue" = "Continue Listening";
+"action.resume" = "Resume";
+"home.refresh" = "Refresh";
+"home.recent" = "Recently Played";
+"home.recentPlaylists" = "Recently Played Playlists";
+"home.frequent" = "Heavy Rotation";
+"home.newest" = "New on Your Server";
+"home.rediscover" = "Rediscover";
+"home.dailyMix" = "Daily Mix";
+"home.favourites" = "Your Favourites";
+"home.artistStation" = "From Your Artists";
+"home.genreStation" = "From Your Genres";
+"home.random" = "Explore Your Server";
+"home.play" = "Play %@";

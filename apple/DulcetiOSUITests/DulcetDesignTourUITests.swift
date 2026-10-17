@@ -37,6 +37,9 @@ final class DulcetDesignTourUITests: XCTestCase {
             "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
             "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
         launchInInteractionScope(app)
+        if let expected = environment["DULCET_HOME_IDIOM"] {
+            XCTAssertEqual(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone", expected)
+        }
         let home = app.descendants(matching: .any)["dulcet.listenNow"].firstMatch
         XCTAssertTrue(home.waitForExistence(timeout: 40), app.debugDescription)
         let album = app.buttons["dulcet.library.album"].firstMatch

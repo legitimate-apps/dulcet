@@ -7,16 +7,16 @@ public enum DulcetListenNowShelf: String, CaseIterable, Sendable, Hashable, Iden
     public var id: String { rawValue }
     var title: String {
         switch self {
-        case .recent: "Recently Played"
-        case .recentPlaylists: "Recently Played Playlists"
-        case .frequent: "Heavy Rotation"
-        case .newest: "New on Your Server"
-        case .rediscover: "Rediscover"
-        case .dailyMix: "Daily Mix"
-        case .favourites: "Your Favourites"
-        case .artistStation: "From Your Artists"
-        case .genreStation: "From Your Genres"
-        case .random: "Explore Your Server"
+        case .recent: DulcetStrings.homeRecent
+        case .recentPlaylists: DulcetStrings.homeRecentPlaylists
+        case .frequent: DulcetStrings.homeFrequent
+        case .newest: DulcetStrings.homeNewest
+        case .rediscover: DulcetStrings.homeRediscover
+        case .dailyMix: DulcetStrings.homeDailyMix
+        case .favourites: DulcetStrings.homeFavourites
+        case .artistStation: DulcetStrings.homeArtistStation
+        case .genreStation: DulcetStrings.homeGenreStation
+        case .random: DulcetStrings.homeRandom
         }
     }
 }
@@ -24,12 +24,12 @@ public enum DulcetListenNowShelf: String, CaseIterable, Sendable, Hashable, Iden
 struct DulcetListenNowView: View {
     @Environment(DulcetPresentationStore.self) private var store
     var body: some View {
-        DulcetReaderPage(title: "Listen Now") { width in
+        DulcetReaderPage(title: DulcetStrings.listenNow) { width in
             DulcetReaderAccountBanner()
-            Text("Find your next listen")
+            Text(DulcetStrings.homeTitle)
                 .font(.largeTitle.bold())
                 .accessibilityAddTraits(.isHeader)
-            Text("Your music, ready when you are. Return to an album, revisit a favourite or explore your server.")
+            Text(DulcetStrings.homeBody)
                 .font(.body)
                 .dulcetForeground(.secondaryTextOnWindow)
             HStack {
@@ -42,10 +42,10 @@ struct DulcetListenNowView: View {
             }
             if let player = store.snapshot.nowPlaying, player.sessionID != nil {
                 VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                    Text("Continue Listening").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                    Text(DulcetStrings.continueListening).font(.title2.bold()).accessibilityAddTraits(.isHeader)
                     Text(player.sourceDisplayName ?? player.current.title).font(.headline)
                     Text(player.current.title).dulcetForeground(.secondaryTextOnWindow)
-                    Button("Resume", systemImage: "play.fill") { store.sendPlaybackControl(.play) }
+                    Button(DulcetStrings.resume, systemImage: "play.fill") { store.sendPlaybackControl(.play) }
                         .accessibilityIdentifier("dulcet.listenNow.resume")
                 }
             }
@@ -64,7 +64,7 @@ private struct DulcetListenNowRefresh: View {
     @FocusState private var focused: Bool
 #endif
     var body: some View {
-        Button("Refresh", systemImage: "arrow.clockwise") { store.librarySession?.reconnect() }
+        Button(DulcetStrings.homeRefresh, systemImage: "arrow.clockwise") { store.librarySession?.reconnect() }
             .accessibilityIdentifier("dulcet.listenNow.refresh")
 #if os(tvOS)
             .focused($focused)
@@ -105,7 +105,7 @@ private struct DulcetListenNowShelfView: View {
                                     store.playReaderTracks(window.playableTracks, sourceKind: .library,
                                         sourceID: nil, sourceName: shelf.title)
                                 }
-                                .accessibilityLabel("Play \(shelf.title)")
+                                .accessibilityLabel(DulcetStrings.homePlay(shelf.title))
                             }
                         }
                         if let line = DulcetReaderCopy.freshnessLine(window.freshness) {
@@ -126,11 +126,11 @@ private struct DulcetListenNowShelfView: View {
                                             VStack(alignment: .leading) {
                                                 DulcetArtworkView(artwork: item.artwork, size: tileWidth)
                                                 Text(item.displayTitle).lineLimit(textSize.isAccessibilitySize ? nil : 2)
-                                                Text(item.artistName ?? "").font(.caption)
+                                                Text(verbatim: item.artistName ?? "").font(.caption)
                                             }.frame(width: tileWidth, alignment: .leading)
                                         }
                                         .dulcetMediaButtonStyle(hover: .lift)
-                                        .accessibilityLabel("Play \(item.displayTitle)")
+                                        .accessibilityLabel(DulcetStrings.homePlay(item.displayTitle))
                                         .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue).track.\(index)")
                                     } else {
                                         DulcetReaderTile(item: item, width: tileWidth)

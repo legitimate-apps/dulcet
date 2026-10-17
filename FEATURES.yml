@@ -2598,6 +2598,95 @@
           "reason": "The TV offers the choice on its Account screen, below Sign out. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. The control and the hand-off are Robolectric evidence; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5). The cap is also driven end to end on an API 34 Android TV emulator in core-ci (AndroidTvEmulatorStreamingQualityProofTest): the server's own answer is read at a relay in front of it, transcoded with the cap and the FLAC original without it; it executed and passed, one testcase with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The cap is written to the settings store directly there; choosing it through the Account screen is the Robolectric rows' claim. No physical device was used."
         }
       }
+    },
+    {
+      "id": "home.listen_now",
+      "title": "Listen Now with cached shelves and server recommendations",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#2941-listen-now",
+      "gates": [
+        "protocol:subsonic-1.16.1"
+      ],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Platform runtime verification is pending; no device claim is made.",
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Platform runtime verification is pending; no device claim is made.",
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Platform runtime verification is pending; no device claim is made.",
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Platform runtime verification is pending; no device claim is made.",
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Platform runtime verification is pending; no device claim is made.",
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "core-ci"
+              }
+            ]
+          }
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Platform runtime verification is pending; no device claim is made.",
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "core-ci"
+              }
+            ]
+          }
+        }
+      }
     }
   ]
 }

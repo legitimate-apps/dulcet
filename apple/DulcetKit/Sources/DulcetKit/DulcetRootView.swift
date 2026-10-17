@@ -864,7 +864,7 @@ private struct DulcetSidebar: View {
             List(selection: selection) {
                 Section {
                     if destinations.contains(.listenNow) {
-                        sidebarRow("Listen Now", symbol: "play.circle", destination: .listenNow)
+                        sidebarRow(DulcetStrings.listenNow, symbol: "play.circle", destination: .listenNow)
                     }
                     if destinations.contains(.library) {
                         sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
@@ -1238,7 +1238,7 @@ extension DulcetSidebarDestination {
 
     var windowTitle: String {
         switch self {
-        case .listenNow: "Listen Now"
+        case .listenNow: DulcetStrings.listenNow
         case .library: DulcetStrings.library
         case .browse: DulcetStrings.browseSection
         case .search: DulcetStrings.search
