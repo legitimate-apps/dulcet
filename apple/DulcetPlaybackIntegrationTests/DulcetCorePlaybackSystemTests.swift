@@ -1143,7 +1143,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     }
 
     /// With AutoPlay on and the queue on its last entry, the core's request is answered once.
-    /// The fixture's server does not listen, so the answer is a failure and adds nothing.
+    /// The fixture's server does not listen; every source fails and is skipped (only refused
+    /// credentials end the search), so the answer is an empty list and adds nothing.
     func testAutoplayAsksOnceWhenTheQueueRunsOutAndNotWhenItIsOff() async throws {
         let fixture = makeFixture(tracks: ["only"])
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "dulcet.tests.autoplay.\(UUID().uuidString)"))
@@ -1163,9 +1164,10 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         while fixture.controller.autoplayLog.isEmpty, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        XCTAssertEqual(fixture.controller.autoplayLog, ["failed"], "one request, answered from the account's server")
+        XCTAssertEqual(fixture.controller.autoplayLog, ["answered:0"], "one request, answered from the account's server")
         XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.queueEntries.count, 1)
-        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.autoplayActive, false)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.autoplayActive, true,
+                       "on, with Shuffle and Repeat off")
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(fixture.controller.autoplayLog.count, 1, "a key is answered once")
     }
