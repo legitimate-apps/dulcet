@@ -20,16 +20,16 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
     val state by remember(playback) { playback?.state ?: kotlinx.coroutines.flow.MutableStateFlow(AndroidPlaybackState()) }.collectAsState()
     val context = LocalContext.current
     LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"),
-        contentPadding=PaddingValues(horizontal=56.dp, vertical=24.dp), verticalArrangement=Arrangement.spacedBy(24.dp)) {
+        contentPadding=PaddingValues(horizontal=56.dp, vertical=24.dp)) {
         item {
-            Column {
+            Column(Modifier.padding(bottom=24.dp)) {
                 Text("Listen Now", style=MaterialTheme.typography.headlineLarge)
                 Text("Find your next listen", style=MaterialTheme.typography.titleMedium)
                 Button(onClick=session::refresh, modifier=Modifier.tvFocus("listenNow.refresh")) { Text("Refresh") }
             }
         }
         if (state.hasSession && playback != null) item {
-            Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(bottom=24.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text("Continue Listening", style=MaterialTheme.typography.headlineSmall)
                 Text(state.album ?: state.title)
                 Button(onClick={ playback.play() }, modifier=Modifier.tvFocus("listenNow.resume")) { Text("Resume ${state.title}") }
@@ -40,7 +40,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
             val current by surface.state.collectAsState()
             val shown by rememberUpdatedState(current)
             if (current == null || current!!.items.isNotEmpty() || current!!.freshness != AndroidLibraryFreshness.Live) {
-                Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}"), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom=24.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     Text(shelf.title,style=MaterialTheme.typography.headlineSmall)
                     val resources = libraryResources()
                     current?.let { publication ->

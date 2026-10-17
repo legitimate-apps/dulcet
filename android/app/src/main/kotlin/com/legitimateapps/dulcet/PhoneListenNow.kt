@@ -15,10 +15,9 @@ import com.legitimateapps.dulcet.search.SearchAccount
 
 @Composable
 internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, actions: PhoneActions, playbackState: AndroidPlaybackState, playback: AndroidPlaybackController?) {
-    LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), contentPadding = PaddingValues(vertical=20.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().testTag("listenNow.surface"), contentPadding = PaddingValues(vertical=20.dp)) {
         item {
-            Column(Modifier.padding(horizontal=16.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(horizontal=16.dp).padding(bottom=24.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text("Listen Now", style=MaterialTheme.typography.headlineLarge, modifier=Modifier.semantics { heading() })
                 Text("Find your next listen", style=MaterialTheme.typography.titleMedium)
                 Text("Return to an album, revisit a favourite or explore your server.", style=MaterialTheme.typography.bodyMedium)
@@ -26,7 +25,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
             }
         }
         if (playbackState.hasSession && playback != null) item {
-            Column(Modifier.padding(horizontal=16.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(horizontal=16.dp).padding(bottom=24.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text("Continue Listening", style=MaterialTheme.typography.titleLarge, modifier=Modifier.semantics { heading() })
                 Text(playbackState.album ?: playbackState.title)
                 Text(playbackState.title, style=MaterialTheme.typography.bodyMedium)
@@ -38,7 +37,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
             val publication by surface.state.collectAsState()
             val current = publication
             if (current == null || current.items.isNotEmpty() || current.freshness != AndroidLibraryFreshness.Live) {
-                Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}"), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom=24.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.padding(horizontal=16.dp), horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                         Text(shelf.title, Modifier.weight(1f).semantics { heading() }, style=MaterialTheme.typography.titleLarge)
                         val first = current?.items?.filterIsInstance<AndroidLibraryItem.Track>()?.firstOrNull()
