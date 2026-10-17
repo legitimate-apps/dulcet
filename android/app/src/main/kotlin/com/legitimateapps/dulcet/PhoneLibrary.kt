@@ -73,6 +73,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
+import com.legitimateapps.dulcet.library.rememberLibraryCategory
 import com.legitimateapps.dulcet.library.AlbumSort
 import com.legitimateapps.dulcet.library.rememberAlbumSort
 import androidx.compose.foundation.lazy.LazyListState
@@ -138,7 +139,7 @@ import com.legitimateapps.dulcet.ui.rememberArtwork
  */
 
 /** The library's views, in the Apple shells' section order where both have one. */
-private enum class LibraryView { Home, Albums, Artists, Genres, Favourites, Playlists }
+private enum class LibraryView { Home, Albums, Artists, Songs, Downloaded, Genres, Favourites, Playlists }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -170,6 +171,8 @@ internal fun LibraryHome(
                     LibraryView.Home -> R.string.library_view_home
                     LibraryView.Albums -> R.string.library_view_albums
                     LibraryView.Artists -> R.string.library_view_artists
+                    LibraryView.Songs -> SharedR.string.search_group_songs
+                    LibraryView.Downloaded -> SharedR.string.library_downloaded
                     LibraryView.Genres -> SharedR.string.library_genres
                     LibraryView.Favourites -> R.string.library_view_favourites
                     LibraryView.Playlists -> R.string.library_view_playlists
@@ -177,11 +180,14 @@ internal fun LibraryHome(
                 modifier = Modifier.testTag("library.view.${option.name.lowercase()}"),
             )
         }
-        ConnectionNotices(session, accountNotices = true)
+        ConnectionNotices(session, accountNotices = true, local = view == LibraryView.Downloaded)
+        if (title != R.string.tab_library) StatementText(stringResource(SharedR.string.library_browse_hint), "library.browse.hint")
         when (view) {
             LibraryView.Home -> HomeRows(account, session, actions, myLibrary)
             LibraryView.Albums -> AlbumsGrid(account, session, actions, myLibrary)
             LibraryView.Artists -> ArtistsList(session, actions, myLibrary)
+            LibraryView.Songs -> DeviceSongs(account, session, actions, false, playingRawId)
+            LibraryView.Downloaded -> DeviceSongs(account, session, actions, true, playingRawId)
             LibraryView.Genres -> GenresList(session, actions)
             LibraryView.Favourites -> FavouritesList(account, session, actions, playingRawId, myLibrary)
             LibraryView.Playlists -> PlaylistsList(account, session, actions)
@@ -195,8 +201,15 @@ internal fun LibraryHome(
 @Composable
 private fun HomeRows(account: SearchAccount, session: LibrarySession, actions: PhoneActions, myLibrary: MyLibrarySession? = null) {
     val rows = rememberHomeRows(session)
-    LazyColumn(Modifier.fillMaxSize().testTag("library.home"), contentPadding = PaddingValues(bottom = 24.dp)) {
-        itemsIndexed(rows) { index, row -> HomeRow(account, index, row, session, actions, myLibrary) }
+    val pins = rememberPinnedItems(session)
+    val list = rememberLazyListState()
+    val hasPins = pins.isNotEmpty()
+    // A header that arrives after the first layout belongs at the top. Metadata refreshes and
+    // changes within an existing pins row must retain the user's scroll position.
+    LaunchedEffect(hasPins) { if (hasPins) list.scrollToItem(0) }
+    LazyColumn(Modifier.fillMaxSize().testTag("library.home"), state = list, contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (hasPins) item(key = "pins") { LibraryPins(account, session, actions, pins) }
+        itemsIndexed(rows, key = { _, row -> row.row.titleResource() }) { index, row -> HomeRow(account, index, row, session, actions, myLibrary) }
     }
 }
 
@@ -264,7 +277,10 @@ internal fun RowPlaceholder(modifier: Modifier) {
  */
 @Composable
 private fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions: PhoneActions, myLibrary: MyLibrarySession? = null) {
-    val sort = rememberAlbumSort()
+    val depth by session.depth.collectAsState()
+    if (depth == null) { StatementText("…", "library.albums.loading"); return }
+    val filters = rememberLibraryCategory(session, "albums")
+    val sort = rememberAlbumSort(session)
     val order = sort.value
     val surface = rememberSurface(session, "albums:$order") { openAlbums(order) }
     val publication by surface.state.collectAsState()
@@ -285,7 +301,13 @@ private fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions:
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column {
                 AlbumSortControl(order, sort::choose)
-                if (current != null) ListStatus(current, "library.albums", session::retry)
+                LibraryCategoryControls(filters, showSort = false)
+                if (current != null) {
+                    ListStatus(current, "library.albums", session::retry)
+                    if (current.growsAtEnd()) TextButton(onClick = surface::loadMore, modifier = Modifier.testTag("library.albums.loadMore")) {
+                        Text(stringResource(SharedR.string.library_load_more))
+                    }
+                }
             }
         }
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
@@ -369,10 +391,12 @@ private const val PAGE_AHEAD = 12
 
 @Composable
 private fun ArtistsList(session: LibrarySession, actions: PhoneActions, myLibrary: MyLibrarySession? = null) {
+    val controls = rememberLibraryCategory(session, "artists")
     val surface = rememberSurface(session, "artists") { openArtists() }
     val publication by surface.state.collectAsState()
     val current = publication
     LazyColumn(Modifier.fillMaxSize().testTag("library.artists")) {
+        item { LibraryCategoryControls(controls) }
         if (current != null) item { ListStatus(current, "library.artists", session::retry) }
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
             if (item is AndroidLibraryItem.Artist) {
@@ -495,12 +519,14 @@ internal fun SectionHeading(text: Int, tag: String) {
  * "Nothing here yet".
  */
 @Composable
-internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit) {
+internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit, local: Boolean = false) {
     val resources = libraryResources()
     Column {
-        FreshnessLine(publication.freshness, tag, retry)
-        resources.coverageLine(publication)?.let { StatementText(it, "$tag.coverage") }
-        resources.orderLine(publication)?.let { StatementText(it, "$tag.order") }
+        if (!local) {
+            FreshnessLine(publication.freshness, tag, retry)
+            resources.coverageLine(publication)?.let { StatementText(it, "$tag.coverage") }
+            resources.orderLine(publication)?.let { StatementText(it, "$tag.order") }
+        }
         val freshness = publication.freshness
         when {
             freshness is AndroidLibraryFreshness.Unavailable ->
@@ -537,7 +563,10 @@ internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount)
  * statements that are made once rather than on every list (§16.12, §16.10).
  */
 @Composable
-internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false) {
+    val depth by session.depth.collectAsState()
+    if (depth?.errorKind != null) StatementText(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
+    if (local) return
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
@@ -619,6 +648,7 @@ internal fun AlbumScreen(
                     Icon(DulcetIcons.Download, stringResource(SharedR.string.download_album))
                 }
             }
+            if (album != null) LibraryPinButton(session, album, "album.pin")
             if (album != null) {
                 val membership = membershipOf(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
                 // The + / checkmark of the album's membership, beside its heart as Apple Music has it.
@@ -758,6 +788,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                           myLibrary: MyLibrarySession? = null) {
     val surface = rememberSurface(session, "artist:$rawId") { openArtist(rawId) }
     val publication by surface.state.collectAsState()
+    val topSurface = rememberSurface(session, "artistTopSongs:$rawId") { openArtistTopSongs(rawId) }
+    val topSongs by topSurface.state.collectAsState()
     val current = publication
     val artist = current?.header as? AndroidLibraryItem.Artist
     val resources = libraryResources()
@@ -789,6 +821,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
             navigationIcon = {
                 IconButton(onClick = actions.back) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back)) }
             }, actions = {
+                if (artist != null) LibraryPinButton(session, artist, "artist.pin")
                 if (artist != null) {
                     val membership = membershipOf(myLibrary, target)
                     // The + / checkmark of the artist's membership, beside its heart as Apple Music has it.
@@ -827,8 +860,28 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                     }
                 }
             }
-            itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
-                AlbumCard(account, album, Modifier.testTag("artist.album.$position")) { actions.openAlbum(album.rawId) }
+            val top = topSongs?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
+            if (top.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Text(stringResource(SharedR.string.library_top_songs), style = MaterialTheme.typography.titleLarge)
+                    StatementText(stringResource(SharedR.string.library_top_songs_hint), "artist.topSongs.scope")
+                    topSongs?.let { FreshnessLine(it.freshness, "artist.topSongs", session::retry) }
+                    top.take(5).forEachIndexed { index, track ->
+                        TrackRow(track, index + 1, false, Modifier.fillMaxWidth().testTag("artist.topSongs.$index"), onUnavailable = {},
+                            onClick = { actions.playTracks(top, track.rawId, artist?.name.orEmpty()) })
+                    }
+                }
+            }
+            for (group in listOf("albums", "epsSingles", "compilations", "appearsOn")) {
+                val grouped = albums.withIndex().filter { it.value.discographyGroup == group }
+                if (grouped.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                    Text(stringResource(releaseGroupTitle(group)), style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.testTag("artist.group.$group"))
+                }
+                itemsIndexed(grouped, key = { _, album -> album.value.rawId }) { _, indexed ->
+                    val album = indexed.value
+                    AlbumCard(account, album, Modifier.testTag("artist.album.${indexed.index}")) { actions.openAlbum(album.rawId) }
+                }
             }
         }
     }
@@ -948,7 +1001,9 @@ internal fun AlbumCard(
 ) {
     val title = item.displayTitle()
     val artwork = (item as? AndroidLibraryItem.Album)?.artworkKey
-    val subtitle = (item as? AndroidLibraryItem.Album)?.artistName
+    val subtitle = (item as? AndroidLibraryItem.Album)?.let { album ->
+        listOfNotNull(album.artistName, album.originalReleaseDate?.take(4) ?: album.year?.toString()).joinToString(" · ")
+    }
     // A long press opens the card's membership menu, as Apple Music's does. The caller's modifier —
     // its tag — stays on the clickable card, so a test's click and text find the same node as before.
     var menuOpen by remember { mutableStateOf(false) }

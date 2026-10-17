@@ -61,7 +61,9 @@ public fun Resources.unavailableLine(reason: AndroidLibraryUnavailableReason, su
  * and the noun are stated: "Showing 120 of 2,950 albums — the rest need a connection".
  */
 public fun Resources.coverageLine(publication: AndroidLibraryPublication): String? = when (publication.coverage) {
-    AndroidLibraryCoverage.Open -> if (publication.freshness.isOffline() || publication.order == AndroidLibraryItemsOrder.LocalView) {
+    AndroidLibraryCoverage.Open -> if (!publication.freshness.isOffline() && publication.order == AndroidLibraryItemsOrder.LocalView) {
+        getString(R.string.library_loaded_scope)
+    } else if (publication.freshness.isOffline()) {
         val shown = publication.items.size
         val plural = countPlural(publication.items)
         publication.total?.takeIf { it > shown }?.let { total ->
@@ -124,7 +126,9 @@ public fun Resources.discardedChangesLine(count: Long): String? =
 
 /** "Available offline" above a list sorted on this device while offline (§16.14). */
 public fun Resources.orderLine(publication: AndroidLibraryPublication): String? =
-    if (publication.order == AndroidLibraryItemsOrder.LocalView) getString(R.string.library_local_view) else null
+    if (publication.order == AndroidLibraryItemsOrder.LocalView) {
+        getString(if (publication.freshness.isOffline()) R.string.library_local_view else R.string.library_sorted_device)
+    } else null
 
 /** The label of a search's scope (§16.15); null when the server answered and nothing needs saying. */
 public fun Resources.searchScopeLabel(scope: AndroidLibrarySearchScope?): String? = when (scope) {

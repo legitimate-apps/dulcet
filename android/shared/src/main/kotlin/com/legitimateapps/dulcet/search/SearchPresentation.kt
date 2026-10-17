@@ -111,6 +111,10 @@ public interface SearchSourceHandle {
     public fun updateQuery(text: String)
     public fun refresh()
     public fun close()
+    public val recentSearchError: String? get() = null
+    public fun recentSearches(completion: (List<String>) -> Unit) { completion(emptyList()) }
+    public fun recordSearch(text: String) {}
+    public fun clearRecentSearches() {}
 }
 
 /** Shared phone/TV search state over one [SearchSource]. */
@@ -121,6 +125,11 @@ public class SearchPresenter(
     private val mutableState = MutableStateFlow(SearchUiState())
     public val state: StateFlow<SearchUiState> = mutableState.asStateFlow()
     private var closed = false
+    private val mutableRecents = MutableStateFlow<List<String>>(emptyList())
+    public val recents: StateFlow<List<String>> = mutableRecents.asStateFlow()
+    private val mutableRecentError = MutableStateFlow<String?>(null)
+    public val recentSearchError: StateFlow<String?> = mutableRecentError.asStateFlow()
+    private var historyRead = 0L
 
     private val handle: SearchSourceHandle = source.open { publication ->
         if (!closed) {
@@ -129,6 +138,31 @@ public class SearchPresenter(
                     serverPending = publication.serverPending)
             }
         }
+    }
+
+    init { refreshRecents() }
+
+    private fun refreshRecents() {
+        val read = ++historyRead
+        handle.recentSearches {
+            if (!closed && read == historyRead) {
+                mutableRecents.value = it
+                mutableRecentError.value = handle.recentSearchError
+            }
+        }
+    }
+
+    /** A deliberate search or result activation, rather than every intermediate keystroke. */
+    public fun commitQuery() {
+        if (closed || mutableState.value.query.isBlank()) return
+        handle.recordSearch(mutableState.value.query)
+        refreshRecents()
+    }
+
+    public fun clearRecents() {
+        if (closed) return
+        handle.clearRecentSearches()
+        refreshRecents()
     }
 
     public fun updateQuery(value: String) {

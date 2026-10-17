@@ -88,7 +88,7 @@ struct DulcetMyLibraryEmptyState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             Text(DulcetStrings.myLibraryEmptyTitle).font(.title2.weight(.semibold))
-            Text(DulcetStrings.myLibraryEmptyBody).dulcetForeground(.secondaryTextOnWindow)
+            Text(DulcetStrings.libraryPersonalEmpty).dulcetForeground(.secondaryTextOnWindow)
             Button(DulcetStrings.browseSection) { store.navigate(to: .browse) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -153,7 +153,11 @@ struct DulcetMyLibrarySectionPage: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                             if let library = store.librarySession?.myLibrary {
+                                if section != .recent {
+                                    DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
+                                }
                                 DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
+                                if section == .songs { DulcetMyLibraryShuffle(songs: library.songs) }
                                 if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
                                     DulcetMyLibraryEmptyState()
                                 } else {
@@ -261,7 +265,11 @@ struct DulcetMyLibraryView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                    Text(DulcetStrings.libraryPersonalTitle).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    Text(DulcetStrings.libraryPersonalHint).font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+                    DulcetLibraryDepthHome(width: geometry.size.width)
                     if let library = store.librarySession?.myLibrary {
+                        DulcetMyLibraryShuffle(songs: library.songs)
                         DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                         VStack(spacing: 0) {
                             ForEach(DulcetMyLibrarySection.allCases) { choice in
@@ -305,7 +313,12 @@ struct DulcetMyLibraryView: View {
                         Button(DulcetStrings.myLibraryRefresh, systemImage: "arrow.clockwise") { refresh() }
                             .accessibilityIdentifier("dulcet.myLibrary.refresh")
 #endif
+                        DulcetLibraryDepthHome(width: geometry.size.width)
+                        if section != .recent {
+                            DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
+                        }
                         if let library = store.librarySession?.myLibrary {
+                            if section == .songs || section == .recent { DulcetMyLibraryShuffle(songs: library.songs) }
                             DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                             if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
                                 DulcetMyLibraryEmptyState()
@@ -376,5 +389,18 @@ struct DulcetMyLibraryView: View {
         (store.librarySession?.reader as? any DulcetMyLibraryReading)?.setMyLibrarySort(shownSection == .recent ? .recentlyAdded : .alphabetical)
     }
     private func refresh() { (store.librarySession?.reader as? any DulcetMyLibraryReading)?.refreshMyLibrary() }
+}
+struct DulcetMyLibraryShuffle: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let songs: [DulcetReaderItem]
+    var body: some View {
+        Button(DulcetStrings.libraryShufflePersonal, systemImage: "shuffle") {
+            store.playReaderTracks(songs.compactMap(\.playableTrack).filter { $0.availability == .playable }, shuffle: true,
+                                   sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.libraryPersonalTitle)
+        }
+        .buttonStyle(.bordered)
+        .disabled(songs.compactMap(\.playableTrack).allSatisfy { $0.availability != .playable })
+        .accessibilityIdentifier("dulcet.myLibrary.shuffleAll")
+    }
 }
 #endif

@@ -261,6 +261,35 @@ public class AndroidLibraryReader internal constructor(
      * Opens one screen. The first publication is the cached content if there is any — built on the
      * reader's thread before any request of this open is issued (CONF-76) — then each later state.
      */
+    public fun libraryDepthState(completion: (LibraryDepthState) -> Unit) {
+        val delivered = AtomicBoolean(false)
+        fun finish(state: LibraryDepthState) {
+            if (delivered.compareAndSet(false, true)) onMain(checkClosed = false) { completion(state) }
+        }
+        onReader(onDropped = { finish(LibraryDepthState(errorKind = "closed")) }) {
+            val state = try { composed()?.session?.reader?.libraryDepthState() ?: LibraryDepthState(errorKind = "closed") }
+                catch (_: Throwable) { LibraryDepthState(errorKind = "internalFailure") }
+            finish(state)
+        }
+    }
+
+    public fun setLibraryCategory(category: String, sort: String, filter: String): Boolean = depthChange {
+        it.cache.setLibraryCategory(category, sort, filter)
+    }
+    public fun setLibraryPin(kind: String, rawId: String, pinned: Boolean): Boolean = depthChange {
+        it.cache.setLibraryPin(kind, rawId, pinned)
+    }
+    public fun recordSearch(text: String): Boolean = depthChange { it.cache.recordSearch(text) }
+    public fun clearRecentSearches(): Boolean = depthChange { it.cache.clearRecentSearches() }
+    private fun depthChange(work: (LibraryReader) -> Unit): Boolean {
+        if (closed.get()) return false
+        onReader {
+            val reader = composed()?.session?.reader ?: return@onReader
+            reader.changeLibraryDepth(work)
+        }
+        return true
+    }
+
     public fun openWindow(query: AndroidLibraryQuery, listener: (AndroidLibraryPublication) -> Unit): AndroidLibraryWindow {
         val window = AndroidLibraryWindow(this, listener)
         onReader(onDropped = window::emitClosed) {

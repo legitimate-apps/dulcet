@@ -1,0 +1,9 @@
+-- Device-only library preferences, pins, recent searches and optional release metadata.
+CREATE TABLE library_depth_entry (
+  server_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  value TEXT NOT NULL,
+  issue_seq INTEGER NOT NULL,
+  PRIMARY KEY (server_id, category, raw_id)
+);

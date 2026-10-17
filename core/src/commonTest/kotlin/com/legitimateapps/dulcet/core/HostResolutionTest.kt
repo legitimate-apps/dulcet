@@ -3,10 +3,17 @@ package com.legitimateapps.dulcet.core
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -105,19 +112,76 @@ class HostResolutionTest {
 
     @Test
     fun saturationRejectsWithoutQueueingAndRecoversAfterWorkersReturn() = runBlocking {
+        val dispatcherEntered = List(2) { CompletableDeferred<Unit>() }
+        val dispatcherReturned = List(2) { CompletableDeferred<Unit>() }
+        val releaseDispatcher = CompletableDeferred<Unit>()
+        val releaseLookups = CompletableDeferred<Unit>()
         val started = List(2) { CompletableDeferred<Unit>() }
-        val jobs = started.map { signal ->
-            launch(start = CoroutineStart.UNDISPATCHED) {
-                boundedHostResolution(80) { signal.complete(Unit); blockingLookup() }
+        var jobs = emptyList<Deferred<List<String>>>()
+        try {
+            // A worker can start after an 80ms waiter has expired, in which case the resolver
+            // correctly skips the lookup. Reproduce that schedule rather than depending on CI
+            // load: neither dispatcher thread can take the probes during their first 200ms.
+            dispatcherEntered.indices.forEach { index ->
+                hostResolutionDispatcher().dispatch(EmptyCoroutineContext, Runnable {
+                    try {
+                        runBlocking {
+                            dispatcherEntered[index].complete(Unit)
+                            releaseDispatcher.await()
+                        }
+                    } finally {
+                        dispatcherReturned[index].complete(Unit)
+                    }
+                })
+            }
+            withTimeout(5_000) {
+                dispatcherEntered.forEach { it.await() }
+                jobs = started.map { signal ->
+                    async(start = CoroutineStart.UNDISPATCHED) {
+                        // Capacity needs admitted workers, not a timed-out callback that may
+                        // never run. Deadline behavior is covered by the 80ms tests above;
+                        // this entire coordination is bounded by the outer five-second limit.
+                        boundedHostResolution(Long.MAX_VALUE) {
+                            signal.complete(Unit)
+                            runBlocking { releaseLookups.await() }
+                            local
+                        }
+                    }
+                }
+                launch { delay(200); releaseDispatcher.complete(Unit) }
+                started.forEach { it.await() }
+                var ran = false
+                val rejected = async(start = CoroutineStart.UNDISPATCHED) {
+                    boundedHostResolution { ran = true; local }
+                }
+                assertTrue(rejected.isCompleted, "saturation must reject without waiting for a permit or deadline")
+                assertEquals(emptyList(), rejected.await())
+                assertEquals(false, ran)
+                releaseLookups.complete(Unit)
+                jobs.forEach { assertEquals(local, it.await()) }
+            }
+        } finally {
+            // Assertion or coordination failure must release both blocking stages. Cancel the
+            // waiter jobs too: a resolver regression must report a test failure, not hang CI.
+            releaseDispatcher.complete(Unit)
+            releaseLookups.complete(Unit)
+            jobs.forEach { it.cancel() }
+            withTimeout(5_000) {
+                jobs.joinAll()
+                dispatcherReturned.forEach { it.await() }
             }
         }
-        started.forEach { it.await() }
-        var ran = false
-        assertEquals(emptyList(), boundedHostResolution { ran = true; local })
-        assertEquals(false, ran)
-        jobs.forEach { it.join() }
-        delay(1_500) // 3x margin over the 500ms busy-spin; 550ms left only 50ms of slack
-        assertEquals(local, boundedHostResolution { local })
+        // A waiter can resume just before the worker's finally releases its permit. Observe
+        // actual recovery instead of assuming an elapsed sleep means both permits returned.
+        val recovered = withTimeout(5_000) {
+            var addresses = boundedHostResolution { local }
+            while (addresses.isEmpty()) {
+                yield()
+                addresses = boundedHostResolution { local }
+            }
+            addresses
+        }
+        assertEquals(local, recovered)
     }
 
     @Test
