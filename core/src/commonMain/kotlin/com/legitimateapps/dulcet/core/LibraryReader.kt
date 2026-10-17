@@ -603,10 +603,13 @@ internal class LibraryReader(
         if (constrained) lookAhead.cancelAll()
     }
 
+    internal var localCollectionsChanged: (() -> Unit)? = null
+
     /** Recomputes local download playability without reading the server. */
     fun downloadsChanged() {
         checkConfined()
         visibleHandles().forEach { it.republish() }
+        localCollectionsChanged?.invoke()
         // Offline searches re-run entirely on the device. Online searches will recompute
         // playability when going offline; revalidating them here would read the server.
         if (!online) revalidateSurfaces()
@@ -701,6 +704,8 @@ internal class LibraryReader(
     fun open(query: LibraryQuery, listener: (LibraryPublication) -> Unit): LibraryWindowHandle {
         checkConfined()
         val handle: ReaderHandle = when (query) {
+            LibraryQuery.Downloaded, LibraryQuery.Pinned, is LibraryQuery.ArtistTopSongs ->
+                LibraryDepthWindow(this, query, listener)
             is LibraryQuery.Album -> AlbumDetailWindow(this, query, listener)
             is LibraryQuery.Artist -> CollectionDetailWindow(this, query, listener)
             is LibraryQuery.Playlist -> CollectionDetailWindow(this, query, listener)
@@ -1217,6 +1222,11 @@ internal sealed interface LibraryQuery {
     data object Playlists : LibraryQuery
     data class Playlist(val rawId: String) : LibraryQuery
     data object Starred : LibraryQuery
+    data class Songs(val sort: String = "title", val filter: String = "") : LibraryQuery
+    data object ShuffleSongs : LibraryQuery
+    data object Downloaded : LibraryQuery
+    data object Pinned : LibraryQuery
+    data class ArtistTopSongs(val rawId: String) : LibraryQuery
     data object Genres : LibraryQuery
     data class SongsByGenre(val genre: String, val musicFolderId: String? = null) : LibraryQuery
 }
@@ -1368,6 +1378,9 @@ internal sealed interface LibraryItem {
         val userRating: Int?,
         val playCount: Long?,
         val detailComplete: Boolean,
+        val releaseTypes: List<String> = emptyList(),
+        val originalReleaseDate: String? = null,
+        val discographyGroup: String = "albums",
     ) : LibraryItem
 
     data class Artist(

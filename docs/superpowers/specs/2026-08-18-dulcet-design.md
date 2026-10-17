@@ -7777,6 +7777,45 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-16 — Personal collection depth and device-only Library state.**
+The shared reader owns per-category sort/filter preferences, pins and recent searches in a new
+additive account-bound device table (schema 10). Pins intentionally live **on this device for this
+account**, including with Dulcet Server: they make no server write and do not sync between devices.
+A changed server URL or username purges this state with the seen-cache. User pins protect their
+cached metadata from eviction. Search recents are recorded on a committed search action, trimmed,
+case-folded for deduplication and limited to the latest twelve; clearing recents leaves pins intact.
+
+Albums retain the existing `getAlbumList2` window and scan-stamp rules: title, artist, `byYear`
+(newest first), `newest` (recently added) and `frequent` (most played). Activity lists remain single
+pages; they never claim whole-library coverage. `byYear` excludes albums whose server supplies no
+year. Optional OpenSubsonic `releaseTypes` and `originalReleaseDate` survive the cache and both
+bridges. An artist's discography is newest first, using original date then year, with Albums,
+EPs & Singles, Compilations and Appears On groups when the server supplies the corresponding
+metadata/credits; untyped releases remain Albums, and undated releases follow dated ones.
+
+Songs uses empty-query `search3`, requesting only songs and paging with `songCount`/`songOffset`
+through the same guarded reader window. A server that rejects this enumeration leaves explicitly
+cached, open-coverage device songs visible; a successful empty response with known device songs
+also offers that labelled local view without asserting current server membership. Local title,
+artist, play-count and text filtering cover the loaded window, not an unseen catalog; the UI states
+that scope. Complete one-response categories and Dulcet Server My Library use the shared local
+sort/filter policy; My Library recently-added order uses membership rank. Unknown play counts,
+release dates and unsupported playlist favorites are never invented.
+
+Downloaded contains actual completed download identities resolved against pinned track metadata,
+works offline and updates when downloads change; merely cached tracks are excluded. Downloaded
+album/artist filters use those track relationships. `artistTopSongs` calls `getTopSongs` with the
+artist's name when online and falls back to this account's cached plays and stars when unavailable
+or empty. It does not label an unplayed alphabetical sample as Top Songs. Shuffle All online
+requests a fresh `getRandomSongs` selection on every action, with a bounded queue of up to 500
+server-selected songs; every server song is eligible without enumerating a mirror. Offline and
+personal-collection shuffle uses the displayed available collection and states its scope.
+
+OBSERVED core evidence: `LibraryDepthTest` exercises isolation, persistence, recent-search bounds,
+metadata ordering, pin eviction protection, local offline collections, Top Songs fallback, guarded
+song offsets, bounded random selection and category filters. Platform screen evidence is recorded
+separately in `FEATURES.yml`; these core tests do not claim simulator or emulator UI verification.
+
 **2026-10-16 — Required CI exercises My Library against disposable Dulcet Server.**
 The automated-server boundary includes local disposable Dulcet Server as well as Navidrome;
 automated writes to personal or production instances remain forbidden. The existing Apple
