@@ -29,7 +29,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private let queue: DispatchQueue
     private let queueKey = DispatchSpecificKey<UInt8>()
     private let mediaSamplingQueue: DispatchQueue
-    private let player: AVQueuePlayer
+    private var player: AVQueuePlayer
     private let clock: any DulcetAVPlayerEngineClock
     private let usesAVFoundationMediaStack: Bool
     private let audioSession: any DulcetAudioSessionManaging
@@ -42,6 +42,36 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private var preloaded: PlayerItemContext?
     private var released = false
     private var desiredRate: Float = 1
+    private var masterVolume: Float = 1
+    private var crossfadeDuration: TimeInterval = 0
+    private var overlap: CrossfadeTail?
+    private var crossfadeTimeObserver: Any?
+    private var crossfadeObservationGeneration: UInt64 = 0
+
+    private struct CrossfadeTail {
+        let player: AVQueuePlayer
+        let context: PlayerItemContext
+        let duration: TimeInterval
+        var fraction: Float = 0
+    }
+
+    func currentPlayerRateForTesting() -> Float {
+        var rate: Float = 0
+        performOnQueueSynchronously { [self] in rate = player.rate }
+        return rate
+    }
+
+    /// Transport/gain evidence from the actual players, read on the engine queue.
+    func crossfadeStateForTesting() -> (incomingRate: Float, outgoingRate: Float,
+                                      incomingVolume: Float, outgoingVolume: Float, outgoingPosition: Double)? {
+        var state: (Float, Float, Float, Float, Double)?
+        performOnQueueSynchronously { [self] in
+            guard let overlap else { return }
+            state = (player.rate, overlap.player.rate, player.volume, overlap.player.volume,
+                     CMTimeGetSeconds(overlap.player.currentTime()))
+        }
+        return state
+    }
     private var playerObservers: [NSKeyValueObservation] = []
     private var notificationObservers: [NSObjectProtocol] = []
     private var cancelSampler: (@Sendable () -> Void)?
@@ -89,6 +119,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         )
     ) {
         self.player = player
+        self.masterVolume = player.volume
         self.clock = clock
         self.usesAVFoundationMediaStack = usesAVFoundationMediaStack
         self.audioSession = audioSession
@@ -339,12 +370,20 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 completion(.rejected(commandID: commandID, reason: .invalidState))
                 return
             }
-            player.volume = Float(volume)
+            masterVolume = Float(volume)
+            applyFadeVolumes()
             completion(.completed(commandID: commandID, result: .withoutData))
-        case let .setCrossfade(commandID, _, _):
-            // Overlapping playback is not implemented by this engine yet: every boundary stays
-            // gapless, and the owner treats the rejection as "no crossfade".
-            completion(.rejected(commandID: commandID, reason: .unsupported))
+        case let .setCrossfade(commandID, attemptID, duration):
+            guard current?.plan.attemptID == attemptID, duration.isFinite, duration >= 0 else {
+                completion(.rejected(commandID: commandID, reason: .invalidState))
+                return
+            }
+            crossfadeDuration = duration
+            if usesAVFoundationMediaStack {
+                if duration > 0 || overlap != nil { installCrossfadeTimeObserver() }
+                else { removeCrossfadeTimeObserver() }
+            }
+            completion(.completed(commandID: commandID, result: .withoutData))
         case let .setRate(commandID, rate):
             guard rate.isFinite, rate > 0, rate <= 2 else {
                 completion(.rejected(commandID: commandID, reason: .unsupported))
@@ -354,6 +393,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             if player.timeControlStatus == .playing {
                 player.rate = desiredRate
             }
+            if let overlap, overlap.player.rate > 0 { overlap.player.rate = desiredRate }
             if let current {
                 current.rate = rate
                 emit(.rateChanged(attemptID: current.plan.attemptID, rate: rate))
@@ -423,6 +463,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         guard activateAudioSessionIfNeeded(for: plan, commandID: commandID, completion: completion) else {
             return
         }
+        endOverlap()
+        removeCrossfadeTimeObserver()
+        crossfadeDuration = 0
         let wasPlaying = player.timeControlStatus == .playing
         let context = makeContext(plan: plan, resource: resource, isPreloaded: false)
         current?.invalidate()
@@ -434,6 +477,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 player.insert(preloaded.item, after: context.item)
             }
         }
+        if usesAVFoundationMediaStack { installCrossfadeTimeObserver() }
         emit(.preparing(attemptID: plan.attemptID))
         // Publish after activation, without waiting for stream readiness or artwork. Cold
         // transcodes and restored queues can spend time preparing an otherwise valid track.
@@ -501,7 +545,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             completion(.rejected(commandID: commandID, reason: .invalidState))
             return
         }
+        endOverlap()
         let from = currentPosition(for: context)
+        context.seekGeneration &+= 1
+        let seekGeneration = context.seekGeneration
+        context.isSeeking = true
+        removeCrossfadeTimeObserver()
         let requested = CMTime(seconds: position, preferredTimescale: 1_000)
         player.seek(to: requested, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] success in
             guard let self else {
@@ -509,10 +558,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 return
             }
             self.queue.async {
-                guard self.current === context else {
+                guard self.current === context, context.seekGeneration == seekGeneration else {
                     completion(.rejected(commandID: commandID, reason: .invalidState))
                     return
                 }
+                context.isSeeking = false
+                if self.usesAVFoundationMediaStack { self.installCrossfadeTimeObserver() }
                 context.lastSampledPosition = position
                 let event: DulcetPlaybackEvent = success
                     ? .seekCompleted(attemptID: context.plan.attemptID, from: from, to: position)
@@ -534,6 +585,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func stop(reason: DulcetPlaybackSkipReason) {
+        endOverlap()
+        crossfadeDuration = 0
+        removeCrossfadeTimeObserver()
         guard let current else {
             player.pause()
             player.removeAllItems()
@@ -554,6 +608,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
 
     private func releaseEngine() {
         guard !released else { return }
+        endOverlap()
+        removeCrossfadeTimeObserver()
         player.pause()
         if let current {
             emit(
@@ -586,6 +642,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
 
     private func tearDownWithoutEvent() {
         performOnQueueSynchronously { [self] in
+            endOverlap()
+            removeCrossfadeTimeObserver()
             player.pause()
             current?.invalidate()
             preloaded?.invalidate()
@@ -639,6 +697,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func observePlayer() {
+        installCrossfadeTimeObserver()
         playerObservers.append(
             player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
                 self?.enqueue { $0.timeControlStatusChanged() }
@@ -652,57 +711,78 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func observe(_ context: PlayerItemContext) {
+        // A crossfade reuses this context with a fresh item on the same asset. Fence on the
+        // engine queue as well as at delivery: the replaced item's callbacks may already queue.
+        let observedItem = context.item
         context.observers.append(
-            context.item.observe(\.status, options: [.initial, .new]) { [weak self, weak context] _, _ in
+            observedItem.observe(\.status, options: [.initial, .new]) { [weak self, weak context] item, _ in
                 guard let context else { return }
-                self?.enqueue { $0.itemStatusChanged(context) }
+                self?.enqueue {
+                    guard context.item === item else { return }
+                    $0.itemStatusChanged(context)
+                }
             }
         )
         context.observers.append(
-            context.item.observe(\.duration, options: [.new]) { [weak self, weak context] _, _ in
+            observedItem.observe(\.duration, options: [.new]) { [weak self, weak context] item, _ in
                 guard let context else { return }
-                self?.enqueue { $0.durationChanged(context) }
+                self?.enqueue {
+                    guard context.item === item else { return }
+                    $0.durationChanged(context)
+                }
             }
         )
         context.observers.append(
-            context.item.observe(\.seekableTimeRanges, options: [.new]) { [weak self, weak context] _, _ in
+            observedItem.observe(\.seekableTimeRanges, options: [.new]) { [weak self, weak context] item, _ in
                 guard let context else { return }
-                self?.enqueue { $0.durationChanged(context) }
+                self?.enqueue {
+                    guard context.item === item else { return }
+                    $0.durationChanged(context)
+                }
             }
         )
         let center = NotificationCenter.default
         notificationObservers.append(
             center.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,
-                object: context.item,
+                object: observedItem,
                 queue: nil
-            ) { [weak self, weak context] _ in
-                guard let context else { return }
-                self?.enqueue { $0.itemEnded(context) }
+            ) { [weak self, weak context, weak observedItem] _ in
+                guard let context, let observedItem else { return }
+                self?.enqueue {
+                    guard context.item === observedItem else { return }
+                    $0.itemEnded(context)
+                }
             }
         )
         notificationObservers.append(
             center.addObserver(
                 forName: .AVPlayerItemFailedToPlayToEndTime,
-                object: context.item,
+                object: observedItem,
                 queue: nil
-            ) { [weak self, weak context] notification in
-                guard let context else { return }
+            ) { [weak self, weak context, weak observedItem] notification in
+                guard let context, let observedItem else { return }
                 // A decode failure arrives HERE, with the item still `readyToPlay` and its
                 // `error` nil: without this the engine reported it as its own `.engine` failure.
                 let failure = (notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)
                     .map(DulcetApplePlaybackErrorSanitizer.avFoundationFailure)
-                self?.enqueue { $0.itemFailed(context, reported: failure) }
+                self?.enqueue {
+                    guard context.item === observedItem else { return }
+                    $0.itemFailed(context, reported: failure)
+                }
             }
         )
         notificationObservers.append(
             center.addObserver(
                 forName: .AVPlayerItemPlaybackStalled,
-                object: context.item,
+                object: observedItem,
                 queue: nil
-            ) { [weak self, weak context] _ in
-                guard let context else { return }
-                self?.enqueue { $0.beginBuffering(context) }
+            ) { [weak self, weak context, weak observedItem] _ in
+                guard let context, let observedItem else { return }
+                self?.enqueue {
+                    guard context.item === observedItem else { return }
+                    $0.beginBuffering(context)
+                }
             }
         )
     }
@@ -818,6 +898,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             // that is playing, with no Paused event, for a failure that is not its own.
             if context === current {
                 context.playRequested = false
+                endOverlap()
                 player.pause()
                 updateSystemTransport(for: context, isPlaying: false)
             }
@@ -853,6 +934,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     /// the current one alone: its failure is not the current item's.
     private func stopPresentingAsPlaying(afterFailureOf context: PlayerItemContext) {
         guard context === current else { return }
+        endOverlap()
         context.playRequested = false
         player.pause()
         updateSystemTransport(for: context, isPlaying: false, rateOverride: 0)
@@ -861,22 +943,27 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private func currentItemChanged() {
         guard let outgoing = current, let incoming = preloaded else { return }
         guard player.currentItem === incoming.item else { return }
+        promotePreloaded(outgoing: outgoing, incoming: incoming, retainingTail: false)
+    }
+
+    private func promotePreloaded(
+        outgoing: PlayerItemContext, incoming: PlayerItemContext, retainingTail: Bool
+    ) {
         if !outgoing.endEmitted {
             outgoing.endEmitted = true
-            emit(
-                .endedNaturally(
-                    attemptID: outgoing.plan.attemptID,
-                    finalPosition: finiteSeconds(outgoing.item.duration) ?? outgoing.lastSampledPosition
-                )
-            )
+            outgoing.cancelStartupRecovery()
+            emit(.endedNaturally(
+                attemptID: outgoing.plan.attemptID,
+                finalPosition: retainingTail ? outgoing.lastSampledPosition :
+                    (finiteSeconds(outgoing.item.duration) ?? outgoing.lastSampledPosition)
+            ))
         }
-        emit(
-            .advancedToPreloaded(
-                oldAttemptID: outgoing.plan.attemptID,
-                newAttemptID: incoming.plan.attemptID
-            )
-        )
+        emit(.advancedToPreloaded(
+            oldAttemptID: outgoing.plan.attemptID, newAttemptID: incoming.plan.attemptID
+        ))
         outgoing.invalidate()
+        crossfadeDuration = 0
+        if !retainingTail { removeCrossfadeTimeObserver() }
         incoming.isPreloaded = false
         // The listener asked for music, not for one item: the preloaded item inherits the
         // outgoing item's play request. Without this the sampler -- which only samples a context
@@ -890,10 +977,96 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         activeAudioSessionID = incoming.plan.playbackSessionID
         cancelAudioSessionGrace?()
         cancelAudioSessionGrace = nil
-        if incoming.readyEmitted {
+        if incoming.readyEmitted || retainingTail {
             publishNowPlaying(incoming)
         }
         updateStartupRecovery(incoming)
+    }
+
+    /// Keep the existing decoder and resource loader running for the tail. Only the queued
+    /// incoming asset gets a fresh item in a new queue, which becomes the main player. AVPlayerItem
+    /// attachment outlives remove(_:), so reusing that item would throw during the handoff. The
+    /// asset and its loader stay preloaded; this needs no second
+    /// request or seek of the outgoing stream, so non-seekable transcodes use the same path.
+    /// With duration zero no item/player transfer occurs: AVQueuePlayer owns the gapless boundary.
+    private func updateCrossfade(at position: TimeInterval) {
+        guard position.isFinite, let current, current.playRequested,
+              !current.failureEmitted, !current.isSeeking else { return }
+        if var tail = overlap {
+            // Incoming media time, rather than wall time, stops the ramp while it buffers.
+            tail.fraction = Float(min(1, max(0, position / tail.duration)))
+            overlap = tail
+            applyFadeVolumes()
+            if tail.fraction >= 1 || tail.player.currentItem == nil { endOverlap() }
+            return
+        }
+        guard crossfadeDuration > 0, let duration = current.duration,
+              position >= duration - crossfadeDuration, position < duration,
+              player.rate > 0, !current.endEmitted,
+              let incoming = preloaded, !incoming.failureEmitted, !incoming.waitingForRefresh,
+              incoming.item.status == .readyToPlay,
+              player.currentItem === current.item else { return }
+        let remaining = duration - position
+        let outgoingPlayer = player
+        removeCrossfadeTimeObserver()
+        playerObservers.forEach { $0.invalidate() }
+        playerObservers.removeAll()
+        outgoingPlayer.remove(incoming.item)
+        let incomingAsset = incoming.item.asset
+        incoming.invalidate()
+        incoming.item = AVPlayerItem(asset: incomingAsset)
+        observe(incoming)
+        let incomingPlayer = AVQueuePlayer(items: [incoming.item])
+        incomingPlayer.volume = 0
+        incomingPlayer.actionAtItemEnd = .advance
+        player = incomingPlayer
+        overlap = CrossfadeTail(player: outgoingPlayer, context: current, duration: remaining)
+        current.lastSampledPosition = position
+        promotePreloaded(outgoing: current, incoming: incoming, retainingTail: true)
+        observePlayer()
+        incomingPlayer.playImmediately(atRate: desiredRate)
+        applyFadeVolumes()
+    }
+
+    private func applyFadeVolumes() {
+        let fraction = overlap?.fraction ?? 1
+        player.volume = masterVolume * fraction
+        overlap?.player.volume = masterVolume * (1 - fraction)
+    }
+
+    private func endOverlap() {
+        if let tail = overlap {
+            tail.player.pause()
+            tail.player.removeAllItems()
+            tail.context.invalidate()
+            overlap = nil
+        }
+        applyFadeVolumes()
+        if crossfadeDuration == 0 { removeCrossfadeTimeObserver() }
+    }
+
+    private func installCrossfadeTimeObserver() {
+        guard !released, crossfadeTimeObserver == nil, current?.isSeeking != true,
+              crossfadeDuration > 0 || overlap != nil else { return }
+        let observedPlayer = player
+        let generation = crossfadeObservationGeneration
+        crossfadeTimeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.05, preferredTimescale: 1_000), queue: queue
+        ) { [weak self, weak observedPlayer] time in
+            guard let self, self.player === observedPlayer,
+                  self.crossfadeObservationGeneration == generation else { return }
+            self.updateCrossfade(at: CMTimeGetSeconds(time))
+        }
+    }
+
+    private func removeCrossfadeTimeObserver() {
+        // AVFoundation seek completion and periodic callbacks have separate producers. Removing
+        // and regenerating the observer also rejects an old timestamp delivered after the seek.
+        crossfadeObservationGeneration &+= 1
+        if let observer = crossfadeTimeObserver {
+            player.removeTimeObserver(observer)
+            crossfadeTimeObserver = nil
+        }
     }
 
     private func timeControlStatusChanged() {
@@ -1011,6 +1184,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func pause(context: PlayerItemContext) {
+        endOverlap()
         context.playRequested = false
         context.cancelStartupRecovery()
         player.pause()
@@ -1032,9 +1206,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             interval: Self.sampleInterval
         ) { [weak self] in
             guard let self else { return }
-            guard let context = contextForPositionSampling() else { return }
-            let sample = clock.sample(player: player)
+            guard let (context, sampledPlayer, seekGeneration) = contextForPositionSampling() else { return }
+            let sample = clock.sample(player: sampledPlayer)
             performOnQueueSynchronously { [self] in
+                guard context.seekGeneration == seekGeneration else { return }
                 applyPositionSample(sample, for: context)
             }
         }
@@ -1043,11 +1218,11 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     /// AVFoundation media-time reads can block while the host is overloaded. Keep those reads off
     /// the serialized state queue, and pin each result to the exact attempt that requested it so a
     /// late sample can never mutate a replacement attempt or a new playback session.
-    private func contextForPositionSampling() -> PlayerItemContext? {
-        var context: PlayerItemContext?
+    private func contextForPositionSampling() -> (PlayerItemContext, AVQueuePlayer, UInt64)? {
+        var context: (PlayerItemContext, AVQueuePlayer, UInt64)?
         performOnQueueSynchronously { [self] in
-            guard !released, let current, current.playRequested else { return }
-            context = current
+            guard !released, let current, current.playRequested, !current.isSeeking else { return }
+            context = (current, player, current.seekGeneration)
         }
         return context
     }
@@ -1098,6 +1273,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         guard let current else { return }
         switch event {
         case .interruptionBegan:
+            endOverlap()
             interruptionWasPlaying = current.playRequested || player.timeControlStatus == .playing
             current.playRequested = false
             current.cancelStartupRecovery()
@@ -1129,6 +1305,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 current.playRequested = false
                 current.cancelStartupRecovery()
                 current.pausedAfterProgress = current.progressBegan
+                endOverlap()
                 player.pause()
                 updateSystemTransport(for: current, isPlaying: false)
             }
@@ -1139,6 +1316,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 didPause: didPause
             ))
         case .externalPlaybackBegan:
+            endOverlap()
             current.playRequested = false
             player.pause()
             emit(.interruptionBegan(attemptID: current.plan.attemptID, shouldResume: false))
@@ -1254,7 +1432,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         _ sample: DulcetAVPlayerEngineClockSample,
         for context: PlayerItemContext
     ) {
-        guard current === context, context.playRequested else { return }
+        guard current === context, context.playRequested, !context.isSeeking else { return }
         guard sample.isPlaying else { return }
         let position = sample.mediaPosition
         guard position > context.lastSampledPosition + 0.000_001 else { return }
@@ -1463,7 +1641,7 @@ private final class QueueLivenessProbeResult: @unchecked Sendable {
 
 private final class PlayerItemContext: @unchecked Sendable {
     let plan: DulcetPlaybackPlan
-    let item: AVPlayerItem
+    var item: AVPlayerItem
     let loader: DulcetAVAssetResourceLoaderDelegate
     var isPreloaded: Bool
     var observers: [NSKeyValueObservation] = []
@@ -1480,6 +1658,8 @@ private final class PlayerItemContext: @unchecked Sendable {
     var startupPlayRequestedAt: TimeInterval?
     var startupRecoveryToken: UUID?
     var cancelStartupRecoveryTimer: (@Sendable () -> Void)?
+    var isSeeking = false
+    var seekGeneration: UInt64 = 0
     var lastSampledPosition: TimeInterval = 0
     var lastSampleMonotonic: DulcetMonotonicInstant?
     var duration: TimeInterval?
