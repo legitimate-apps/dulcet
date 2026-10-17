@@ -2598,6 +2598,210 @@
           "reason": "The TV offers the choice on its Account screen, below Sign out. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. The control and the hand-off are Robolectric evidence; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5). The cap is also driven end to end on an API 34 Android TV emulator in core-ci (AndroidTvEmulatorStreamingQualityProofTest): the server's own answer is read at a relay in front of it, transcoded with the cap and the FLAC original without it; it executed and passed, one testcase with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The cap is written to the settings store directly there; choosing it through the Account screen is the Robolectric rows' claim. No physical device was used."
         }
       }
+    },
+    {
+      "id": "library.sort_filter",
+      "title": "Sort and filter Library categories",
+      "spec": "docs/evidence/library-depth.md#sort-and-filter-scope",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        }
+      }
+    },
+    {
+      "id": "library.downloaded",
+      "title": "Browse music downloaded on this device",
+      "spec": "docs/evidence/library-depth.md#downloaded",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. Android TV completed-download runtime proof is pending; no runtime result is claimed."
+        }
+      }
+    },
+    {
+      "id": "library.pins",
+      "title": "Pin albums, artists, playlists and songs to Library",
+      "spec": "docs/evidence/library-depth.md#pins",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        }
+      }
+    },
+    {
+      "id": "library.shuffle_all",
+      "title": "Shuffle a server-wide selection or available local collection",
+      "spec": "docs/evidence/library-depth.md#shuffle",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        }
+      }
+    },
+    {
+      "id": "library.artist_depth",
+      "title": "Artist Top Songs and newest-first grouped discography",
+      "spec": "docs/evidence/library-depth.md#artist-depth",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        }
+      }
+    },
+    {
+      "id": "search.groups_recents",
+      "title": "Grouped search results and per-account recent queries",
+      "spec": "docs/evidence/library-depth.md#search-groups-and-recent-queries",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Native Artists/Albums/Songs previews, group expansion and device-local recent queries are implemented. The shared Apple search proof excludes tvOS; platform execution and result interaction still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Native Artists/Albums/Songs previews, group expansion and device-local recent queries are implemented. The shared Apple search proof excludes tvOS; platform execution and result interaction still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Native Artists/Albums/Songs previews, group expansion and device-local recent queries are implemented. The shared Apple search proof excludes tvOS; platform execution and result interaction still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Native Artists/Albums/Songs previews, group expansion and device-local recent queries are implemented. The shared Apple search proof excludes tvOS; platform execution and result interaction still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Native Artists/Albums/Songs previews, group expansion and device-local recent queries are implemented. The shared Apple search proof excludes tvOS; platform execution and result interaction still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Native Artists/Albums/Songs previews, group expansion and device-local recent queries are implemented. The shared Apple search proof excludes tvOS; platform execution and result interaction still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        }
+      }
     }
   ]
 }

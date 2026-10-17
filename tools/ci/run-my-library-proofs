@@ -17,13 +17,15 @@ if [ "$mode" = macos ]; then
         -only-testing:DulcetMacUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetMacUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetMacUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
+        -only-testing:DulcetMacUITests/DulcetMyLibraryUITests/testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable \
+        -only-testing:DulcetMacUITests/DulcetMyLibraryUITests/testLibrarySearchGroupsAndRecentQuerySurviveRelaunch \
         CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= \
         CODE_SIGN_ENTITLEMENTS= \
         2>&1 | tee "$RUNNER_TEMP/dulcet-macos-my-library.log"
     python3 tools/verify-xcode-test-execution \
         "$RUNNER_TEMP/dulcet-macos-my-library.xcresult" \
         DulcetMacUITests.DulcetMyLibraryUITests \
-        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText
+        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable testLibrarySearchGroupsAndRecentQuerySurviveRelaunch
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-macos-my-library.xcresult" \
         "$RUNNER_TEMP/dulcet-macos-my-library-junit/TEST-MyLibrary.xml" \
@@ -46,11 +48,12 @@ if [ "$mode" = tvos ]; then
         -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
+        -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable \
         2>&1 | tee "$RUNNER_TEMP/dulcet-tvos-my-library.log"
     python3 tools/verify-xcode-test-execution \
         "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
         DulcetTVUITests.DulcetMyLibraryUITests \
-        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText
+        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
         "$RUNNER_TEMP/dulcet-tvos-my-library-junit/TEST-MyLibrary.xml" \
@@ -73,12 +76,14 @@ if [ "$mode" = iphone ]; then
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibrarySearchGroupsAndRecentQuerySurviveRelaunch \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testAlbumAddRemainsVisibleAtLargestTextOnIPhone \
         2>&1 | tee "$RUNNER_TEMP/dulcet-iphone-my-library.log"
     python3 tools/verify-xcode-test-execution \
         "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
         DulcetiOSUITests.DulcetMyLibraryUITests \
-        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText testAlbumAddRemainsVisibleAtLargestTextOnIPhone
+        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable testLibrarySearchGroupsAndRecentQuerySurviveRelaunch testAlbumAddRemainsVisibleAtLargestTextOnIPhone
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
         "$RUNNER_TEMP/dulcet-iphone-my-library-junit/TEST-MyLibrary.xml" \
@@ -101,11 +106,13 @@ if [ "$mode" = ipad ]; then
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibrarySearchGroupsAndRecentQuerySurviveRelaunch \
         2>&1 | tee "$RUNNER_TEMP/dulcet-ipad-my-library.log"
     python3 tools/verify-xcode-test-execution \
         "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
         DulcetiOSUITests.DulcetMyLibraryUITests \
-        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText
+        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable testLibrarySearchGroupsAndRecentQuerySurviveRelaunch
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
         "$RUNNER_TEMP/dulcet-ipad-my-library-junit/TEST-MyLibrary.xml" \
