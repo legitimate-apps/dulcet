@@ -92,6 +92,9 @@ private struct DulcetListenNowShelfView: View {
     let width: CGFloat
     var body: some View {
         DulcetReaderScreen(query: .listenNow(shelf)) { model in
+            // Keep a concrete view alive before the first publication. An EmptyView does not
+            // receive the reader's onAppear, so it can never open the query that would fill it.
+            VStack(alignment: .leading, spacing: 0) {
             if let window = model.window {
                 // Unsupported and empty personalized shelves disappear on a plain server. Newest
                 // and Explore remain useful for an account without history.
@@ -150,6 +153,12 @@ private struct DulcetListenNowShelfView: View {
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue)")
                 }
+            } else {
+                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                    Text(shelf.title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                    ProgressView().frame(maxWidth: .infinity, minHeight: 100)
+                }
+            }
             }
         }
     }
