@@ -1216,6 +1216,7 @@ internal sealed interface LibraryQuery {
     data class Album(val rawId: String) : LibraryQuery
     data object Playlists : LibraryQuery
     data class Playlist(val rawId: String) : LibraryQuery
+    data object ShuffleSongs : LibraryQuery
     data object Starred : LibraryQuery
     data object Genres : LibraryQuery
     data class SongsByGenre(val genre: String, val musicFolderId: String? = null) : LibraryQuery

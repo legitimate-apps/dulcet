@@ -473,7 +473,8 @@ IOS_PROD_SCHEME = "  DulcetiOSRelease:\n    build:\n      targets:\n        Dulc
 # Starts at the PROD target's own comment: the signed iPad host repeats the rest verbatim.
 IOS_PROD_SOURCES = ("      # its own, below, and carries the background audio mode itself.\n"
                     "      - path: DulcetiOS\n        excludes:\n          - BackgroundAudio.plist\n"
-                    "      - DulcetAppleShared\n")
+                    "      - DulcetAppleShared\n"
+                    "      - DulcetSystemSurfaces\n")
 DEV_IOS_RELEASE = "          PROVISIONING_PROFILE_SPECIFIER: \"Dulcet CI Dev iOS App Store\"\n"
 
 
@@ -650,7 +651,7 @@ MUTATIONS = [
      "archive-and-export: contains an upload mechanism"),
     ("an extra archive build setting", edit("tools/release/archive-and-export", '  CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER"',
                                              '  CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER" \\\n  DULCET_HOME="$X"'),
-     "may override CURRENT_PROJECT_VERSION only"),
+     "may override only the build number and profile-selected system entitlement file"),
     ("release.yml deleted", lambda root: (root / WORKFLOW).unlink(), "no delivery channel"),
     # The iOS PROD target is held to the same shape as the macOS one.
     ("a server setting on the iOS PROD target", edit("apple/project.yml", IOS_PROD_ANCHOR,
@@ -799,7 +800,7 @@ MUTATIONS = [
      "reads a channel-distinguishing variable $PRODUCT_BUNDLE_IDENTIFIER"),
     ("a shared script branching on the configuration (project.yml only)",
      edit_all("apple/project.yml", KOTLIN_SCRIPT, KOTLIN_SCRIPT + '          case "${CONFIGURATION}" in Release) echo x;; esac\n'),
-     "apple/project.yml:74 script: reads a channel-distinguishing variable $CONFIGURATION"),
+     "script: reads a channel-distinguishing variable $CONFIGURATION"),
     ("a shared script reading the target name (committed project only)",
      edit_all(PBXPROJ, KOTLIN_SCRIPT_PBX, KOTLIN_SCRIPT_PBX + 'echo $(TARGET_NAME)\\n'),
      "reads a channel-distinguishing variable $TARGET_NAME"),
@@ -841,9 +842,8 @@ MUTATIONS = [
     ("DEV iOS generating a scene manifest PROD's plist lacks", both(
         edit("apple/project.yml", DEV_IOS_RELEASE, DEV_IOS_RELEASE + "          INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES\n"),
         pbx("DulcetiOS", "Release", add_setting("INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;"))),
-     "Info.plist UIApplicationSceneManifest: DulcetiOS and DulcetiOSRelease must declare it identically (apple/DulcetiOSRelease/Info.plist "
-     "lacks it; INFOPLIST_KEY_UIApplicationSceneManifest_Generation makes Xcode generate UIApplicationSceneManifest, whose content a "
-     "hand-written PROD plist cannot be compared with, so declare UIApplicationSceneManifest explicitly in both plists instead)"),
+     "Info.plist UIApplicationSceneManifest: DulcetiOS and DulcetiOSRelease must declare it identically (the values differ; "
+     "INFOPLIST_KEY_UIApplicationSceneManifest_Generation makes Xcode generate UIApplicationSceneManifest"),
     # Round 4 (SF-1): the sources PROD compiles. The bundle scan cannot see a Swift literal of 15 bytes
     # or fewer, so an address written in source names an allowlisted host or is refused there.
     ("a short Swift literal naming a LAN server in shared code",
@@ -886,6 +886,13 @@ MUTATIONS = [
      lambda root: (root / "core/build.gradle.kts").write_text((root / "core/build.gradle.kts").read_text()
                                                             + '\napply(from = "endpoint.gradle")\n'),
      "runs build logic this policy cannot read"),
+    ("CarPlay PROD entitlement variant loses its App Group",
+     edit("apple/DulcetWidgets/prod-simulator.entitlements", "group.com.legitimateapps.dulcet", "group.wrong"),
+     "CarPlay entitlements must equal the channel App Group"),
+    ("a matching widget plist preprocessing bypass",
+     lambda root: (pbx("DulcetIOSWidgetsRelease", "Release", lambda block: block.replace("buildSettings = {", "buildSettings = {\nINFOPLIST_PREPROCESS = YES;"))(root),
+                   pbx("DulcetIOSWidgets", "Release", lambda block: block.replace("buildSettings = {", "buildSettings = {\nINFOPLIST_PREPROCESS = YES;"))(root)),
+     "sets non-allowlisted INFOPLIST_PREPROCESS"),
     # Round 4 (NIT): Xcode reads per-user schemes, which nothing else checks.
     ("a committed per-user scheme under xcuserdata",
      lambda root: (root / "apple/Dulcet.xcodeproj/xcuserdata/u.xcuserdatad/xcschemes").mkdir(parents=True) or

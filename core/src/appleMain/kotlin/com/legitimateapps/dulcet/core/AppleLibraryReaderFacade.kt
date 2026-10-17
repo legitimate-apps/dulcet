@@ -687,6 +687,7 @@ internal fun AppleLibraryWindowRequest.toTarget(): AppleLibraryWindowTarget {
         "album" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Album(id()))
         "playlists" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Playlists)
         "playlist" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Playlist(id()))
+        "shuffleSongs" -> AppleLibraryWindowTarget.Screen(LibraryQuery.ShuffleSongs)
         "starred" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Starred)
         "genres" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Genres)
         "songsByGenre" -> AppleLibraryWindowTarget.Screen(

@@ -522,7 +522,7 @@ public protocol DulcetServerSearching: AnyObject {
 
 /// Live presentation source for account setup. Network and persistence adapters stay replaceable.
 @MainActor
-public final class DulcetAccountDataSource: DulcetDataSource {
+public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlaybackPreparing {
     private let connector: any DulcetAccountConnecting
     private let credentialStore: (any DulcetCredentialStoring)?
     private let libraryBrowser: (any DulcetLibraryBrowsing)?
@@ -766,6 +766,18 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func cancelReconnectRetry() {
         reconnectRetry?.cancel()
         reconnectRetry = nil
+    }
+
+    public func prepareForExternalPlayback() {
+        guard !currentSnapshot.accountConnection.isConnected,
+              currentSnapshot.accountConnection != .connecting,
+              accountRemovalStatus == .idle,
+              let credentialStore,
+              let account = librarySession?.account,
+              (credentialStore as? any DulcetProviderInstanceCredentialStoring)?.providerInstanceID == account.providerInstanceID,
+              let saved = try? credentialStore.load() else { return }
+        cancelReconnectRetry()
+        submit(saved, inPlace: true, automatic: false)
     }
 
     private func requestSavedReconnect() {

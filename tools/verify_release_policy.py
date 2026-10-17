@@ -80,6 +80,8 @@ RELEASE_SECRETS = {
     "DULCET_IOS_APP_STORE_PROFILE_BASE64",
     "DULCET_MAC_APP_STORE_PROFILE_BASE64",
     "DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64",
+    "DULCET_DEV_IOS_WIDGETS_PROFILE_BASE64", "DULCET_IOS_WIDGETS_PROFILE_BASE64",
+    "DULCET_DEV_MAC_WIDGETS_PROFILE_BASE64", "DULCET_MAC_WIDGETS_PROFILE_BASE64",
 }
 # Anything that can move a build to App Store Connect. `pilot` and `upload_to_testflight` are the
 # fastlane spellings; `destination` upload is the exportArchive one.
@@ -113,6 +115,18 @@ PBXPROJ = Path("apple/Dulcet.xcodeproj/project.pbxproj")
 SERVER_KEY = "DulcetPreconfiguredServer"
 # Every PROD target: its own plist, in a directory no other target reads, held to an exact key set,
 # its own settings allowlisted by name, and a DEV twin it must match in everything but §22.3's list.
+# Widget extensions are separate signed identities per channel, with identical source membership.
+WIDGET_SETTINGS = SIGNING_SETTINGS | {
+    "INFOPLIST_FILE", "LD_RUNPATH_SEARCH_PATHS", "SDKROOT", "COMBINE_HIDPI_IMAGES",
+    "CODE_SIGN_ENTITLEMENTS", "APPLICATION_EXTENSION_API_ONLY", "SKIP_INSTALL", "TARGETED_DEVICE_FAMILY",
+}
+WIDGET_TWINS = {"DulcetIOSWidgetsRelease": "DulcetIOSWidgets", "DulcetMacWidgetsRelease": "DulcetMacWidgets"}
+
+def canonical_widget(value: str) -> str:
+    for prod, dev in WIDGET_TWINS.items():
+        value = value.replace(prod, dev)
+    return value
+
 PROD_TARGETS = {
     "DulcetMacRelease": {
         "dev": "DulcetMac",
@@ -132,9 +146,9 @@ PROD_TARGETS = {
         "keys": BUNDLE_KEYS | {
             "LSRequiresIPhoneOS", "UIBackgroundModes", "UILaunchScreen",
             "UISupportedInterfaceOrientations~iphone", "UISupportedInterfaceOrientations~ipad",
-            "UTExportedTypeDeclarations",
+            "UTExportedTypeDeclarations", "UIApplicationSceneManifest",
         },
-        "settings": SIGNING_SETTINGS | {"TARGETED_DEVICE_FAMILY"},
+        "settings": SIGNING_SETTINGS | {"TARGETED_DEVICE_FAMILY", "DULCET_SYSTEM_ENTITLEMENTS_FILE", "CODE_SIGN_ENTITLEMENTS", "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]"},
     },
 }
 PROJECT_SETTINGS = {
@@ -193,6 +207,7 @@ PINNED_TARGET_SETTINGS = {"OTHER_LDFLAGS": "$(inherited) -Wl,-export_dynamic"}
 CHANNEL_SETTINGS = {
     "PRODUCT_BUNDLE_IDENTIFIER", "PRODUCT_NAME", "ASSETCATALOG_COMPILER_APPICON_NAME",
     "PROVISIONING_PROFILE_SPECIFIER", "INFOPLIST_FILE", "CODE_SIGN_ENTITLEMENTS",
+    "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]", "DULCET_SYSTEM_ENTITLEMENTS_FILE",
     "CURRENT_PROJECT_VERSION",
 }
 # The Info.plist keys that may differ: name, icon, and the DEV-only server key.
@@ -424,8 +439,8 @@ def check(errors: list[str]) -> None:
         if not re.search(r"xcodebuild archive \\\n(?:[^\n]*\\\n)*?\s+-configuration Release \\\n", script):
             errors.append(f"{ARCHIVE_SCRIPT}: the archive must pass -configuration Release explicitly")
         overrides = set(re.findall(r"(?m)^\s+([A-Z][A-Z0-9_]*)=", script))
-        if overrides != {"CURRENT_PROJECT_VERSION"} or "-xcconfig" in script:
-            errors.append(f"{ARCHIVE_SCRIPT}: the archive may override CURRENT_PROJECT_VERSION only, found {sorted(overrides)}")
+        if overrides != {"CURRENT_PROJECT_VERSION", "DULCET_SYSTEM_ENTITLEMENTS_FILE"} or "-xcconfig" in script:
+            errors.append(f"{ARCHIVE_SCRIPT}: the archive may override only the build number and profile-selected system entitlement file, found {sorted(overrides)}")
 
     for workflow in sorted(Path(".github/workflows").glob("*.y*ml")):
         if workflow == RELEASE:
@@ -489,7 +504,7 @@ def yaml_block(lines: list[str], path: list[str]) -> list[str] | None:
 
 
 def mapping(lines: list[str]) -> dict[str, str]:
-    entries = [re.fullmatch(r"( *)([A-Za-z0-9_~]+):\s*(.*)", code(line)) for line in lines]
+    entries = [re.fullmatch(r"( *)([A-Za-z0-9_~\[\]=*.-]+):\s*(.*)", code(line)) for line in lines]
     entries = [entry for entry in entries if entry]
     if not entries:
         return {}
@@ -531,7 +546,7 @@ def check_yaml_shape(errors: list[str], project: Path, lines: list[str]) -> None
         if re.search(r"(?:^|\s)(?:[&*!][^\s]|<<\s*:|\?\s)", line) or line.strip() == "---":
             errors.append(f"{where}: YAML anchor, alias, merge key, tag or complex key; not readable here")
         key = re.match(r"\s*(?:-\s+)?([^\s\"'#-][^:]*?):(?:\s|$)", line)
-        if key and not re.fullmatch(r"[A-Za-z0-9_~]+", key.group(1)):
+        if key and key.group(1) != "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" and not re.fullmatch(r"[A-Za-z0-9_~]+", key.group(1)):
             errors.append(f"{where}: key {key.group(1)!r} is not one this policy can read (letters, digits, _ and ~); "
                           "a conditional or dotted key would be skipped rather than checked, so it fails closed "
                           "(spec §22.3)")
@@ -630,7 +645,7 @@ def check_prod_target(errors: list[str], project: Path, lines: list[str], target
                           f"(excludes may only remove); found {source_paths(target)} against {source_paths(dev)}")
         deps = [code(line).strip() for line in yaml_block(target, ["dependencies"]) or [] if code(line).strip()]
         dev_deps = [code(line).strip() for line in yaml_block(dev, ["dependencies"]) or [] if code(line).strip()]
-        if deps != dev_deps:
+        if [canonical_widget(dep) for dep in deps] != dev_deps:
             errors.append(f"{project}: {name} must have exactly {rules['dev']}'s dependencies")
 
     scheme = [code(line).strip() for line in yaml_block(lines, ["schemes", name]) or [] if code(line).strip()]
@@ -860,6 +875,44 @@ def check_project_objects(errors: list[str], lines: list[str], root: dict) -> se
         check_twins(errors, objects, name, prod, prod_configs["Release"], rules["dev"], dev,
                     dev_configs["Release"], rules["plist"])
 
+    for prod_name, dev_name in WIDGET_TWINS.items():
+        if prod_name not in targets or dev_name not in targets:
+            errors.append("Widget extension pair is missing: " + prod_name)
+            continue
+        prod, dev = targets[prod_name], targets[dev_name]
+        for target_name, target, channel in ((prod_name, prod, "prod"), (dev_name, dev, "dev")):
+            for configuration, settings in configurations(target).items():
+                for setting in sorted(set(settings) - WIDGET_SETTINGS):
+                    errors.append(f"Widget {target_name} ({configuration}) sets non-allowlisted {setting}")
+                suffix = "-ios" if target_name.startswith("DulcetIOS") else ""
+                pinned = {"OTHER_LDFLAGS": "", "APPLICATION_EXTENSION_API_ONLY": "YES", "SKIP_INSTALL": "YES",
+                          "CODE_SIGN_ENTITLEMENTS": f"DulcetWidgets/{channel}{suffix}.entitlements",
+                          "PRODUCT_NAME": target_name,
+                          "PRODUCT_BUNDLE_IDENTIFIER": "com.legitimateapps.dulcet" + (".dev" if channel == "dev" else "") + ".widgets",
+                          "INFOPLIST_FILE": f"{target_name}/Info.plist"}
+                if suffix: pinned["TARGETED_DEVICE_FAMILY"] = "1,2"
+                if configuration == "Release":
+                    platform = "iOS" if suffix else "Mac"
+                    pinned.update({"CODE_SIGN_STYLE": "Manual", "CODE_SIGN_IDENTITY": "Apple Distribution",
+                        "PROVISIONING_PROFILE_SPECIFIER": "Dulcet CI " + (("Dev iOS" if channel == "dev" else "iOS") if suffix else ("Mac Dev" if channel == "dev" else "Mac")) + " Widgets App Store"})
+                for key, value in pinned.items():
+                    if settings.get(key) != value:
+                        errors.append(f"Widget {target_name} ({configuration}) requires {key}={value!r}")
+        prod_config, dev_config = configurations(prod)["Release"], configurations(dev)["Release"]
+        check_generated(errors, lines, prod_name, configurations(prod))
+        check_generated(errors, lines, dev_name, configurations(dev))
+        check_twins(errors, objects, prod_name, prod, prod_config, dev_name, dev, dev_config,
+                    Path("apple") / prod_config["INFOPLIST_FILE"])
+        for channel, config in (("prod", prod_config), ("dev", dev_config)):
+            document, problems = declared_plist(config)
+            errors.extend(problems)
+            allowed = BUNDLE_KEYS | {"NSExtension"}
+            if set(document) - allowed or holds_url(document):
+                errors.append("Widget plist must have only URL-free bundle metadata and its WidgetKit extension point")
+            expected_id = "com.legitimateapps.dulcet" + (".dev" if channel == "dev" else "") + ".widgets"
+            if config.get("PRODUCT_BUNDLE_IDENTIFIER") != expected_id:
+                errors.append("Widget bundle identifier does not match its channel")
+
     dev_only = set()
     for item in targets.values():
         if item.get("productType") == "com.apple.product-type.application" and item["name"] not in PROD_TARGETS:
@@ -942,15 +995,28 @@ def check_twins(errors: list[str], objects: dict, name: str, prod: dict, prod_se
     def entitlements(settings: dict, rename: bool):
         if not settings.get("CODE_SIGN_ENTITLEMENTS"):
             return None
-        path = Path("apple") / settings["CODE_SIGN_ENTITLEMENTS"]
+        path = Path("apple") / settings["CODE_SIGN_ENTITLEMENTS"].replace("$(DULCET_SYSTEM_ENTITLEMENTS_FILE)", settings.get("DULCET_SYSTEM_ENTITLEMENTS_FILE", ""))
         try:
             text = path.read_text()
         except OSError as error:
             errors.append(f"{path}: unreadable: {error}")
             return None
         if rename and dev_id:
-            text = text.replace(dev_id, prod_id)
+            text = text.replace(dev_id.removesuffix(".widgets"), prod_id.removesuffix(".widgets"))
         return plistlib.loads(text.encode())
+
+    if name == "DulcetiOSRelease":
+        for channel in ("dev", "prod"):
+            base_path = Path(f"apple/DulcetWidgets/{channel}-ios.entitlements")
+            carplay_path = Path(f"apple/DulcetWidgets/{channel}-simulator.entitlements")
+            try:
+                base = plistlib.loads(base_path.read_bytes())
+                carplay = plistlib.loads(carplay_path.read_bytes())
+                group = "group.com.legitimateapps.dulcet" + (".dev" if channel == "dev" else "")
+                if base != {"com.apple.security.application-groups": [group]} or carplay != dict(base, **{"com.apple.developer.carplay-audio": True}):
+                    errors.append(f"{carplay_path}: CarPlay entitlements must equal the channel App Group plus only carplay-audio=true")
+            except (OSError, plistlib.InvalidFileException) as error:
+                errors.append(f"{carplay_path}: unreadable entitlements: {error}")
 
     if entitlements(dev_settings, True) != entitlements(prod_settings, False):
         errors.append(f"entitlements of {dev_name} and {name} must match apart from the bundle identifier "
@@ -984,13 +1050,17 @@ def check_twins(errors: list[str], objects: dict, name: str, prod: dict, prod_se
                 build_file = dict(objects.get(entry, {}))
                 if "productRef" in build_file:
                     build_file["productRef"] = package(build_file["productRef"])
+                reference = objects.get(build_file.get("fileRef"), {})
+                path = reference.get("path", "")
+                if path in {target + ".appex" for target in (*WIDGET_TWINS, *WIDGET_TWINS.values())}:
+                    build_file["fileRef"] = canonical_widget(path)
                 members.append(str(sorted((key, str(value)) for key, value in build_file.items())))
             phases.append((phase.get("isa"), phase.get("dstSubfolderSpec"), phase.get("dstPath"), tuple(sorted(members))))
         return {
             "build phases (files, per-file settings and scripts)": phases,
             "packages (by location and requirement, not product name)":
                 sorted(package(item) for item in target.get("packageProductDependencies", [])),
-            "dependencies": sorted(objects.get(objects.get(item, {}).get("target"), {}).get("name", "?")
+            "dependencies": sorted(canonical_widget(objects.get(objects.get(item, {}).get("target"), {}).get("name", "?"))
                                    for item in target.get("dependencies", [])),
             "build rules": sorted(str(sorted((key, str(value)) for key, value in objects.get(item, {}).items()))
                                   for item in target.get("buildRules", [])),

@@ -84,6 +84,8 @@ jobs:
         run: python3 tools/verify_ci_policy.py
       - name: Prove the release channel's planner, uploader logic and policy gate
         run: python3 tools/test-release-channel
+      - name: Test channel-specific system-surface provisioning
+        run: python3 tools/test_system_surfaces.py
       - name: Require release.yml to stay dispatch-only, approval-gated and PROD-server-free
         run: python3 tools/verify_release_policy.py
       - name: Prove the project-spec path gate rejects a missing referenced file

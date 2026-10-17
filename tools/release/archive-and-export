@@ -44,6 +44,7 @@ options="$RELEASE_ROOT/ExportOptions.plist"
 mkdir -p "$RELEASE_ROOT"
 [[ ! -e "$archive" && ! -e "$export_dir" ]] || die "$RELEASE_ROOT already holds a release"
 
+system_entitlements="$(python3 tools/release/carplay-entitlements "$RELEASE_PROFILE_NAME" "$RELEASE_CHANNEL" "$RELEASE_PLATFORM")"
 xcodebuild archive \
   -project apple/Dulcet.xcodeproj \
   -scheme "$RELEASE_SCHEME" \
@@ -52,6 +53,7 @@ xcodebuild archive \
   -archivePath "$archive" \
   -derivedDataPath "$RELEASE_DERIVED_DATA" \
   -hideShellScriptEnvironment \
+  DULCET_SYSTEM_ENTITLEMENTS_FILE="$system_entitlements" \
   CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER"
 
 apps=("$archive"/Products/Applications/*.app)
@@ -126,6 +128,9 @@ options = {
     # DEV: Xcode marks the build ineligible for external TestFlight and App Store release.
     "testFlightInternalTestingOnly": $([[ $internal_only == true ]] && echo True || echo False),
 }
+if "$RELEASE_PLATFORM" in ("ios", "macos"):
+    widget_profile = "$RELEASE_PROFILE_NAME".replace(" App Store", " Widgets App Store")
+    options["provisioningProfiles"]["$RELEASE_BUNDLE_ID.widgets"] = widget_profile
 if "$RELEASE_PLATFORM" == "macos":
     options["installerSigningCertificate"] = "${DULCET_INSTALLER_IDENTITY_SHA1:-}"
 with open(sys.argv[1], "wb") as handle:

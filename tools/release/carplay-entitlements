@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Select the audio entitlement only when the selected iOS profile actually grants it.
+
+The archive passes the returned path through the app-only DULCET_SYSTEM_ENTITLEMENTS_FILE
+setting; widget extensions retain their own, fixed entitlement files. No portal call or profile
+mutation is made. Reissuing the host profile after Apple grants CarPlay activates the next archive.
+"""
+import os
+from pathlib import Path
+import plistlib
+import subprocess
+import sys
+
+
+def select(profile_name: str, channel: str, platform: str, profiles: list[dict]) -> str:
+    if channel not in ("dev", "prod") or platform not in ("ios", "macos", "tvos"):
+        raise ValueError("unsupported release channel or platform")
+    bundle = "com.legitimateapps.dulcet" + (".dev" if channel == "dev" else "")
+    allowed = platform == "ios" and any(
+        profile.get("Name") == profile_name
+        and profile.get("Entitlements", {}).get("application-identifier") == "3LTL47SJ8C." + bundle
+        and profile.get("Entitlements", {}).get("com.apple.developer.carplay-audio") is True
+        for profile in profiles
+    )
+    return f"DulcetWidgets/{channel}-{'simulator' if allowed else 'ios'}.entitlements"
+
+
+def main():
+    name, channel, platform = sys.argv[1:]
+    profiles = []
+    if platform == "ios":
+        root = Path(os.environ.get("DULCET_PROVISIONING_PROFILE_DIR", str(Path.home() / "Library/MobileDevice/Provisioning Profiles")))
+        for path in sorted(root.glob("*.mobileprovision")):
+            decoded = subprocess.run(["/usr/bin/security", "cms", "-D", "-i", str(path)], capture_output=True)
+            if decoded.returncode == 0:
+                profiles.append(plistlib.loads(decoded.stdout))
+    print(select(name, channel, platform, profiles))
+
+if __name__ == "__main__":
+    main()

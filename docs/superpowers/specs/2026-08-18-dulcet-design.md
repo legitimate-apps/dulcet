@@ -228,7 +228,7 @@ Navidrome's private `/api` surface. §2.4 forbids it.
   are the server's business.
 - No server-side play-queue sync (§14.4). Not "default off" — not built.
 - No `sonicSimilarity` UI (§18.5). Negotiated and recorded only.
-- No CarPlay / Android Auto (deferred, not precluded — §12.11).
+- CarPlay / Android Auto use the existing playback owner (§12.11); activation and evidence are separate from source implementation.
 - No Intel Macs, no Intel simulators (§4).
 - No telemetry or analytics, ever. A goal, not a deferral.
 
@@ -2006,11 +2006,14 @@ when the transport changes (play, pause, seek, rate, buffering) or when the syst
 extrapolation has drifted by more than 0.75 s, not on every position sample; while **buffering** the
 entry stays "playing" with rate 0, so the lock-screen scrubber does not run ahead of the audio.
 
-### 12.11 Deferred but not precluded
+### 12.11 External system surfaces
 
-CarPlay and Android Auto are out of scope. The constraint they impose — the queue and metadata must be
-fully expressible without the app's own UI — is already satisfied by the core owning queue state and by
-`NowPlayingSink`. No v1 decision may violate that.
+App Intents, WidgetKit, CarPlay, Android Auto and the Android home-screen widget project the same
+account, core reader and playback owner as the native app. They never create a second queue or
+store credentials in widget containers, media IDs or URLs. Apple's existing NowPlayingSink and
+remote command center remain the single Lock Screen / Control Center Now Playing integration.
+See the 2026-10-16 system-surfaces revision record and `docs/evidence/system-surfaces.md` for the
+capability boundary, channel signing requirements and evidence limitations.
 
 ### 12.12 A failure that belongs to the track moves the queue on
 
@@ -7776,6 +7779,49 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-16 — System surfaces share playback ownership and channel identities.**
+App Intents on iOS/iPadOS/macOS resolve exact album, artist, playlist and song names through the
+reader; duplicate names ask the person to choose in the app. Resume/toggle, favourites, current-song
+favourite (idempotent), playlist append and library shuffle enter the existing presentation store.
+An explicit external command may reconnect saved credentials even when the app is backgrounded;
+automatic foreground/reachability reconnect rules otherwise remain unchanged. Requests are bounded,
+close their transient reader handles and reject an account change. Catalog shuffle uses a fresh
+OpenSubsonic `getRandomSongs` selection of at most500 songs, matching lane A's shared query. Dulcet
+Server My Library uses owned songs; an unknown membership capability does not silently mean catalog.
+App Shortcut discovery is the initial Spotlight integration; catalog-wide Spotlight indexing is not
+introduced. tvOS compiles the shared intent types where SDK availability permits, without widgets
+or a car presentation on a television.
+
+WidgetKit extensions use channel-isolated App Groups: `group.com.legitimateapps.dulcet.dev` and
+`group.com.legitimateapps.dulcet`. They store display metadata and opaque song references only;
+account changes clear recent items. AudioPlaybackIntent buttons execute in the host app. Now Playing
+widgets support Home Screen/macOS and iOS Lock Screen families; iOS18+ also has a ControlWidget.
+Recently Played is device-local. Pins remain lane A's native library feature until a widget provider
+can consume that shared projection. Android's widget uses private app preferences and explicit
+PendingIntents into its existing media session; no App Group or second player is involved.
+
+CarPlay uses CPTemplate scenes and the shared queue/Now Playing state. Simulator builds request
+`com.apple.developer.carplay-audio`; Apple's simulator documentation requires that entitlement in
+the app even before testing. Device archives request it only when the selected installed host
+profile grants it. After Apple grants the managed capability, refresh BOTH channel host profiles;
+the next normal archive then activates CarPlay. Pre-grant device builds retain the ordinary app
+behavior. A portal grant alone cannot alter an installed signed binary. Search is exposed through
+App Intents rather than a CarPlay keyboard template in this first implementation.
+Android Auto uses MediaLibraryService/MediaLibrarySession, a finite browse hierarchy with explicit
+continuation folders, search and validated selection. Same-app or trusted system controllers are
+accepted; arbitrary controllers are rejected. Google Assistant's media search/transport uses that
+session; no separate account or cloud action is registered.
+
+New extension IDs are `com.legitimateapps.dulcet[.dev].widgets` on iOS and macOS. DEV/PROD each need
+App Group registration, group capability on host/extension IDs, and refreshed host profiles. The four
+new distribution profiles are `Dulcet CI Dev iOS Widgets App Store`, `Dulcet CI iOS Widgets App Store`,
+`Dulcet CI Mac Dev Widgets App Store`, `Dulcet CI Mac Widgets App Store`; their optional CI profile
+inputs are documented in the evidence file. Both channels compile identical extension sources.
+Release policy permits only the documented app entitlement selector, constrains all widget target
+settings, validates both entitlement variants and maps extensions in export options. No release,
+portal change or new profile is claimed by this source change.
+
 
 **2026-10-16 — Required CI exercises My Library against disposable Dulcet Server.**
 The automated-server boundary includes local disposable Dulcet Server as well as Navidrome;

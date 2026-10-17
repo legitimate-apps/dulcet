@@ -148,6 +148,8 @@ enum DulcetAppleProduction {
                 )
             )
         )
+        DulcetSystemActions.shared.store = store
+        DulcetSurfacePublisher.shared.attach(store)
         store.likeCommandDriver = DulcetLikeCommandDriver(store: store)
         store.streamingQualitySetting = streamingQuality
         return store

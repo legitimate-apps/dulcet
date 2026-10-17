@@ -2115,3 +2115,138 @@ func myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication() throw
     #expect(session.myLibrary.availability == .unknown)
     #expect(DulcetFavouriteOutcome(kind: "notSaved", targetKind: "album", rawID: "album", field: "inLibrary", errorKind: "forbidden").field == .inLibrary)
 }
+
+// External surfaces hold transient subscriptions only for their request, and cannot cross accounts.
+@MainActor
+private final class SystemActionTestSource: DulcetDataSource, DulcetLibrarySessionProviding {
+    let fixture = DulcetDeterministicDataSource(initialState: .nowPlaying)
+    let librarySession: DulcetLibrarySession?
+    var queues: [DulcetPlaybackQueueIntent] = []
+    init(_ session: DulcetLibrarySession) { librarySession = session }
+    var currentSnapshot: DulcetSnapshot { fixture.currentSnapshot }
+    func setSnapshotHandler(_ handler: @escaping @MainActor (DulcetSnapshot) -> Void) { fixture.setSnapshotHandler(handler) }
+    func send(_ action: DulcetPresentationAction) {
+        if case let .playTracks(intent) = action { queues.append(intent) }
+        fixture.send(action)
+    }
+}
+
+@Test @MainActor
+func systemSurfaceWindowClosesAfterContentAndOnCancellation() async throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let store = DulcetPresentationStore(source: SystemActionTestSource(session))
+    let actions = DulcetSystemActions(store: store)
+    let reader = try #require(factory.made.first)
+    let request = Task { try await actions.window(.albums(.recent)) }
+    await Task.yield()
+    let subscription = try #require(reader.windows.last)
+    subscription.publish(window([item("album", "album/opaque:?", title: "A")]))
+    let publication = try await request.value
+    #expect(publication.items.first?.id.rawID == "album/opaque:?")
+    #expect(subscription.events.last == "close")
+    let cancelled = Task { try await actions.window(.playlists) }
+    await Task.yield()
+    let pending = try #require(reader.windows.last)
+    cancelled.cancel()
+    do { _ = try await cancelled.value; Issue.record("cancelled request succeeded") } catch is CancellationError {} catch { Issue.record("wrong cancellation error") }
+    #expect(pending.events.last == "close")
+}
+
+@Test @MainActor
+func systemSurfaceRejectsAnAccountChangeWhileResolving() async throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let store = DulcetPresentationStore(source: SystemActionTestSource(session))
+    let actions = DulcetSystemActions(store: store)
+    let reader = try #require(factory.made.first)
+    let request = Task { try await actions.window(.favourites) }
+    await Task.yield()
+    session.close()
+    reader.finishClose()
+    do { _ = try await request.value; Issue.record("old account was accepted") }
+    catch DulcetSystemActions.Failure.changedAccount {} catch { Issue.record("wrong account error: \(error)") }
+    #expect(reader.windows.last?.events.last == "close")
+}
+
+@Test @MainActor
+func systemSurfaceSnapshotRoundTripsOnlyDisplayMetadata() throws {
+    let name = "dulcet.surface.test." + UUID().uuidString
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    let snapshot = DulcetSurfaceSnapshot(title: "A Song", subtitle: "An Album", isPlaying: true,
+        recent: [.init(id: "opaque/provider/song", title: "A Song")])
+    snapshot.write(to: defaults)
+    #expect(DulcetSurfaceSnapshot.read(from: defaults) == snapshot)
+    #expect(DulcetSurfaceSnapshot.groupID(bundleID: "com.legitimateapps.dulcet.dev.widgets") == "group.com.legitimateapps.dulcet.dev")
+    #expect(DulcetSurfaceSnapshot.groupID(bundleID: "com.legitimateapps.dulcet.widgets") == "group.com.legitimateapps.dulcet")
+    #expect(DulcetSystemActions.sameName("Beyoncé", "  beyonce "))
+    #expect(!DulcetSystemActions.sameName("Song", "Song (Live)"))
+}
+
+@Test @MainActor
+func systemSurfaceReconnectsSavedAccountFromBackgroundWithoutUsingEditedFields() throws {
+    let factory = RecordingReaderFactory()
+    let connector = ReaderTestConnector()
+    let saved = DulcetAccountConnectRequest(serverURL: readerAccount.normalizedServerURL,
+        username: readerAccount.username, password: readerAccount.password, allowLocalHTTP: false)
+    let session = DulcetLibrarySession(factory: factory, foreground: false)
+    let source = DulcetAccountDataSource(connector: connector,
+        credentialStore: ReaderTestCredentials(persisted: saved, providerInstanceID: "provider-reader"),
+        librarySession: session)
+    let store = DulcetPresentationStore(source: source)
+    #expect(connector.requests.isEmpty, "background restoration does not negotiate automatically")
+    store.prepareForExternalPlayback()
+    #expect(connector.requests == [saved], "an explicit external command negotiates using saved credentials")
+    store.prepareForExternalPlayback()
+    #expect(connector.requests.count == 1, "concurrent commands join the connection")
+    connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music", normalizedServerURL: readerAccount.normalizedServerURL)))
+    #expect(store.snapshot.accountConnection.isConnected)
+    #expect(session.account?.providerInstanceID == "provider-reader")
+    #expect(factory.foregrounds == [false])
+}
+
+@Test @MainActor
+func systemSurfaceRecentReplayUsesOpaqueIdentityForAOneLetterCachedTitle() async throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let source = SystemActionTestSource(session)
+    let store = DulcetPresentationStore(source: source)
+    let actions = DulcetSystemActions(store: store)
+    let reader = try #require(factory.made.first)
+    let request = Task { try await actions.playRecent(provider: "provider-reader", rawID: "song/opaque:?", name: "A") }
+    await Task.yield()
+    let subscription = try #require(reader.searches.last)
+    let row = try #require(DulcetReaderSearchRow(kind: "track", providerInstanceID: "provider-reader",
+        rawID: "song/opaque:?", title: "A", credits: [], albumTitle: nil, year: nil,
+        durationMilliseconds: 60_000, discNumber: nil, trackNumber: nil, sourceContainer: "Mp3",
+        mediaSourceID: nil, artworkKey: nil, source: "device", favourite: false, rating: nil,
+        playability: "streamable"))
+    subscription.publish(.init(query: "A", sequence: 1, scope: .deviceWhileServerPending, rows: [row]))
+    try await request.value
+    #expect(source.queues.last?.tracks.map(\.id.rawID) == ["song/opaque:?"])
+    #expect(subscription.closed)
+}
+
+@Test @MainActor
+func systemSurfaceContinuationLoadsPastTheFirstPageAndClosesItsWindow() async throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let store = DulcetPresentationStore(source: SystemActionTestSource(session))
+    let actions = DulcetSystemActions(store: store)
+    let request = Task { try await actions.window(.albums(.alphabeticalByName), minimumCount: 3) }
+    await Task.yield()
+    let subscription = try #require(factory.made.first?.windows.last)
+    subscription.publish(window([item("album", "1")], coverage: "open"))
+    try await Task.sleep(for: .milliseconds(75))
+    #expect(subscription.events.contains("loadMore"))
+    #expect(subscription.events.contains("viewport(0,0)"))
+    subscription.publish(window([item("album", "1"), item("album", "2"), item("album", "3")], coverage: "open", sequence: 2))
+    let answer = try await request.value
+    #expect(answer.items.count == 3)
+    #expect(subscription.events.last == "close")
+}

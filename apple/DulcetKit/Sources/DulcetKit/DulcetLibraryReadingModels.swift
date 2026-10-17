@@ -457,6 +457,7 @@ public enum DulcetLibraryQuery: Sendable, Hashable {
     case playlists
     case playlist(rawID: String)
     case favourites
+    case shuffleSongs
     case genres
     case songsByGenre(String)
     case homeRow(DulcetHomeRow)
@@ -471,6 +472,7 @@ public enum DulcetLibraryQuery: Sendable, Hashable {
         case .playlists: ("playlists", nil, nil, nil)
         case let .playlist(rawID): ("playlist", rawID, nil, nil)
         case .favourites: ("starred", nil, nil, nil)
+        case .shuffleSongs: ("shuffleSongs", nil, nil, nil)
         case .genres: ("genres", nil, nil, nil)
         case let .songsByGenre(genre): ("songsByGenre", nil, nil, genre)
         case let .homeRow(row): ("homeRow", nil, row.listType, nil)

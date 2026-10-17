@@ -419,6 +419,10 @@ internal data class ListRequestSpec(
                     entities,
                 )
             }
+            LibraryQuery.ShuffleSongs -> whole("getRandomSongs", mapOf("size" to "500")) {
+                val tracks = parseReaderRandomSongs(it)
+                ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
+            }
             LibraryQuery.Genres -> whole("getGenres", emptyMap()) {
                 ParsedList(parseReaderGenres(it).map { g -> CacheListMember(CacheItemKind.Genre, g) }, CacheEntities())
             }
@@ -555,6 +559,7 @@ internal class ListWindow(
     private val liveThisSession: Boolean get() = spec.listKey in reader.liveListReads
 
     override fun needsRevalidation(): Boolean {
+        if (query == LibraryQuery.ShuffleSongs) return true
         val epoch = reader.sessionEpoch ?: return true
         val state = cache.listState(spec.listKey) ?: return true
         return mustRebase(state, epoch) || !readRecently(state, epoch)

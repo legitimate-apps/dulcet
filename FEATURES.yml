@@ -2598,6 +2598,138 @@
           "reason": "The TV offers the choice on its Account screen, below Sign out. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. The control and the hand-off are Robolectric evidence; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5). The cap is also driven end to end on an API 34 Android TV emulator in core-ci (AndroidTvEmulatorStreamingQualityProofTest): the server's own answer is read at a relay in front of it, transcoded with the cap and the FLAC original without it; it executed and passed, one testcase with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The cap is written to the settings store directly there; choosing it through the Account screen is the Robolectric rows' claim. No physical device was used."
         }
       }
+    },
+    {
+      "id": "system.intents",
+      "title": "Siri and Shortcuts music actions",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1211-external-system-surfaces",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "android": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "androidtv": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        }
+      }
+    },
+    {
+      "id": "system.widgets",
+      "title": "Now Playing and Recently Played widgets",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1211-external-system-surfaces",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+        },
+        "androidtv": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        }
+      }
+    },
+    {
+      "id": "system.carplay",
+      "title": "CarPlay audio browsing and Now Playing",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1211-external-system-surfaces",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "CPTemplate source and simulator signing are configured; Apple managed audio capability and refreshed channel profiles are required for device archives. CarPlay simulator trigger/effect proof is pending."
+        },
+        "ipados": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "android": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "androidtv": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        }
+      }
+    },
+    {
+      "id": "system.android_auto",
+      "title": "Android Auto media browser and Assistant media session",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1211-external-system-surfaces",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "ios": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "ipados": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "MediaLibraryService browse/search/selection source exists; Android Auto/DHU and Assistant delivery proof is pending."
+        },
+        "androidtv": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        }
+      }
     }
   ]
 }

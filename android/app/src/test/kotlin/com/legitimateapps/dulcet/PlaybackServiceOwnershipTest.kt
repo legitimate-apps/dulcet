@@ -23,12 +23,41 @@ class PlaybackServiceOwnershipTest {
             assertSame(service, binder.service)
             val playback = assertNotNull(service.playback)
             assertEquals(1, service.sessions.size, "Local binding must register service ownership")
-            assertSame(playback.sessionPlayer, service.sessions.single().player)
+            assertSame(playback.sessionPlayer, (service.sessions.single().player as androidx.media3.common.ForwardingPlayer).wrappedPlayer)
             service.onUnbind(Intent(PlaybackService.LOCAL_BIND))
             assertEquals(1, service.sessions.size)
         } finally { lifecycle.destroy() }
         assertTrue(service.sessions.isEmpty())
     }
+    @Test fun mediaBrowserCanSubscribeToTheBrowseRootAndBuiltInFolders() {
+        val lifecycle = Robolectric.buildService(PlaybackService::class.java).create()
+        val service = lifecycle.get()
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val session = service.sessions.single()
+        val future = androidx.media3.session.MediaBrowser.Builder(context, session.token).buildAsync()
+        fun drain() = org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        try {
+            drain()
+            assertTrue(future.isDone, "the app's browser connects to the production session")
+            val browser = future.get()
+            val root = browser.getLibraryRoot(null)
+            drain()
+            assertEquals(androidx.media3.session.LibraryResult.RESULT_SUCCESS, root.get().resultCode)
+            val rootId = assertNotNull(root.get().value).mediaId
+            val children = browser.getChildren(rootId, 0, 100, null)
+            drain()
+            assertEquals(listOf("Library", "Playlists", "Recently Played", "Favourites"),
+                assertNotNull(children.get().value).map { it.mediaMetadata.title.toString() })
+            for (item in assertNotNull(children.get().value)) {
+                val subscription = browser.subscribe(item.mediaId, null)
+                drain()
+                assertEquals(androidx.media3.session.LibraryResult.RESULT_SUCCESS, subscription.get().resultCode,
+                    "built-in folders must pass Media3 default getItem subscription validation")
+            }
+            browser.release()
+        } finally { androidx.media3.session.MediaController.releaseFuture(future); lifecycle.destroy() }
+    }
+
 }
 
 /** Only account storage is replaced; service, controller and Media3 session are production. */
