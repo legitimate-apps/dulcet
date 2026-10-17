@@ -836,3 +836,26 @@ JUnit export. The test-execution allowance and job bound remain unchanged.
 Local CI policy validation passes across 13 workflows, and the planner control passes
 28,135 checks over 700 Apple-affecting files. Runtime validation must still require
 actual executed native test counts in the subsequent required platform run.
+
+The combined dispatch above subsequently fails two other checks, so it is **not** an
+all-green gate. Its iPhone My Library xcresult executes all seven methods: six pass,
+including offline replay (158.649 seconds), sort/artist depth (88.928), pin/relaunch
+(86.926) and grouped Search/recent queries (67.951). The standalone largest-text Add
+capture fails while finding its album. **OBSERVED:** six touch swipes end at the
+Browse scroll bar's 73% position; the lazy grid contains other albums but not Threshold
+Boundary. The recording shows the introduction and destination rows consuming several
+screens before the catalog. Unlike the passing three-variant tour, this standalone
+method did not first reveal a catalog tile. It now uses the same two-stage navigation
+and proves that the catalog begins offscreen, an actual touch scroll occurs and a
+catalog tile becomes hittable before looking for the named album. The existing eight
+plus six gesture bounds and all Add-action visibility assertions are retained. All
+five UI-test source directories type-check after this correction; runtime is pending.
+
+The platform failure is a separate **native iPhone** crossfade integration assertion:
+`crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds` sees no overlap in
+30.038 seconds. Captured events include readiness at six seconds and buffering ended,
+but no playback-progress or preload-advance event; the engine queue responds in
+0.009 seconds. Nearby decoder/overload messages do not establish the underlying cause.
+The complete log and result bundle were retained and the playback owner received the
+evidence for diagnosis. No passing retry or responsive-queue measurement is treated
+as proof of a playback correction.

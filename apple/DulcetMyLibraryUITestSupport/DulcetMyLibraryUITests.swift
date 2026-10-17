@@ -352,6 +352,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try removeAlbum(album.id)
         try launch(variant: "largest-text")
         try select("browse")
+        // At accessibility text sizes, Browse's introduction and destination rows take
+        // several screens before its lazy album grid. Reach the catalog first, as the
+        // light/dark/largest-text tour above does, then look for the fixture album.
+        let catalogAlbum = app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertFalse(catalogAlbum.exists && catalogAlbum.isHittable,
+            "The cold largest-text Browse must exercise scrolling to its catalog")
+        let catalogScrolls = revealPhoneAlbumTile(catalogAlbum)
+        XCTAssertGreaterThan(catalogScrolls, 0, "The catalog must be reached by a real touch scroll")
+        XCTAssertTrue(catalogAlbum.exists && catalogAlbum.isHittable,
+            "The catalog must be visible before searching its albums: " + app.debugDescription)
+        print("MY LIBRARY LARGEST TEXT catalog-scrolls=\(catalogScrolls) catalog-visible=true")
         try openAlbum(album.title)
         let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
