@@ -86,6 +86,7 @@ class HomeRecommendationsTest {
         suspend fun submit(playlist: String, time: Long = at, submission: Boolean = true) =
             client.rest("scrobble", "alice", "password", "id" to ids[0], "time" to time.toString(),
                 "submission" to submission.toString(), "dulcetContextType" to "playlist", "dulcetContextId" to playlist)
+                .also { assertEquals("ok", it["status"]!!.jsonPrimitive.content, "Context must preserve standard scrobble success") }
         try {
             client.rest("getPlaylist", "alice", "password", "id" to "played")
             assertTrue(recent(alice.id).isEmpty(), "Reading a playlist is not playing it")
@@ -93,6 +94,7 @@ class HomeRecommendationsTest {
             assertTrue(recent(alice.id).isEmpty(), "Now playing is not an eligible submitted play")
             submit("private")
             submit("unrelated")
+            submit("missing")
             assertTrue(recent(alice.id).isEmpty(), "Private or unrelated context must be ignored")
             assertTrue(recent(bob.id).isEmpty(), "No other user's playlist annotation is written")
             submit("played")

@@ -36,7 +36,7 @@ import XCTest
 ///
 /// Part 2 keeps everything production -- connector, reader with a database of its own, root view
 /// -- except the credential store, an in-memory stand-in, because this host's Keychain cannot hold
-/// an account: connected (the connection lands on the library, and Connection says connected), and
+/// an account: connected (the connection lands on Listen Now, and Connection says connected), and
 /// saved and disconnected (a second data source over the same store and reader database, as a
 /// relaunch builds it). The signed Keychain's half of those two states needs an entitled host and
 /// is not claimed here.
@@ -215,7 +215,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
             )), session)
         }
 
-        // 11. Connected: the connection lands on the library, and Connection says connected.
+        // 11. Connected: the connection lands on Listen Now, and Connection says connected.
         let (first, firstSession) = makeStore()
         let connectedWindow = AccountStatesWindow(store: first)
         defer { connectedWindow.close() }
@@ -225,7 +225,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
             try await connectedWindow.element(identifiedBy: "dulcet.account-connect.primary-action"), named: "Connect"
         )
         try await waitUntil(timeout: .seconds(45), "connected: state=\(first.snapshot.state) mode=\(firstSession.mode)") {
-            first.snapshot.accountConnected && first.selectedDestination == .library
+            first.snapshot.accountConnected && first.selectedDestination == .listenNow
         }
         first.selectDestination(.settings)
         XCTAssertEqual(first.snapshot.state, .accountConnected, "Connection opened from the library is connected")
@@ -244,7 +244,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         let (second, secondSession) = makeStore()
         let savedWindow = AccountStatesWindow(store: second)
         defer { savedWindow.close() }
-        XCTAssertEqual(second.selectedDestination, .library)
+        XCTAssertEqual(second.selectedDestination, .listenNow)
         try await waitUntil(timeout: .seconds(30), "saved launch must reconnect without a tap") {
             second.snapshot.accountConnected
         }
@@ -255,7 +255,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         await withCheckedContinuation { continuation in
             secondSession.close { continuation.resume() }
         }
-        // 13. Unreachable saved relaunch keeps its library; a real ping meets the outage.
+        // 13. Unreachable saved relaunch keeps Listen Now; a real ping meets the outage.
         try await proxy.setOutage(true)
         defer { proxy.disarmOutage() }
         let (offline, offlineSession) = makeStore()
@@ -263,7 +263,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         defer { offlineWindow.close() }
         _ = try await offlineWindow.element(identifiedBy: "dulcet.reader.reconnect")
         XCTAssertTrue(offlineSession.isForeground, "The visible hosted window supplies a foreground scene")
-        XCTAssertEqual(offline.selectedDestination, .library)
+        XCTAssertEqual(offline.selectedDestination, .listenNow)
         XCTAssertFalse(offline.snapshot.accountConnected)
         let outageDeadline = ContinuousClock.now.advanced(by: .seconds(10))
         while try await proxy.droppedNegotiations() == 0, ContinuousClock.now < outageDeadline {
@@ -271,7 +271,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         }
         let dropped = try await proxy.droppedNegotiations()
         XCTAssertGreaterThan(dropped, 0, "saved launch actually tried negotiation with the unreachable server")
-        offlineWindow.attachImage(named: "saved-launch-offline-library")
+        offlineWindow.attachImage(named: "saved-launch-offline-home")
         try await proxy.setOutage(false)
         var reported: DulcetAccountConnectionStatus?
         // A dropped negotiation may consume its bounded 30-second request timeout before the

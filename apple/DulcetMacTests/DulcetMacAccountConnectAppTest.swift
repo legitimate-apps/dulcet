@@ -281,11 +281,11 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
     }
 
-    /// A first connection made on Connection lands on the library it connected to, rendered in
+    /// A first connection made on Connection lands on Listen Now, rendered in
     /// the production root view: the founding report was an app that "connected successfully
     /// supposedly" and did not change the screen. The window shows Connection's form first, so a
-    /// library shown afterwards was reached by the connection, not by the launch.
-    func connectFromConnectionLandsOnTheLibraryInTheHostedApp() async throws {
+    /// Home shown afterwards was reached by the connection, not by the launch.
+    func connectFromConnectionLandsOnListenNowInTheHostedApp() async throws {
         let environment = ProcessInfo.processInfo.environment
         let baseURL = try XCTUnwrap(
             environment["DULCET_CONFORMANCE_BASE_URL"],
@@ -346,10 +346,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             store.snapshot.accountConnected && session.mode == .connected && session.reader != nil
         }
 
-        // After: the library, on Home, and Connection's form is gone from the window.
-        XCTAssertEqual(store.selectedDestination, .library, "A connection made on Connection must land on Library")
+        // After: Listen Now, and Connection's form is gone from the window.
+        XCTAssertEqual(store.selectedDestination, .listenNow, "A connection made on Connection must land on Listen Now")
         _ = try await accessibilityElement(
-            identifiedBy: "dulcet.reader.home.recentlyAdded", in: hostingView, timeout: .seconds(20)
+            identifiedBy: "dulcet.listenNow", in: hostingView, timeout: .seconds(20)
         )
         let stillShown = accessibilityDescendants(in: hostingView).contains {
             accessibilityIdentifier($0) == "dulcet.account-connect.title"
@@ -1111,6 +1111,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         let (second, secondSession) = makeStore(connector: deferred)
         XCTAssertEqual(second.snapshot.state, .libraryBrowse, "A saved account opens straight into its library")
         XCTAssertEqual(second.selectedDestination, .listenNow)
+        second.selectDestination(.library)
         XCTAssertEqual(secondSession.mode, .deviceOnly, "The device library remains readable while negotiation is held")
         var cachedPublications: [DulcetLibraryWindow] = []
         let cachedAlbums = try XCTUnwrap(secondSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {
