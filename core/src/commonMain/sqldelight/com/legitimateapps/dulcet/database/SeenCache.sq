@@ -558,6 +558,7 @@ selectEvictableAlbums:
 SELECT raw_id FROM cache_album AS a
 WHERE a.server_id = :server_id
   AND a.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'album')
+  AND a.raw_id NOT IN (SELECT raw_id FROM library_depth_entry WHERE server_id = :server_id AND category = 'pin.album')
   AND a.raw_id NOT IN (SELECT raw_id FROM cache_list_member WHERE server_id = :server_id AND item_kind = 'album')
   AND a.raw_id NOT IN (SELECT raw_id FROM my_library_item WHERE server_id = :server_id AND item_kind = 'album' AND member = 1)
   AND a.raw_id NOT IN (
@@ -578,6 +579,7 @@ selectEvictableTracks:
 SELECT raw_id FROM cache_track AS t
 WHERE t.server_id = :server_id
   AND t.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'track')
+  AND t.raw_id NOT IN (SELECT raw_id FROM library_depth_entry WHERE server_id = :server_id AND category = 'pin.track')
   AND t.raw_id NOT IN (SELECT raw_id FROM cache_list_member WHERE server_id = :server_id AND item_kind = 'track')
   AND t.raw_id NOT IN (SELECT raw_id FROM my_library_item WHERE server_id = :server_id AND item_kind = 'track' AND member = 1)
   AND (
@@ -591,6 +593,7 @@ selectEvictableArtists:
 SELECT raw_id FROM cache_artist AS r
 WHERE r.server_id = :server_id
   AND r.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'artist')
+  AND r.raw_id NOT IN (SELECT raw_id FROM library_depth_entry WHERE server_id = :server_id AND category = 'pin.artist')
   AND r.raw_id NOT IN (SELECT raw_id FROM cache_list_member WHERE server_id = :server_id AND item_kind = 'artist')
   AND r.raw_id NOT IN (SELECT raw_id FROM my_library_item WHERE server_id = :server_id AND item_kind = 'artist' AND member = 1)
 ORDER BY r.last_access_wall, r.raw_id
@@ -711,6 +714,7 @@ purgeNamespace {
   DELETE FROM cache_artist WHERE server_id = :server_id;
   DELETE FROM cache_playlist WHERE server_id = :server_id;
   DELETE FROM cache_pin WHERE server_id = :server_id;
+  DELETE FROM library_depth_entry WHERE server_id = :server_id;
   DELETE FROM cache_epoch WHERE server_id = :server_id;
   DELETE FROM cache_binding WHERE server_id = :server_id;
   DELETE FROM my_library_item WHERE server_id = :server_id;

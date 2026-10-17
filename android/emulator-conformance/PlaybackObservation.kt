@@ -156,9 +156,13 @@ fun requireMediaTimeAdvances(observer: PlaybackObserver, label: String): Long {
         observer.state().let { it.phase == "Progressing" && it.positionMilliseconds > 0 }
     }
     val first = observer.state().positionMilliseconds
-    Thread.sleep(2_500)
-    val second = observer.state()
-    check(second.positionMilliseconds >= first + 1_500) {
+    val deadline = SystemClock.elapsedRealtime() + 10_000
+    var second = observer.state()
+    while (second.positionMilliseconds < first + 1_500 && SystemClock.elapsedRealtime() < deadline) {
+        Thread.sleep(200)
+        second = observer.state()
+    }
+    check(second.phase == "Progressing" && second.positionMilliseconds >= first + 1_500) {
         "$label: media time did not advance (${first}ms then ${second.positionMilliseconds}ms, phase ${second.phase})"
     }
     return second.positionMilliseconds

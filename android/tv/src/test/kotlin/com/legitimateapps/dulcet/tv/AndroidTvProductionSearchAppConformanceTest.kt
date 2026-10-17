@@ -42,20 +42,26 @@ class AndroidTvProductionSearchAppConformanceTest {
             pressKey(Key.C); pressKey(Key.E); pressKey(Key.T)
         }
         compose.waitUntil(timeoutMillis = 15_000) {
-            compose.onAllNodesWithText("Dulcet Health Probe", substring = true)
-                .fetchSemanticsNodes().isNotEmpty()
+            compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
+                .rows.any { it.item.title == "Dulcet Health Probe" }
         }
         val serverOnly = compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
             .assertMergedOrder(environment)
-        compose.onNodeWithTag("search.result.0").assertTextContains(environment.overlap.title)
-        compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
+        // Merge order belongs to the shared publication; visual order is Artists / Albums / Songs.
+        // Walk through the groups with the remote; the server-only result can be any result type.
+        upToQuery()
+        compose.onNodeWithTag("search.query").performKeyInput { pressKey(Key.DirectionDown) }
+        downToResult(2)
         compose.onNodeWithTag("search.result.2").assertTextContains(serverOnly.title)
+        upToQuery()
+        compose.onNodeWithTag("search.query").performKeyInput { pressKey(Key.DirectionDown) }
+        downToResult(0)
+        compose.onNodeWithTag("search.result.0").assertTextContains(environment.overlap.title)
         compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet Health Probe")
         assertNull(shadowOf(app).nextStartedActivity, "Rendering must not activate a result")
-        compose.onNodeWithTag("search.query").performKeyInput { pressKey(Key.DirectionDown) }
-        compose.onNodeWithTag("search.result.0").assertIsFocused()
         compose.onNodeWithTag("search.result.0").performKeyInput { pressKey(Key.DirectionDown) }
         compose.onNodeWithTag("search.result.1").assertIsFocused()
+        compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
         compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionCenter) }
         val routed = assertNotNull(shadowOf(app).nextStartedActivity)
         // The local-only row is a track: activating it plays it through this app's own player entry,
@@ -80,10 +86,9 @@ class AndroidTvProductionSearchAppConformanceTest {
     }
     private fun assertSingleCharacterLocalRows() {
         compose.waitUntil(timeoutMillis = 5_000) {
-            compose.onAllNodesWithText("Dulcet local only", substring = true).fetchSemanticsNodes().isNotEmpty()
+            compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
+                .rows.any { it.item.id == environment.localOnly.id }
         }
-        compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet")
-        compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
         // Only the device's rows: one character is not sent to the server. The app opens on the
         // library, whose home rows are committed too, so more device rows than the seeded two may
         // follow; every one of them is the device's.
@@ -98,7 +103,36 @@ class AndroidTvProductionSearchAppConformanceTest {
         assertEquals(ids.size, ids.toSet().size, "No row is shown twice")
         assertEquals(1, ids.count { it == environment.overlap.id }, "The cached overlap row appears exactly once")
         assertEquals(1, ids.count { it == environment.localOnly.id }, "The device-only row appears exactly once")
+        compose.onNodeWithTag("search.query").performKeyInput { pressKey(Key.DirectionDown) }
+        downToResult(0)
+        compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet")
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithTag("search.result.1").assertIsFocused()
+        compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
+        upToQuery()
+        compose.onNodeWithTag("search.query").performKeyInput { pressKey(Key.DirectionCenter) }
         println("CONF-41 OBSERVED first-character query returns committed local library rows (${rows.size} device rows)")
+    }
+
+    private fun upToQuery() {
+        repeat(24) {
+            val field = compose.onNodeWithTag("search.query").fetchSemanticsNode()
+            if (field.config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Focused) { false }) return
+            compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) }
+            compose.waitForIdle()
+        }
+        compose.onNodeWithTag("search.query").assertIsFocused()
+    }
+
+    /** Remote DOWN crosses each visible group and composes the next row; no direct offscreen focus. */
+    private fun downToResult(index: Int) {
+        repeat(24) {
+            val nodes = compose.onAllNodesWithTag("search.result.$index").fetchSemanticsNodes()
+            if (nodes.any { it.config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Focused) { false } }) return
+            compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            compose.waitForIdle()
+        }
+        compose.onNodeWithTag("search.result.$index").assertIsFocused()
     }
 
 }
