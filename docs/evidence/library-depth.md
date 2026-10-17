@@ -7,8 +7,9 @@ on Apple TV, which is **n/a** under the existing tvOS download policy.
 Source implementation and shared-core tests do not establish that a native screen works.
 The Android phone and TV completed-download/offline-playback proofs passed locally.
 Other runtime limits and failed attempts are recorded below. The final Android phone
-and TV host-test soaks passed. Required Apple CI has reported a TV compile failure and
-an iPad pin-relaunch failure; its remaining legs are still in progress.
+and TV host-test soaks passed. The first executed Apple CI run reported a TV compile
+failure and an iPad pin-relaunch failure. A replacement run for the resulting fixes
+is pending; no Apple pass is claimed from those fixes yet.
 The existing Library, My Library and Search rows retain their earlier evidence and statuses.
 
 The native surfaces cover category controls, Downloaded, pins, shuffle entry points,
@@ -261,9 +262,18 @@ The [Mac/core conformance job](https://github.com/legitimate-apps/dulcet/actions
 failed while building DulcetTV: `DulcetLibraryDepth.swift:207` used the `.roundedBorder`
 text-field style, which is unavailable on tvOS. It stopped before the Mac UI proof.
 The [iPad conformance job](https://github.com/legitimate-apps/dulcet/actions/runs/38993971381/job/117282299242)
-failed its proof step as described above. The iPhone and platform legs have not completed;
-no pass is claimed for them. These are actual build/test failures, separate from the
-local host blockers. A later fix requires its own validation.
+failed its proof step as described above. The remaining iPhone leg was canceled while
+still compiling its shell; the platform leg had not started. Neither supplied a native
+result. These are actual build/test failures, separate from the local host blockers.
+
+[Replacement Apple CI run 38995693756](https://github.com/legitimate-apps/dulcet/actions/runs/38995693756)
+was dispatched for `bea646f3`. The TV fix selects a tvOS-supported text-field style.
+The pinned region now provides a stable view while its reader window loads; failure
+to mount the initial empty reader content is a suspected cause, pending native
+verification. A new core offline-reopen pinned-publication regression passed **1 test
+with zero failures in 7 seconds**, reported by the implementation owner. That core
+result does not establish that the native pinned row renders. No result from the
+replacement Apple run is claimed yet.
 
 The hosted Mac My Library recipe targets the disposable `DulcetMyLibraryMacHost`, built
 from the production Mac and shared Swift sources. `tools/ci/run-my-library-proofs`
