@@ -7865,7 +7865,10 @@ strong DulcetCore linkage requirement.
 The merged Mac UI proofs resolve static text by exact accessibility identifier and accept the
 platform's AXValue as well as AXLabel. Hosted failure recordings showed the offline pinned album
 and the selected Artists count while indexed name queries and label-only reads failed; the
-assertions still require the visible Pinned heading and exactly one artist result.
+assertions still require the visible Pinned heading and exactly one artist result. Phone UI proofs scroll the
+lazy album grid after an offline cold launch and allow enough real swipes to reach a fixture album
+at the largest text size. The app-host offline control allows URLSession five seconds to initialize
+while still requiring `NSURLErrorCannotConnectToHost`; a timeout cannot satisfy its offline evidence.
 
 **2026-10-16 — Listening session: sleep timer, crossfade decisions, AutoPlay, queue confirmations.**
 New §12.13 (sleep timer), §14.8 (AutoPlay) and the §12.8 crossfade paragraph. The queue core gains

@@ -171,3 +171,20 @@ identifier. The search recording shows Artists and 1 result while the label-only
 an empty string. These failures do not establish lost pin data or an incorrect search count.
 The shared UI selector now resolves exact identifiers from bound static-text elements and reads
 AXValue when AXLabel is empty, retaining both content assertions and their bounded waits.
+
+OBSERVED follow-up: run [39028026485](https://github.com/legitimate-apps/dulcet/actions/runs/39028026485)
+executed all five Mac My Library UI cases with zero failures in 223.524 seconds, including the
+Pinned heading and selected Artists count. Later inherited proof failures were separate:
+
+- The offline iPhone relaunch hierarchy puts Recently Added below the viewport at y=900.3,
+  after the new Library destinations and connection notice. The proof now scrolls to the lazy
+  album grid before requiring the same persisted opaque album identity and absent server write.
+- At the largest text size, six real swipes reached only the third fixture album. The phone
+  album-opening loop permits up to twenty swipes and still requires the exact target to exist
+  and be hittable before activation; Mac/iPad bounds remain unchanged.
+- The iPad app-host offline control returned request timeout (-1001) under its 0.5-second limit.
+  It now allows five seconds for URLSession initialization but still requires an actual
+  `NSURLErrorCannotConnectToHost` (-1004); timeouts cannot satisfy the offline proof.
+
+These changes adjust proof navigation/setup and do not change production behavior. The final
+hosted runtime results remain necessary to verify them.

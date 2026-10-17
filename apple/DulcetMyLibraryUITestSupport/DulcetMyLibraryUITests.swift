@@ -96,6 +96,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         app.terminate()
         try launch(connect: false)
         try select("library")
+        // The Library destination rows and offline notice precede its lazy album grid.
+        // A cold launch starts at the top: reveal the grid before testing durable membership.
+        revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline relaunch paints the durable pending add before reconnect")
         let pendingAfterRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingAfterRelaunch)
@@ -464,7 +467,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         guard UIDevice.current.userInterfaceIdiom == .phone else { return }
         // Library's destination rows and Browse's largest-text introduction precede a lazy
         // album grid. Reach that grid with touch scrolling before asserting its publication.
-        for _ in 0..<8 {
+        for _ in 0..<20 {
             if tile.exists && tile.isHittable { return }
             app.scrollViews.firstMatch.swipeUp()
         }
@@ -483,7 +486,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(albumPage.waitForExistence(timeout: 30), "The album page must load before scrolling")
 #endif
 #if !os(tvOS)
-        for _ in 0..<6 {
+#if os(iOS)
+        // At the largest accessibility size each album is a tall single-column card.
+        // Six swipes reached only the third fixture album in the recorded failure.
+        let maximumScrolls = UIDevice.current.userInterfaceIdiom == .phone ? 20 : 6
+#else
+        let maximumScrolls = 6
+#endif
+        for _ in 0..<maximumScrolls {
             if tile.exists && tile.isHittable { break }
 #if os(macOS)
             albumPage.scroll(byDeltaX: 0, deltaY: -450)
