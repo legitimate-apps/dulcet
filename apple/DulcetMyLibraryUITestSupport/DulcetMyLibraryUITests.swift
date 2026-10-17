@@ -107,6 +107,76 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try removeAlbum(album.id)
     }
 
+    /// Drives the production library on each Apple shell using disposable server metadata.
+    @MainActor
+    func testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws {
+        continueAfterFailure = false
+        try setOffline(false)
+        let album = try fixtureAlbum()
+        try launch()
+        try select("browse")
+        try openAlbum(album.title)
+        let pin = app.buttons["dulcet.pin.album.\(album.id)"].firstMatch
+        XCTAssertTrue(pin.waitForExistence(timeout: 20))
+        if !pin.label.hasPrefix("Unpin") { activate(pin) }
+        awaitLabel(pin, "Unpin \(album.title)")
+        app.terminate()
+        try setOffline(true)
+        try launch(connect: false)
+        try select("library")
+        XCTAssertTrue(app.staticTexts["Pinned"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Pinned metadata must survive an offline relaunch")
+        let downloaded = app.buttons["dulcet.library.downloaded"].firstMatch
+        XCTAssertTrue(downloaded.waitForExistence(timeout: 10))
+        activate(downloaded)
+        XCTAssertTrue(app.staticTexts["Music stored on this device, ready to play offline."].firstMatch.waitForExistence(timeout: 20))
+        try capture("Library-Depth-Downloaded")
+        try select("library")
+        let songs = app.buttons["dulcet.library.songs"].firstMatch
+        XCTAssertTrue(songs.waitForExistence(timeout: 10))
+        activate(songs)
+        XCTAssertTrue(app.descendants(matching: .any)["dulcet.library.songs.sort"].firstMatch.waitForExistence(timeout: 20))
+        try capture("Library-Depth-Songs")
+        try setOffline(false)
+        try select("browse")
+        try openAlbum(album.title)
+        let unpin = app.buttons["dulcet.pin.album.\(album.id)"].firstMatch
+        XCTAssertTrue(unpin.waitForExistence(timeout: 20))
+        if unpin.label.hasPrefix("Unpin") { activate(unpin) }
+        awaitLabel(unpin, "Pin \(album.title)")
+    }
+
+#if !os(tvOS)
+    @MainActor
+    func testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws {
+        continueAfterFailure = false
+        try setOffline(false)
+        try launch()
+        try select("search")
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 20))
+        activate(field)
+        field.typeText("Dulcet")
+        let artists = app.buttons["dulcet.search.group.artist"].firstMatch
+        let albums = app.buttons["dulcet.search.group.album"].firstMatch
+        let songs = app.buttons["dulcet.search.group.track"].firstMatch
+        XCTAssertTrue(artists.waitForExistence(timeout: 30))
+        XCTAssertTrue(albums.waitForExistence(timeout: 30))
+        XCTAssertTrue(songs.waitForExistence(timeout: 30))
+        activate(artists)
+        XCTAssertTrue(app.buttons["dulcet.search.group.all"].firstMatch.waitForExistence(timeout: 10))
+        try capture("Library-Depth-Search-Groups")
+        activate(field)
+        field.typeText("\n")
+        app.terminate()
+        try launch(connect: false)
+        try select("search")
+        XCTAssertTrue(app.buttons["dulcet.search.recent.Dulcet"].firstMatch.waitForExistence(timeout: 20), "Submitted query survives relaunch for this account")
+        activate(app.buttons["dulcet.search.recent.Dulcet"].firstMatch)
+        XCTAssertTrue(artists.waitForExistence(timeout: 20), "Recent query reruns the real reader search")
+    }
+#endif
+
     @MainActor
     func testNonDulcetServerKeepsTheOriginalLibraryNavigation() throws {
         continueAfterFailure = false

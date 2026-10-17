@@ -9,6 +9,10 @@ struct DulcetSearchView: View {
     @FocusState private var searchFieldFocused: Bool
     @Environment(DulcetPresentationStore.self) private var store
 #endif
+    @State private var selectedGroup: DulcetSearchResultKind?
+    var recentSearches: [String] = []
+    var onRememberSearch: (String) -> Void = { _ in }
+    var onClearRecentSearches: () -> Void = {}
     let snapshot: DulcetSnapshot
     @Binding var searchQuery: String
     let onLoadMore: (DulcetSearchResultKind) -> Void
@@ -53,8 +57,25 @@ struct DulcetSearchView: View {
         }
     }
 
-    private var results: [DulcetSearchResult] {
+    private var allResults: [DulcetSearchResult] {
         reader.map { $0.publication?.rows.map(\.result) ?? [] } ?? snapshot.searchResults
+    }
+
+    private let groupKinds: [DulcetSearchResultKind] = [.artist, .album, .track]
+
+    private var results: [DulcetSearchResult] {
+        groupKinds.filter { selectedGroup == nil || selectedGroup == $0 }.flatMap { kind in
+            let rows = allResults.filter { $0.kind == kind }
+            return selectedGroup == nil ? Array(rows.prefix(5)) : rows
+        }
+    }
+
+    private func groupTitle(_ kind: DulcetSearchResultKind) -> String {
+        switch kind {
+        case .artist: DulcetStrings.readerArtists
+        case .album: DulcetStrings.readerAlbums
+        case .track: DulcetStrings.readerSongs
+        }
     }
 
     private func readerRow(_ id: DulcetSearchResult.ID) -> DulcetReaderSearchRow? {
@@ -62,6 +83,7 @@ struct DulcetSearchView: View {
     }
 
     private func activate(_ id: DulcetSearchResult.ID) {
+        onRememberSearch(searchQuery)
         if let reader, let row = readerRow(id) {
             reader.onActivate(row)
         } else {
@@ -92,7 +114,7 @@ struct DulcetSearchView: View {
                         // submit, so the keyboard clears the results without a second gesture.
                         .focused($searchFieldFocused)
                         .submitLabel(.search)
-                        .onSubmit { searchFieldFocused = false }
+                        .onSubmit { onRememberSearch(searchQuery); searchFieldFocused = false }
                         .onAppear(perform: takeRequestedFocus)
                         .onChange(of: focusRequested) { _, _ in takeRequestedFocus() }
                         .accessibilityLabel(DulcetStrings.searchPrompt)
@@ -104,6 +126,7 @@ struct DulcetSearchView: View {
 #else
                 TextField(DulcetStrings.searchPrompt, text: $searchQuery)
                     .dulcetSearchFieldStyle()
+                    .onSubmit { onRememberSearch(searchQuery) }
 #if os(macOS)
                     // The small AppKit field's SwiftUI ideal height differs from the hosted
                     // NSTextField's runtime intrinsic height. Use the native regular metric so
@@ -139,6 +162,7 @@ struct DulcetSearchView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .dulcetNavigationTitle(DulcetStrings.search)
+        .onChange(of: searchQuery) { _, _ in selectedGroup = nil }
 #if os(macOS)
         .safeAreaPadding(.top, 48)
 #endif
@@ -196,21 +220,42 @@ struct DulcetSearchView: View {
                 body: DulcetReaderCopy.searchScopeLabel(.deviceOffline(seen)) ?? DulcetStrings.readerSearchScopeDevice
             )
         case .idle:
-            searchMessage(
-                symbol: "magnifyingglass",
-                title: DulcetStrings.searchIdleTitle,
-                body: reader == nil ? DulcetStrings.searchIdleBody : DulcetStrings.readerSearchIdleBody
-            )
+            if recentSearches.isEmpty {
+                searchMessage(
+                    symbol: "magnifyingglass",
+                    title: DulcetStrings.searchIdleTitle,
+                    body: reader == nil ? DulcetStrings.searchIdleBody : DulcetStrings.readerSearchIdleBody
+                )
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                        HStack {
+                            Text(DulcetStrings.searchRecentTitle).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                            Spacer()
+                            Button(DulcetStrings.searchRecentClear, action: onClearRecentSearches)
+                                .accessibilityIdentifier("dulcet.search.recents.clear")
+                        }
+                        ForEach(recentSearches, id: \.self) { query in
+                            Button { searchQuery = query } label: {
+                                Label(query, systemImage: "clock.arrow.circlepath")
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            }
+                            .dulcetRowButtonStyle()
+                            .accessibilityIdentifier("dulcet.search.recent.\(query)")
+                        }
+                    }
+                }
+            }
         }
     }
 
     private var resultsTable: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
-                Text(DulcetStrings.bestMatches)
+                Text(selectedGroup.map(groupTitle) ?? DulcetStrings.bestMatches)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Text(DulcetStrings.searchResultCount(results.count))
+                Text(DulcetStrings.searchResultCount(allResults.count))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
             }
@@ -222,6 +267,22 @@ struct DulcetSearchView: View {
                     .accessibilityIdentifier("dulcet.search.scope")
             }
 
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: DulcetSpacing.sm) {
+                    if selectedGroup != nil {
+                        Button(DulcetStrings.searchAllResults) { selectedGroup = nil }
+                            .accessibilityIdentifier("dulcet.search.group.all")
+                    }
+                    ForEach(groupKinds, id: \.rawValue) { kind in
+                        let count = allResults.filter { $0.kind == kind }.count
+                        if count > 0 {
+                            Button(DulcetStrings.librarySearchSeeAll(groupTitle(kind), count: count)) { selectedGroup = kind }
+                                .accessibilityIdentifier("dulcet.search.group.\(kind.rawValue)")
+                                .accessibilityAddTraits(selectedGroup == kind ? .isSelected : [])
+                        }
+                    }
+                }
+            }
 #if os(macOS)
             Table(results, selection: $selectedResultID) {
                 TableColumn(DulcetStrings.resultColumn) { result in
@@ -260,6 +321,12 @@ struct DulcetSearchView: View {
             ScrollView {
                 LazyVStack(spacing: DulcetSpacing.sm) {
                     ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
+                        if index == 0 || results[index - 1].kind != result.kind {
+                            Text(groupTitle(result.kind))
+                                .font(.title2.weight(.semibold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityAddTraits(.isHeader)
+                        }
                         Button {
                             activate(result.id)
                         } label: {

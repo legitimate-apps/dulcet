@@ -989,8 +989,8 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
                 rawId: fields.rawID,
                 listType: fields.listType,
                 genre: fields.genre,
-                fromYear: 0,
-                toYear: 0,
+                fromYear: fields.listType == "byYear" ? 9999 : 0,
+                toYear: fields.listType == "byYear" ? 1 : 0,
                 musicFolderId: nil
             ),
             listener: listener
@@ -1146,7 +1146,10 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
             pendingChanges: item.pendingChanges,
             local: item.local,
             comment: item.comment,
-            isPublic: item.isPublic?.boolValue
+            isPublic: item.isPublic?.boolValue,
+            originalReleaseDate: item.originalReleaseDate,
+            releaseTypes: item.releaseTypes.split(separator: ",").map(String.init),
+            discographyGroup: item.discographyGroup
         )
     }
 

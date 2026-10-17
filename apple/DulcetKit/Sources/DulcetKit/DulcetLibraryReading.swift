@@ -210,6 +210,8 @@ public final class DulcetLibrarySession {
     /// account: a create in doubt deleted here is not in the core's outbox to be asked again.
     @ObservationIgnored private var carriedPlaylistQuestions: (account: DulcetLibraryReaderAccount, questions: [DulcetPlaylistQuestion])?
 
+    public internal(set) var libraryDepth = DulcetLibraryDepthState()
+    public internal(set) var libraryDepthRevision = 0
     public private(set) var myLibrary = DulcetMyLibrarySnapshot()
     @ObservationIgnored private var myLibrarySubscription: (any DulcetLibraryReaderCancellable)?
 
@@ -374,6 +376,7 @@ public final class DulcetLibrarySession {
         }
         reader = made
         self.account = account
+        libraryDepth = DulcetLibraryDepthState()
         mode = requested
         connectionFailure = nil
         serverReportsNoEpoch = false
@@ -387,6 +390,7 @@ public final class DulcetLibrarySession {
         readerGeneration += 1
         readerSetupFailed = false
         let generation = readerGeneration
+        refreshLibraryDepth()
         myLibrary = DulcetMyLibrarySnapshot()
         if let library = made as? any DulcetMyLibraryReading {
             myLibrarySubscription = library.subscribeMyLibrary { [weak self] publication in
@@ -442,6 +446,8 @@ public final class DulcetLibrarySession {
         }
         detachReader(reader, completion: completion)
         self.reader = nil
+        libraryDepth = DulcetLibraryDepthState()
+        libraryDepthRevision += 1
         account = nil
         mode = .none
         readerSetupFailed = false
@@ -903,6 +909,7 @@ public final class DulcetLibrarySession {
     /// tracks answer at once; nothing is played from a list still loading.
     public func resolveTracks(
         of query: DulcetLibraryQuery,
+        waitForFresh: Bool = false,
         completion: @escaping @MainActor ([DulcetTrack], DulcetLibraryWindow) -> Void
     ) {
         guard let reader else { return }
@@ -914,6 +921,7 @@ public final class DulcetLibrarySession {
             let settled: Bool = switch window.freshness {
             case .loading: false
             case .unavailable: true
+            case .cached(.revalidating, _): !waitForFresh && window.itemsState != .loading
             case .live, .cached: window.itemsState != .loading
             }
             guard settled else { return }
@@ -1039,6 +1047,8 @@ public final class DulcetLibraryWindowModel {
         self.window = window
         scheduleViewport()
     }
+
+    public func loadMore() { subscription?.loadMore() }
 
     // MARK: Scrolling
 

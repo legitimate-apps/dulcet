@@ -802,6 +802,7 @@ struct DulcetReaderTrackRow: View {
                         if let target = item.favouriteTarget { DulcetMyLibraryButton(target: target, menu: true) }
                     }
             }
+            DulcetLibraryPinControl(item: item)
             if showsTrailingHeart, let target = item.favouriteTarget {
                 DulcetFavouriteButton(target: target, published: item.isFavourite, title: item.displayTitle)
             }
@@ -976,6 +977,7 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
 
     @ViewBuilder
     private var menuItems: some View {
+        DulcetLibraryPinControl(item: item, menu: true)
 #if os(iOS)
         if dynamicTypeSize.isAccessibilitySize, item.trackListQuery != nil {
             Menu {
@@ -1109,6 +1111,10 @@ struct DulcetReaderListBody<Rows: View>: View {
                             .accessibilityLabel(DulcetStrings.loadingMore)
                     }
                 }
+                if window.growsAtEnd && !window.freshness.isOffline && window.freshness != .loading {
+                    Button(DulcetStrings.libraryLoadMore) { model.loadMore() }
+                        .accessibilityIdentifier("dulcet.library.loadMore")
+                }
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity)
@@ -1226,12 +1232,13 @@ extension DulcetAlbumListType {
         case .highest: DulcetStrings.readerSortTopRated
         case .starred: DulcetStrings.readerSortFavorites
         case .random: DulcetStrings.readerSortRandom
+        case .byYear: DulcetStrings.libraryReleaseDate
         }
     }
 
     /// The orders the Albums sort picker offers.
     static let sortChoices: [DulcetAlbumListType] = [
-        .alphabeticalByName, .alphabeticalByArtist, .newest, .recent, .frequent, .highest, .random,
+        .alphabeticalByName, .alphabeticalByArtist, .byYear, .newest, .recent, .frequent, .highest, .random,
     ]
 }
 
@@ -1272,6 +1279,12 @@ struct DulcetReaderHomeView: View {
         // reader draws the Library tab itself, so the page keeps the legacy name.
         DulcetReaderPage(title: store.myLibraryAvailable ? DulcetStrings.browseSection : DulcetStrings.library) { width in
             DulcetReaderAccountBanner()
+            if store.myLibraryAvailable {
+                Text(DulcetStrings.libraryServerCatalog).font(.title2.weight(.semibold))
+                Text(DulcetStrings.libraryBrowseHint)
+                    .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+            }
+            DulcetLibraryDepthHome(width: width)
             if listsSections {
                 // A phone's Library, as the platform's own music app lays it out: every section as
                 // a row, then what was added recently as a grid -- one scroll direction throughout.
@@ -1439,15 +1452,25 @@ struct DulcetReaderShelf: View {
 
 /// Albums, in the order the person chose.
 struct DulcetReaderAlbumsView: View {
-    @AppStorage("dulcet.reader.albumSort") private var sortRaw = DulcetAlbumListType.alphabeticalByName.rawValue
+    @Environment(DulcetPresentationStore.self) private var store
+
+    private var sortRaw: Binding<String> {
+        Binding(get: { store.librarySession?.libraryDepth.sorts["albums"] ?? "title" },
+                set: { store.librarySession?.setLibraryCategory("albums", sort: $0) })
+    }
 
     private var sort: DulcetAlbumListType {
-        DulcetAlbumListType(rawValue: sortRaw) ?? .alphabeticalByName
+        switch sortRaw.wrappedValue {
+        case "artist": .alphabeticalByArtist
+        case "releaseDate": .byYear
+        case "recentlyAdded": .newest
+        case "mostPlayed": .frequent
+        default: .alphabeticalByName
+        }
     }
 
     var body: some View {
-        DulcetReaderAlbumGridView(type: sort, title: DulcetStrings.readerAlbums, sort: $sortRaw)
-            // A different order is a different list: a new window, read from its start.
+        DulcetReaderAlbumGridView(type: sort, title: DulcetStrings.readerAlbums, category: "albums")
             .id(sort)
     }
 }
@@ -1459,12 +1482,14 @@ struct DulcetReaderAlbumGridView: View {
     let type: DulcetAlbumListType
     let title: String
     var sort: Binding<String>?
+    var category: String?
     /// The Albums section's root keeps Apple TV's navigation bar; a pushed "See All" hides it.
     var keepsTVNavigationBar = true
 
     var body: some View {
         DulcetReaderScreen(query: .albums(type)) { model in
             DulcetReaderPage(title: title, keepsTVNavigationBar: keepsTVNavigationBar) { width in
+                if let category { DulcetLibraryCategoryControls(category: category, albumSort: true) }
                 if let sort {
 #if os(iOS)
                     if dynamicTypeSize.isAccessibilitySize {
@@ -1529,12 +1554,14 @@ struct DulcetReaderAlbumGridView: View {
 
 /// Artists, genres or playlists: a list of rows opening their pages.
 struct DulcetReaderSimpleListView: View {
+    @Environment(DulcetPresentationStore.self) private var store
     let query: DulcetLibraryQuery
     let title: String
 
     var body: some View {
         DulcetReaderScreen(query: query) { model in
             DulcetReaderPage(title: title) { _ in
+                if query == .artists { DulcetLibraryCategoryControls(category: "artists", offersArtist: false) }
                 DulcetReaderListBody(model: model) { window in
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
@@ -1614,6 +1641,8 @@ struct DulcetReaderRouteView: View {
 
     var body: some View {
         switch route {
+        case .songs: DulcetLibrarySongsPage(downloaded: false)
+        case .downloaded: DulcetLibrarySongsPage(downloaded: true)
         case let .section(section): DulcetReaderSectionView(section: section)
         case let .album(id): DulcetReaderTrackListPage(query: .album(rawID: id.rawID), kind: .album, id: id)
         case let .playlist(id): DulcetPlaylistPage(id: id)
@@ -1844,6 +1873,7 @@ struct DulcetReaderTrackListPage: View {
     @ViewBuilder
     private func favouriteButton(_ item: DulcetReaderItem?, window: DulcetLibraryWindow) -> some View {
         if let item, let target = item.favouriteTarget {
+            DulcetLibraryPinControl(item: item)
             DulcetMyLibraryButton(target: target)
             DulcetFavouriteButton(
                 target: target,
@@ -1930,6 +1960,7 @@ struct DulcetReaderArtistPage: View {
                                 }
                             }
                             Spacer(minLength: 0)
+                            DulcetLibraryPinControl(item: header)
                             if let target = header.favouriteTarget {
                                 DulcetMyLibraryButton(target: target)
                                 DulcetFavouriteButton(
@@ -1948,11 +1979,15 @@ struct DulcetReaderArtistPage: View {
                         .focusSection()
 #endif
                     }
+                    DulcetArtistTopSongs(id: id)
+                    Text(DulcetStrings.libraryDiscography)
+                        .font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    if !window.items.contains(where: { !$0.releaseTypes.isEmpty }) {
+                        Text(DulcetStrings.libraryNoReleaseTypes)
+                            .font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                    }
                     DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { _ in
-                        DulcetReaderGrid(model: model, width: width) { item in
-                            // The page says whose albums these are; the year is the tile's news.
-                            item.year.map(String.init) ?? ""
-                        }
+                        DulcetArtistDiscography(items: window.items, width: width)
                     }
                 } else {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 120)
@@ -2049,6 +2084,9 @@ struct DulcetReaderSearchScreen: View {
 
     var body: some View {
         DulcetSearchView(
+            recentSearches: store.librarySession?.libraryDepth.recentSearches ?? [],
+            onRememberSearch: { store.librarySession?.rememberSearch($0) },
+            onClearRecentSearches: { store.librarySession?.clearRecentSearches() },
             snapshot: store.snapshot,
             searchQuery: $store.searchQuery,
             onLoadMore: { _ in },

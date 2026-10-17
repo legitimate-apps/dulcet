@@ -12,7 +12,19 @@ import Testing
 // MARK: - Fakes
 
 @MainActor
-private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading {
+private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading, DulcetLibraryDepthReading {
+    var depthHandlers: [@MainActor (DulcetLibraryDepthState) -> Void] = []
+    var depthCategories: [(String, String, String)] = []
+    var depthPins: [(DulcetReaderItem, Bool)] = []
+    var depthSearches: [String] = []
+    func readLibraryDepth(_ completion: @escaping @MainActor (DulcetLibraryDepthState) -> Void) { depthHandlers.append(completion) }
+    func setLibraryCategory(_ category: String, sort: String, filter: String) -> Bool {
+        depthCategories.append((category, sort, filter)); return true
+    }
+    func setLibraryPin(_ item: DulcetReaderItem, pinned: Bool) -> Bool { depthPins.append((item, pinned)); return true }
+    func rememberSearch(_ text: String) -> Bool { depthSearches.append(text); return true }
+    func clearRecentSearches() -> Bool { true }
+
     var libraryHandler: (@MainActor (DulcetMyLibrarySnapshot) -> Void)?
     var libraryMembership: DulcetMyLibraryMembership = .notAdded
     var libraryChanges: [(DulcetFavouriteTarget, Bool)] = []
@@ -468,7 +480,9 @@ func anOpenListIsStatedOnlyWhileItCannotBeExtended() {
         == DulcetStrings.readerCoverageScanning)
     #expect(DulcetReaderCopy.coverageLine(window(items, coverage: "unverifiedNoEpoch")) == nil,
             "no-epoch is stated once per account, never per list")
-    #expect(DulcetReaderCopy.orderLine(window(items, order: "localView")) == DulcetStrings.readerAvailableOffline)
+    #expect(DulcetReaderCopy.orderLine(window(items, order: "localView")) == DulcetStrings.libraryLocalOrder)
+    #expect(DulcetReaderCopy.orderLine(window(items, freshness: .cached(.offline, asOf: nil), order: "localView")) == DulcetStrings.readerAvailableOffline)
+    #expect(DulcetReaderCopy.coverageLine(window(items, coverage: "open", order: "localView")) == DulcetStrings.libraryLoadedScope(items.count))
 }
 
 @Test
@@ -2114,4 +2128,69 @@ func myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication() throw
     reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
     #expect(session.myLibrary.availability == .unknown)
     #expect(DulcetFavouriteOutcome(kind: "notSaved", targetKind: "album", rawID: "album", field: "inLibrary", errorKind: "forbidden").field == .inLibrary)
+}
+
+
+@MainActor @Test
+func libraryDepthIgnoresOldAccountAnswersAndKeepsStateOnAStorageFailure() {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .deviceOnly)
+    let first = factory.made[0]
+    let oldAnswer = first.depthHandlers[0]
+    oldAnswer(DulcetLibraryDepthState(sorts: ["albums": "artist"], pins: ["album\u{0}one"], recentSearches: ["First"]))
+    #expect(session.libraryDepth.recentSearches == ["First"])
+    session.refreshLibraryDepth()
+    first.depthHandlers.last?(DulcetLibraryDepthState(errorKind: "internalFailure"))
+    #expect(session.libraryDepth.recentSearches == ["First"])
+    #expect(session.notice != nil)
+
+    let other = DulcetLibraryReaderAccount(providerInstanceID: "another-provider", normalizedServerURL: "https://other.example.invalid",
+                                          username: "another-listener", password: "fixture-password", allowLocalHTTP: false)
+    session.open(account: other, mode: .deviceOnly)
+    first.finishClose()
+    #expect(factory.made.count == 2)
+    #expect(session.libraryDepth.pins.isEmpty)
+    #expect(session.libraryDepth.recentSearches.isEmpty)
+    oldAnswer(DulcetLibraryDepthState(pins: ["album\u{0}one"], recentSearches: ["Late old account"]))
+    #expect(session.libraryDepth.recentSearches.isEmpty)
+    session.toggleLibraryPin(item("album", "foreign"))
+    #expect(factory.made[1].depthPins.isEmpty)
+}
+
+@MainActor @Test
+func libraryDepthCategoryMutationKeepsOtherPreferenceAndRefreshesFromCore() {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .deviceOnly)
+    let reader = factory.made[0]
+    reader.depthHandlers[0](DulcetLibraryDepthState(sorts: ["songs": "artist"], filters: ["songs": "downloaded"]))
+    session.setLibraryCategory("songs", sort: "mostPlayed")
+    #expect(reader.depthCategories.count == 1)
+    #expect(reader.depthCategories[0].0 == "songs")
+    #expect(reader.depthCategories[0].1 == "mostPlayed")
+    #expect(reader.depthCategories[0].2 == "downloaded")
+    #expect(reader.depthHandlers.count == 2)
+    let pinned = item("album", "one")
+    session.toggleLibraryPin(pinned)
+    #expect(reader.depthPins.last?.1 == true)
+    reader.depthHandlers.last?(DulcetLibraryDepthState(pins: ["album\u{0}one"]))
+    session.toggleLibraryPin(pinned)
+    #expect(reader.depthPins.last?.1 == false)
+}
+
+@MainActor @Test
+func shuffleResolutionWaitsForANewServerSampleRatherThanPlayingTheCachedQueue() {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .deviceOnly)
+    var delivered: [String] = []
+    session.resolveTracks(of: .shuffleSongs, waitForFresh: true) { tracks, _ in delivered = tracks.map(\.id.rawID) }
+    let subscription = factory.made[0].windows.last!
+    subscription.publish(window([item("track", "old-random-sample")], freshness: .cached(.revalidating, asOf: nil)))
+    #expect(delivered.isEmpty)
+    #expect(!subscription.events.contains("close"))
+    subscription.publish(window([item("track", "fresh-random-sample")], sequence: 2))
+    #expect(delivered == ["fresh-random-sample"])
+    #expect(subscription.events.contains("close"))
 }
