@@ -151,6 +151,61 @@ struct DulcetStreamingQualitySection: View {
 }
 #endif
 
+#if os(macOS) || os(iOS) || os(tvOS)
+/// The Crossfade section of the settings screen (§12.8): off, or one to twelve seconds.
+struct DulcetCrossfadeSection: View {
+    @Bindable var store: DulcetPresentationStore
+    var inForm = false
+
+    var body: some View {
+        if let listening = store.listening {
+            if inForm {
+                Section {
+                    picker(listening.crossfadeSeconds)
+                } header: {
+                    Text(DulcetStrings.crossfadeTitle)
+                } footer: {
+                    Text(DulcetStrings.crossfadeFootnote)
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dulcet.crossfade")
+            } else {
+                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                    Text(DulcetStrings.crossfadeTitle)
+                        .font(.title3.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    picker(listening.crossfadeSeconds)
+                    Text(DulcetStrings.crossfadeFootnote)
+                        .font(.callout)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(nil)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dulcet.crossfade")
+            }
+        }
+    }
+
+    static func label(_ seconds: Int) -> String {
+        seconds == 0 ? DulcetStrings.crossfadeOff : DulcetStrings.crossfadeSeconds(seconds)
+    }
+
+    private func picker(_ selection: Int) -> some View {
+        Picker(DulcetStrings.crossfadeTitle, selection: Binding(
+            get: { selection },
+            set: { store.setCrossfadeSeconds($0) }
+        )) {
+            ForEach(0...DulcetListeningPreference.maximumCrossfadeSeconds, id: \.self) { seconds in
+                Text(Self.label(seconds)).tag(seconds)
+            }
+        }
+        .pickerStyle(.menu)
+        .accessibilityIdentifier("dulcet.crossfade.length")
+    }
+}
+#endif
+
 #if os(macOS)
 /// The Mac's Settings window (Dulcet > Settings…): the streaming-quality choice, the same section
 /// the Connection screen carries.
@@ -162,7 +217,10 @@ public struct DulcetSettingsView: View {
     }
 
     public var body: some View {
-        DulcetStreamingQualitySection(store: store)
+        VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
+            DulcetStreamingQualitySection(store: store)
+            DulcetCrossfadeSection(store: store)
+        }
             .padding(DulcetSpacing.xl)
             .frame(width: 480)
     }

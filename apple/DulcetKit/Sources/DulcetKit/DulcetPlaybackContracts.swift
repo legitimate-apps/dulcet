@@ -107,6 +107,18 @@ public enum DulcetPlaybackCommand: Sendable {
     /// Removes the named preloaded item, so the engine cannot advance into an entry the queue no
     /// longer plays next. Rejected when no preload with that attempt is held.
     case discardPreloaded(commandID: DulcetPlaybackCommandID, attemptID: DulcetPlaybackAttemptID)
+    /// How long the named attempt overlaps the preloaded item at its end (spec §12.8); zero is a
+    /// gapless boundary. Replaces any earlier value for that attempt and lapses when another
+    /// attempt becomes current. At `duration` before the item's end, with a preload held, the
+    /// engine fades the outgoing item out on a sidecar player that reports nothing, and hands
+    /// the main player to the preload with a fade in: the outgoing attempt reports
+    /// `endedNaturally` at that position and then `advancedToPreloaded`, as at any handover.
+    /// Rejected for an attempt that is not current.
+    case setCrossfade(
+        commandID: DulcetPlaybackCommandID,
+        attemptID: DulcetPlaybackAttemptID,
+        duration: TimeInterval
+    )
     case release(commandID: DulcetPlaybackCommandID)
 
     public var commandID: DulcetPlaybackCommandID {
@@ -115,7 +127,7 @@ public enum DulcetPlaybackCommand: Sendable {
              let .stop(commandID), let .seek(commandID, _), let .setVolume(commandID, _),
              let .setRate(commandID, _), let .replaceCurrent(commandID, _),
              let .preloadNext(commandID, _), let .discardPreloaded(commandID, _),
-             let .release(commandID):
+             let .setCrossfade(commandID, _, _), let .release(commandID):
             commandID
         }
     }

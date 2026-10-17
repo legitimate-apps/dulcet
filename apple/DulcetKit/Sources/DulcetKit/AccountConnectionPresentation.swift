@@ -596,6 +596,25 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var libraryReadCompleted = false
     /// Queue edits the playback controller refused, carried on every snapshot.
     private var refusedQueueEdits = 0
+    private var queueEditConfirmation: DulcetQueueEditConfirmation?
+    private var queueEditConfirmationSequence = 0
+
+    /// Word that Play Next or Add to Queue took (the brief confirmation the surfaces show).
+    private func confirmation(for intent: DulcetQueueEditIntent) -> DulcetQueueEditConfirmation? {
+        let (placement, addition): (DulcetQueueEditConfirmation.Placement, DulcetQueueAddition)
+        switch intent {
+        case let .playNext(value): (placement, addition) = (.playNext, value)
+        case let .playLater(value): (placement, addition) = (.addToQueue, value)
+        default: return nil
+        }
+        queueEditConfirmationSequence += 1
+        return DulcetQueueEditConfirmation(
+            sequence: queueEditConfirmationSequence,
+            placement: placement,
+            trackCount: addition.tracks.count,
+            title: addition.tracks.count == 1 ? addition.tracks.first?.title : nil
+        )
+    }
     /// What starting playback does to the surface the person is on.
     private let playbackStartNavigation: DulcetPlaybackStartNavigation
     /// The playback controller's latest presentation. Every publication carries it, so the
@@ -901,12 +920,19 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             openLibrary(reason: .entered, selecting: .artist(id))
         case let .editQueue(intent):
             guard let editor = playbackController as? any DulcetQueueEditing else { return }
+            // Adding to an empty player plays the tracks instead: that is its own feedback.
+            let addsToAQueue = playbackController?.currentPresentation.nowPlaying != nil
             if !editor.edit(intent) {
                 // Said out loud on the next publication: a swipe or a drag that changed nothing
                 // must not look as if it worked.
                 refusedQueueEdits += 1
                 receivePlaybackPresentation(latestPlaybackPresentation)
+            } else if addsToAQueue, let confirmation = confirmation(for: intent) {
+                queueEditConfirmation = confirmation
+                receivePlaybackPresentation(latestPlaybackPresentation)
             }
+        case let .setSleepTimer(choice):
+            (playbackController as? any DulcetSleepTimerControlling)?.setSleepTimer(choice)
         case .reportRefusedQueueEdit:
             refusedQueueEdits += 1
             receivePlaybackPresentation(latestPlaybackPresentation)
@@ -1299,7 +1325,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             searchLoadingMoreKind: searchLoadingMoreKind,
             searchFailure: searchFailure,
             accountRemoval: accountRemovalStatus,
-            refusedQueueEdits: refusedQueueEdits
+            refusedQueueEdits: refusedQueueEdits,
+            queueEditConfirmation: queueEditConfirmation
         )
         snapshotHandler?(currentSnapshot)
     }
@@ -1323,7 +1350,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         searchLoadingMoreKind: DulcetSearchResultKind? = nil,
         searchFailure: DulcetSearchFailure? = nil,
         accountRemoval: DulcetAccountRemovalStatus = .idle,
-        refusedQueueEdits: Int = 0
+        refusedQueueEdits: Int = 0,
+        queueEditConfirmation: DulcetQueueEditConfirmation? = nil
     ) -> DulcetSnapshot {
         let connectivity: DulcetConnectivity = switch status {
         case .idle, .connecting:
@@ -1356,6 +1384,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             playbackStatus: playback.status,
             playbackFailure: playback.failure,
             refusedQueueEdits: refusedQueueEdits,
+            queueEditConfirmation: queueEditConfirmation,
             playbackSkipNotice: playback.skipNotice,
             searchQuery: searchQuery,
             searchResults: searchResults,

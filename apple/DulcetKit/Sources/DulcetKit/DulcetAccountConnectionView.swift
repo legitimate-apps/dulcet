@@ -158,6 +158,7 @@ struct DulcetAccountConnectionView: View {
                         .focusSection()
                     }
                     DulcetStreamingQualitySection(store: store)
+                    DulcetCrossfadeSection(store: store)
                 }
             }
             .padding(40)
@@ -181,6 +182,7 @@ struct DulcetAccountConnectionView: View {
                     .accessibilityIdentifier("dulcet.account-connect.title")
                     Section { statusPanel }
                     DulcetStreamingQualitySection(store: store, inForm: true)
+                    DulcetCrossfadeSection(store: store, inForm: true)
                 }
             }
             .formStyle(.grouped)
@@ -197,6 +199,7 @@ struct DulcetAccountConnectionView: View {
                     accountCredentialsSection
                     accountStatusSection
                     DulcetStreamingQualitySection(store: store, inForm: true)
+                    DulcetCrossfadeSection(store: store, inForm: true)
                 }
             }
             .formStyle(.grouped)
