@@ -140,22 +140,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch(connect: false)
         try select("library")
 #if os(macOS)
-        let pinQuery = app.staticTexts.matching(identifier: "dulcet.library.pinned.title")
-        print("MY LIBRARY PIN QUERY firstMatch=\(pinQuery.firstMatch.exists) indexed=\(pinQuery.element(boundBy: 0).exists) count=\(pinQuery.count)")
-        let anyPin = app.descendants(matching: .any).matching(identifier: "dulcet.library.pinned.title").element(boundBy: 0)
-        print("MY LIBRARY PIN ANY exists=\(anyPin.exists)")
-        print("MY LIBRARY PIN ENUMERATED \(app.staticTexts.allElementsBoundByIndex.filter { $0.identifier == "dulcet.library.pinned.title" }.map { "label=\($0.label) value=\($0.value ?? "nil")" })")
-#endif
-#if os(macOS)
-        // Resolve the identified heading across native roles. The failure snapshot contains
-        // this StaticText, while XCTest's type-restricted firstMatch lookup misses it.
-        let pinnedHeading = app.descendants(matching: .any)
+        // On the hosted Mac, this exact query reports firstMatch=false but count=1 and
+        // indexed.exists=true. Avoid the firstMatch shortcut without changing the target.
+        let pinnedHeading = app.staticTexts
             .matching(identifier: "dulcet.library.pinned.title").element(boundBy: 0)
 #else
         let pinnedHeading = app.staticTexts["dulcet.library.pinned.title"].firstMatch
 #endif
         XCTAssertTrue(pinnedHeading.waitForExistence(timeout: 20))
         XCTAssertEqual(pinnedHeading.label, "Pinned", "The actual pinned section heading must be present")
+        print("MY LIBRARY PIN heading=\(pinnedHeading.label)")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Pinned metadata must survive an offline relaunch")
         try capture("Library-Depth-Pinned-Offline")
         let downloaded = app.buttons["dulcet.library.downloaded"].firstMatch
@@ -273,10 +267,6 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(songs.waitForExistence(timeout: 30))
         activate(artists)
         XCTAssertTrue(app.buttons["dulcet.search.group.all"].firstMatch.waitForExistence(timeout: 10))
-#if os(macOS)
-        let countQuery = app.staticTexts.matching(identifier: "dulcet.search.resultCount")
-        print("MY LIBRARY SEARCH COUNT exists=\(countQuery.firstMatch.exists) label=\(countQuery.firstMatch.label) value=\(countQuery.firstMatch.value ?? "nil")")
-#endif
         let resultCount = app.staticTexts["dulcet.search.resultCount"].firstMatch
         XCTAssertTrue(resultCount.waitForExistence(timeout: 10))
 #if os(macOS)
@@ -288,8 +278,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
                        "The selected Artists group counts its own results")
 #if os(macOS)
         XCTAssertEqual(resultCount.value as? String, "1 result")
-        XCTAssertEqual(app.tables.firstMatch.tableRows.count, 1, "Artists See All must contain only the fixture artist")
-        print("MY LIBRARY SEARCH selected=Artists count=\(resultCount.value ?? "nil") rows=\(app.tables.firstMatch.tableRows.count)")
+        // SwiftUI's native Table is a SwiftUIOutlineTableView with AXOutline role.
+        // Scope it by the rendered result so the sidebar's outline cannot satisfy this proof.
+        let artistResults = app.outlines.containing(.staticText, identifier: "dulcet.search.result.0")
+            .element(boundBy: 0)
+        XCTAssertTrue(artistResults.waitForExistence(timeout: 20), "The selected group must render its real result cell")
+        let oneArtistRow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            artistResults.outlineRows.count == 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [oneArtistRow], timeout: 20), .completed,
+                       "Artists See All must contain only the fixture artist")
+        XCTAssertEqual(artistResults.outlineRows.count, 1)
+        print("MY LIBRARY SEARCH selected=Artists count=\(resultCount.value ?? "nil") rows=\(artistResults.outlineRows.count) role=outline")
 #else
         XCTAssertEqual(resultCount.label, "1 result")
 #endif
