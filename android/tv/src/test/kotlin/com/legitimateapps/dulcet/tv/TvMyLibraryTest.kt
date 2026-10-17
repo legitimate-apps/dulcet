@@ -88,8 +88,8 @@ class TvMyLibraryTest {
         // UP from the card crosses to the bar; where it lands on the bar is geometric, so walk
         // along the bar to Browse from whichever tab the remote first rests on.
         var ups = 0
-        while (!focused("library.open") && !focused("search.open") && !focused("browse.open") && ups < 4) { key(Key.DirectionUp); ups += 1 }
-        assertTrue(focused("library.open") || focused("search.open") || focused("browse.open"),
+        while (!focused("listenNow.open") && !focused("library.open") && !focused("search.open") && !focused("browse.open") && ups < 4) { key(Key.DirectionUp); ups += 1 }
+        assertTrue(focused("listenNow.open") || focused("library.open") || focused("search.open") || focused("browse.open"),
             "UP from the card reaches the bar; focused=${focusedTags()}")
         var rights = 0
         while (!focused("browse.open") && rights < 6) { key(Key.DirectionRight); rights += 1 }

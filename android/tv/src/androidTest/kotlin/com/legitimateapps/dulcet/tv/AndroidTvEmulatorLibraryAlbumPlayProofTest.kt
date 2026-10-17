@@ -56,12 +56,9 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
             val launch = Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ActivityScenario.launch<TvSearchActivity>(launch).use { scenario ->
-                // Launch: the library, with the remote on the bar's Library tab or, once the home
-                // rows arrive, their first card -- never on Sign out -- and no on-screen keyboard,
-                // which would take the D-pad until Back closed it.
-                awaitNode("the library at launch, the remote on it") {
-                    exists("library.surface") && (focused("library.open") || focused("library.home.0.item.0"))
-                }
+                // Launch on Home without an on-screen keyboard; Library remains reachable below.
+                awaitNode("Listen Now at launch") { exists("listenNow.surface") }
+                check(!focused("tv.account.signout")) { "The remote must not land on Sign out" }
                 check(!exists("search.query")) { "The app must not open on search" }
                 check(!keyboardShown(scenario)) { "No on-screen keyboard at launch" }
                 // Search, from the bar: the remote rests on its tab, not in the field.

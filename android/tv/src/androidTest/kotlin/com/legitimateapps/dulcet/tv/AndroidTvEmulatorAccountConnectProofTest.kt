@@ -139,9 +139,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
 
                     // Connected: the library, with the remote on it and no keyboard.
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    awaitNode("the library, the remote on it", 60_000) {
-                        exists("library.surface") && (focused("library.open") || focused("library.home.0.item.0"))
-                    }
+                    openLibraryFromHome()
                     check(!keyboardShown(scenario)) { "No keyboard over the library" }
                     val saved = checkNotNull(store.load()) { "A connected account must be saved" }
                     check(saved.username == DisposableServerProbe.USER && saved.serverUrl.startsWith(relay.url)) { "The saved account is the one typed" }
@@ -220,9 +218,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
                     remote(KeyEvent.KEYCODE_DPAD_DOWN)
                     awaitNode("DOWN reaches Connect") { focused("tv.connect.submit") }
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    awaitNode("the library, the remote on it", 60_000) {
-                        exists("library.surface") && (focused("library.open") || focused("library.home.0.item.0"))
-                    }
+                    openLibraryFromHome()
                     awaitNode("the server's albums in the library", 60_000) { exists("library.home.0.item.0") }
                     observed += "connected"
                 }
@@ -239,8 +235,10 @@ class AndroidTvEmulatorAccountConnectProofTest {
         endProcessConnection()
         val triedBefore = relay.acceptedConnections.get()
         launch().use { scenario ->
-            awaitNode("the saved library") { exists("library.surface") }
+            awaitNode("the saved Home") { exists("listenNow.surface") }
             check(!exists("tv.connect.submit")) { "A saved account must not be asked for again" }
+            awaitNode("automatic reconnect starts without a remote action", 60_000) { relay.acceptedConnections.get() > triedBefore }
+            openLibraryFromHome()
             awaitNode("automatic reconnect in place", 60_000) {
                 relay.acceptedConnections.get() > triedBefore && !saysOffline() && exists("library.home.0.item.0")
             }
@@ -261,6 +259,20 @@ class AndroidTvEmulatorAccountConnectProofTest {
         var activity: TvSearchActivity? = null
         scenario.onActivity { activity = it }
         awaitWindowInFront(instrumentation, { activity })
+    }
+
+    /** Home is now the landing destination; Library is still reached with the real remote. */
+    private fun openLibraryFromHome() {
+        awaitNode("Listen Now after connection", 60_000) { exists("listenNow.surface") }
+        val tabs = listOf("listenNow.open", "search.open", "library.open", "browse.open", "tv.account.open")
+        repeat(8) { if (tabs.none(::focused)) remote(KeyEvent.KEYCODE_DPAD_UP) }
+        repeat(8) { if (!focused("listenNow.open")) remote(KeyEvent.KEYCODE_DPAD_LEFT) }
+        check(focused("listenNow.open")) { "The remote must reach Home in the bar" }
+        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        awaitNode("RIGHT from Search reaches Library") { focused("library.open") }
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        awaitNode("the Library opened from Home", 60_000) { exists("library.surface") }
     }
 
     private fun requireNothingSaved(store: AndroidAccountCredentialStore, moment: String) {
