@@ -7784,6 +7784,9 @@ account**, including with Dulcet Server: they make no server write and do not sy
 A changed server URL or username purges this state with the seen-cache. User pins protect their
 cached metadata from eviction. Search recents are recorded on a committed search action, trimmed,
 case-folded for deduplication and limited to the latest twelve; clearing recents leaves pins intact.
+Mutation return values acknowledge queue acceptance. A failed device-state write keeps a sanitized
+error on subsequent state reads until a successful write, so a failed write cannot silently revert
+an accepted UI change through an apparently successful read.
 
 Albums retain the existing `getAlbumList2` window and scan-stamp rules: title, artist, `byYear`
 (newest first), `newest` (recently added) and `frequent` (most played). Activity lists remain single

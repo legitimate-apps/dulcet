@@ -313,4 +313,18 @@ class LibraryDepthTest {
         assertEquals(listOf("Alpha", "Zulu"), sorted("recentlyAdded").map { it.rawId })
     }
 
+    @Test fun queuedWriteFailureRemainsVisibleAcrossReadsUntilSuccessfulWrite() = readerTest { env ->
+        val reader = env.reader()
+        reader.changeLibraryDepth { it.cache.setLibraryCategory("songs", "artist", "all") }
+        reader.changeLibraryDepth { error("private storage failure details") }
+        repeat(2) {
+            val state = reader.libraryDepthState()
+            assertEquals("internalFailure", state.errorKind)
+            assertEquals("artist", state.sort("songs"))
+        }
+        reader.changeLibraryDepth { it.cache.setLibraryCategory("songs", "title", "all") }
+        assertEquals(null, reader.libraryDepthState().errorKind)
+        assertEquals("title", reader.libraryDepthState().sort("songs"))
+    }
+
 }

@@ -267,7 +267,7 @@ public class AndroidLibraryReader internal constructor(
             if (delivered.compareAndSet(false, true)) onMain(checkClosed = false) { completion(state) }
         }
         onReader(onDropped = { finish(LibraryDepthState(errorKind = "closed")) }) {
-            val state = try { composed()?.session?.reader?.cache?.libraryDepthState() ?: LibraryDepthState(errorKind = "closed") }
+            val state = try { composed()?.session?.reader?.libraryDepthState() ?: LibraryDepthState(errorKind = "closed") }
                 catch (_: Throwable) { LibraryDepthState(errorKind = "internalFailure") }
             finish(state)
         }
@@ -284,8 +284,8 @@ public class AndroidLibraryReader internal constructor(
     private fun depthChange(work: (LibraryReader) -> Unit): Boolean {
         if (closed.get()) return false
         onReader {
-        val reader = composed()?.session?.reader ?: return@onReader
-        try { work(reader); reader.downloadsChanged() } catch (_: IllegalArgumentException) { }
+            val reader = composed()?.session?.reader ?: return@onReader
+            reader.changeLibraryDepth(work)
         }
         return true
     }

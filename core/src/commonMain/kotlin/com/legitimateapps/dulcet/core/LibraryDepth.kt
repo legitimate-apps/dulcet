@@ -16,6 +16,7 @@ public class LibraryDepthState internal constructor(
     private val searches: List<String> = emptyList(),
     public val errorKind: String? = null,
 ) {
+    internal fun withError(error: String?): LibraryDepthState = LibraryDepthState(categories, pins, searches, error)
     public fun sort(category: String): String = categories[category.lowercase()]?.first ?: "title"
     public fun filter(category: String): String = categories[category.lowercase()]?.second ?: "all"
     public val pinCount: Int get() = pins.size
@@ -23,6 +24,25 @@ public class LibraryDepthState internal constructor(
     public fun pinRawId(index: Int): String = pins.getOrNull(index)?.second ?: ""
     public val recentSearchCount: Int get() = searches.size
     public fun recentSearch(index: Int): String = searches.getOrNull(index) ?: ""
+}
+
+
+/** A queued mutation reports its eventual storage result through the next state read. */
+internal fun LibraryReader.libraryDepthState(): LibraryDepthState = cache.libraryDepthState().withError(libraryDepthWriteError)
+
+internal fun LibraryReader.changeLibraryDepth(work: (LibraryReader) -> Unit) {
+    checkConfined()
+    try {
+        work(this)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        libraryDepthWriteError = if (failure is IllegalArgumentException) "invalidArgument" else "internalFailure"
+        uncaughtFailures += failure
+        return
+    }
+    libraryDepthWriteError = null
+    downloadsChanged()
 }
 
 internal fun BoundSeenCache.libraryDepthState(): LibraryDepthState {

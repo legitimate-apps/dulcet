@@ -69,6 +69,7 @@ internal class LibraryReader(
 
     /** Failures that reached the backstop handler instead of a publication; empty when healthy. */
     internal val uncaughtFailures = mutableListOf<Throwable>()
+    internal var libraryDepthWriteError: String? = null
 
     /**
      * This session's lyrics reads (§18.4): the verdicts on answers refused as too large, the

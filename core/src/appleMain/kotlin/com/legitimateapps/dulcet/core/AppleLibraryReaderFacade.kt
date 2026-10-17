@@ -165,7 +165,7 @@ public class AppleLibraryReaderClient internal constructor(
      * stop the reader before the open runs. Subscribe and close on the main thread.
      */
     public fun libraryDepthState(completion: (LibraryDepthState) -> Unit): AppleLibraryReaderOperation =
-        operation(completion, failed = { LibraryDepthState(errorKind = it) }) { it.reader.cache.libraryDepthState() }
+        operation(completion, failed = { LibraryDepthState(errorKind = it) }) { it.reader.libraryDepthState() }
 
     public fun setLibraryCategory(category: String, sort: String, filter: String): Boolean = depthChange {
         it.cache.setLibraryCategory(category, sort, filter)
@@ -176,7 +176,7 @@ public class AppleLibraryReaderClient internal constructor(
     public fun recordSearch(text: String): Boolean = depthChange { it.cache.recordSearch(text) }
     public fun clearRecentSearches(): Boolean = depthChange { it.cache.clearRecentSearches() }
     private fun depthChange(work: (LibraryReader) -> Unit): Boolean = onSession { session ->
-        try { work(session.reader); session.reader.downloadsChanged() } catch (_: IllegalArgumentException) { }
+        session.reader.changeLibraryDepth(work)
     }
 
     public fun subscribeLibraryWindow(
