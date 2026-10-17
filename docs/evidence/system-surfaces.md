@@ -69,7 +69,9 @@ policy. Widget entitlements are fixed and cannot inherit the host selector.
 ## Scope limitations
 
 Catalog name matching is exact, case/diacritic insensitive, and rejects duplicates rather than
-choosing an arbitrary edition. Shortcut discovery provides Spotlight entry points; catalog-wide
+choosing an arbitrary edition. Names shorter than two characters can match only the device cache,
+matching the reader's server-search minimum. Recent replay uses the stored identity even for such
+titles. Shortcut discovery provides Spotlight entry points; catalog-wide
 Spotlight indexing is deferred. CarPlay has Library, Playlists, Recently Played and Queue tabs;
 search by voice uses App Intents. Widgets provide play/pause and recent songs; no separate player is
 created. ControlWidget requires iOS18+. Catalog shuffle asks OpenSubsonic for a fresh sample of up to

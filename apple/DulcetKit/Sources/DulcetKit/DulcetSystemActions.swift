@@ -111,7 +111,8 @@ public final class DulcetSystemActions {
         for _ in 0..<300 {
             try Task.checkCancellation()
             guard generation == session.readerGeneration else { throw Failure.changedAccount }
-            if let latest, latest.query == name, latest.scope != .deviceWhileServerPending {
+            if let latest, latest.query == name,
+               latest.scope != .deviceWhileServerPending || name.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 {
                 let matches = latest.rows.filter {
                     $0.result.kind.rawValue == kind.rawValue && Self.sameName($0.result.title, name)
                 }
