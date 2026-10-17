@@ -934,7 +934,33 @@ private fun JsonObject.readerAlbum(): CacheAlbumRecord = CacheAlbumRecord(
     songCount = int("songCount")?.takeIf { it >= 0 },
     artworkKey = optionalOpaqueId("coverArt"),
     userState = readerUserState(withPlays = true),
+    releaseTypes = arrayOrEmpty("releaseTypes").mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+    originalReleaseDate = (get("originalReleaseDate") as? JsonObject)?.let { date ->
+        val year = date.int("year")?.takeIf { it in 1..9999 } ?: return@let null
+        val month = date.int("month")?.takeIf { it in 1..12 }
+        val day = date.int("day")?.takeIf { it in 1..31 }
+        year.toString().padStart(4, '0') + (month?.let { "-" + it.toString().padStart(2, '0') } ?: "") +
+            (if (month != null) day?.let { "-" + it.toString().padStart(2, '0') } ?: "" else "")
+    },
 )
+
+internal fun parseReaderAllSongs(body: String): List<CacheTrackRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val result = payload["searchResult3"] as? JsonObject ?: malformed()
+    return result.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
+}
+
+internal fun parseReaderRandomSongs(body: String): List<CacheTrackRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val result = payload["randomSongs"] as? JsonObject ?: malformed()
+    return result.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
+}
+
+internal fun parseReaderTopSongs(body: String): List<CacheTrackRecord> {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val top = payload["topSongs"] as? JsonObject ?: malformed()
+    return top.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
+}
 
 private fun JsonObject.readerTrack(albumRawId: String?): CacheTrackRecord = CacheTrackRecord(
     rawId = requiredOpaqueId("id"),

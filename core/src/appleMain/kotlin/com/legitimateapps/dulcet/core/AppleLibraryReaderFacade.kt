@@ -164,6 +164,21 @@ public class AppleLibraryReaderClient internal constructor(
      * subscribe on ANOTHER thread racing a [close] may instead receive nothing at all: the close can
      * stop the reader before the open runs. Subscribe and close on the main thread.
      */
+    public fun libraryDepthState(completion: (LibraryDepthState) -> Unit): AppleLibraryReaderOperation =
+        operation(completion, failed = { LibraryDepthState(errorKind = it) }) { it.reader.libraryDepthState() }
+
+    public fun setLibraryCategory(category: String, sort: String, filter: String): Boolean = depthChange {
+        it.cache.setLibraryCategory(category, sort, filter)
+    }
+    public fun setLibraryPin(kind: String, rawId: String, pinned: Boolean): Boolean = depthChange {
+        it.cache.setLibraryPin(kind, rawId, pinned)
+    }
+    public fun recordSearch(text: String): Boolean = depthChange { it.cache.recordSearch(text) }
+    public fun clearRecentSearches(): Boolean = depthChange { it.cache.clearRecentSearches() }
+    private fun depthChange(work: (LibraryReader) -> Unit): Boolean = onSession { session ->
+        session.reader.changeLibraryDepth(work)
+    }
+
     public fun subscribeLibraryWindow(
         request: AppleLibraryWindowRequest,
         listener: AppleLibraryWindowListener,
@@ -689,6 +704,11 @@ internal fun AppleLibraryWindowRequest.toTarget(): AppleLibraryWindowTarget {
         "playlist" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Playlist(id()))
         "shuffleSongs" -> AppleLibraryWindowTarget.Screen(LibraryQuery.ShuffleSongs)
         "starred" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Starred)
+        "songs" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Songs(listType ?: "title", genre ?: ""))
+        "shuffleSongs" -> AppleLibraryWindowTarget.Screen(LibraryQuery.ShuffleSongs)
+        "downloaded" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Downloaded)
+        "pinned" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Pinned)
+        "artistTopSongs" -> AppleLibraryWindowTarget.Screen(LibraryQuery.ArtistTopSongs(id()))
         "genres" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Genres)
         "songsByGenre" -> AppleLibraryWindowTarget.Screen(
             LibraryQuery.SongsByGenre(requireNotNull(genre?.takeIf { it.isNotBlank() }) { "missing genre" }, folder),

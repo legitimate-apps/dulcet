@@ -1007,6 +1007,7 @@ internal class LibraryReaderSession(
 
     init {
         reader.setForeground(foreground)
+        reader.localCollectionsChanged = { myLibrary.preferencesChanged() }
         // The reader, not this session, owns reachability: it revalidates the searches when it goes
         // offline and when a reconnect revalidates the screen, whichever entry point the shell called.
         reader.addVisibleSurface {

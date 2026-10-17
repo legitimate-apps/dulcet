@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -26,6 +27,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
@@ -160,6 +164,13 @@ internal fun TvSearchScreen(
     onActivate: (SearchResultItem) -> Unit,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
+    val resultsList = rememberLazyListState()
+    // A new query starts at its first group. Keeping the old scroll anchor could leave that
+    // group's focus requester uncomposed when the remote moves DOWN from the query field.
+    LaunchedEffect(state.query) { resultsList.scrollToItem(0) }
+    val recents by presenter.recents.collectAsStateWithLifecycle()
+    val recentError by presenter.recentSearchError.collectAsStateWithLifecycle()
+    var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
     val resources = libraryResources()
     val queryFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
@@ -170,6 +181,17 @@ internal fun TvSearchScreen(
     // there let a publication landing between the two (the results arriving) meet requesters sized
     // for the rows before it, and the first result threw.
     val rows = state.rows
+    val groupFocus = remember(state.query) { SearchResultType.entries.associateWith { FocusRequester() } }
+    val focusScope = rememberCoroutineScope()
+    val currentQuery by rememberUpdatedState(state.query)
+    val rowIds = rows.map { it.item.id }
+    val currentRowIds by rememberUpdatedState(rowIds)
+    val currentExpanded by rememberUpdatedState(expanded)
+    val headerPrefix = (if (recentError != null) 1 else 0) +
+        (if (state.query.isBlank() && recents.isNotEmpty()) recents.size + 1 else 0)
+    val currentHeaderPrefix by rememberUpdatedState(headerPrefix)
+    val firstResult = rows.indexOfFirst { it.item.type == SearchResultType.Artist }.takeIf { it >= 0 }
+        ?: rows.indexOfFirst { it.item.type == SearchResultType.Album }.takeIf { it >= 0 } ?: 0
     val rowsScope = state.scope
     val resultFocus = remember(rows.map { it.item.id }) {
         List(rows.size) { FocusRequester() }
@@ -249,7 +271,8 @@ internal fun TvSearchScreen(
                                     true
                                 }
                                 event.key == Key.DirectionDown && resultFocus.isNotEmpty() -> {
-                                    resultFocus.first().requestFocus()
+                                    resultFocus[rows.indexOfFirst { it.item.type == SearchResultType.Artist }.takeIf { it >= 0 }
+                                        ?: rows.indexOfFirst { it.item.type == SearchResultType.Album }.takeIf { it >= 0 } ?: 0].requestFocus()
                                     true
                                 }
                                 // The field keeps DOWN too, so the way to Try Again is explicit.
@@ -310,11 +333,57 @@ internal fun TvSearchScreen(
                 }
             }
             LazyColumn(
+                state = resultsList,
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
                     .semantics { this[SearchObservation] = state },
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                itemsIndexed(rows) { index, row ->
+                if (recentError != null) item { Text(stringResource(SharedR.string.library_depth_save_failed), Modifier.testTag("search.recents.error")) }
+                if (state.query.isBlank() && recents.isNotEmpty()) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Text(stringResource(SharedR.string.search_recent), style = MaterialTheme.typography.titleLarge)
+                            TvAction(stringResource(SharedR.string.search_clear), "search.recents.clear", onClick = presenter::clearRecents)
+                        }
+                    }
+                    itemsIndexed(recents) { index, query ->
+                        TvAction(query, "search.recent.$index") { presenter.updateQuery(query); presenter.commitQuery() }
+                    }
+                }
+                var nextHeader = headerPrefix
+                for (type in listOf(SearchResultType.Artist, SearchResultType.Album, SearchResultType.Track)) {
+                    val all = rows.withIndex().filter { it.value.item.type == type }
+                    val collapsed = all.size > 4 && type !in expanded
+                    val groupRows = if (type in expanded) all else all.take(4)
+                    val headerIndex = nextHeader
+                    if (all.isNotEmpty()) nextHeader += 1 + groupRows.size
+                    if (all.isNotEmpty()) item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(when (type) {
+                                SearchResultType.Artist -> SharedR.string.search_group_artists
+                                SearchResultType.Album -> SharedR.string.search_group_albums
+                                SearchResultType.Track -> SharedR.string.search_group_songs
+                            }), style = MaterialTheme.typography.titleLarge)
+                            if (collapsed) TvAction(stringResource(SharedR.string.search_see_all),
+                                "search.seeAll.${type.name.lowercase()}",
+                                modifier = Modifier.focusRequester(groupFocus.getValue(type)).onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) false
+                                    else when (event.key) {
+                                        Key.DirectionUp -> if (all.first().index == firstResult) {
+                                            queryFocus.requestFocus(); true
+                                        } else false
+                                        else -> false
+                                    }
+                                }) {
+                                expanded = expanded + type
+                                // The expanding control leaves composition; keep the remote on its group.
+                                resultFocus[all.first().index].requestFocus()
+                            }
+                        }
+                    }
+                    itemsIndexed(groupRows, key = { _, indexed -> indexed.index }) { _, indexed ->
+                    val index = indexed.index
+                    val row = indexed.value
                     val result = row.item
                     val context = LocalContext.current
                     val addition = tvSearchAddition(context, playback, account?.providerInstanceId, result, row.playability)
@@ -333,9 +402,27 @@ internal fun TvSearchScreen(
                         account = account,
                         addition = addition,
                         focusRequester = resultFocus[index],
-                        queryFocusRequester = queryFocus.takeIf { index == 0 },
-                        onActivate = { onActivate(result) },
+                        queryFocusRequester = queryFocus.takeIf { index == firstResult },
+                        onMoveUp = if (collapsed && index == all.first().index) ({
+                            val requestedQuery = state.query
+                            val requestedRows = rowIds
+                            val requestedExpanded = expanded
+                            val requestedPrefix = headerPrefix
+                            focusScope.launch {
+                                // The group header can be outside the lazy viewport after walking back.
+                                resultsList.scrollToItem(headerIndex)
+                                withFrameNanos { }
+                                // A server merge or a new query may replace this header while scrolling.
+                                if (currentQuery == requestedQuery && currentRowIds == requestedRows &&
+                                    currentExpanded == requestedExpanded && currentHeaderPrefix == requestedPrefix) {
+                                    groupFocus.getValue(type).requestFocus()
+                                }
+                            }
+                            Unit
+                        }) else null,
+                        onActivate = { presenter.commitQuery(); onActivate(result) },
                     )
+                }
                 }
             }
         }
@@ -352,6 +439,8 @@ internal fun TvSearchResult(
     focusRequester: FocusRequester,
     /** The query field, above the first result only: UP from there goes to it. */
     queryFocusRequester: FocusRequester?,
+    /** A collapsed group's first row exposes its See all control above it. */
+    onMoveUp: (() -> Unit)? = null,
     onActivate: () -> Unit,
 ) {
     var adding by remember { mutableStateOf(false) }
@@ -379,7 +468,10 @@ internal fun TvSearchResult(
                     // result not yet on screen, where a requester of one never composed takes nothing,
                     // which left the D-pad stuck at the last result the screen had room for.
                     when (event.key) {
-                        Key.DirectionUp -> if (queryFocusRequester != null) {
+                        Key.DirectionUp -> if (onMoveUp != null) {
+                            onMoveUp()
+                            true
+                        } else if (queryFocusRequester != null) {
                             queryFocusRequester.requestFocus()
                             true
                         } else {

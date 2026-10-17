@@ -17,7 +17,7 @@ on:
         default: ':android:app:testProdDebugUnitTest'
         type: string
       tests:
-        description: Gradle --tests filter, e.g. *DownloadExecutorTest (required; must match at least one test)
+        description: Comma-separated Gradle --tests filters, e.g. *DownloadExecutorTest,*LibraryDepthTest
         required: true
         type: string
       repeat:
@@ -103,6 +103,18 @@ jobs:
           failures_dir="$RUNNER_TEMP/android-test-soak-failures"
           mkdir -p "$failures_dir"
           command=(./gradlew --max-workers=2 --no-build-cache)
+          test_args=()
+          IFS=',' read -ra filters <<< "$SOAK_TESTS"
+          for filter in "${filters[@]}"; do
+            # Trim surrounding whitespace while preserving Gradle's wildcard syntax.
+            filter="${filter#"${filter%%[![:space:]]*}"}"
+            filter="${filter%"${filter##*[![:space:]]}"}"
+            if [[ -z "$filter" ]]; then
+              echo "SOAK ERROR each tests filter must be nonempty"
+              exit 2
+            fi
+            test_args+=(--tests "$filter")
+          done
           if [[ -n "${SOAK_CONFORMANCE_ROOT:-}" ]]; then
             command=(tools/conformance-env/linux-local --root "$SOAK_CONFORMANCE_ROOT" run -- "${command[@]}" -Pdulcet.productionSearchConformance)
           fi
@@ -122,7 +134,7 @@ jobs:
             rm -rf "$results_dir"
             # The runner starts bash with -e: a failing Gradle run must be recorded, not end the soak.
             gradle_exit=0
-            "${command[@]}" "$SOAK_TASK" --tests "$SOAK_TESTS" --rerun \
+            "${command[@]}" "$SOAK_TASK" "${test_args[@]}" --rerun \
               > "$RUNNER_TEMP/soak-$label.log" 2>&1 || gradle_exit=$?
             counts="$(python3 - "$results_dir" <<'PY'
           import sys

@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.library
 
 import android.content.Context
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -13,8 +14,8 @@ import com.legitimateapps.dulcet.shared.R
 /**
  * The orders the Albums screen offers, one implementation for the phone and the TV, at parity with the
  * Apple shells' sort picker: each is a `getAlbumList2` type the server orders (§16.9), so choosing one
- * opens that list from its start. The choice is remembered on this device, as Apple remembers it,
- * whatever account is signed in.
+ * opens that list from its start. Production screens keep the choice per account on this device
+ * through the shared library-depth store.
  */
 public object AlbumSort {
     /** In the order the picker lists them: the Apple shells' `sortChoices`. */
@@ -26,6 +27,7 @@ public object AlbumSort {
         AndroidAlbumListType.Frequent,
         AndroidAlbumListType.Highest,
         AndroidAlbumListType.Random,
+        AndroidAlbumListType.ByYear,
     )
 
     public val DEFAULT: AndroidAlbumListType = AndroidAlbumListType.AlphabeticalByName
@@ -48,6 +50,7 @@ public object AlbumSort {
     public fun titleResource(type: AndroidAlbumListType): Int = when (type) {
         AndroidAlbumListType.AlphabeticalByName -> R.string.library_sort_title
         AndroidAlbumListType.AlphabeticalByArtist -> R.string.library_sort_artist
+        AndroidAlbumListType.ByYear -> R.string.library_sort_release
         AndroidAlbumListType.Newest -> R.string.library_sort_recently_added
         AndroidAlbumListType.Recent -> R.string.library_sort_recently_played
         AndroidAlbumListType.Frequent -> R.string.library_sort_most_played
@@ -61,13 +64,13 @@ public object AlbumSort {
 }
 
 /** The order the Albums screen shows, read once from this device and written back on every change. */
-public class AlbumSortState internal constructor(private val context: Context, initial: AndroidAlbumListType) {
+public class AlbumSortState internal constructor(private val context: Context, initial: AndroidAlbumListType, private val persist: ((AndroidAlbumListType) -> Unit)? = null) {
     public var value: AndroidAlbumListType by mutableStateOf(initial)
         private set
 
     public fun choose(type: AndroidAlbumListType) {
         if (type == value) return
-        AlbumSort.save(context, type)
+        if (persist != null) persist.invoke(type) else AlbumSort.save(context, type)
         value = type
     }
 }
@@ -76,4 +79,18 @@ public class AlbumSortState internal constructor(private val context: Context, i
 public fun rememberAlbumSort(): AlbumSortState {
     val context = LocalContext.current
     return remember(context) { AlbumSortState(context.applicationContext ?: context, AlbumSort.load(context)) }
+}
+
+/** Account-specific ordering from the core, shared by phone and TV. */
+@Composable
+public fun rememberAlbumSort(session: LibrarySession): AlbumSortState {
+    val context = LocalContext.current
+    val depth by session.depth.collectAsState()
+    val loaded = depth != null
+    return remember(session, loaded) {
+        val initial = AlbumSort.CHOICES.firstOrNull { it.name == depth?.sort("albums") } ?: AlbumSort.DEFAULT
+        AlbumSortState(context.applicationContext ?: context, initial) { sort ->
+            session.setCategorySort("albums", sort.name)
+        }
+    }
 }
