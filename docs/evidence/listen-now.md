@@ -80,6 +80,17 @@ playlist tiles use the existing collection detail and playback actions.
 
 ## Run record
 
+Merged `main` at `df546b2e` (scanner fix #332) into the feature branch without conflicts.
+On the merged product source, [core-ci 39000147383](https://github.com/legitimate-apps/dulcet/actions/runs/39000147383)
+passed the full server step: **135 tests, zero failures/errors/skips**, including the three new
+scanner regression/scale cases, both Home integration cases and the actual importer-to-Home
+control. Its phone and TV device jobs passed; downloaded JUnit contains one non-skipped Home
+case per platform/server (four total), against plain OpenSubsonic and advertised Dulcet Server.
+The separate full native [run 39000146299](https://github.com/legitimate-apps/dulcet/actions/runs/39000146299)
+checks the same merged Apple product source. Home JUnit reports now feed the required Apple
+parity resolver using their actual test classes; the source policy and parity mutation/execution
+self-tests pass locally.
+
 Observed local core baseline: JVM 1,068 tests, Android host 1,259, native Mac 1,148, with no
 failures, errors or skips. The five Home reader tests executed in each runtime. Shared iOS test
 sources and phone/TV instrumented APKs compiled. Apple package tests passed 332/332 serially;
@@ -96,7 +107,7 @@ not native UI execution.
 | iPhone Home | 1 passed, 0 skipped; 35.622 seconds | [Apple run 38991471536](https://github.com/legitimate-apps/dulcet/actions/runs/38991471536), retained Home JUnit/xcresult |
 | iPad Home | 1 passed, 0 skipped; 51.905 seconds | Same run, separate iPad Home JUnit/xcresult |
 | Corrected Mac connection control | 1 passed, 0 skipped; 0.894 seconds | [Apple run 38995086942](https://github.com/legitimate-apps/dulcet/actions/runs/38995086942), connection-landing JUnit |
-| Apple TV Home | Pending | [replacement native run 38998014475](https://github.com/legitimate-apps/dulcet/actions/runs/38998014475) |
+| Apple TV Home | Pending | [replacement native run 39000146299](https://github.com/legitimate-apps/dulcet/actions/runs/39000146299) |
 | Full core/server/API and Android integration gate | Passed: server 132, API conformance 60, shared JVM/Android host 2,327, Android app host 1,753; zero failures/errors/skips | [core-ci 38995786940](https://github.com/legitimate-apps/dulcet/actions/runs/38995786940), actual JUnit case counts |
 
 The full integration run above passed after legacy navigation controls were updated to enter
