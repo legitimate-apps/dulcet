@@ -1287,7 +1287,7 @@ final class DulcetTVUITests: XCTestCase {
         }
         let artistRowLabel = try XCTUnwrap(focusedElement(app)?.label)
 
-        // The artist's page: walk past Top Songs to materialize its lazy discography, then
+        // The artist's page: walk past Top Songs into its discography, then
         // compare every album with the server's metadata in newest-first order and open one.
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.staticTexts[artistName].firstMatch.waitForExistence(timeout: 30),

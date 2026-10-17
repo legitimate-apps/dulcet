@@ -7859,6 +7859,15 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-17 — Reach artist discography with the television remote.**
+On tvOS, an artist's discography creates the album controls for the reader's currently loaded
+items in an eager grid. Top Songs can place that entire grid below the viewport; with a lazy
+grid, repeated Down presses left focus on the last Top Songs pin control and no album controls
+were present in the accessibility hierarchy. The full-width discography focus section remains,
+as do release grouping, newest-first ordering and focus restoration after Back. The remote
+regression crosses Top Songs before requiring complete album membership/order, selection,
+playback progress and Back focus. Other platforms retain their lazy discography grids.
+
 **2026-10-17 — Integrate library depth with system surfaces.**
 The system-surfaces branch merges collection controls, artist depth, grouped search and trusted
 proxy handling without replacing either feature record. Identical shuffle query/parser additions
