@@ -19,6 +19,12 @@ final class DulcetTVUITests: XCTestCase {
         let refresh=app.buttons["dulcet.listenNow.refresh"].firstMatch
         XCTAssertTrue(refresh.waitForExistence(timeout:10))
         XCTAssertTrue(focusByRemote(refresh,in:app),"Home's Refresh must take remote focus")
+        // tvOS can initially focus this first button instead of Refresh. It must remain a
+        // named control so launch/navigation drivers can observe the actual focused action.
+        let library = app.buttons["dulcet.listenNow.library"].firstMatch
+        XCTAssertTrue(library.waitForExistence(timeout:10))
+        XCTAssertTrue(focusByRemote(library,in:app))
+        XCTAssertEqual(focusedControlIdentifier(app), "dulcet.listenNow.library")
         let album=app.buttons["dulcet.library.album"].firstMatch
         XCTAssertTrue(album.waitForExistence(timeout:30),app.debugDescription)
         XCTAssertTrue(focusByRemote(album,in:app))

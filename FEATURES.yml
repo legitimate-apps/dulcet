@@ -2618,7 +2618,7 @@
               "test": "DulcetMacDesignTourTest/testDesignTour"
             }
           ],
-          "reason": "Listen Now opens first. Hosted production Home reached populated shelves, activated an album and returned through Library/Home in apple-ci 38991471536 (1 passing test and screen captures). Core tests establish cache-before-network. Corrected connection landing passed in 38995086942. The catalog-sidebar regression passed its current-source unit control (1/1) and actual app-hosted Mac playlist-edit runtime (1/1, 8.801 seconds), including independent server reads. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first. Hosted production Home reached populated shelves, activated an album and returned through Library/Home in apple-ci 38991471536 (1 passing test and screen captures). Core tests establish cache-before-network. Corrected connection landing passed in 38995086942. The catalog-sidebar regression passed on all four hosted Apple runtimes. The actual Mac app-hosted catalog Playlists edit proof passed locally (1/1, 8.801 seconds) and in hosted apple-ci 39012368296 (1/1, 11.185 seconds), including independent server reads and an individual execution guard. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "submitted-play-playlist-context-transport",

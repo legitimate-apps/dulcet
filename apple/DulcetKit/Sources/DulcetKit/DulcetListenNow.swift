@@ -34,8 +34,10 @@ struct DulcetListenNowView: View {
                 .dulcetForeground(.secondaryTextOnWindow)
             HStack {
                 Button(DulcetStrings.library) { store.navigate(to: .library) }
+                    .accessibilityIdentifier("dulcet.listenNow.library")
                 if store.myLibraryAvailable {
                     Button(DulcetStrings.browseSection) { store.navigate(to: .browse) }
+                        .accessibilityIdentifier("dulcet.listenNow.browse")
                 }
                 Spacer()
                 DulcetListenNowRefresh()
@@ -109,6 +111,7 @@ private struct DulcetListenNowShelfView: View {
                                         sourceID: nil, sourceName: shelf.title)
                                 }
                                 .accessibilityLabel(DulcetStrings.homePlay(shelf.title))
+                                .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue).play")
                             }
                         }
                         if let line = DulcetReaderCopy.freshnessLine(window.freshness) {

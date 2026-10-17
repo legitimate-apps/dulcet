@@ -231,6 +231,21 @@ control reaches the correct focused album but remains unverified: on local tvOS 
 failed. The driver retains that assertion and the independent membership/offline checks.
 No Library product implementation was changed for these navigation-driver corrections.
 
+The completed hosted core job in [run 39012368296](https://github.com/legitimate-apps/dulcet/actions/runs/39012368296)
+also passed the actual Mac app-hosted catalog Playlists edit proof **1/1 in 11.185 seconds**.
+Its rendered create/add/remove/reorder/rename/delete actions were confirmed by independent
+server reads, and the individual xcresult execution guard passed. This supplements the local
+8.801-second result with a positive hosted runtime result.
+
+That run stopped before the TV Home and My Library controls in the Search launch helper.
+Its failure tree shows Home's Library button **Focused**, with no identifier; the helper
+requires a named focused control. Home now gives Library, Browse and shelf Play actions stable
+identifiers. On a fresh leased tvOS 26.5 simulator, Home and Search passed **2/2 without skips**
+(16.438 and 37.381 seconds). The Home test then gained a direct regression check: remote-focus
+Library and assert its exact identifier before continuing to the album and saved relaunch.
+That stricter Home control passed **1/1 in 16.286 seconds**, with execution guard and JUnit.
+This fixes the unnamed action; the hosted TV membership menu comparison remains pending.
+
 A controlled main-branch comparison (`fa2ec5e6`, with only the corrected test driver and its
 pre-Home tab order) reached the same closed TV membership menu on the same local Xcode 27 /
 tvOS 26.5 setup. That control failed in 40.064 seconds. It establishes that the local failure
