@@ -7783,6 +7783,17 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-17 — Integrate library depth with system surfaces.**
+The system-surfaces branch merges collection controls, artist depth, grouped search and trusted
+proxy handling without replacing either feature record. Identical shuffle query/parser additions
+are consolidated. WidgetKit now consumes the existing account-bound `.pinned` reader window;
+its metadata-only snapshot excludes foreign accounts and unpinned entries, decodes older snapshots,
+and revalidates opaque kind/provider/ID plus pin membership before playback. Android pinned widgets
+remain deferred. This source and regression coverage does not claim Pinned widget host interaction.
+The build-order guard checks the four pure Swift widget extensions separately, requiring no Kotlin
+link flags/provider/dependency and extension-safe APIs; every other native target retains its ordered
+strong DulcetCore linkage requirement.
+
 **2026-10-16 — Personal collection depth and device-only Library state.**
 The shared reader owns per-category sort/filter preferences, pins and recent searches in a new
 additive account-bound device table (schema 10). Pins intentionally live **on this device for this
@@ -7833,6 +7844,7 @@ empty by default. Only a trusted socket peer may supply a forwarded client ident
 Dulcet API and OAuth IP limits share the resolver described in §29.1; reverse proxies must sanitize
 forwarded headers. OBSERVED: `ClientAddressesTest` and real-CIO `TrustedProxyIntegrationTest` cover
 configuration, spoofing, multi-hop boundaries and isolation across the three limiters.
+
 **2026-10-16 — System surfaces share playback ownership and channel identities.**
 App Intents on iOS/iPadOS/macOS resolve exact album, artist, playlist and song names through the
 reader; duplicate names ask the person to choose in the app. Resume/toggle, favourites, current-song
@@ -7850,8 +7862,9 @@ WidgetKit extensions use channel-isolated App Groups: `group.com.legitimateapps.
 `group.com.legitimateapps.dulcet`. They store display metadata and opaque song references only;
 account changes clear recent items. AudioPlaybackIntent buttons execute in the host app. Now Playing
 widgets support Home Screen/macOS and iOS Lock Screen families; iOS18+ also has a ControlWidget.
-Recently Played is device-local. Pins remain lane A's native library feature until a widget provider
-can consume that shared projection. Android's widget uses private app preferences and explicit
+Recently Played is device-local. The Pinned widget projects up to four items from the shared account-bound
+`.pinned` reader window and shows up to three buttons; each button revalidates kind/provider/ID
+and current pin membership before entering the existing player. Android's widget uses private app preferences and explicit
 PendingIntents into its existing media session; no App Group or second player is involved.
 
 CarPlay uses CPTemplate scenes and the shared queue/Now Playing state. Simulator builds request

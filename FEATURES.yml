@@ -3043,29 +3043,29 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets.",
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Apple Pinned widget projection and opaque-ID replay are implemented with account/unpin regression tests; OS host interaction remains unproven.",
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "system-widgets-macos-os-trigger-proof",
-            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Apple Pinned widget projection and opaque-ID replay are implemented with account/unpin regression tests; OS host interaction remains unproven."
           }
         },
         "ios": {
           "status": "partial",
-          "reason": "The real iOS 26.5 Home widget rendered the canary and its Resume App Intent advanced the existing player in a passing 63.444-second XCUITest. Recently Played, Lock Screen and ControlWidget OS interaction remain unproven; native pins are not yet projected into widgets.",
+          "reason": "The real iOS 26.5 Home widget rendered the canary and its Resume App Intent advanced the existing player in a passing 63.444-second XCUITest. Recently Played, Lock Screen and ControlWidget OS interaction remain unproven; Apple Pinned widget projection and opaque-ID replay have account/unpin regression tests, with OS host interaction still unproven.",
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "system-widgets-ios-os-trigger-proof",
-            "reason": "The real iOS 26.5 Home widget rendered the canary and its Resume App Intent advanced the existing player in a passing 63.444-second XCUITest. Recently Played, Lock Screen and ControlWidget OS interaction remain unproven; native pins are not yet projected into widgets."
+            "reason": "The real iOS 26.5 Home widget rendered the canary and its Resume App Intent advanced the existing player in a passing 63.444-second XCUITest. Recently Played, Lock Screen and ControlWidget OS interaction remain unproven; Apple Pinned widget projection and opaque-ID replay have account/unpin regression tests, with OS host interaction still unproven."
           }
         },
         "ipados": {
           "status": "partial",
-          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets.",
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Apple Pinned widget projection and opaque-ID replay are implemented with account/unpin regression tests; OS host interaction remains unproven.",
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "system-widgets-ipados-os-trigger-proof",
-            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Apple Pinned widget projection and opaque-ID replay are implemented with account/unpin regression tests; OS host interaction remains unproven."
           }
         },
         "tvos": {

@@ -16,7 +16,13 @@ Widget App Groups contain only display metadata, timestamps and opaque song/prov
 They have separate DEV/PROD containers and do not share credentials, Keychain access groups or reader
 databases. Recently Played is device-local, clears on account change, and survives host relaunch.
 Recent song buttons resolve the stored provider/ID through the current reader before playing.
-Pins remain the native library feature owned by the library-depth lane, pending a widget projection.
+The Apple Pinned widget projects at most four metadata entries from the shared `.pinned` reader
+window and shows at most three buttons. It filters by current account and accepted pin membership;
+a stale button rechecks opaque kind/provider/ID and membership before playing. Account changes and
+unpins remove the projection. Snapshots written before the pinned field was added remain readable.
+`systemSurfacePinsProjectOnlyCurrentAccountMetadataAndRemoveUnpinnedItems` and
+`systemSurfacePinnedReplayRevalidatesOpaqueIdentityAndRejectsAnUnpin` cover these boundaries.
+Pinned widget rendering/interaction in the OS host is not yet claimed; Android pins remain deferred.
 
 Android uses its existing playback service/controller, promoted to `MediaLibraryService`; trusted
 system or same-app controllers receive library commands. Media IDs contain opaque references, never

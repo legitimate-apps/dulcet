@@ -12,6 +12,7 @@ final class DulcetSurfacePublisher {
     private weak var store: DulcetPresentationStore?
     private var previous: DulcetSurfaceSnapshot?
     private var accountID: String?
+    private let pinnedWindow = DulcetLibraryWindowModel(query: .pinned)
     func attach(_ store: DulcetPresentationStore) { self.store = store; observe() }
     private func observe() {
         withObservationTracking { refresh() } onChange: {
@@ -29,13 +30,17 @@ final class DulcetSurfacePublisher {
         }
         #endif
         if accountID != provider { previous = nil; accountID = provider }
+        if let session = store.librarySession { pinnedWindow.open(in: session) }
+        else { pinnedWindow.close() }
         let now = provider == nil ? nil : store.snapshot.nowPlaying
         var value = DulcetSurfaceSnapshot(
             title: now?.current.title ?? "Dulcet",
             subtitle: now?.current.albumTitle ?? "Open your music library",
             isPlaying: now?.isPlaying ?? false,
             updatedAt: previous?.updatedAt ?? Date(),
-            recent: store.librarySession?.account == nil ? [] : previous?.recent ?? []
+            recent: store.librarySession?.account == nil ? [] : previous?.recent ?? [],
+            pinned: DulcetSurfaceSnapshot.pinnedItems(window: pinnedWindow.window, providerID: provider,
+                depth: store.librarySession?.libraryDepth ?? .init())
         )
         if let current = now?.current {
             let id = current.id.providerInstanceID + ":" + current.id.rawID
@@ -55,6 +60,7 @@ final class DulcetSurfacePublisher {
         sharedDefaults?.set(provider, forKey: "dulcet.surface.account")
         WidgetCenter.shared.reloadTimelines(ofKind: "DulcetNowPlaying")
         WidgetCenter.shared.reloadTimelines(ofKind: "DulcetRecent")
+        WidgetCenter.shared.reloadTimelines(ofKind: "DulcetPinned")
         #endif
     }
 }

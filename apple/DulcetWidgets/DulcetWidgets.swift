@@ -18,6 +18,7 @@ struct DulcetProvider: TimelineProvider {
 struct DulcetWidgetView: View {
     let entry: DulcetEntry
     var recent = false
+    var pinned = false
     @Environment(\.widgetFamily) private var family
     private var isCircular: Bool {
         #if os(iOS)
@@ -51,7 +52,17 @@ struct DulcetWidgetView: View {
                 }
             } else {
             VStack(alignment: .leading, spacing: 8) {
-                if recent {
+                if pinned {
+                    Label("Pinned", systemImage: "pin").font(.headline)
+                    ForEach((entry.snapshot.pinned ?? []).prefix(3)) { item in
+                        if let provider = item.providerID, let rawID = item.rawID, let kind = item.kind {
+                            Button(intent: DulcetPlayPinnedIntent(provider: provider, itemID: rawID, kind: kind)) {
+                                Text(item.title).font(.caption).lineLimit(1)
+                            }.buttonStyle(.plain).accessibilityLabel("Play " + item.title)
+                        }
+                    }
+                    if entry.snapshot.pinned?.isEmpty != false { Text("Pin music in your Dulcet library to see it here.").font(.caption) }
+                } else if recent {
                     Label("Recently Played", systemImage: "clock") .font(.headline)
                     ForEach(entry.snapshot.recent.prefix(3)) { item in
                         if let provider = item.providerID, let rawID = item.rawID {
@@ -101,6 +112,15 @@ struct DulcetRecentWidget: Widget {
             .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
+struct DulcetPinnedWidget: Widget {
+    let kind = "DulcetPinned"
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: DulcetProvider()) { DulcetWidgetView(entry: $0, pinned: true) }
+            .configurationDisplayName("Dulcet Pinned")
+            .description("Music pinned in this account on this device.")
+            .supportedFamilies([.systemSmall, .systemMedium])
+    }
+}
 #if os(iOS)
 @available(iOS 18.0, *)
 struct DulcetPlaybackControl: ControlWidget {
@@ -118,6 +138,7 @@ struct DulcetWidgets: WidgetBundle {
     var body: some Widget {
         DulcetNowPlayingWidget()
         DulcetRecentWidget()
+        DulcetPinnedWidget()
         #if os(iOS)
         if #available(iOS 18.0, *) { DulcetPlaybackControl() }
         #endif

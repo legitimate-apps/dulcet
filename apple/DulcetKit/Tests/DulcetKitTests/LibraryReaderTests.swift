@@ -2354,3 +2354,50 @@ func shuffleResolutionWaitsForANewServerSampleRatherThanPlayingTheCachedQueue() 
     #expect(delivered == ["fresh-random-sample"])
     #expect(subscription.events.contains("close"))
 }
+
+@Test @MainActor
+func systemSurfacePinsProjectOnlyCurrentAccountMetadataAndRemoveUnpinnedItems() throws {
+    let album = item("album", "opaque:/?album", title: "Pinned Album")
+    let song = item("track", "opaque:/?song", title: "Pinned Song")
+    let rows = window([album, song])
+    let depth = DulcetLibraryDepthState(pins: ["album\u{0}opaque:/?album", "track\u{0}opaque:/?song"])
+    let projected = DulcetSurfaceSnapshot.pinnedItems(window: rows, providerID: "provider-reader", depth: depth)
+    #expect(projected.map(\.kind) == ["album", "track"])
+    #expect(projected.map(\.rawID) == ["opaque:/?album", "opaque:/?song"])
+    #expect(DulcetSurfaceSnapshot.pinnedItems(window: rows, providerID: "other", depth: depth).isEmpty)
+    #expect(DulcetSurfaceSnapshot.pinnedItems(window: rows, providerID: nil, depth: depth).isEmpty)
+    #expect(DulcetSurfaceSnapshot.pinnedItems(window: rows, providerID: "provider-reader", depth: .init()).isEmpty)
+    let snapshot = DulcetSurfaceSnapshot(pinned: projected)
+    #expect(try JSONDecoder().decode(DulcetSurfaceSnapshot.self, from: JSONEncoder().encode(snapshot)) == snapshot)
+    var old = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+    old.removeValue(forKey: "pinned")
+    #expect(try JSONDecoder().decode(DulcetSurfaceSnapshot.self, from: JSONSerialization.data(withJSONObject: old)).pinned == nil)
+}
+
+@Test @MainActor
+func systemSurfacePinnedReplayRevalidatesOpaqueIdentityAndRejectsAnUnpin() async throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let source = SystemActionTestSource(session)
+    let store = DulcetPresentationStore(source: source)
+    let actions = DulcetSystemActions(store: store)
+    let reader = try #require(factory.made.first)
+    reader.depthHandlers[0](.init(pins: ["track\u{0}opaque-song"]))
+    let request = Task { try await actions.playPinned(provider: "provider-reader", rawID: "opaque-song", kind: "track") }
+    await Task.yield()
+    let subscription = try #require(reader.windows.last)
+    subscription.publish(window([item("track", "opaque-song", title: "A")]))
+    try await request.value
+    #expect(source.queues.last?.tracks.map(\.id.rawID) == ["opaque-song"])
+    #expect(subscription.events.last == "close")
+    session.toggleLibraryPin(item("track", "opaque-song"))
+    let unpinned = Task { try await actions.playPinned(provider: "provider-reader", rawID: "opaque-song", kind: "track") }
+    await Task.yield()
+    reader.windows.last?.publish(window([item("track", "opaque-song", title: "A")]))
+    do { try await unpinned.value; Issue.record("stale widget played an unpinned item") }
+    catch DulcetSystemActions.Failure.unavailable {} catch { Issue.record("wrong unpin error: \(error)") }
+    #expect(source.queues.count == 1)
+    do { try await actions.playPinned(provider: "another-account", rawID: "opaque-song", kind: "track"); Issue.record("foreign pin played") }
+    catch DulcetSystemActions.Failure.changedAccount {} catch { Issue.record("wrong account error: \(error)") }
+}

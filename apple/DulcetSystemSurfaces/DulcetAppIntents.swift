@@ -112,3 +112,19 @@ struct DulcetPlayRecentIntent: AudioPlaybackIntent {
         return .result()
     }
 }
+
+struct DulcetPlayPinnedIntent: AudioPlaybackIntent {
+    static var isDiscoverable: Bool { false }
+    static let title: LocalizedStringResource = "Play Pinned Music"
+    @Parameter(title: "Provider") var provider: String
+    @Parameter(title: "Item ID") var itemID: String
+    @Parameter(title: "Item kind") var kind: String
+    init() {}
+    init(provider: String, itemID: String, kind: String) {
+        self.provider = provider; self.itemID = itemID; self.kind = kind
+    }
+    @MainActor func perform() async throws -> some IntentResult {
+        try await DulcetSystemActions.shared.playPinned(provider: provider, rawID: itemID, kind: kind)
+        return .result()
+    }
+}

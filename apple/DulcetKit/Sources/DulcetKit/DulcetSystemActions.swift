@@ -67,6 +67,19 @@ public final class DulcetSystemActions {
         throw Failure.unavailable
     }
 
+    public func playPinned(provider: String, rawID: String, kind: String) async throws {
+        let session = try await readySession()
+        guard provider == session.account?.providerInstanceID else { throw Failure.changedAccount }
+        let generation = session.readerGeneration
+        let publication = try await window(.pinned)
+        guard generation == session.readerGeneration else { throw Failure.changedAccount }
+        guard let item = publication.items.first(where: {
+            $0.id.providerInstanceID == provider && $0.id.rawID == rawID && $0.kind.rawValue == kind
+                && session.libraryDepth.isPinned($0)
+        }) else { throw Failure.unavailable }
+        try await play(item)
+    }
+
     public func playRecent(provider: String, rawID: String, name: String) async throws {
         let session = try await readySession()
         guard provider == session.account?.providerInstanceID else { throw Failure.changedAccount }
