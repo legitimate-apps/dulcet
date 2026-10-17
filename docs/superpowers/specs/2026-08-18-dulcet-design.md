@@ -1925,7 +1925,10 @@ assumed, because the protocol does not expose the cap:
 - The budget resets when the account's capability set is refreshed (§10.2).
 
 `preloadNext` resolves and validates the next plan while the current one plays; the transition emits
-`AdvancedToPreloaded`, which is a **session boundary** (§12.1).
+`AdvancedToPreloaded`, which is a **session boundary** (§12.1). On Apple, a positive
+`setCrossfade` duration for the current attempt moves that boundary to `duration` before its end:
+`EndedNaturally` at the observed outgoing position, immediately followed by `AdvancedToPreloaded`,
+once each; the outgoing tail reports nothing. Zero retains the ordinary AVQueuePlayer boundary.
 
 **How the core and a shell share the boundary (revision 106).** A shell asks the core to register
 the preloaded session (`preloadNext(sessionId)`) only once the current session has reported
@@ -7848,6 +7851,32 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-16 — Apple engine overlaps the preloaded boundary.**
+`DulcetAVPlayerEngine` accepts `setCrossfade` only for its current attempt and a finite,
+nonnegative duration. The value replaces the previous one and lapses at an attempt change.
+With a ready preload, a positive duration starts the handover at the outgoing media time
+`T - d`; a 50 ms media observer drives it. The engine retains the already-running outgoing
+queue as a tail that emits no playback events, creates a fresh incoming item from the preloaded
+asset and its existing loader in a new main queue, and ramps complementary linear gains using
+incoming media time. A queued `AVPlayerItem` cannot be immediately reattached to another player;
+the fresh item avoids that attachment race while retaining the preloaded asset. It never reopens or seeks
+the outgoing resource, including a non-seekable transcode. If readiness arrives within the
+window, only the remaining tail can overlap; without a ready preload the ordinary gapless
+queue boundary remains. A zero duration leaves AVQueuePlayer's existing gapless path intact.
+Both gains multiply the latest engine volume, including the sleep timer's fade. Pause, stop,
+seek, replacement, release, interruption, noisy-route pause and current-item failure dispose
+the outgoing tail. Seeking before a future boundary leaves that attempt's fade armed.
+At overlap start the outgoing attempt emits `EndedNaturally` at its observed position, then
+`AdvancedToPreloaded` exactly once; the incoming session owns Now Playing and remote commands.
+No progress, end or failure from the outgoing tail reaches the controller. The core retains
+musical-context policy and play accounting; the engine only executes the chosen boundary.
+Tests: `AVPlayerCrossfadeTests` drives local-file and resource-loader PCM through real players,
+checking boundary timing within 250 ms (five observer periods for host scheduling), concurrent
+positive rates and gains, master-volume composition, gapless reset and transport cleanup.
+OBSERVED 2026-10-16: all six suite functions (eleven argument cases) passed on macOS and an
+iPhone 17 Pro simulator running iOS 26.5; the full macOS package run passed 342 tests. The iOS
+and tvOS app and test targets compile. iPad and tvOS runtime overlap remains unobserved here.
 
 **2026-10-16 — Listening session: sleep timer, crossfade decisions, AutoPlay, queue confirmations.**
 New §12.13 (sleep timer), §14.8 (AutoPlay) and the §12.8 crossfade paragraph. The queue core gains
