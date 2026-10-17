@@ -151,6 +151,76 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 
 #if !os(tvOS)
+    /// Catalog order, durable category selection, shuffle queue, and artist depth through UI.
+    @MainActor
+    func testIPhoneLibrarySortShuffleAndArtistDepth() throws {
+#if os(iOS)
+        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("Compact library proof") }
+        continueAfterFailure = false
+        try setOffline(false)
+        try launch()
+        try select("browse")
+        let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
+        try reveal(albums)
+        activate(albums)
+        let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
+        XCTAssertTrue(sort.waitForExistence(timeout: 20))
+        activate(sort)
+        let release = app.buttons["Release Date"].firstMatch
+        XCTAssertTrue(release.waitForExistence(timeout: 10))
+        activate(release)
+        XCTAssertTrue(app.staticTexts["Release Date uses the server’s year ordering. Albums without a year are available in Title order."].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 20))
+        try capture("Library-Depth-Release-Sort")
+        app.terminate()
+        try launch(connect: false)
+        try select("browse")
+        try reveal(albums); activate(albums)
+        XCTAssertTrue(sort.waitForExistence(timeout: 20))
+        XCTAssertTrue(sort.label.contains("Release Date"), "Category selection survives a saved-account relaunch: \(sort.label)")
+        // Return through a different tab and reselect Browse to reach its navigation root.
+        try select("library"); try select("browse")
+        for _ in 0..<8 {
+            if app.buttons["dulcet.reader.section.artists"].exists { break }
+            let back = app.navigationBars.buttons.firstMatch
+            guard back.exists else { break }
+            back.tap()
+        }
+        let artists = app.buttons["dulcet.reader.section.artists"].firstMatch
+        try reveal(artists); activate(artists)
+        let artist = app.buttons["dulcet.library.artist"].firstMatch
+        XCTAssertTrue(artist.waitForExistence(timeout: 20)); activate(artist)
+        XCTAssertTrue(app.staticTexts["Top Songs"].firstMatch.waitForExistence(timeout: 20))
+        try capture("Library-Depth-Artist-Top-Songs")
+        let artistAlbum = app.buttons["dulcet.library.album"].firstMatch
+        try reveal(artistAlbum)
+        XCTAssertTrue(artistAlbum.exists, "Artist discography contains the fixture's albums")
+        try capture("Library-Depth-Artist-Discography")
+        try select("library")
+        let songs = app.buttons["dulcet.library.songs"].firstMatch
+        try reveal(songs); activate(songs)
+        let shuffle = app.buttons["dulcet.songs.shuffleAll"].firstMatch
+        XCTAssertTrue(shuffle.waitForExistence(timeout: 20)); XCTAssertTrue(shuffle.isEnabled)
+        activate(shuffle)
+        XCTAssertTrue(app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 30), "Shuffle All creates a real playback queue")
+        try capture("Library-Depth-Shuffle-All")
+        print("LIBRARY DEPTH IPHONE sort=releaseDate persisted=true artistTopSongs=true discography=true shuffleQueue=true")
+#else
+        throw XCTSkip("iPhone library proof")
+#endif
+    }
+
+#if os(iOS)
+    @MainActor private func reveal(_ element: XCUIElement) throws {
+        for _ in 0..<12 {
+            if element.exists && element.isHittable { return }
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(element.waitForExistence(timeout: 10))
+        XCTAssertTrue(element.isHittable)
+    }
+#endif
+
     @MainActor
     func testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws {
         continueAfterFailure = false

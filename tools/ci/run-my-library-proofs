@@ -79,11 +79,12 @@ if [ "$mode" = iphone ]; then
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibrarySearchGroupsAndRecentQuerySurviveRelaunch \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testAlbumAddRemainsVisibleAtLargestTextOnIPhone \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testIPhoneLibrarySortShuffleAndArtistDepth \
         2>&1 | tee "$RUNNER_TEMP/dulcet-iphone-my-library.log"
     python3 tools/verify-xcode-test-execution \
         "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
         DulcetiOSUITests.DulcetMyLibraryUITests \
-        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable testLibrarySearchGroupsAndRecentQuerySurviveRelaunch testAlbumAddRemainsVisibleAtLargestTextOnIPhone
+        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable testLibrarySearchGroupsAndRecentQuerySurviveRelaunch testAlbumAddRemainsVisibleAtLargestTextOnIPhone testIPhoneLibrarySortShuffleAndArtistDepth
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
         "$RUNNER_TEMP/dulcet-iphone-my-library-junit/TEST-MyLibrary.xml" \
