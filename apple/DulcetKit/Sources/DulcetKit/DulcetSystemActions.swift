@@ -181,16 +181,29 @@ public final class DulcetSystemActions {
         }
         guard track.id.providerInstanceID == store?.librarySession?.account?.providerInstanceID,
               let editor = store?.librarySession?.playlists else { throw Failure.changedAccount }
-        let result: DulcetPlaylistEditResult = await withCheckedContinuation { continuation in
-            editor.perform(.append(playlistID: playlist.id.rawID, songs: [track.id.rawID])) { continuation.resume(returning: $0) }
+        var outcome: DulcetPlaylistEditResult?
+        editor.perform(.append(playlistID: playlist.id.rawID, songs: [track.id.rawID])) { outcome = $0 }
+        for _ in 0..<200 {
+            try Task.checkCancellation()
+            guard track.id.providerInstanceID == store?.librarySession?.account?.providerInstanceID else { throw Failure.changedAccount }
+            if let outcome {
+                guard outcome.record == .pending || outcome.record == .unchanged else { throw Failure.unavailable }
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
         }
-        guard result.record == .pending || result.record == .unchanged else { throw Failure.unavailable }
+        throw Failure.unavailable
     }
 
     private func readySession() async throws -> DulcetLibrarySession {
-        store?.prepareForExternalPlayback()
+        var prepared = false
         for _ in 0..<200 {
             try Task.checkCancellation()
+            if let store, !prepared {
+                prepared = true
+                store.prepareForExternalPlayback()
+                if store.librarySession?.account == nil, store.snapshot.accountConnection != .connecting { throw Failure.connect }
+            }
             if let session = store?.librarySession, session.reader != nil,
                store?.snapshot.accountConnection != .connecting { return session }
             try await Task.sleep(for: .milliseconds(50))

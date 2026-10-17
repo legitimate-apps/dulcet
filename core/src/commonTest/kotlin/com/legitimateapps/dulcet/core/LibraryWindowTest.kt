@@ -19,7 +19,8 @@ class LibraryWindowTest {
         var sequence = 0
         env.server.responseOverride = { request -> if (request.endpoint == "getRandomSongs") {
             sequence++
-            body("\"randomSongs\":{\"song\":[{\"id\":\"random-$sequence\",\"title\":\"Random\"}]}")
+            LibraryEndpointResponse(200,
+                """{"subsonic-response":{"status":"ok","randomSongs":{"song":[{"id":"random-$sequence","title":"Random"}]}}}""", "<redacted>")
         } else null }
         val reader = env.reader()
         reader.connect()

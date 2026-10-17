@@ -98,6 +98,7 @@ struct DulcetShortcuts: AppShortcutsProvider {
 }
 
 struct DulcetPlayRecentIntent: AudioPlaybackIntent {
+    static var isDiscoverable: Bool { false }
     static let title: LocalizedStringResource = "Play Recent Song"
     @Parameter(title: "Provider") var provider: String
     @Parameter(title: "Song ID") var songID: String
