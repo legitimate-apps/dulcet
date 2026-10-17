@@ -50,7 +50,7 @@ struct AVPlayerCrossfadeTests {
         }
         // The state the wait observed, not a second read: a loaded host can end the two-second
         // overlap between two reads.
-        let state = try await waitForCrossfadeState("crossfade did not start", engine: engine) {
+        let state = try await waitForCrossfadeState("crossfade did not start", engine: engine, events: fixture.events) {
             $0.incomingRate > 0 && $0.outgoingRate > 0 && $0.incomingVolume > 0.05 && $0.outgoingVolume > 0.05
         }
         #expect(state.outgoingPosition < 6, "the old decoder must still be before its physical end")
@@ -145,7 +145,7 @@ struct AVPlayerCrossfadeTests {
                 engine.execute(.release(commandID: .init("cleanup"))) { _ in }
                 try? FileManager.default.removeItem(at: fixture.localURL)
             }
-            _ = try await waitForCrossfadeState("overlap never began", engine: engine) {
+            _ = try await waitForCrossfadeState("overlap never began", engine: engine, events: fixture.events) {
                 $0.incomingVolume > 0.05
             }
             let command: DulcetPlaybackCommand
@@ -2501,10 +2501,13 @@ private func waitForCrossfadeState(
     _ failure: String,
     engine: DulcetAVPlayerEngine,
     timeout: TimeInterval = 30,
+    events: PlaybackEventRecorder? = nil,
     where predicate: @escaping @Sendable (CrossfadeState) -> Bool
 ) async throws -> CrossfadeState {
     let observed = ObservedCrossfadeState()
-    try await waitUntil(failure, engine: engine, timeout: timeout) {
+    var mediaState: (@Sendable () -> String)?
+    if let events { mediaState = { "events=\(events.snapshot)" } }
+    try await waitUntil(failure, engine: engine, timeout: timeout, mediaState: mediaState) {
         if observed.value != nil { return true }
         guard let state = engine.crossfadeStateForTesting(), predicate(state) else { return false }
         observed.set(state)
