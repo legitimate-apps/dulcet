@@ -53,6 +53,12 @@ class LoopbackLibraryServer : AutoCloseable {
 
     fun releaseSongs() = songsReleased.countDown()
 
+    /** Holds album continuation reads so remote header proofs can keep Open coverage visible. */
+    @Volatile var holdAlbumPages = false
+    private val albumPagesReleased = CountDownLatch(1)
+
+    fun releaseAlbumPages() = albumPagesReleased.countDown()
+
     /**
      * When set, the server advertises `dulcetLibrary` v1 and answers its endpoints: the membership
      * below, `addToDulcetLibrary`/`removeFromDulcetLibrary` (an album's remove takes its member
@@ -136,6 +142,9 @@ class LoopbackLibraryServer : AutoCloseable {
             libraryWrite(endpoint, parameters)
             respond(client, 200, envelope(endpoint, parameters))
             return@use
+        }
+        if (endpoint == "getAlbumList2" && (parameters["offset"]?.toIntOrNull() ?: 0) > 0 && holdAlbumPages) {
+            albumPagesReleased.await(30, TimeUnit.SECONDS)
         }
         if (endpoint == "getGenres" && holdGenres) genresReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "getSong" && holdSongs) songsReleased.await(30, TimeUnit.SECONDS)
@@ -305,6 +314,7 @@ class LoopbackLibraryServer : AutoCloseable {
     }
 
     override fun close() {
+        releaseAlbumPages()
         genresReleased.countDown()
         streamsReleased.countDown()
         socket.close()

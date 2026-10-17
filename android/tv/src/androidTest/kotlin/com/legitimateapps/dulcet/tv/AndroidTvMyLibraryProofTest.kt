@@ -68,7 +68,7 @@ class AndroidTvMyLibraryProofTest {
             ActivityScenario.launch<TvSearchActivity>(launch).use activity@{
                 if (!expectSplit) {
                     step(shots, "library-nosplit") {
-                        select("library.open") && awaitTag("library.home.0.item.0") && shots.settle(2_000) &&
+                        awaitFocused("library.home.0.item.0") && shots.settle(2_000) &&
                             noTag("browse.open", 5_000)
                     }
                     check(noTag("browse.open", 1)) { "A server without dulcetLibrary must not split the bar" }
@@ -133,8 +133,10 @@ class AndroidTvMyLibraryProofTest {
             var steps = 0
             repeat(3) {
                 if (compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+                    println("MYLIBRARY TV remote-reveal before-UP focused=${focusedTags()}")
                     remote(KeyEvent.KEYCODE_DPAD_UP)
                     steps += 1
+                    println("MYLIBRARY TV remote-reveal after-UP focused=${focusedTags()}")
                 }
             }
             println("MYLIBRARY TV remote-reveal tag=$tag up-steps=$steps composed=${!noTag(tag, 1)}")
@@ -145,6 +147,10 @@ class AndroidTvMyLibraryProofTest {
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
         return true
     }
+
+    private fun focusedTags(): List<String> = compose.onAllNodes(SemanticsMatcher("focused") {
+        it.config.getOrElse(SemanticsProperties.Focused) { false }
+    }, useUnmergedTree = true).fetchSemanticsNodes().map { it.config.getOrElse(SemanticsProperties.TestTag) { "?" } }
 
     private fun focused(tag: String): Boolean =
         compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, tag), useUnmergedTree = true)

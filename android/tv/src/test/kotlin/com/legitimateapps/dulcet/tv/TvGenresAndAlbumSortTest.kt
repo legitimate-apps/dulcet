@@ -53,6 +53,7 @@ class TvGenresAndAlbumSortTest {
     private var controller: AndroidPlaybackController? = null
 
     @After fun close() {
+        server.releaseAlbumPages()
         controller?.close()
         var closed = false
         AndroidLibraryReader.closeCurrent { closed = true }
@@ -157,6 +158,7 @@ class TvGenresAndAlbumSortTest {
     }
 
     @Test fun theAlbumOrdersAreUpFromTheAlbumsAndChoosingOneKeepsTheRemoteOnIt() {
+        server.holdAlbumPages = true
         host()
         focus("library.view.albums")
         key(Key.DirectionCenter)
@@ -165,8 +167,22 @@ class TvGenresAndAlbumSortTest {
         }
         assertTrue(selected("library.albums.sort.alphabeticalbyname"), "the order showing is marked")
         key(Key.DirectionUp)
-        val landed = focusedTags().single()
-        assertTrue(landed.startsWith("library.albums.sort.") || landed.startsWith("library.albums.filter."), "UP from the first albums reaches its controls: $landed")
+        var landed = focusedTags().single()
+        assertEquals("library.albums.loadMore", landed, "Open coverage exposes paging above the albums")
+        val frame = compose.onNodeWithTag("library.albums").fetchSemanticsNode().config[
+            com.legitimateapps.dulcet.library.LibraryObservation].surfaces.getValue("albums:AlphabeticalByName").last()
+        assertEquals(com.legitimateapps.dulcet.core.AndroidLibraryCoverage.Open, frame.coverage)
+        assertEquals(2, frame.itemCount)
+        assertTrue(exists("library.albums.loadMore"), "The focused paging action is composed")
+        repeat(4) {
+            if (!landed.startsWith("library.albums.sort.") && !landed.startsWith("library.albums.filter.")) {
+                key(Key.DirectionUp)
+                landed = focusedTags().single()
+            }
+        }
+        assertTrue(landed.startsWith("library.albums.sort.") || landed.startsWith("library.albums.filter."),
+            "UP through the paging header reaches its sort/filter controls: $landed")
+        server.releaseAlbumPages()
         focus("library.albums.sort.alphabeticalbyname")
         key(Key.DirectionRight)
         key(Key.DirectionRight)
