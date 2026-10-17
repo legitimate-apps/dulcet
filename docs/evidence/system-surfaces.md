@@ -62,6 +62,8 @@ policy. Widget entitlements are fixed and cannot inherit the host selector.
 - OBSERVED: 4/4 provisioning selector tests passed (`python3 tools/test_system_surfaces.py`).
 - OBSERVED: XcodeGen regeneration/self-test matched pinned 2.46.0; release policy passed after strict
   widget settings and alternate-entitlement validation were added.
+- OBSERVED: `tools/test-release-channel` passed 367 assertions, rejected all 115 policy mutations,
+  and passed 37 bundle validations after the widget/CarPlay policy extensions.
 - PENDING: final Apple and Android integrations, full relevant test counts, Android Linux host-test
   soak, simulator/emulator OS triggers, widget hosting, CarPlay display/selection, Siri/Shortcuts and
   Assistant delivery. No physical device, portal capability grant, archive upload or release is claimed.
