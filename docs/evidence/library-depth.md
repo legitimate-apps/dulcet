@@ -5,7 +5,9 @@
 The library-depth feature rows in `FEATURES.yml` remain **partial**, except Downloaded
 on Apple TV, which is **n/a** under the existing tvOS download policy.
 Source implementation and shared-core tests do not establish that a native screen works.
-No new platform runtime result or required-CI execution is claimed by this document yet.
+The Android phone and TV completed-download/offline-playback proofs passed locally.
+Other runtime limits and failed attempts are recorded below. Required CI has not executed
+on this change yet.
 The existing Library, My Library and Search rows retain their earlier evidence and statuses.
 
 The native surfaces cover category controls, Downloaded, pins, shuffle entry points,
@@ -52,8 +54,39 @@ not download a track or establish offline playback. The Android phone proof
 is designed to use the existing real download fixture, cut its relay and open/play the
 Downloaded row. The equivalent TV method is
 `AndroidTvEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable`.
-Neither execution has yet been observed by this record, and these proofs are not yet
-wired into required CI.
+The first phone attempt reached the offline Downloaded canary row, then failed at the
+emulator screenshot API before playback. A later TV run at `5c37ea58` captured that row
+and activated it, but its independent playback sample advanced only 708 ms in 2.5 seconds,
+below the required 1,500 ms, so the complete proof failed. These observations establish
+row reachability only for those earlier artifacts. The final phone run at `70bcc4e0`
+passed **one test in 112.489 seconds** (`android-phone-runtime3.log`). After the relay
+was cut and the control request refused, the production Downloaded row started playback;
+the independent observer required at least 1,500 ms of advancing media time, reported
+`playing-download=true` at media position 2,264 ms, observed zero server requests during
+playback, and rechecked identical file bytes. Sign-out left zero files and zero unfinished
+tasks. The captured Downloaded surface shows the canary, All/Favorites controls and local
+offline copy, without network retry or a redundant Downloaded filter.
+
+The final TV run of the equivalent method passed **one test in 61.967 seconds**
+(`android-tv-runtime3.log`) with the phone emulator stopped. TV focus and D-pad activation
+started the offline row. The same independent observer required at least 1,500 ms of
+advancing media time, reported `playing-download=true` at position 1,947 ms, observed
+zero server requests during playback and identical file bytes, and confirmed zero files
+and unfinished tasks after sign-out. Its saved image shows the focused canary under
+Downloaded, local offline copy, All/Favorites, sorting and Shuffle All; network retry and
+the redundant Downloaded filter are absent. These results establish this completed-file
+path on both Android shells; they do not establish every other library-depth interaction.
+The proofs are not yet wired into required CI.
+
+The final Android APKs were assembled from source through `70bcc4e0`. Their SHA-256
+identifies the runtime artifacts independently of later evidence-only commits:
+
+| APK | SHA-256 |
+| --- | --- |
+| Phone app | `3151fd4db9f45f9046ede18534d7426b3834438d377b24ea642e5a4b1990aba8` |
+| Phone instrumentation | `9accadd21c36fc334f9dc8516a6dfdd3288a4cf88ac0ee43187888a7a40d6123` |
+| TV app | `258b139bc874d4bbe4fb6beb3f7ecba3c9c5b9c14cd9f969d0a03cb61de18edb` |
+| TV instrumentation | `4a8f363a3e0ea61e5b14b2242c9b2af8699c688a2ff2af0a6acc84b2417283c4` |
 
 ## Pins
 
@@ -158,14 +191,31 @@ reviewer did not rerun the suites:
   five phone tests and two TV tests. The phone app, TV app and both instrumentation APKs
   compiled, **four APKs** in total. These are compilation and host-test observations;
   the separate emulator runtime proofs were still pending.
+- The final Android source at `70bcc4e0` passed **5 `PhoneLibraryDepthTest` cases**,
+  with zero failures or errors, including the initial asynchronous preference snapshot,
+  rapid persisted category/pin intents, Downloaded local-only controls, pin/unpin and
+  server-wide shuffle selection. Both production apps and both instrumented APKs rebuilt.
+  The preceding pin test timed out once after the pin had been stored but before its
+  home shortcut appeared. An isolated rerun and the complete final five-case class passed;
+  no cause is asserted for that earlier timeout. The required 20-repetition host soak
+  remains the stability gate. The final changed filters select **15 phone** and **7 TV**
+  tests per repetition; the earlier host counts overlap these cases.
+- Native Mac production integration compiled successfully, including the final Swift
+  bridge and latest Kotlin framework (`mac-integration-final.log`, observed by the owning
+  implementation agent). The Mac UI attempt was blocked before test execution: all
+  887 sampled main-thread stacks remained in `dyld` → `libSystem_initializer` →
+  `_libsecinit_appsandbox` → XPC `mach_msg`, before application main. No test case began
+  and no result was emitted. The owner canceled only its fixture and runner; this is a
+  prelaunch host blocker, not an application-test failure.
 - `tools/typecheck-xcuitest-sources --self-test` passed for all five configured UI-test
   directories, including the four iOS and four tvOS source files. This checks standalone
   source types with the tool's XCTest assertion shims; it does not link or execute tests.
   `tools/verify_xcodegen_regeneration --self-test` also passed.
 - After the bounded Apple source review, the focused library-depth regression run passed
-  **3 tests with zero failures in 0.058 seconds**. It includes the rapid category-change,
-  reversed-read-callback and double-pin regression. The method name was subsequently
-  corrected from `libraryDepthRapidChangesKeepConfirmedWritesAndIgnoreOlderReads` to
+  **3 tests with zero failures in 0.060 seconds** at `ebad7fae`, after the final Downloaded
+  status and shuffle-header changes (reported by the Apple implementation owner). It
+  includes the rapid category-change, reversed-read-callback and double-pin regression.
+  The method name was corrected from `libraryDepthRapidChangesKeepConfirmedWritesAndIgnoreOlderReads` to
   `libraryDepthRapidChangesKeepAcceptedWritesAndIgnoreOlderReads`; that rename changes no
   behavior. These are package tests, not native UI execution.
 
@@ -178,7 +228,7 @@ The new iPhone UI proof attempt failed **before compilation**: Xcode could not r
 the selected booted simulator destination. A subsequent 20-second `simctl` device-types
 probe produced no output and exceeded its deadline; the simulator device store remained
 mounted. This is a host execution blocker, not a diagnosis of an application failure.
-**No simulator behavior was verified by that attempt.** Native Mac integration compilation
-and Android runtime proof results were still pending. The hosted 20-repetition Android
-host-test soak and required Apple CI await publication. No new platform status is promoted
-on these package, core, host-test or framework results.
+**No simulator behavior was verified by that attempt.** Native Mac production integration
+compilation subsequently passed; the Mac UI runner was blocked before application main,
+as recorded above. The final Android phone and TV completed-download proofs passed.
+The hosted 20-repetition Android host-test soak and required Apple CI await publication. No broad platform status is promoted on these bounded results.
