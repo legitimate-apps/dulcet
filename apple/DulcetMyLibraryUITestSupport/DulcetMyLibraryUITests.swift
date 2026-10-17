@@ -280,7 +280,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             if app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.tab.' AND hasFocus == true")).firstMatch.exists { break }
             remote.press(.menu)
         }
-        let order = ["library", "browse", "search", "nowPlaying", "settings"]
+        let order = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"]
         for _ in 0..<12 {
             if control.hasFocus { remote.press(.select); return }
             if let current = order.firstIndex(where: { app.buttons["dulcet.tab.\($0)"].firstMatch.hasFocus }), let target = order.firstIndex(of: section) {
