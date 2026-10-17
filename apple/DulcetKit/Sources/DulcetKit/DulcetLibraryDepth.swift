@@ -126,14 +126,19 @@ struct DulcetLibraryDepthHome: View {
             if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
                 Text(DulcetStrings.libraryPinned).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                 DulcetReaderScreen(query: .pinned) { model in
-                    if let window = model.window {
-                        ForEach(window.items) { item in
-                            if item.kind == .track {
-                                DulcetReaderTrackRow(item: item, index: 0, showsIndex: false) { track in
-                                    store.playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.libraryPinned)
-                                }
-                            } else { DulcetReaderListRow(item: item) }
+                    // Mount a real view before the first window so ReaderScreen's onAppear
+                    // opens the subscription even when there are no published rows yet.
+                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                        if let window = model.window {
+                            ForEach(window.items) { item in
+                                if item.kind == .track {
+                                    DulcetReaderTrackRow(item: item, index: 0, showsIndex: false) { track in
+                                        store.playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.libraryPinned)
+                                    }
+                                } else { DulcetReaderListRow(item: item) }
+                            }
                         }
+                        if model.window == nil { ProgressView().controlSize(.small) }
                     }
                 }
                 .id(store.librarySession?.libraryDepthRevision)
@@ -204,7 +209,11 @@ struct DulcetLibraryCategoryControls: View {
         if category.hasSuffix("playlists") {
             TextField(DulcetStrings.libraryFilter, text: Binding(get: { binding.wrappedValue == "all" ? "" : binding.wrappedValue },
                                                                 set: { binding.wrappedValue = $0.isEmpty ? "all" : $0 }))
+#if os(tvOS)
+                .textFieldStyle(.plain)
+#else
                 .textFieldStyle(.roundedBorder)
+#endif
                 .accessibilityIdentifier("dulcet.library.\(category).filter")
         } else { filterPicker(binding) }
     }
