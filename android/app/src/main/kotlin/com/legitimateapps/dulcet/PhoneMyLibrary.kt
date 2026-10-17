@@ -125,7 +125,7 @@ internal fun MyLibraryHome(
             LibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added") +
                 if (view == MyLibraryView.Albums) listOf("artist" to "Artist", "year" to "Release Year (Newest First)") else emptyList())
         }
-        ConnectionNotices(session, accountNotices = true)
+        ConnectionNotices(session, accountNotices = true, local = view == MyLibraryView.Downloaded)
         LibraryPins(account, session, actions)
         val current = publication
         when {

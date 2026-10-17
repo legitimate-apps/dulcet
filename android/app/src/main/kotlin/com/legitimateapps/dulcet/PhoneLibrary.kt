@@ -180,7 +180,7 @@ internal fun LibraryHome(
                 modifier = Modifier.testTag("library.view.${option.name.lowercase()}"),
             )
         }
-        ConnectionNotices(session, accountNotices = true)
+        ConnectionNotices(session, accountNotices = true, local = view == LibraryView.Downloaded)
         if (title != R.string.tab_library) StatementText(stringResource(SharedR.string.library_browse_hint), "library.browse.hint")
         when (view) {
             LibraryView.Home -> HomeRows(account, session, actions, myLibrary)
@@ -513,12 +513,14 @@ internal fun SectionHeading(text: Int, tag: String) {
  * "Nothing here yet".
  */
 @Composable
-internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit) {
+internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit, local: Boolean = false) {
     val resources = libraryResources()
     Column {
-        FreshnessLine(publication.freshness, tag, retry)
-        resources.coverageLine(publication)?.let { StatementText(it, "$tag.coverage") }
-        resources.orderLine(publication)?.let { StatementText(it, "$tag.order") }
+        if (!local) {
+            FreshnessLine(publication.freshness, tag, retry)
+            resources.coverageLine(publication)?.let { StatementText(it, "$tag.coverage") }
+            resources.orderLine(publication)?.let { StatementText(it, "$tag.order") }
+        }
         val freshness = publication.freshness
         when {
             freshness is AndroidLibraryFreshness.Unavailable ->
@@ -555,9 +557,10 @@ internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount)
  * statements that are made once rather than on every list (§16.12, §16.10).
  */
 @Composable
-internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false) {
     val depth by session.depth.collectAsState()
     if (depth?.errorKind != null) StatementText(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
+    if (local) return
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()

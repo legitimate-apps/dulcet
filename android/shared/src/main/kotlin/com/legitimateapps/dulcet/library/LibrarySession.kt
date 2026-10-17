@@ -106,10 +106,10 @@ public class LibrarySession internal constructor(
     /** Account-bound library choices and pins, persisted by the core. */
     public val depth: StateFlow<com.legitimateapps.dulcet.core.LibraryDepthState?> = mutableDepth.asStateFlow()
 
-    init { refreshDepth() }
-
     private var depthRead = 0L
     private val chosenPins = mutableMapOf<Pair<String, String>, Boolean>()
+
+    init { refreshDepth() }
     public fun refreshDepth() {
         val read = ++depthRead
         reader.libraryDepthState {

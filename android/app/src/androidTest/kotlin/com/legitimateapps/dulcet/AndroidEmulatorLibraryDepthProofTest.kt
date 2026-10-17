@@ -31,6 +31,8 @@ class AndroidEmulatorLibraryDepthProofTest {
             compose.onNodeWithTag("library.view.downloaded").performScrollTo().performClick()
             compose.waitUntil(60_000) { compose.onAllNodesWithTag("library.downloaded.track.0").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("library.downloaded.track.0").assertTextContains(DisposableServerProbe.CANARY_TITLE)
+            compose.onNodeWithTag("library.downloaded.retry").assertDoesNotExist()
+            compose.onNodeWithTag("library.downloaded.filter.downloaded").assertDoesNotExist()
             val shot = compose.onNodeWithTag("library.downloaded").captureToImage().asAndroidBitmap()
             File(context.getExternalFilesDir(null), "library-depth-phone-downloaded-offline.jpg").outputStream().use {
                 shot.compress(Bitmap.CompressFormat.JPEG, 65, it)

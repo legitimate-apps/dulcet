@@ -55,6 +55,26 @@ class PhoneLibraryDepthTest {
         }
     }
 
+    @Test fun downloadedViewDoesNotOfferNetworkRetryOrARedundantDownloadedFilter() {
+        host()
+        compose.onNodeWithTag("library.view.downloaded").performScrollTo().performClick()
+        await { exists("library.downloaded.empty") }
+        compose.onNodeWithTag("library.downloaded.retry").assertDoesNotExist()
+        compose.onNodeWithTag("library.downloaded.freshness").assertDoesNotExist()
+        compose.onNodeWithTag("library.downloaded.filter.downloaded").assertDoesNotExist()
+        compose.onNodeWithTag("library.downloaded.filter.favorites").assertExists()
+    }
+
+    @Test fun initialSavedCategorySnapshotArrivesWithoutAnotherRead() {
+        val reader = AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true)
+        reader.setLibraryCategory("albums", "ByYear", "favorites")
+        session = LibrarySession(context, account, true)
+        await { session.depth.value != null }
+        assertEquals("ByYear", session.depth.value!!.sort("albums"))
+        assertEquals("favorites", session.depth.value!!.filter("albums"))
+        session.close()
+    }
+
     @Test fun pinningAnAlbumPublishesAtTheTopAndUnpinRemovesItWithoutChangingFavorites() {
         host()
         compose.onNodeWithTag("library.view.albums").performClick()
@@ -111,6 +131,6 @@ class PhoneLibraryDepthTest {
     private fun text(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString { it.text }
     private fun await(condition: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
-        while (!runCatching(condition).getOrDefault(false)) { compose.waitForIdle(); check(System.nanoTime() < deadline); Thread.sleep(10) }
+        while (!runCatching(condition).getOrDefault(false)) { compose.waitForIdle(); check(System.nanoTime() < deadline) { "Timed out with ${session.depth.value?.pinCount} pins; pinned frames=${session.observation.value.surfaces["pinned"]}: " + compose.onRoot().printToString() }; Thread.sleep(10) }
     }
 }

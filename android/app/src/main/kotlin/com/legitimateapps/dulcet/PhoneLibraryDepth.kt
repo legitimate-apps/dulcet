@@ -28,7 +28,7 @@ internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Bool
             label = { Text(stringResource(SharedR.string.library_filter)) }, singleLine = true,
             modifier = Modifier.fillMaxWidth().testTag("library.${state.category}.filter"))
         else Row(verticalAlignment = Alignment.CenterVertically) {
-            for ((key, label) in listOf("all" to "All", "favorites" to "Favorites", "downloaded" to "Downloaded")) {
+            for ((key, label) in (listOf("all" to "All", "favorites" to "Favorites") + if (state.category == "downloaded") emptyList() else listOf("downloaded" to "Downloaded"))) {
                 FilterChip(selected = state.filter.ifBlank { "all" } == key, onClick = { state.filter(key) }, label = { Text(label) },
                     modifier = Modifier.padding(end = 8.dp).testTag("library.${state.category}.filter.$key"))
             }
@@ -88,7 +88,7 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
                     modifier = Modifier.testTag("library.$key.shuffleAll")) { Text(stringResource(if (offline && !downloaded) SharedR.string.library_shuffle_available else SharedR.string.library_shuffle_all)) }
                 if (shuffle.failed) StatementText(stringResource(SharedR.string.library_shuffle_failed), "library.$key.shuffle.failed")
                 publication?.let {
-                    ListStatus(it, "library.$key", session::retry)
+                    ListStatus(it, "library.$key", session::retry, local = downloaded)
                     if (it.growsAtEnd()) TextButton(onClick = surface::loadMore, modifier = Modifier.testTag("library.$key.loadMore")) {
                         Text(stringResource(SharedR.string.library_load_more))
                     }

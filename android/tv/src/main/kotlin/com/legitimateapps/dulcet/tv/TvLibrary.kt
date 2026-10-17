@@ -786,9 +786,10 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
 
 /** The phone's `ConnectionNotices`, in the TV's type: the same statements, from the same copy. */
 @Composable
-internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false) {
     val depth by session.depth.collectAsState()
     if (depth?.errorKind != null) TvStatement(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
+    if (local) return
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
@@ -982,10 +983,10 @@ private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, pub
 
 /** A list's freshness and coverage, or the statement shown instead of it (the phone's `ListStatus`). */
 @Composable
-internal fun TvListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit) {
+internal fun TvListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit, local: Boolean = false) {
     val resources = libraryResources()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        resources.freshnessLine(publication.freshness)?.let { line ->
+        if (!local) resources.freshnessLine(publication.freshness)?.let { line ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvStatement(line, "$tag.freshness")
                 if (publication.freshness.offersRetry()) {
@@ -993,8 +994,10 @@ internal fun TvListStatus(publication: AndroidLibraryPublication, tag: String, r
                 }
             }
         }
-        resources.coverageLine(publication)?.let { TvStatement(it, "$tag.coverage") }
-        resources.orderLine(publication)?.let { TvStatement(it, "$tag.order") }
+        if (!local) {
+            resources.coverageLine(publication)?.let { TvStatement(it, "$tag.coverage") }
+            resources.orderLine(publication)?.let { TvStatement(it, "$tag.order") }
+        }
         val freshness = publication.freshness
         when {
             freshness is AndroidLibraryFreshness.Unavailable ->

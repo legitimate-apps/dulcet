@@ -30,7 +30,7 @@ internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Bo
             modifier = Modifier.fillMaxWidth().padding(12.dp).tvFocus("library.${state.category}.filter"),
             decorationBox = { inner -> Column { Text(stringResource(SharedR.string.library_filter)); inner() } }, singleLine = true)
         else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            itemsIndexed(listOf("all" to "All", "favorites" to "Favorites", "downloaded" to "Downloaded")) { _, (key, title) ->
+            itemsIndexed((listOf("all" to "All", "favorites" to "Favorites") + if (state.category == "downloaded") emptyList() else listOf("downloaded" to "Downloaded"))) { _, (key, title) ->
                 TvAction(title, "library.${state.category}.filter.$key", icon = if (state.filter.ifBlank { "all" } == key) com.legitimateapps.dulcet.ui.DulcetIcons.Check else null) { state.filter(key) }
             }
         }
@@ -107,7 +107,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                 TvAction(stringResource(R.string.tv_back), "library.$key.back", onClick = navigator.back)
                 Text(title, style = MaterialTheme.typography.displaySmall)
                 TvStatement(stringResource(if (downloaded) SharedR.string.library_downloaded_hint else SharedR.string.library_songs_scope), "library.$key.scope")
-                TvConnectionNotices(session, accountNotices = false)
+                TvConnectionNotices(session, accountNotices = false, local = downloaded)
                 TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)", "artist" to "Artist", "mostPlayed" to "Most Played"))
                 if (!downloaded && !offline) TvStatement(stringResource(SharedR.string.library_shuffle_server_hint), "library.$key.shuffle.scope")
                 TvAction(stringResource(if (offline && !downloaded) SharedR.string.library_shuffle_available else SharedR.string.library_shuffle_all), "library.$key.shuffleAll",
@@ -116,7 +116,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                     else shuffle.start { playTracks(plays, account.providerInstanceId, it, null, title, true) { context.startActivity(PlaybackIntents.showNowPlaying(context)) } }
                 }
                 if (shuffle.failed) TvStatement(stringResource(SharedR.string.library_shuffle_failed), "library.$key.shuffle.failed")
-                publication?.let { TvListStatus(it, "library.$key", session::retry) }
+                publication?.let { TvListStatus(it, "library.$key", session::retry, local = downloaded) }
             }
         }
         itemsIndexed(tracks, key = { _, track -> track.rawId }) { position, track ->

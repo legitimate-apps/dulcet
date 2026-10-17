@@ -26,7 +26,7 @@ public class LibraryCategoryState internal constructor(
         if (loaded) return
         loaded = true
         this.sort = sort.ifBlank { "title" }
-        this.filter = filter
+        this.filter = if (category == "downloaded" && filter == "downloaded") "all" else filter
     }
     public fun choose(sort: String) {
         this.sort = sort
