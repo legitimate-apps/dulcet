@@ -301,6 +301,16 @@ execution guard and JUnit confirmed the passing method. No membership assertion 
 This proves the shelf path; the full-grid context-menu limitation remains unresolved. No Library
 product implementation or playback engine changed.
 
+The broader merged-source TV controls then passed appearance variants **1/1** (54.161 seconds)
+and ordinary-server Library **1/1** (8.080 seconds). The new pin/offline selector reached Songs,
+but its unrestricted accessibility-descendant query timed out. It now queries the native TV
+segmented control by the same exact sort identifier and verifies its Title child. With normal
+simulator signing, pin/offline Songs passed **1/1** (60.152 seconds) and Home passed **1/1**
+(16.820 seconds), both without skips; exact individual result checks and separate JUnit files
+confirmed both. The passing typed query does not establish why the broader query timed out.
+An intermediate unsigned local build failed account Keychain persistence, and a broad invocation
+without the Home fixture flag skipped Home; neither supplies positive evidence.
+
 ## Integration boundary
 
 Server playlist recency accepts actual API play contexts and optional submitted REST scrobble

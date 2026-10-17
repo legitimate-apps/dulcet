@@ -145,7 +145,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let songs = app.buttons["dulcet.library.songs"].firstMatch
         XCTAssertTrue(songs.waitForExistence(timeout: 10))
         activate(songs)
+#if os(tvOS)
+        // The TV Picker is a native segmented control. Restrict its query rather than
+        // collecting every accessibility descendant in the cached Songs list.
+        let sort = app.segmentedControls["dulcet.library.songs.sort"].firstMatch
+        XCTAssertTrue(sort.waitForExistence(timeout: 20))
+        XCTAssertTrue(sort.buttons["Title"].exists)
+#else
         XCTAssertTrue(app.descendants(matching: .any)["dulcet.library.songs.sort"].firstMatch.waitForExistence(timeout: 20))
+#endif
         try capture("Library-Depth-Songs")
         try setOffline(false)
         try select("browse")
