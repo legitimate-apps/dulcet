@@ -107,7 +107,7 @@ not native UI execution.
 | iPhone Home | 1 passed, 0 skipped; 35.622 seconds | [Apple run 38991471536](https://github.com/legitimate-apps/dulcet/actions/runs/38991471536), retained Home JUnit/xcresult |
 | iPad Home | 1 passed, 0 skipped; 51.905 seconds | Same run, separate iPad Home JUnit/xcresult |
 | Corrected Mac connection control | 1 passed, 0 skipped; 0.894 seconds | [Apple run 38995086942](https://github.com/legitimate-apps/dulcet/actions/runs/38995086942), connection-landing JUnit |
-| Apple TV Home | Pending | [replacement native run 39000146299](https://github.com/legitimate-apps/dulcet/actions/runs/39000146299) |
+| Apple TV Home | 1 passed, 0 skipped; 16.433 seconds | Local leased Apple TV 4K, tvOS 26.5; `DulcetTVUITests/testListenNowLaunchAlbumAndRelaunch`, individual xcresult execution guard and JUnit passed |
 | Full core/server/API and Android integration gate | Passed: server 132, API conformance 60, shared JVM/Android host 2,327, Android app host 1,753; zero failures/errors/skips | [core-ci 38995786940](https://github.com/legitimate-apps/dulcet/actions/runs/38995786940), actual JUnit case counts |
 
 The full integration run above passed after legacy navigation controls were updated to enter
@@ -164,8 +164,16 @@ Playlists sidebar row while on Home changed the catalog section but left Home di
 Home was counted as an active reader destination. Catalog sidebar choices now switch to Library
 (or Browse on a Dulcet Server) before opening the chosen section root, preserving Home's own
 navigation stack. `choosingACatalogSidebarSectionLeavesHomeAndKeepsItsOwnNavigationHistory`
-covers this trigger and return path. Native verification of that fix is pending; the failed
-whole workflow is not reported as green.
+covers this trigger and return path and passed locally (one actual test, zero failures).
+The corrected `DulcetMacRatingsAndPlaylistsAppTest/everyPlaylistEditReachesTheServerThroughTheHostedMacApp`
+also passed locally against a fresh disposable Navidrome fixture: **1 test, zero failures,
+8.801 seconds**, verified in the individual xcresult and generated JUnit. Starting from Home,
+the rendered Playlists sidebar reached create, album/track additions, removal, reordering,
+rename, deletion confirmation and the deleted-elsewhere rename error; independent server reads
+verified the mutations. The initial external-volume host launch blocked in `dyld` before tests;
+staging the runnable products internally allowed execution, with build caches on the external
+volume. Staging and fixture processes were removed after verification. The earlier failed whole
+workflow is not reported as green.
 
 Reviewed Mac proof images:
 
@@ -178,6 +186,36 @@ as green. The screenshots below are from those completed Home controls.
 
 ![iPhone Listen Now](listen-now/iphone-home.jpg)
 ![iPad Listen Now](listen-now/ipad-home.jpg)
+
+The local Apple TV Home control drove Refresh and album focus, album activation, saved-account
+relaunch, Library and the return to Home using the remote. Its current-source result passed
+1/1 in 16.433 seconds on a leased tvOS 26.5 simulator.
+
+![Apple TV Listen Now](listen-now/tvos-home.jpg)
+
+## Native Library regression follow-up
+
+On the current Apple product source, all four local iPhone My Library controls passed without
+skips on iOS 26.5: largest-text Add (37.409 seconds), membership/offline replay (72.960),
+light/dark/largest-text navigation (82.436), and ordinary-server navigation (9.225).
+The compact helper enters Browse's Albums section; regular iPad/Mac use Recently Added's See All.
+Individual xcresult execution guards required all four methods before JUnit emission.
+
+The TV helper now enters Browse's visible Albums section before finding a named album; the
+horizontal Browse shelf does not instantiate offscreen cards. The light/dark/largest-text
+control passed in 53.667 seconds and ordinary-server navigation in 6.861 seconds. Its membership
+control reaches the correct focused album but remains unverified: on local tvOS 26.5, real
+1.5- and 3-second remote holds left the native menu closed, so the Add to Library assertion
+failed. The driver retains that assertion and the independent membership/offline checks.
+No Library product implementation was changed for these navigation-driver corrections.
+
+The hosted iPad job in [run 39002864991](https://github.com/legitimate-apps/dulcet/actions/runs/39002864991)
+failed before UI execution when its disposable Navidrome readiness check timed out during the
+initial scan. It supplies no iPad driver result. Local iPad verification then passed all three controls on iOS 26.5, without skips:
+membership/offline replay (100.973 seconds), light/dark/largest-text navigation (65.682),
+and ordinary-server navigation (9.237). The individual xcresult execution guard required all
+three methods before JUnit emission. The local compiler was Xcode 27; hosted CI selects Xcode
+26.4.1. A failed hosted fixture setup is not counted as a passing control.
 
 ## Integration boundary
 

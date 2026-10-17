@@ -2618,7 +2618,7 @@
               "test": "DulcetMacDesignTourTest/testDesignTour"
             }
           ],
-          "reason": "Listen Now opens first; hosted production Home reached populated shelves, activated an album and returned through Library/Home in apple-ci 38991471536 (1 passing test, actual screen captures). Core tests establish cache-before-network. The corrected account-connection landing also passed in apple-ci 38995086942. A later catalog-sidebar control exposed Home retaining the detail pane when Playlists was chosen; its root-navigation fix and current-app playlist-context transport remain pending verification. See docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first; hosted production Home reached populated shelves, activated an album and returned through Library/Home in apple-ci 38991471536 (1 passing test, actual screen captures). Core tests establish cache-before-network. The corrected account-connection landing also passed in apple-ci 38995086942. The catalog-sidebar root-navigation regression passed its current-source unit control (1/1) and the actual hosted Mac playlist-edit test locally (1/1, 8.801 seconds). Current-app playlist-context transport remains a player-session integration dependency; final native integration gates remain pending. See docs/evidence/listen-now.md.",
           "promotion_condition": {
             "status": "named",
             "targets": [
@@ -2681,7 +2681,7 @@
               "test": "DulcetTVUITests/testListenNowLaunchAlbumAndRelaunch"
             }
           ],
-          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Platform runtime verification is pending; no device claim is made.",
+          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Local Apple TV Home passed 1/1 in 16.433 seconds on tvOS 26.5, including remote focus, album activation, relaunch and Library/Home navigation, with individual xcresult execution guard and JUnit. The separate Library visual and ordinary-server controls passed; the long-press membership control and final native gates remain pending. Current-app playlist-context transport belongs to player-session integration. See docs/evidence/listen-now.md.",
           "promotion_condition": {
             "status": "named",
             "targets": [

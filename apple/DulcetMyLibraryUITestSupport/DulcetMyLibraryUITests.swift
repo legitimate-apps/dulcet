@@ -46,12 +46,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
         try select("browse")
 #if os(tvOS)
+        try openAlbumList()
         let tile = albumTile(album.title)
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
         focus(tile)
-        XCUIRemote.shared.press(.select, forDuration: 1.5)
         let contextAdd = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
-        XCTAssertTrue(contextAdd.waitForExistence(timeout: 10), "Remote press and hold offers membership")
+        // As in the TV design tour, the first hold can leave the album focused without
+        // opening its native menu. Retry a longer real hold only on that same focused tile.
+        for duration in [1.5, 3.0] {
+            guard tile.exists, tile.hasFocus else { break }
+            XCUIRemote.shared.press(.select, forDuration: duration)
+            if contextAdd.waitForExistence(timeout: 4) { break }
+        }
+        XCTAssertTrue(contextAdd.waitForExistence(timeout: 10), "Remote press and hold offers membership: \(app.debugDescription)")
         activate(contextAdd)
         try select("library")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
@@ -308,9 +315,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func albumTile(_ title: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier == 'dulcet.library.album' AND label BEGINSWITH %@", title)).firstMatch
     }
-    @MainActor private func openAlbum(_ title: String) throws {
-#if !os(tvOS)
-#if os(iOS)
+    @MainActor private func openAlbumList() throws {
+#if os(tvOS)
+        // Browse's section bar keeps TV navigation visible and is reachable by the remote.
+        let albumListLink = "dulcet.reader.section.albums"
+#elseif os(iOS)
         // Compact Browse has section links and a vertical Recently Added grid; it has no
         // Recently Added See All. Regular-width Browse uses horizontal shelves instead.
         let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
@@ -322,7 +331,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // Wait for the appropriate catalog link to publish before leaving Browse.
         XCTAssertTrue(all.waitForExistence(timeout: 30), "Browse must publish its album-list link: \(albumListLink). \(app.debugDescription)")
         activate(all)
-#endif
+    }
+    @MainActor private func openAlbum(_ title: String) throws {
+        // Horizontal Browse shelves instantiate only visible cards. Enter the full list on
+        // TV as well, so waiting for a named album does not depend on its shelf position.
+        try openAlbumList()
         let tile = albumTile(title)
 #if !os(tvOS)
         // The sidebar is also a scroll view. Wait for catalog publication and scroll only the
