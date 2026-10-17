@@ -49,5 +49,11 @@ xcodebuild test-without-building \
 proof_pid=$!
 if [ "$mode" = macos ]; then serve_mac_captures "$proof_pid"; fi
 wait "$proof_pid"
+if [ "$mode" = macos ]; then
+    # The general design-tour test returns early unless opted in. Require the actual Home
+    # phase's two reached markers, so an environment forwarding mistake cannot look green.
+    grep -Fq 'DULCET DESIGN TOUR screen=listen-now reached=true' "$RUNNER_TEMP/dulcet-$mode-home.log"
+    grep -Fq 'DULCET DESIGN TOUR screen=listen-now-return reached=true' "$RUNNER_TEMP/dulcet-$mode-home.log"
+fi
 python3 tools/verify-xcode-test-execution "$result" "$suite" "$test_name"
 python3 tools/swift-testing-junit "$result" "$RUNNER_TEMP/dulcet-$mode-home-junit/TEST-ListenNow.xml" ListenNow

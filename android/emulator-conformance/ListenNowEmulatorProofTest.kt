@@ -17,10 +17,14 @@ class ListenNowEmulatorProofTest {
     @Test fun homeLaunchAlbumAndCachedRelaunch() {
         val probe = DisposableServerProbe.fromInstrumentation()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        connectSavedAccount(context,probe)
-        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)!!
         val shots = DesignTourShots("listen-now")
         PlaybackObserver(context).use {
+            // Own cleanup before connecting: a failed launch must not leave this fixture account
+            // behind for the next proof. TV apps advertise LEANBACK_LAUNCHER, not LAUNCHER.
+            connectSavedAccount(context,probe)
+            val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+                ?: context.packageManager.getLeanbackLaunchIntentForPackage(context.packageName)
+                ?: error("The installed app has no launch activity")
             ActivityScenario.launch<Activity>(intent).use { activity ->
                 await("listenNow.surface")
                 compose.onNodeWithTag("listenNow.open").assertIsSelected()
