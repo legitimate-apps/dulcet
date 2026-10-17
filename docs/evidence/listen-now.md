@@ -81,6 +81,11 @@ playlist tiles use the existing collection detail and playback actions.
 ## Run record
 
 Merged `main` at `df546b2e` (scanner fix #332) into the feature branch without conflicts.
+Main subsequently advanced to `fa2ec5e6` (trusted proxy fix #337). The merge retained both
+spec revision records; the merged server compiled and all 18 selected Home/proxy tests passed.
+On that product source, [core-ci 39014292891](https://github.com/legitimate-apps/dulcet/actions/runs/39014292891)
+passed completely. Downloaded reports confirm **151 server cases and 60 API self-tests**, with
+zero failures/errors/skips, plus four non-skipped Home device passes (phone/TV, plain/Dulcet).
 On the merged product source, [core-ci 39000147383](https://github.com/legitimate-apps/dulcet/actions/runs/39000147383)
 passed the full server step: **135 tests, zero failures/errors/skips**, including the three new
 scanner regression/scale cases, both Home integration cases and the actual importer-to-Home
@@ -208,6 +213,15 @@ now waits for a real album publication before navigating and asserts the compact
 state after its tap. On a fresh leased iPhone simulator, the corrected largest-text control
 passed 1/1 in 43.588 seconds; the individual xcresult execution guard and JUnit both confirmed
 the passing method. Hosted execution of that correction remains pending.
+
+The corrected full iPhone suite then passed **4/4 without skips**: largest-text Add (44.376
+seconds), membership/offline replay (83.653), appearance variants (88.077), and ordinary-server
+navigation (10.495). The same shared readiness correction passed all three iPad controls
+without skips: membership/offline replay (86.992), appearance variants (72.178), and
+ordinary-server navigation (9.000). Both used fresh leased iOS 26.5 simulators and disposable
+loopback fixtures; individual xcresult execution guards required every method before JUnit
+was accepted. An initial iPad retry stopped at the fixture port preflight before UI and is
+not included in these passing counts.
 
 The TV helper now enters Browse's visible Albums section before finding a named album; the
 horizontal Browse shelf does not instantiate offscreen cards. The light/dark/largest-text

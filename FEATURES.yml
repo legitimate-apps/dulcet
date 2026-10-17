@@ -2618,15 +2618,11 @@
               "test": "DulcetMacDesignTourTest/testDesignTour"
             }
           ],
-          "reason": "Listen Now opens first; hosted production Home reached populated shelves, activated an album and returned through Library/Home in apple-ci 38991471536 (1 passing test, actual screen captures). Core tests establish cache-before-network. The corrected account-connection landing also passed in apple-ci 38995086942. The catalog-sidebar root-navigation regression passed its current-source unit control (1/1) and the actual hosted Mac playlist-edit test locally (1/1, 8.801 seconds). Current-app playlist-context transport remains a player-session integration dependency; final native integration gates remain pending. See docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first. Hosted production Home reached populated shelves, activated an album and returned through Library/Home in apple-ci 38991471536 (1 passing test and screen captures). Core tests establish cache-before-network. Corrected connection landing passed in 38995086942. The catalog-sidebar regression passed its current-source unit control (1/1) and actual app-hosted Mac playlist-edit runtime (1/1, 8.801 seconds), including independent server reads. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
           "promotion_condition": {
-            "status": "named",
-            "targets": [
-              {
-                "kind": "workflow",
-                "name": "apple-ci"
-              }
-            ]
+            "status": "blocked",
+            "blocked_on": "submitted-play-playlist-context-transport",
+            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
           }
         },
         "ios": {
@@ -2639,15 +2635,11 @@
               "test": "DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch"
             }
           ],
-          "reason": "Listen Now is the first destination. The native Home-to-album, saved relaunch and Library/Home navigation control passed 1/1 without skips in 35.622 seconds (apple-ci 38991471536 retained Home JUnit and screenshots). Shared tests establish per-account cached first paint and honest REST fallback. Current-app recent-playlist context transport remains a player-session integration dependency; final native integration gates are tracked in docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first. Native Home-to-album, saved relaunch and Library/Home navigation passed 1/1 without skips in 35.622 seconds (apple-ci 38991471536, retained Home JUnit and screenshots). Shared tests establish per-account cached first paint and honest REST fallback. After the cold-connection driver correction, all four local iPhone Library controls passed without skips, including membership/offline replay and the largest text size; exact xcresult execution guards and JUnit required every method. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
           "promotion_condition": {
-            "status": "named",
-            "targets": [
-              {
-                "kind": "workflow",
-                "name": "apple-ci"
-              }
-            ]
+            "status": "blocked",
+            "blocked_on": "submitted-play-playlist-context-transport",
+            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
           }
         },
         "ipados": {
@@ -2660,15 +2652,11 @@
               "test": "DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch"
             }
           ],
-          "reason": "Listen Now is the first destination. The native Home-to-album, saved relaunch and Library/Home navigation control passed 1/1 without skips in 51.905 seconds (apple-ci 38991471536 retained Home JUnit and screenshots). Shared tests establish per-account cached first paint and honest REST fallback. Current-app recent-playlist context transport remains a player-session integration dependency; final native integration gates are tracked in docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first. Native Home-to-album, saved relaunch and Library/Home navigation passed 1/1 without skips in 51.905 seconds (apple-ci 38991471536, retained Home JUnit and screenshots). Shared tests establish per-account cached first paint and honest REST fallback. After the driver correction, all three local iPad Library controls passed without skips, including membership/offline replay and appearance variants; exact xcresult execution guards and JUnit required every method. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
           "promotion_condition": {
-            "status": "named",
-            "targets": [
-              {
-                "kind": "workflow",
-                "name": "apple-ci"
-              }
-            ]
+            "status": "blocked",
+            "blocked_on": "submitted-play-playlist-context-transport",
+            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
           }
         },
         "tvos": {
@@ -2681,15 +2669,11 @@
               "test": "DulcetTVUITests/testListenNowLaunchAlbumAndRelaunch"
             }
           ],
-          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Local Apple TV Home passed 1/1 in 16.433 seconds on tvOS 26.5, including remote focus, album activation, relaunch and Library/Home navigation, with individual xcresult execution guard and JUnit. The separate Library visual and ordinary-server controls passed; the long-press membership control and final native gates remain pending. Current-app playlist-context transport belongs to player-session integration. See docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use public REST fallbacks. Local Apple TV Home passed 1/1 in 16.433 seconds on tvOS 26.5, including remote focus, album activation, relaunch and Library/Home navigation, with individual xcresult execution guard and JUnit. Separate Library appearance and ordinary-server controls passed. The long-press membership menu remains a native integration failure under investigation, with its assertion retained. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
           "promotion_condition": {
-            "status": "named",
-            "targets": [
-              {
-                "kind": "workflow",
-                "name": "apple-ci"
-              }
-            ]
+            "status": "blocked",
+            "blocked_on": "submitted-play-playlist-context-transport",
+            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
           }
         },
         "android": {
@@ -2702,15 +2686,11 @@
               "test": "ListenNowEmulatorProofTest/homeLaunchAlbumAndCachedRelaunch"
             }
           ],
-          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, real album activation, relaunch, Library and Home controls passed on the API 34 emulator against plain REST and advertised Dulcet Server (core-ci 38995786940). Server personalization and cache-before-network have integration/shared test coverage. Current-app recent-playlist context transport belongs to the player-session integration; final evidence and promotion remain tracked in docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, actual album activation, relaunch and Library/Home controls passed on the API 34 phone emulator against plain REST and advertised Dulcet Server in core-ci 39014292891 (one non-skipped Home case per server). The whole current-product core workflow passed, including 151 server cases and 60 API self-tests without failures/errors/skips. Shared tests cover server personalization, account binding and cache-before-network. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
           "promotion_condition": {
-            "status": "named",
-            "targets": [
-              {
-                "kind": "workflow",
-                "name": "core-ci"
-              }
-            ]
+            "status": "blocked",
+            "blocked_on": "submitted-play-playlist-context-transport",
+            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
           }
         },
         "androidtv": {
@@ -2723,15 +2703,11 @@
               "test": "ListenNowEmulatorProofTest/homeLaunchAlbumAndCachedRelaunch"
             }
           ],
-          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, real album activation, relaunch, Library and Home controls passed on the API 34 emulator against plain REST and advertised Dulcet Server (core-ci 38995786940). Server personalization and cache-before-network have integration/shared test coverage. Current-app recent-playlist context transport belongs to the player-session integration; final evidence and promotion remain tracked in docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, actual album activation, relaunch and Library/Home controls passed on the API 34 TV emulator against plain REST and advertised Dulcet Server in core-ci 39014292891 (one non-skipped Home case per server). The whole current-product core workflow passed, including 151 server cases and 60 API self-tests without failures/errors/skips. Shared tests cover server personalization, account binding and cache-before-network. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
           "promotion_condition": {
-            "status": "named",
-            "targets": [
-              {
-                "kind": "workflow",
-                "name": "core-ci"
-              }
-            ]
+            "status": "blocked",
+            "blocked_on": "submitted-play-playlist-context-transport",
+            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
           }
         }
       }
