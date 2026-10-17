@@ -682,3 +682,74 @@ The guard rejects an absent, failed or skipped method, as the earlier independen
 missing-method controls demonstrated. This passing required consumption fulfills
 the two recorded Android Downloaded promotion conditions. Only those two cells are
 now shipped; the remaining 33 new cells stay partial, and Apple TV Downloaded stays n/a.
+
+## Apple conformance repair after #336 (2026-10-17)
+
+The [original full Apple run at `128b9d39`](https://github.com/legitimate-apps/dulcet/actions/runs/39002314622)
+already contains the three reported Library failures, before the listening-session merges.
+Its Mac Library bundle ran five tests with two failures; its iPhone Library bundle ran
+seven tests with one failure. The failure diagnostics were exported and examined before
+changing the tests.
+
+- **OBSERVED — iPhone offline replay:** the failure hierarchy has Library selected and
+  Recently Added at y900.3, below the 874-point viewport and the tab bar at y791. The lazy
+  album grid has no instantiated album tile. The test already scrolled before its first
+  offline assertion, but omitted that action after relaunch. The correction requires the
+  section control to exist, the tile to be initially absent, at least one touch scroll,
+  and a hittable tile. It retains the direct-server negative membership checks both before
+  and after relaunch, and the eventual positive server membership after reconnect. The
+  fixture must also acknowledge each requested online/offline transition. A missing lazy
+  accessibility element alone did not establish loss of the durable pending add. In the
+  diagnostic run, this method passes in 132.609 seconds and logs
+  `MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=1`. All seven iPhone Library
+  methods pass the named terminal-result guard.
+- **OBSERVED — Mac pin lookup:** the original failure hierarchy contains the identified
+  `dulcet.library.pinned.title` StaticText with label `Pinned`, plus the pinned album. In
+  the [diagnostic run at `24b656e3`](https://github.com/legitimate-apps/dulcet/actions/runs/39044137148),
+  the same live typed query reports `firstMatch=false`, `indexed=true`, `count=1`. The pin
+  method then passes, including the exact heading text, persisted album and offline
+  destinations. This establishes a false negative in the first-match lookup; it does not
+  establish an internal XCTest implementation cause. The final lookup uses the same type
+  and identifier with `element(boundBy: 0)`. The diagnostic enumeration before the assertion
+  is removed so the final validation exercises that lookup without warming its query.
+- **OBSERVED — Mac grouped count:** both recordings show Artists, `1 result` and one
+  artist row. The diagnostic reports `exists=true`, an empty `label`, and `value=1 result`.
+  Mac must assert the native StaticText value. The correction waits for that exact value;
+  iOS retains the exact label check. The initial diagnostic revision also exposed an error
+  in a new, stronger row assertion: querying TableRow returns zero because SwiftUI's native
+  `SwiftUIOutlineTableView` has `AXOutline` role, as the same run's native accessibility
+  probe records. The corrected assertion scopes the results outline by its identified
+  rendered result and waits for exactly one OutlineRow, excluding the sidebar outline.
+
+The old `7b` search crash report records missing `DulcetPresentationStore` environment
+resolution through native table hosts. Production commit `eb112755` already fixes that
+on main by supplying the root store to the cell and context-menu hosts. This repair
+preserves it. In the diagnostic platform job, both argument cases of
+`MacGroupedSearchHostingTests.readerResultsRenderThroughTheRootAndNativeTable` pass;
+the Library search recordings reach the Artists table without a crash.
+
+Local `tools/typecheck-xcuitest-sources` passes all five covered UI-test directories for
+the corrected queries. The check's negative controls passed; its actual type-check caught
+an introduced invalid row API, corrected before the replacement dispatch. A type-check is compile evidence,
+not UI execution evidence.
+
+The iPhone job subsequently reaches a latent lyrics-test assumption. Its search hierarchy
+contains exactly one result, `Ogg Probe`, while Now Playing has already advanced into
+`Paging Track 008` and later another paging track. **OBSERVED:** one own search result no
+longer guarantees that the one-second fixture remains current. **ASSUMED from the
+production default and queue continuation path:** enabled AutoPlay is the source of that
+continuation; the old test never controlled or read the setting. The test correction
+chooses AutoPlay off through the actual Up Next switch, reads it back, verifies that choice
+again after the plain phase's relaunch, and restores the previous choice through the UI.
+Setup pauses and resumes the synced fixture with positive transport-state checks. Every
+existing lyrics-line, empty-state, failed-read receipt and retry assertion remains, with an
+additional exact `Ogg Probe` title assertion after its plain lyrics are shown. The production
+AutoPlay default remains on. This interaction fix still needs runtime validation.
+
+Validation is still in progress. The diagnostic full run is **red**: Mac Library passed
+four of five methods, with the added TableRow assertion failing; the platform job failed
+in existing crossfade tests; and the iPhone job failed in the later lyrics proof after
+all seven Library methods passed. The corrected indexed/Outline queries and explicit
+lyrics setting require runtime validation. The iPad result and the subsequent all-green
+full-run link must be recorded before this repair is handed off. No feature cell is
+promoted by this test repair.

@@ -3354,11 +3354,40 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        var originalAutoplay: Bool?
+        defer {
+            if let originalAutoplay {
+                XCTAssertTrue(chooseAutoplayForLyrics(originalAutoplay, in: XCUIApplication()),
+                              "Restore the person's AutoPlay choice after the lyrics proof")
+            }
+        }
+
         // 1. Synced: a line lights as media time moves.
         guard let syncedApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
                                               compact: expectedCompact),
               openLibraryAlbum(album, in: syncedApp, compact: expectedCompact) else { return }
         guard tapAlbumPlay(in: syncedApp) else { return }
+        // These states include a one-second track and a deliberately slow failed read. Choose
+        // an ending queue explicitly: one search result no longer implies that with AutoPlay on.
+        // Pause during setup so navigating Up Next cannot consume the 29-second synced fixture.
+        let syncedTransport = syncedApp.buttons["dulcet.mini-player.play-pause"].firstMatch
+        guard syncedTransport.waitForExistence(timeout: 10),
+              waitForLabel("Pause", of: syncedTransport, timeout: 15) else {
+            XCTFail("The synced fixture must actually start before its setup pause")
+            return
+        }
+        syncedTransport.tap()
+        guard waitForLabel("Play", of: syncedTransport, timeout: 10) else {
+            XCTFail("The setup pause must reach playback before navigating Up Next")
+            return
+        }
+        guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
+              chooseAutoplayForLyrics(false, in: syncedApp, capturePrevious: { originalAutoplay = $0 }) else { return }
+        syncedTransport.tap()
+        guard waitForLabel("Pause", of: syncedTransport, timeout: 10) else {
+            XCTFail("The synced fixture must resume after the paused AutoPlay setup")
+            return
+        }
         guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
               let syncedPanel = openLyricsPanel(in: syncedApp) else { return }
         let current = syncedApp.staticTexts["dulcet.lyrics.line.current"].firstMatch
@@ -3395,11 +3424,14 @@ final class DulcetiOSUITests: XCTestCase {
 
         // 2. Plain: both lines, and nothing lit.
         guard let plainApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
-                                             compact: expectedCompact),
+                                             compact: expectedCompact) else { return }
+        var persistedAutoplay: Bool?
+        guard chooseAutoplayForLyrics(false, in: plainApp, capturePrevious: { persistedAutoplay = $0 }) else { return }
+        XCTAssertEqual(persistedAutoplay, false, "The plain phase must inherit the explicitly disabled AutoPlay choice")
+        guard persistedAutoplay == false,
               playFromSearch("Ogg Probe", in: plainApp, compact: expectedCompact) else { return }
-        // A one-second track, played from a search that matches it alone, so it is the whole
-        // queue: the finished queue keeps it as Now Playing's track (spec §14.3). Played from its
-        // album it would advance to the next track and show that track's lyrics instead.
+        // A one-second track, played from a search that matches it alone with AutoPlay proven
+        // off: the finished queue keeps it as Now Playing's track (spec §14.3).
         guard openNowPlayingFromBar(in: plainApp, expectingTitle: "Ogg Probe"),
               openLyricsPanel(in: plainApp) != nil else { return }
         let plainLines = plainApp.staticTexts.matching(identifier: "dulcet.lyrics.line")
@@ -3409,6 +3441,8 @@ final class DulcetiOSUITests: XCTestCase {
         }
         XCTAssertFalse(plainApp.staticTexts["dulcet.lyrics.line.current"].firstMatch.exists,
             "Plain lyrics have no current line, so none may be lit")
+        XCTAssertEqual(plainApp.staticTexts["dulcet.now-playing.title"].firstMatch.label, "Ogg Probe",
+                       "The single-result queue must retain its track while the plain lyrics are shown")
         let plainShown = plainLines.count
         attachScreenshot(named: "lyrics-plain", app: plainApp)
 
@@ -3712,6 +3746,67 @@ final class DulcetiOSUITests: XCTestCase {
             return false
         }
         row.tap()
+        return true
+    }
+
+    /// Chooses the production Up Next setting and reads its switch back. Lyrics states that
+    /// outlive a short track need an ending queue; the original choice is restored by the caller.
+    @MainActor
+    private func chooseAutoplayForLyrics(
+        _ enabled: Bool,
+        in app: XCUIApplication,
+        capturePrevious: ((Bool) -> Void)? = nil
+    ) -> Bool {
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        if !close.exists, !openNowPlayingFromBar(in: app, expectingTitle: nil) { return false }
+        let lyricsPanel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+        if lyricsPanel.exists {
+            let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+            guard lyrics.exists && lyrics.isHittable else {
+                XCTFail("The open lyrics panel must offer its own toggle")
+                return false
+            }
+            lyrics.tap()
+            guard lyricsPanel.waitForNonExistence(timeout: 5) else {
+                XCTFail("Hide Lyrics must reveal the queue's place beside the regular player")
+                return false
+            }
+        }
+        let queueToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+        if queueToggle.exists && queueToggle.label == "Show Up Next" { queueToggle.tap() }
+        let queue = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
+        guard queue.waitForExistence(timeout: 10) else {
+            XCTFail("Up Next must expose its actual list before choosing AutoPlay: " + app.debugDescription)
+            return false
+        }
+        let toggle = app.switches["dulcet.upNext.autoplay.toggle"].firstMatch
+        for _ in 0..<6 {
+            if toggle.exists && toggle.isHittable { break }
+            queue.swipeUp()
+        }
+        guard toggle.exists && toggle.isHittable,
+              let previous = toggle.value as? String, ["0", "1"].contains(previous) else {
+            XCTFail("Up Next must expose a readable AutoPlay switch: " + app.debugDescription)
+            return false
+        }
+        capturePrevious?(previous == "1")
+        let expected = enabled ? "1" : "0"
+        if previous != expected { toggle.tap() }
+        let chosen = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: toggle)
+        guard XCTWaiter.wait(for: [chosen], timeout: 10) == .completed else {
+            XCTFail("The real AutoPlay switch must acknowledge \(expected); value=\(String(describing: toggle.value))")
+            return false
+        }
+        print("DULCET LYRICS AUTOPLAY previous=\(previous) value=\(toggle.value ?? "nil")")
+        guard close.exists && close.isHittable else {
+            XCTFail("The player must stay open while choosing AutoPlay")
+            return false
+        }
+        close.tap()
+        guard close.waitForNonExistence(timeout: 5) else {
+            XCTFail("The player must close before returning to the lyrics fixture")
+            return false
+        }
         return true
     }
 
