@@ -2517,6 +2517,13 @@ the background, and it is never persisted: a relaunch has no timer.
 - Cancelling a timer restores the level and clears any stop point. Setting a new choice replaces
   the old one.
 
+**Android presentation.** Phone listening options are in Up Next. Android TV opens listening
+options from a focused button below the artwork; the remote selects AutoPlay, sleep and crossfade
+through buttons and scrollable dialogs. Both use the playback service for the timer and settings.
+Play Next and Add to Queue use the existing brief toast notice, claimed once after application;
+an empty-player addition starts playback without an extra notice. TV queue editing uses named
+Move Up/Down and Remove actions in place of swipe gestures.
+
 ---
 
 ## 13. Security
