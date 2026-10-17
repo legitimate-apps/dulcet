@@ -143,8 +143,10 @@ struct DulcetLibraryDepthHome: View {
             DulcetReaderHomeLink(title: store.myLibraryAvailable ? DulcetStrings.libraryServerSongs : DulcetStrings.librarySongs, symbolName: "music.note", identifier: "dulcet.library.songs") {
                 store.pushReaderPage(.songs)
             }
-            DulcetReaderHomeLink(title: DulcetStrings.libraryDownloaded, symbolName: "arrow.down.circle", identifier: "dulcet.library.downloaded") {
-                store.pushReaderPage(.downloaded)
+            if store.downloadsEnabled {
+                DulcetReaderHomeLink(title: DulcetStrings.libraryDownloaded, symbolName: "arrow.down.circle", identifier: "dulcet.library.downloaded") {
+                    store.pushReaderPage(.downloaded)
+                }
             }
             Button(store.myLibraryAvailable ? DulcetStrings.libraryShuffleServer : DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
                 store.librarySession?.shuffleLibrarySongs(using: store)
@@ -211,7 +213,7 @@ struct DulcetLibraryCategoryControls: View {
         Picker(DulcetStrings.libraryFilter, selection: binding) {
             Text(DulcetStrings.libraryAll).tag("all")
             Text(DulcetStrings.libraryFilterFavorites).tag("favorites")
-            Text(DulcetStrings.libraryDownloaded).tag("downloaded")
+            if store.downloadsEnabled { Text(DulcetStrings.libraryDownloaded).tag("downloaded") }
         }
         .accessibilityIdentifier("dulcet.library.\(category).filter")
     }

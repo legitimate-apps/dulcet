@@ -127,11 +127,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Pinned"].firstMatch.waitForExistence(timeout: 20))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Pinned metadata must survive an offline relaunch")
         let downloaded = app.buttons["dulcet.library.downloaded"].firstMatch
+#if os(tvOS)
+        XCTAssertFalse(downloaded.exists, "Apple TV has no durable user-managed media downloads in v1")
+#else
         XCTAssertTrue(downloaded.waitForExistence(timeout: 10))
         activate(downloaded)
         XCTAssertTrue(app.staticTexts["Music stored on this device, ready to play offline."].firstMatch.waitForExistence(timeout: 20))
         try capture("Library-Depth-Downloaded")
         try select("library")
+#endif
         let songs = app.buttons["dulcet.library.songs"].firstMatch
         XCTAssertTrue(songs.waitForExistence(timeout: 10))
         activate(songs)
