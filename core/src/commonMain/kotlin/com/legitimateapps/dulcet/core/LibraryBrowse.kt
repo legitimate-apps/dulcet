@@ -1006,8 +1006,3 @@ private fun JsonObject.readerCredits(role: CreditRole): List<CacheCredit> =
 private fun JsonObject.long(name: String): Long? =
     (get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
 
-internal fun parseReaderRandomSongs(body: String): List<CacheTrackRecord> {
-    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
-    val result = payload["randomSongs"] as? JsonObject ?: malformed()
-    return result.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
-}

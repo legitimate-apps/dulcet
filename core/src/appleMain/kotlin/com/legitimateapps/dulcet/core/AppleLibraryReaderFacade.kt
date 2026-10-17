@@ -705,7 +705,6 @@ internal fun AppleLibraryWindowRequest.toTarget(): AppleLibraryWindowTarget {
         "shuffleSongs" -> AppleLibraryWindowTarget.Screen(LibraryQuery.ShuffleSongs)
         "starred" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Starred)
         "songs" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Songs(listType ?: "title", genre ?: ""))
-        "shuffleSongs" -> AppleLibraryWindowTarget.Screen(LibraryQuery.ShuffleSongs)
         "downloaded" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Downloaded)
         "pinned" -> AppleLibraryWindowTarget.Screen(LibraryQuery.Pinned)
         "artistTopSongs" -> AppleLibraryWindowTarget.Screen(LibraryQuery.ArtistTopSongs(id()))

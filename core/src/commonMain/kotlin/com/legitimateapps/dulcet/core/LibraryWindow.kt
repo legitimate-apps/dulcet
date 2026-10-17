@@ -441,10 +441,6 @@ internal data class ListRequestSpec(
                     ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
                 })
             }
-            LibraryQuery.ShuffleSongs -> whole("getRandomSongs", mapOf("size" to "500")) {
-                val tracks = parseReaderRandomSongs(it)
-                ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
-            }
             LibraryQuery.Downloaded, LibraryQuery.Pinned, is LibraryQuery.ArtistTopSongs,
             is LibraryQuery.Album, is LibraryQuery.Artist, is LibraryQuery.Playlist ->
                 error("a detail query is not a list")
