@@ -49,6 +49,14 @@ class ListenNowEmulatorProofTest {
                 activate("listenNow.open")
                 await("listenNow.surface")
             }
+            // Gradle uninstalls the target after instrumentation, removing external-files.
+            // Preserve only this proof's photos in a shell-owned disposable directory first.
+            val source = java.io.File(context.getExternalFilesDir(null), "design-tour")
+            val destination = "/data/local/tmp/dulcet-listen-now-${context.packageName}"
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            instrumentation.uiAutomation.executeShellCommand("mkdir -p $destination && cp $source/listen-now-*.jpg $destination/").use { fd ->
+                java.io.FileInputStream(fd.fileDescriptor).bufferedReader().use { it.readText() }
+            }
         }
     }
     private fun await(tag:String) {
