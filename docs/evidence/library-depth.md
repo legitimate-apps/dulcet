@@ -744,7 +744,8 @@ again after the plain phase's relaunch, and restores the previous choice through
 Setup pauses and resumes the synced fixture with positive transport-state checks. Every
 existing lyrics-line, empty-state, failed-read receipt and retry assertion remains, with an
 additional exact `Ogg Probe` title assertion after its plain lyrics are shown. The production
-AutoPlay default remains on. This interaction fix still needs runtime validation.
+AutoPlay default remains on. The controlled local iPhone and iPad results below verify
+this setup through every lyrics state.
 
 The [next full diagnostic at `d3dc1bfa`](https://github.com/legitimate-apps/dulcet/actions/runs/39053289757)
 proves the three Library corrections through the complete methods: **Mac 5 tests / zero
@@ -760,8 +761,12 @@ interactions; those passing Library suites are not an all-green handoff.
   `(201, 380.7)`, the center of its 370-point label-and-gap accessibility row. The recording
   places the actual native switch at the trailing edge, leaving the tap in blank space.
   The helper now targets the switch thumb, 24 points inside the trailing edge, and keeps
-  the exact off, persisted-off and prior-setting restoration requirements. Its runtime
-  result is pending; no production setter failure is established by the missed tap.
+  the exact off, persisted-off and prior-setting restoration requirements. A further local
+  failure caught the new setup inspecting Up Next before activating anything in the fresh
+  plain phase: the hierarchy has a connected account and no Now Playing bar. Activate Ogg
+  first, capture the existing preference before any possible change, and still require it
+  was already off. Both complete local device methods now pass, as recorded below. No
+  production setter or queue-restoration defect is established by these setup failures.
 - **OBSERVED — TV remote footer navigation:** the failed hierarchy places focus on a
   nested `Other` inside Sleep Timer, between the fifth star and Lyrics. The Menu's Button
   itself reports no focus. The test recognizes only the heart and stars as footer controls,
@@ -769,17 +774,50 @@ interactions; those passing Library suites are not an all-green handoff.
   that focused descendant, moves Right to Lyrics and Left back to the heart, and requires
   positive proof that the main test traversed Sleep Timer. The shared lyrics helper uses
   the same focus recognition. All original remote-select, lit-line, favorite and rating
-  assertions remain. A focused leased local TV run is pending.
+  assertions remain. The focused leased local method passes in 38.907 seconds and logs
+  `sleep-timer-traversed=true`, five presses to Lyrics, a lit English line and seven Left
+  presses back to the heart. Its xcresult has one passed test, zero failures and zero skips.
 - **OBSERVED — native playback check:** the platform leg separately fails
   `transportChangesDisposeTheOutgoingTail(action: "replace")` because its initial wait
   observes no overlap in 30.013 seconds, then the required snapshot is nil. The engine queue
   responds in 0.002 seconds. This evidence was passed to the playback owner; no underlying
-  playback cause is inferred from the responsive queue alone.
+  playback cause is inferred from the responsive queue alone. This branch incorporates
+  their correction lineage through `d323bebe` from #341: verified AVPlayer gain writes,
+  paused seek setup, transport commands within the observed overlap and retaining the first
+  successful wait observation, with diagnostics on failure. The owner's
+  [complete platform run](https://github.com/legitimate-apps/dulcet/actions/runs/39059014904)
+  passes at that revision, including native Mac, iPhone and TV. A authored no independent
+  playback-engine correction.
 
-Local source type-checking passes all five UI-test directories after the TV correction.
+Local source type-checking passes all five UI-test directories after the final plain-phase
+order correction. The complete local lyrics methods run against owned disposable Navidrome
+and its real lyrics fault proxy, using fresh leased simulators and explicit
+`-destination "id=<leased UDID>"`, with parallel testing disabled:
+
+| Local proof | Destination | Terminal result |
+| --- | --- | --- |
+| `testTheLyricsPanelShowsEveryStateOnIPhone` | iPhone 17 Pro, `230CDFB4-CFDB-42C6-9DFB-5C4B462192DB` | 1 passed / 0 failed / 0 skipped, 216.887 s |
+| `testTheLyricsPanelShowsEveryStateOnIPadOS` | iPad Pro 13-inch (M5), `A61B1383-5470-439D-A362-D5F285BEB66B` | 1 passed / 0 failed / 0 skipped, 237.715 s |
+| `testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote` | Apple TV 4K (3rd generation), tvOS 26.5, `5AEA7B30-CD53-4670-AFCA-60857D30AA4A` | 1 passed / 0 failed / 0 skipped, 38.907 s |
+
+Each iOS lyrics method logs the actual setting chain `previous=1 value=0`, relaunch
+`previous=0 value=0`, then cleanup `previous=0 value=1`. Both show a lit synced English
+line, two plain lines with exact Ogg title, the no-lyrics state, **one observed failed
+lyrics read and one new read after Try Again**. The iPad also passes the side-by-side
+panel placement checks. These are complete terminal Passed results after the cleanup
+assertion, not just the earlier proof marker. All three result bundles have zero skips.
+The owned fixtures, simulators, DerivedData and capacity leases are released afterwards.
+
 The attempted local Mac UI worker obtained build capacity but refused to reuse another
 lane's disposable server on port 4533, then released its resources before launching a
-fixture or app. Consequently this repair relies on the hosted `apple-ci` Mac UI run above;
-there is no new local pre-main Sandbox/XPC diagnosis or local Mac UI pass to claim.
-A fresh combined full dispatch must pass every leg before handoff. No feature cell is
-promoted by this test repair.
+fixture or app. This repair therefore uses hosted `apple-ci` for actual Mac UI execution.
+Its `tools/ci/run-my-library-proofs macos` uses the `DulcetMac` scheme with ad-hoc signing
+and cleared `CODE_SIGN_ENTITLEMENTS`; that path passes all five Library methods in the
+full diagnostic above. There is no new local pre-main Sandbox/XPC diagnosis or local Mac
+UI pass to claim.
+
+The combined full-conformance gate for these repaired sources is
+[run 39062783989 at `1ca0a17e`](https://github.com/legitimate-apps/dulcet/actions/runs/39062783989).
+The handoff requires successful platform, core, iPad and iPhone legs and the aggregate;
+the local focused passes do not replace that gate. No feature cell is promoted by this
+test repair.
