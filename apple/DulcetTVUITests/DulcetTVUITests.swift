@@ -1112,7 +1112,31 @@ final class DulcetTVUITests: XCTestCase {
         let artistPage = try XCTUnwrap(
             restCall("getArtist", [URLQueryItem(name: "id", value: artists[artistIndex].id)], server: server)?["artist"] as? [String: Any],
             "The server must read \(artistName)")
-        let artistAlbums = (artistPage["album"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+        let artistAlbumRecords = artistPage["album"] as? [[String: Any]] ?? []
+        // These fixture releases are untyped, so all belong to Albums. The artist page now
+        // orders that discography newest first (spec §28, collection depth), rather than
+        // getArtist's order.
+        XCTAssertTrue(artistAlbumRecords.allSatisfy { ($0["releaseTypes"] as? [String] ?? []).isEmpty },
+            "This remote navigation fixture expects untyped releases in one Albums group")
+        func releaseDate(_ album: [String: Any]) -> String {
+            if let date = album["originalReleaseDate"] as? [String: Any], let year = date["year"] as? Int {
+                var result = String(format: "%04d", year)
+                if let month = date["month"] as? Int {
+                    result += String(format: "-%02d", month)
+                    if let day = date["day"] as? Int { result += String(format: "-%02d", day) }
+                }
+                return result
+            }
+            return (album["year"] as? Int).map(String.init) ?? ""
+        }
+        let artistAlbums = artistAlbumRecords.sorted { lhs, rhs in
+            let leftDate = releaseDate(lhs), rightDate = releaseDate(rhs)
+            if leftDate != rightDate { return leftDate > rightDate }
+            let leftTitle = (lhs["name"] as? String ?? "").lowercased()
+            let rightTitle = (rhs["name"] as? String ?? "").lowercased()
+            if leftTitle != rightTitle { return leftTitle < rightTitle }
+            return (lhs["id"] as? String ?? "") < (rhs["id"] as? String ?? "")
+        }.compactMap { $0["name"] as? String }
         // An album whose name is its own on this page, and not the first, so the label that has
         // focus after Back can name only it.
         let artistAlbumIndex = try XCTUnwrap(
@@ -1263,10 +1287,13 @@ final class DulcetTVUITests: XCTestCase {
         }
         let artistRowLabel = try XCTUnwrap(focusedElement(app)?.label)
 
-        // The artist's page: the server's albums for that artist, in its order, walked to one.
+        // The artist's page: walk past Top Songs to materialize its lazy discography, then
+        // compare every album with the server's metadata in newest-first order and open one.
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.staticTexts[artistName].firstMatch.waitForExistence(timeout: 30),
             "Select must open \(artistName)'s page: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 16) { $0.id == "dulcet.library.album" },
+            "Down must pass Top Songs and reach the artist's discography: " + app.debugDescription)
         let artistTiles = app.buttons.matching(identifier: "dulcet.library.album")
         let artistDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         while artistTiles.count < artistAlbums.count, ContinuousClock.now < artistDeadline { Thread.sleep(forTimeInterval: 0.25) }
@@ -1276,8 +1303,6 @@ final class DulcetTVUITests: XCTestCase {
             XCTAssertTrue(Self.names(artistTileLabels[index], name),
                 "Artist album \(index) is \(artistTileLabels[index].debugDescription); the server's is \(name)")
         }
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 6) { $0.id == "dulcet.library.album" },
-            "Down must reach the artist's albums: " + app.debugDescription)
         pressToTheStart(app)
         for index in 0...artistAlbumIndex {
             let focus = try XCTUnwrap(focusedElement(app))
