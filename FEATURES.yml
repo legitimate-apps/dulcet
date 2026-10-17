@@ -9,7 +9,9 @@
     {"id": "account.connect", "platform": "tvos", "reason": "The obsolete explicit-reconnect function citation is replaced by the executed Swift Testing display name, Saved credentials reconnect without a tap (spec 13.1, CONF-10b). The simulator account-state proof also observes automatic relaunch and outage recovery. This declares the removed citation identity; the existing simulator shipping decision and lack of signed physical Apple TV evidence remain unchanged.", "pr": "#306"}
   ],
   "accepted_promotions": [
-    {"id": "account.connect", "platform": "tvos", "reason": "Promoted on the existing simulator CONF-09b and CONF-10e evidence without a new row, by the maintainer's 2026-10-10 decision recorded in spec 28: a signed physical Apple TV run is not required and is not claimed.", "pr": "#300"}
+    {"id": "account.connect", "platform": "tvos", "reason": "Promoted on the existing simulator CONF-09b and CONF-10e evidence without a new row, by the maintainer's 2026-10-10 decision recorded in spec 28: a signed physical Apple TV run is not required and is not claimed.", "pr": "#300"},
+    {"id": "library.downloaded", "platform": "android", "reason": "Promoted after required core-ci run 39007768787 at a076bbf3 passed and its aggregate consumed both explicit Downloaded method identities (208 required identities, 216 JUnit reports). Those evidence rows were added while partial in 44c18c74; this records fulfillment of the existing promotion condition without inventing a new test citation.", "pr": "#336"},
+    {"id": "library.downloaded", "platform": "androidtv", "reason": "Promoted after required core-ci run 39007768787 at a076bbf3 passed and its aggregate consumed both explicit Downloaded method identities (208 required identities, 216 JUnit reports). Those evidence rows were added while partial in 44c18c74; this records fulfillment of the existing promotion condition without inventing a new test citation.", "pr": "#336"}
   ],
   "features": [
     {
@@ -2696,20 +2698,15 @@
             "blocked_on": "ipados-native-completed-download-offline-proof",
             "reason": "The iPad pin/destination selector checks Downloaded reachability only. Add and execute a native proof that completes a production download, makes the server unreachable, browses and plays that completed file with no network read, excludes merely cached tracks, and observes removal from Downloaded. Consume its passing result in required CI before promotion."
           },
-          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+          "reason": "The corrected hosted iPad My Library proof at 128b9d39 passed Downloaded destination reachability after offline relaunch. It did not complete a download or establish completed-file offline browsing and playback through Downloaded. The feature remains partial pending that path and required-CI evidence; see docs/evidence/library-depth.md."
         },
         "tvos": {
           "status": "n/a",
           "reason": "tvOS has no durable user-managed media download contract in v1. The Downloaded link and filter are hidden; the native TV proof checks their absence after a positive pinned-item control. Android TV retains downloaded-media support."
         },
         "android": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-completed-download-runtime-proof-in-required-ci",
-            "reason": "The local Android phone completed-file proof passed. Wire AndroidEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable into required CI with a selected-test execution guard and consumed JUnit; require completed bytes, rejected relay control, native row activation, advancing local playback, zero server requests, byte identity and sign-out cleanup. Promote only after that required run passes."
-          },
-          "reason": "The required dcc2ff38 core-ci emulator JUnit records one passing, non-skipped phone completed-download case, and the required run passed. The new explicit evidence identity makes the required parity verifier reject a missing, failed or skipped method. The feature remains partial until that exact guard is consumed successfully in required CI; the earlier run did not yet require the method identity. See docs/evidence/library-depth.md for scope and artifact evidence.",
+          "status": "shipped",
+          "reason": "Required core-ci run 39007768787 at a076bbf3 passed all jobs and consumed 208 exact method identities across 216 JUnit reports, including the non-skipped Android phone completed-download proof. That native method establishes Downloaded browsing and row activation with the server unreachable, advancing local-file playback, zero server requests, byte identity and sign-out cleanup. The recorded required-CI promotion condition is met; see docs/evidence/library-depth.md.",
           "evidence": [
             {
               "observes": "on an API 34 Android phone emulator in required core-ci, completes a production download, rejects a control request through the cut relay, browses Downloaded and activates its completed row, observes at least 1,500 ms of advancing local playback with zero server requests, rechecks identical bytes, and confirms sign-out removes files and unfinished tasks",
@@ -2720,13 +2717,8 @@
           ]
         },
         "androidtv": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "androidtv-completed-download-runtime-proof-in-required-ci",
-            "reason": "The local Android TV completed-file proof passed. Wire AndroidTvEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable into required CI with a selected-test execution guard and consumed JUnit; require completed bytes, rejected relay control, native row activation, advancing local playback, zero server requests, byte identity and sign-out cleanup. Promote only after that required run passes."
-          },
-          "reason": "The required dcc2ff38 core-ci emulator JUnit records one passing, non-skipped TV completed-download case, and the required run passed. The new explicit evidence identity makes the required parity verifier reject a missing, failed or skipped method. The feature remains partial until that exact guard is consumed successfully in required CI; the earlier run did not yet require the method identity. See docs/evidence/library-depth.md for scope and artifact evidence.",
+          "status": "shipped",
+          "reason": "Required core-ci run 39007768787 at a076bbf3 passed all jobs and consumed 208 exact method identities across 216 JUnit reports, including the non-skipped Android TV completed-download proof. That native method establishes Downloaded browsing and row activation with the server unreachable, advancing local-file playback, zero server requests, byte identity and sign-out cleanup. The recorded required-CI promotion condition is met; see docs/evidence/library-depth.md.",
           "evidence": [
             {
               "observes": "on an API 34 Android TV emulator in required core-ci, completes a production download, rejects a control request through the cut relay, browses Downloaded and activates its completed row, observes at least 1,500 ms of advancing local playback with zero server requests, rechecks identical bytes, and confirms sign-out removes files and unfinished tasks",
@@ -2771,7 +2763,7 @@
             "blocked_on": "ipados-native-all-item-pin-persistence-proof",
             "reason": "The shared Apple selector covers an album pin only, and its first iPad run failed to render the offline shortcut. Add and execute iPad native proofs for album, artist, playlist and song shortcuts at the top of Library, pin/unpin persistence after relaunch, account isolation and independence from favorites/My Library membership. Require metadata-retention core checks plus passing platform CI; a pin does not promise downloaded audio."
           },
-          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+          "reason": "The corrected hosted iPad My Library suite at 128b9d39 passed all five cases; its pin/offline-destination case passed in 104.146 seconds with an exact-method execution guard, observing pinned album metadata after a real server cut and saved-account relaunch. Other pin kinds and native account-isolation controls remain unproven. Pins remain device-local per account; see docs/evidence/library-depth.md."
         },
         "tvos": {
           "status": "partial",
@@ -2963,7 +2955,7 @@
             "blocked_on": "ipados-native-group-search-and-recent-query-proof",
             "reason": "The selected shared Apple method covers group controls, Artists expansion and recent-query replay; it does not prove all result destinations. Add and execute iPad UI proofs for Artists/Albums/Songs result identity and navigation/playback, each See All group beyond its preview with server-result limits disclosed, and recent-query replay, clear and account-specific relaunch persistence. Record passing required-CI results before promotion."
           },
-          "reason": "The hosted iPad grouped-search/recent-query method at 705a2dc0 passed in 59.758 seconds within an otherwise failed My Library suite. That bounded result does not establish all result interactions or a passing required proof bundle. The feature remains partial; see docs/evidence/library-depth.md."
+          "reason": "The corrected hosted iPad My Library suite at 128b9d39 passed all five cases; grouped search/recent-query persistence passed in 67.886 seconds with the exact-method execution guard. Other result interactions and wider group coverage remain unproven, so this stays partial. See docs/evidence/library-depth.md."
         },
         "tvos": {
           "status": "partial",
