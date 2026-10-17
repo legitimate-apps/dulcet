@@ -400,6 +400,12 @@ def main() -> int:
         raise AssertionError(
             f"valid project checked {checked_targets} of {expected_targets} native targets"
         )
+    widget = target_block(source, "DulcetIOSWidgets").group(0)
+    widget_configs = configuration_ids_for_block(source, widget)
+    invalid_widget = mutate_configurations(source, widget_configs,
+        lambda block: block.replace('OTHER_LDFLAGS = "";', 'OTHER_LDFLAGS = "-framework DulcetCore";'))
+    require_result("widget-cannot-silently-link-core", invalid_widget, 1,
+                   ["target=DulcetIOSWidgets violates metadata-only widget contract"])
     require_result(
         "removed-phase-reference",
         remove_phase_reference(source),
