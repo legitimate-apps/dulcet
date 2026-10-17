@@ -957,3 +957,23 @@ substring check can miss one wrong destination. The corrected control parses eac
 of the four actual `xcodebuild` invocations, requires their acknowledged destination,
 and rejects wrong-device, generic and missing destinations independently for each
 invocation (12 mutations), alongside the eight startup acknowledgment controls.
+
+
+**TV artist follow-up — observed focus dead end, not an insufficient wait.**
+Run39071376612 fails the artist path after six real Down presses. Its hierarchy and
+recording show focus moving from the header through the trailing Top Song Pin controls,
+then staying on Pin UI Playback Canary through repeated Down presses. Discography's
+lazy grid is 0×0 with no realized albums below the viewport. The earlier bounded remote
+navigation exposed a product problem: a focus section cannot offer an album target
+when every album is unrealized.
+
+On TV the corrected discography realizes its first row eagerly, with a full-width
+focus section; later rows remain lazy with the same fixed columns, tile width and
+spacing. The eager cost is one viewport row per nonempty release group. Touch and Mac
+retain their adaptive lazy grid. The six-Down test bound, seven albums, independently
+established date/title order, nonfirst album activation and both Back destinations
+remain. Positive controls now require zero initially hittable albums, actual traversal
+through a Top Song Pin control and a focused album that becomes hittable after real
+Down navigation. Independent review finds no blocker; final native runtime validation
+is still required. The seven-album fixture fits in the eager row on a wide TV, so this
+receipt alone does not establish navigation into a later lazy row.

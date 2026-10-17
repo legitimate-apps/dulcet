@@ -1279,24 +1279,33 @@ final class DulcetTVUITests: XCTestCase {
         }
         let artistRowLabel = try XCTUnwrap(focusedElement(app)?.label)
 
-        // The artist's page: Top Songs precedes the lazy discography. Reach the albums by
-        // remote before counting them; waiting at the header cannot instantiate an offscreen grid.
+        // Top Songs pushes the discography below the viewport. Its concrete first row must
+        // let remote Down escape the trailing Top Song Pin column and scroll to the albums.
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.staticTexts[artistName].firstMatch.waitForExistence(timeout: 30),
             "Select must open \(artistName)'s page: " + app.debugDescription)
         let artistTiles = app.buttons.matching(identifier: "dulcet.library.album")
         let initiallyRealizedArtistAlbums = artistTiles.count
+        let initiallyHittableArtistAlbums = artistTiles.allElementsBoundByIndex.filter(\.isHittable).count
+        XCTAssertEqual(initiallyHittableArtistAlbums, 0,
+            "This fixture must exercise the discography below Top Songs, not an already visible grid")
         var artistAlbumDownPresses = 0
+        var traversedTopSongPin = false
         while !awaitFocus(app, timeout: 1.5, { $0.id == "dulcet.library.album" }), artistAlbumDownPresses < 6 {
+            if let focus = focusedElement(app), focus.id == "dulcet.artist.topSongs", focus.label.hasPrefix("Pin ") {
+                traversedTopSongPin = true
+            }
             XCUIRemote.shared.press(.down)
             artistAlbumDownPresses += 1
         }
         XCTAssertTrue(awaitFocus(app, timeout: 1.5) { $0.id == "dulcet.library.album" },
             "Down must reach the artist's albums through Top Songs: " + app.debugDescription)
-        if initiallyRealizedArtistAlbums == 0 {
-            XCTAssertGreaterThan(artistAlbumDownPresses, 0,
-                "An initially unrealized discography must be reached by an actual remote press")
-        }
+        XCTAssertTrue(traversedTopSongPin,
+            "The remote must exercise the trailing Top Song Pin column that previously trapped Down")
+        XCTAssertGreaterThan(artistAlbumDownPresses, 0,
+            "The offscreen discography must be reached by an actual remote press")
+        XCTAssertTrue(artistTiles.matching(NSPredicate(format: "hasFocus == true")).firstMatch.isHittable,
+            "The focused album must actually scroll into the viewport")
         let artistDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         while artistTiles.count < artistAlbums.count, ContinuousClock.now < artistDeadline { Thread.sleep(forTimeInterval: 0.25) }
         let artistTileLabels = artistTiles.allElementsBoundByIndex.map(\.label)
@@ -1338,6 +1347,7 @@ final class DulcetTVUITests: XCTestCase {
         print("DULCET TV LIBRARY PASS shelf=\(shelfLabels) grid-walk=\(gridWalk) album=\(albumName) tracks=\(rowLabels.count)"
             + " played=\(playedTrack.debugDescription) progress=\(initialProgress)->\(observedProgress)"
             + " artist-albums-initial=\(initiallyRealizedArtistAlbums) artist-album-down=\(artistAlbumDownPresses) artist-date-tie=true"
+            + " artist-albums-visible-initial=\(initiallyHittableArtistAlbums) artist-top-song-pin=\(traversedTopSongPin)"
             + " back-to=\(albumName) artist=\(artistName) artist-album=\(artistAlbum) setup=debug-account-only")
     }
 
