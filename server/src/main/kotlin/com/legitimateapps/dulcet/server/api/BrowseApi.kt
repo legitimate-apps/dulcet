@@ -37,6 +37,24 @@ fun browseHandlers(ctx: ServerContext): Map<String, Handler> {
     fun requireSong(call: Call, id: String) = catalog.song(call.user.id, id) ?: throw SubsonicError.notFound("Song")
 
     return mapOf(
+        "getDulcetHome" to { call ->
+            val shelf = call.required("shelf")
+            val size = call.param("size")?.let { it.toIntOrNull() ?: throw SubsonicError.missing("size") } ?: 20
+            if (size !in 1..50) throw SubsonicError.missing("size")
+            val picks = ctx.home.shelves(call.user.id, size, only = shelf).firstOrNull { it.id == shelf }
+                ?: throw SubsonicError.notFound("Shelf")
+            ok { child("dulcetHome") {
+                this["id"] = picks.id; this["title"] = picks.title; this["reason"] = picks.reason
+                emptyList("album"); emptyList("song"); emptyList("playlist")
+                picks.ids.forEach { id ->
+                    (when (picks.type) {
+                        "album" -> catalog.album(call.user.id,id)
+                        "playlist" -> ctx.db.read { playlistRows("p.id=?",id).firstOrNull()?.let { playlistNode(it,call.user.id,ctx) } }
+                        else -> catalog.song(call.user.id,id)
+                    })?.let { add(it) }
+                }
+            } }
+        },
         "ping" to { _ -> ok() },
         "getLicense" to { _ -> ok { child("license") { this["valid"] = true } } },
         "getOpenSubsonicExtensions" to { _ ->

@@ -108,6 +108,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val apiMcp = com.legitimateapps.dulcet.server.v1.ApiMcp(this)
     val dulcetApi = com.legitimateapps.dulcet.server.v1.DulcetApi(this)
     val catalog = Catalog(db, access)
+    val home = HomeRecommendations(this)
     val scanner = Scanner(db, config.musicFolder, Probe(config.ffprobe))
     val artwork = Artwork(db, config.musicFolder, config.dataFolder.resolve("cache"), config.ffmpeg, access)
     val transcoder = Transcoder(config.ffmpeg)
@@ -121,6 +122,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
         "transcodeOffset" to listOf(1),
         "transcoding" to listOf(1),
         "dulcetLibrary" to listOf(1),
+        "dulcetHome" to listOf(1),
     )
 
     fun lastScanMillis(): Long? = db.read { string("SELECT value FROM meta WHERE key = 'last_scan'") }?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }

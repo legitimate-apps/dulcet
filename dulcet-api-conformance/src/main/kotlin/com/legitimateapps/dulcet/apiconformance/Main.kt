@@ -8,7 +8,7 @@ import java.nio.file.Paths
 import kotlin.system.exitProcess
 
 /** Every check, in run order. Aggregate checks judge the whole run, so they come last. */
-fun allChecks(): List<Check> = accessChecks() + dataChecks() + syncChecks() + deviceChecks() + testingChecks() + queueChecks() + eventChecks() + webhookChecks() + mcpChecks() + aggregateChecks()
+fun allChecks(): List<Check> = accessChecks() + homeChecks() + dataChecks() + syncChecks() + deviceChecks() + testingChecks() + queueChecks() + eventChecks() + webhookChecks() + mcpChecks() + aggregateChecks()
 
 const val USAGE = """dulcet-api-conformance: the Dulcet API v1 conformance suite (docs/dulcet-api/CONFORMANCE.md)
 

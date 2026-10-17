@@ -23,6 +23,7 @@ import kotlin.io.path.isRegularFile
  * the self-tests can prove the check that covers it fails (CONFORMANCE.md "Negative controls").
  */
 enum class Fault {
+    HOME_DUPLICATE_ITEM,
     PLAYS_DOUBLE_COUNT,
     TOKEN_IN_QUERY_ACCEPTED,
     ECHO_QUERY_IN_ERROR,
@@ -618,6 +619,14 @@ class MockServer(
         rateLimit(req, hook)
         if (hook) return testHook(req, segs)
         return when {
+            segs == listOf("recommendations", "home") && m == "GET" -> {
+                val p = auth(req, "catalog:read"); requireScope(p, "user:read")
+                val limit = req.query["limit"]?.toIntOrNull() ?: 20
+                if (limit !in 1..50) halt(400,"invalid-request","Invalid limit")
+                val items = albums.values.filter { it.source in p.user.sourceIds }.take(limit).map { albumJson(it,p) }
+                val shown = if (Fault.HOME_DUPLICATE_ITEM in faults && items.isNotEmpty()) items + items.first() else items
+                jsonResp(200, mapOf("shelves" to listOf(mapOf("id" to "newest", "title" to "New", "reason" to "Recently added", "items" to shown))))
+            }
             segs == listOf("capabilities") && m == "GET" -> capabilities(req)
             segs == listOf("me") && m == "GET" -> me(req)
             segs == listOf("me", "tokens") && m == "GET" -> listTokens(req)
@@ -680,7 +689,7 @@ class MockServer(
     private fun capabilities(req: Req): Resp {
         val body = linkedMapOf<String, Any?>(
             "apiVersion" to "1.0", "server" to serverInfo(),
-            "capabilities" to mapOf("dulcet.sync" to mapOf("versions" to listOf(1))),
+            "capabilities" to mapOf("dulcet.sync" to mapOf("versions" to listOf(1)), "dulcet.home" to mapOf("versions" to listOf(1))),
             "limits" to mapOf("maxPageSize" to 500, "maxBatchSize" to 500, "syncRetentionDays" to 90, "maxTokenLifetimeDays" to 365, "mediaUrlTtlSeconds" to 21600, "artworkUrlTtlSeconds" to 604800),
             "auth" to mapOf("flows" to listOf("authorization_code", "refresh_token"), "scopes" to REQUIRED_SCOPES + listOf("admin", "offline_access")))
         if (req.header("Authorization") != null) {

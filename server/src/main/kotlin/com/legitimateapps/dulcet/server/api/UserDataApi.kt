@@ -229,7 +229,7 @@ data class PlaylistRow(
     val created: Long, val changed: Long, val songCount: Int, val duration: Double,
 )
 
-private fun Db.Session.playlistRows(where: String, vararg args: Any?): List<PlaylistRow> = query(
+internal fun Db.Session.playlistRows(where: String, vararg args: Any?): List<PlaylistRow> = query(
     """SELECT p.*, u.name AS owner_name,
          (SELECT COUNT(*) FROM playlist_track pt JOIN track t ON t.id = pt.track_id WHERE pt.playlist_id = p.id) AS song_count,
          (SELECT COALESCE(SUM(t.duration), 0) FROM playlist_track pt JOIN track t ON t.id = pt.track_id WHERE pt.playlist_id = p.id) AS total_duration
@@ -242,7 +242,7 @@ private fun Db.Session.playlistRows(where: String, vararg args: Any?): List<Play
     )
 }
 
-private fun playlistNode(row: PlaylistRow, viewerId: String, ctx: ServerContext): Node = Node("playlist").apply {
+internal fun playlistNode(row: PlaylistRow, viewerId: String, ctx: ServerContext): Node = Node("playlist").apply {
     this["id"] = row.id
     this["name"] = row.name
     row.comment?.takeIf(String::isNotEmpty)?.let { this["comment"] = it }

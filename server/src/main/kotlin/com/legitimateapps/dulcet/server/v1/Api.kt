@@ -210,12 +210,22 @@ class DulcetApi(private val ctx: ServerContext) {
             get("/capabilities") {
                 val header=call.request.headers[HttpHeaders.Authorization]
                 val p=header?.let { call.principal(ctx) }
-                val fields=j("apiVersion" to "1.0","server" to serverInfo(),"capabilities" to j("dulcet.sync" to j("versions" to listOf(1))),"limits" to j("maxPageSize" to 500,"maxBatchSize" to 500,"maxAlbumTracks" to 500,"syncRetentionDays" to 90,"maxTokenLifetimeDays" to 365,"mediaUrlTtlSeconds" to 21600,"artworkUrlTtlSeconds" to 604800),"auth" to j("flows" to listOf("authorization_code","device_code","refresh_token","personal_token"),"scopes" to API_SCOPES.toList()))
+                val fields=j("apiVersion" to "1.0","server" to serverInfo(),"capabilities" to j("dulcet.sync" to j("versions" to listOf(1)),"dulcet.home" to j("versions" to listOf(1))),"limits" to j("maxPageSize" to 500,"maxBatchSize" to 500,"maxAlbumTracks" to 500,"syncRetentionDays" to 90,"maxTokenLifetimeDays" to 365,"mediaUrlTtlSeconds" to 21600,"artworkUrlTtlSeconds" to 604800),"auth" to j("flows" to listOf("authorization_code","device_code","refresh_token","personal_token"),"scopes" to API_SCOPES.toList()))
                 call.send(if(p==null) fields else JsonObject(fields+j("permissions" to j("scopes" to p.scopes.toList(),"download" to ("media:read" in p.scopes && ctx.apiUsers.download(p.user.id)),"admin" to ("admin" in p.scopes)))))
             }
             get("/openapi.yaml") { call.respondText(DulcetApi::class.java.classLoader.getResourceAsStream("dulcet-api/openapi.yaml")!!.bufferedReader().use { it.readText() },ContentType.parse("application/yaml")) }
             ctx.apiAuth.install(this)
             ctx.apiUsers.install(this)
+            get("/recommendations/home") {
+                val p = call.principal(ctx, "catalog:read", "user:read")
+                val limit = call.request.queryParameters["limit"]?.let { it.toIntOrNull() ?: throw ApiProblem(400,"invalid-request") } ?: 20
+                if (limit !in 1..50) throw ApiProblem(400,"invalid-request")
+                val shelves = ctx.home.shelves(p.user.id, limit).map { shelf ->
+                    j("id" to shelf.id, "title" to shelf.title, "reason" to shelf.reason,
+                        "items" to shelf.ids.mapNotNull { if (shelf.type=="playlist") ctx.apiUserData.resource("playlist",it,p) else ctx.apiCatalog.resource(shelf.type,it,p) })
+                }
+                call.send(j("shelves" to shelves))
+            }
             ctx.apiCatalog.install(this)
             ctx.apiUserData.install(this)
             ctx.apiMedia.install(this)
