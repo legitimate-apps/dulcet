@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -160,6 +161,10 @@ internal fun TvSearchScreen(
     onActivate: (SearchResultItem) -> Unit,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
+    val resultsList = rememberLazyListState()
+    // A new query starts at its first group. Keeping the old scroll anchor could leave that
+    // group's focus requester uncomposed when the remote moves DOWN from the query field.
+    LaunchedEffect(state.query) { resultsList.scrollToItem(0) }
     val recents by presenter.recents.collectAsStateWithLifecycle()
     val recentError by presenter.recentSearchError.collectAsStateWithLifecycle()
     var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
@@ -314,6 +319,7 @@ internal fun TvSearchScreen(
                 }
             }
             LazyColumn(
+                state = resultsList,
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
                     .semantics { this[SearchObservation] = state },
                 verticalArrangement = Arrangement.spacedBy(12.dp),

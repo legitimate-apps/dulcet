@@ -127,6 +127,18 @@ class AndroidTvMyLibraryProofTest {
 
     /** Focus, then the centre key, as a remote selects. */
     private fun select(tag: String): Boolean {
+        // Home's first card takes default focus and can scroll its sections out of composition.
+        // Reveal them with the remote before selecting one, as the catalog host proof does.
+        if (tag.startsWith("library.view.")) {
+            var steps = 0
+            repeat(3) {
+                if (compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+                    remote(KeyEvent.KEYCODE_DPAD_UP)
+                    steps += 1
+                }
+            }
+            println("MYLIBRARY TV remote-reveal tag=$tag up-steps=$steps composed=${!noTag(tag, 1)}")
+        }
         if (!awaitTag(tag)) return false
         compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
         compose.waitForIdle()

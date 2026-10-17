@@ -39,4 +39,20 @@ class TvGroupedSearchTest {
         assertEquals(listOf("Previous search", "Previous search"), source.committed)
         presenter.close()
     }
+    @Test fun editingANewQueryAfterScrollingRestoresTheFirstGroupForRemoteDown() {
+        val source = LibraryDepthSearchFixture()
+        val presenter = SearchPresenter(SearchAccount("depth-search", "https://music.example.invalid", "u", "p", false), source)
+        compose.setContent { MaterialTheme { TvSearchScreen(presenter, onActivate = {}) } }
+        activate("search.recent.0")
+        compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag("search.result.3"))
+        compose.onNodeWithTag("search.result.10").assertDoesNotExist()
+        activate("search.query")
+        compose.onNodeWithTag("search.query").performTextReplacement("Next query")
+        compose.waitForIdle()
+        assertEquals("Next query", presenter.state.value.query)
+        compose.onNodeWithTag("search.query").performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithTag("search.result.10").assertIsFocused()
+        presenter.close()
+    }
+
 }

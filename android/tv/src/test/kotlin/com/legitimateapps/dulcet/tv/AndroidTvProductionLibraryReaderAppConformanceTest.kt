@@ -98,7 +98,18 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             /** As a remote reaches the list's status lines: Up until focus leaves the cards for the grid's header. */
             override fun showListStatus() {
                 repeat(64) {
-                    if (focusedAlbum() == null) return
+                    if (focusedAlbum() == null) {
+                        // The taller header now has Load More below status. Reaching that button
+                        // does not reveal the status yet. Settle its retry focus before the shared
+                        // scenario decides whether moving here left the window's end. That move
+                        // may legitimately clear an owed page and retire the retry action.
+                        val retry = compose.onAllNodesWithTag("library.albums.retry").fetchSemanticsNodes()
+                        if (retry.isNotEmpty()) {
+                            compose.onNodeWithTag("library.albums.retry").performSemanticsAction(SemanticsActions.RequestFocus)
+                            compose.waitForIdle()
+                        }
+                        return
+                    }
                     key(Key.DirectionUp)
                 }
                 error("The remote did not leave the album cards; focus is on ${focusedAlbum()}")
