@@ -4,12 +4,11 @@
 set -euo pipefail
 : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
 mode="${1:-}"
-test_name=testListenNowLaunchAlbumAndRelaunch
 case "$mode" in
-    iphone) scheme=DulcetiOS; destination='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'; derived=DulcetiOSDerivedData; suite=DulcetiOSUITests.DulcetDesignTourUITests; target=DulcetiOSUITests/DulcetDesignTourUITests ;;
-    ipados) scheme=DulcetiOS; destination="${2:?iPad simulator destination required}"; derived=DulcetiPadOSDerivedData; suite=DulcetiOSUITests.DulcetDesignTourUITests; target=DulcetiOSUITests/DulcetDesignTourUITests ;;
-    tvos) scheme=DulcetTV; destination='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'; derived=DulcetTVDerivedData; suite=DulcetTVUITests.DulcetTVUITests; target=DulcetTVUITests/DulcetTVUITests ;;
-    macos) scheme=DulcetMac; destination='platform=macOS'; derived=DulcetMacAppTestDerivedData; suite=DulcetMacTests.DulcetMacDesignTourTest; target=DulcetMacTests/DulcetMacDesignTourTest; test_name=testDesignTour ;;
+    iphone) scheme=DulcetiOS; destination='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'; derived=DulcetiOSDerivedData;;
+    ipados) scheme=DulcetiOS; destination="${2:?iPad simulator destination required}"; derived=DulcetiPadOSDerivedData;;
+    tvos) scheme=DulcetTV; destination='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'; derived=DulcetTVDerivedData;;
+    macos) scheme=DulcetMac; destination='platform=macOS'; derived=DulcetMacAppTestDerivedData ;;
     *) echo 'run-home-proof: mode must be iphone, ipados, tvos or macos' >&2; exit 2 ;;
 esac
 export TEST_RUNNER_DULCET_HOME_PROOF=1 TEST_RUNNER_DULCET_HOME_IDIOM="$mode"
@@ -40,20 +39,57 @@ serve_mac_captures() {
         sleep 0.2
     done
 }
-xcodebuild test-without-building \
-    -project apple/Dulcet.xcodeproj -scheme "$scheme" -configuration Debug \
-    -destination "$destination" -derivedDataPath "$RUNNER_TEMP/$derived" \
-    -resultBundlePath "$result" -parallel-testing-enabled NO \
-    -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 180 \
-    "-only-testing:$target/$test_name" 2>&1 | tee "$RUNNER_TEMP/dulcet-$mode-home.log" &
-proof_pid=$!
-if [ "$mode" = macos ]; then serve_mac_captures "$proof_pid"; fi
-wait "$proof_pid"
-if [ "$mode" = macos ]; then
-    # The general design-tour test returns early unless opted in. Require the actual Home
-    # phase's two reached markers, so an environment forwarding mistake cannot look green.
-    grep -Fq 'DULCET DESIGN TOUR screen=listen-now reached=true' "$RUNNER_TEMP/dulcet-$mode-home.log"
-    grep -Fq 'DULCET DESIGN TOUR screen=listen-now-return reached=true' "$RUNNER_TEMP/dulcet-$mode-home.log"
-fi
-python3 tools/verify-xcode-test-execution "$result" "$suite" "$test_name"
-python3 tools/swift-testing-junit "$result" "$RUNNER_TEMP/dulcet-$mode-home-junit/TEST-ListenNow.xml" "${suite##*.}"
+# Literal selectors and JUnit classes keep the CI source policy able to associate each
+# evidence citation with the test actually invoked. The execution guard runs before emission.
+run_home() {
+    xcodebuild test-without-building \
+        -project apple/Dulcet.xcodeproj -scheme "$scheme" -configuration Debug \
+        -destination "$destination" -derivedDataPath "$RUNNER_TEMP/$derived" \
+        -resultBundlePath "$result" -parallel-testing-enabled NO \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 180 \
+        "$1" 2>&1 | tee "$RUNNER_TEMP/dulcet-$mode-home.log" &
+    proof_pid=$!
+    if [ "$mode" = macos ]; then serve_mac_captures "$proof_pid"; fi
+    wait "$proof_pid"
+    if [ "$mode" = macos ]; then
+        # The general design-tour test returns early unless opted in. Require actual Home
+        # markers so an environment forwarding mistake cannot look green.
+        grep -Fq 'DULCET DESIGN TOUR screen=listen-now reached=true' "$RUNNER_TEMP/dulcet-$mode-home.log"
+        grep -Fq 'DULCET DESIGN TOUR screen=listen-now-return reached=true' "$RUNNER_TEMP/dulcet-$mode-home.log"
+    fi
+    python3 tools/verify-xcode-test-execution "$result" "$2" "$3"
+}
+case "$mode" in
+macos)
+    run_home -only-testing:DulcetMacTests/DulcetMacDesignTourTest/testDesignTour \
+        DulcetMacTests.DulcetMacDesignTourTest testDesignTour
+    python3 tools/swift-testing-junit \
+        "$result" \
+        "$RUNNER_TEMP/dulcet-macos-home-junit/TEST-ListenNow.xml" \
+        DulcetMacDesignTourTest
+    ;;
+iphone)
+    run_home -only-testing:DulcetiOSUITests/DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch \
+        DulcetiOSUITests.DulcetDesignTourUITests testListenNowLaunchAlbumAndRelaunch
+    python3 tools/swift-testing-junit \
+        "$result" \
+        "$RUNNER_TEMP/dulcet-iphone-home-junit/TEST-ListenNow.xml" \
+        DulcetDesignTourUITests
+    ;;
+ipados)
+    run_home -only-testing:DulcetiOSUITests/DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch \
+        DulcetiOSUITests.DulcetDesignTourUITests testListenNowLaunchAlbumAndRelaunch
+    python3 tools/swift-testing-junit \
+        "$result" \
+        "$RUNNER_TEMP/dulcet-ipados-home-junit/TEST-ListenNow.xml" \
+        DulcetDesignTourUITests
+    ;;
+tvos)
+    run_home -only-testing:DulcetTVUITests/DulcetTVUITests/testListenNowLaunchAlbumAndRelaunch \
+        DulcetTVUITests.DulcetTVUITests testListenNowLaunchAlbumAndRelaunch
+    python3 tools/swift-testing-junit \
+        "$result" \
+        "$RUNNER_TEMP/dulcet-tvos-home-junit/TEST-ListenNow.xml" \
+        DulcetTVUITests
+    ;;
+esac
