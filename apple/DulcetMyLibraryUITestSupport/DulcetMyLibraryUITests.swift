@@ -88,6 +88,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         activate(offlineAdd)
         awaitLabel(offlineAdd, "Remove from Library")
         try select("library")
+        revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         // A direct read bypasses the offline proxy: it proves the write has not reached the server.
         let pendingBeforeRelaunch = try serverContains(album.id)
@@ -280,7 +281,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
             XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
             try capture("Library-\(variant)")
             try select("browse")
-            XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
+            let catalogAlbum = app.buttons["dulcet.library.album"].firstMatch
+            revealPhoneAlbumTile(catalogAlbum)
+            XCTAssertTrue(catalogAlbum.waitForExistence(timeout: 30))
             try capture("Browse-\(variant)")
             try openAlbum(album.title)
             let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
@@ -455,6 +458,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     @MainActor private func albumTile(_ title: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier == 'dulcet.library.album' AND label BEGINSWITH %@", title)).firstMatch
+    }
+    @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) {
+#if os(iOS)
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        // Library's destination rows and Browse's largest-text introduction precede a lazy
+        // album grid. Reach that grid with touch scrolling before asserting its publication.
+        for _ in 0..<8 {
+            if tile.exists && tile.isHittable { return }
+            app.scrollViews.firstMatch.swipeUp()
+        }
+#endif
     }
     @MainActor private func openAlbum(_ title: String) throws {
 #if !os(tvOS)
