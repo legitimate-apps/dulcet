@@ -150,8 +150,14 @@ reviewer did not rerun the suites:
   passed in that gate. Those framework builds preceded the final filtered-empty paging
   and default-category helper changes.
 - A later focused `LibraryDepthTest` run passed **16 tests**, including explicit Load More
-  progression through an empty filtered page. The subsequent 17-case focused run was
-  still pending when this record was written.
+  progression through an empty filtered page. The final focused run then passed **18
+  tests with zero failures or errors**, covering default category ordering and retained
+  write failures until recovery. Android and iOS Kotlin compilation also passed in that
+  final gate. The earlier 1,078-test full run preceded these small policy/error-helper changes.
+- Android follow-up host checks at `5c37ea58` passed **7 tests with zero failures**:
+  five phone tests and two TV tests. The phone app, TV app and both instrumentation APKs
+  compiled, **four APKs** in total. These are compilation and host-test observations;
+  the separate emulator runtime proofs were still pending.
 - `tools/typecheck-xcuitest-sources --self-test` passed for all five configured UI-test
   directories, including the four iOS and four tvOS source files. This checks standalone
   source types with the tool's XCTest assertion shims; it does not link or execute tests.
@@ -173,5 +179,6 @@ the selected booted simulator destination. A subsequent 20-second `simctl` devic
 probe produced no output and exceeded its deadline; the simulator device store remained
 mounted. This is a host execution blocker, not a diagnosis of an application failure.
 **No simulator behavior was verified by that attempt.** Native Mac integration compilation
-and Android runtime proof results were still pending. No new platform status is promoted
-on these package, core or framework results.
+and Android runtime proof results were still pending. The hosted 20-repetition Android
+host-test soak and required Apple CI await publication. No new platform status is promoted
+on these package, core, host-test or framework results.
