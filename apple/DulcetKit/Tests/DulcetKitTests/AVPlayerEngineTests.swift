@@ -13,27 +13,27 @@ import Network
 /// Real decoded PCM drives the boundary; these fail if overlap is merely reported without
 /// running both players, if the gain ignores master volume, or if a tail leaks playback events.
 @Suite(.serialized)
-struct PROBEVolumeTests {
-    @Test func PROBEsinglePlayerVolumeReadback() async throws {
+struct AVPlayerGainTests {
+    /// AVPlayer has been seen to drop a write of `volume` under audio-device load: a newer value
+    /// overtaken by an older one, still reported a second later (4 of 200 writes in two loaded
+    /// runs before the engine verified its writes). Every gain the engine sets must take effect.
+    @Test
+    func everyVolumeWriteTakesEffectEvenWhenWritesFollowEachOtherClosely() async throws {
         let engine = DulcetAVPlayerEngine()
-        let bytes = makePCMWave(duration: 30)
-        _ = await execute(engine, .prepare(commandID: .init("p"), plan: plan(resource: InMemoryPlaybackResource(data: bytes))))
+        defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
+        _ = await execute(engine, .prepare(commandID: .init("prepare"),
+            plan: plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 30)))))
         _ = await execute(engine, .play(commandID: .init("play")))
-        try await Task.sleep(nanoseconds: 1_000_000_000)
-        var immediate = 0, after100 = 0, after1s = 0
-        for i in 0..<200 {
-            let target: Double = i % 2 == 0 ? 0 : (i % 4 == 1 ? 0.4 : 0.02)
-            _ = await execute(engine, .setVolume(commandID: .init("v\(i)"), volume: target))
-            if engine.PROBEvolumes().1 != Float(target) { immediate += 1
-                try await Task.sleep(nanoseconds: 100_000_000)
-                if engine.PROBEvolumes().1 != Float(target) { after100 += 1
-                    try await Task.sleep(nanoseconds: 900_000_000)
-                    if engine.PROBEvolumes().1 != Float(target) { after1s += 1; print("PROBE LOST i=\(i) target=\(target) got=\(engine.PROBEvolumes())") }
-                }
+        let targets: [Double] = [0, 0.4, 0, 0.02]
+        for index in 0..<200 {
+            let target = targets[index % targets.count]
+            #expect(await execute(engine, .setVolume(commandID: .init("v\(index)"), volume: target)) ==
+                .completed(commandID: .init("v\(index)"), result: .withoutData))
+            try await waitUntil("write \(index) of \(target) never took effect", engine: engine, timeout: 1,
+                                mediaState: { "player_volume=\(engine.currentPlayerVolumeForTesting())" }) {
+                engine.currentPlayerVolumeForTesting() == Float(target)
             }
         }
-        print("PROBE RESULT n=200 staleImmediate=\(immediate) staleAfter100ms=\(after100) staleAfter1s=\(after1s) rate=\(engine.currentPlayerRateForTesting())")
-        _ = await execute(engine, .release(commandID: .init("r")))
     }
 }
 
@@ -73,15 +73,23 @@ struct AVPlayerCrossfadeTests {
             default: false
             }
         })
+        // AVPlayer can drop a volume write (see the engine's applyFadeVolumes), so these wait for
+        // the gains the players report rather than reading them once at the command's completion.
         #expect(await execute(engine, .setVolume(commandID: .init("fade-master"), volume: 0.4)) ==
             .completed(commandID: .init("fade-master"), result: .withoutData))
-        let faded = try #require(engine.crossfadeStateForTesting())
-        #expect(abs(faded.incomingVolume + faded.outgoingVolume - 0.4) < 0.02)
-        #expect(faded.incomingVolume > 0 && faded.outgoingVolume > 0)
-        let silenceOutcome = await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0))
-        let silent = try #require(engine.crossfadeStateForTesting())
-        print("DIAG silence outcome=\(silenceOutcome) in=\(silent.incomingVolume) out=\(silent.outgoingVolume) inRate=\(silent.incomingRate) outRate=\(silent.outgoingRate) outPos=\(silent.outgoingPosition) faded=\(faded)")
-        #expect(silent.incomingVolume == 0 && silent.outgoingVolume == 0)
+        try await waitUntil("the overlap's gains never summed to the master volume", engine: engine, timeout: 2,
+                            mediaState: { "\(String(describing: engine.crossfadeStateForTesting()))" }) {
+            guard let faded = engine.crossfadeStateForTesting() else { return false }
+            return abs(faded.incomingVolume + faded.outgoingVolume - 0.4) < 0.02 &&
+                faded.incomingVolume > 0 && faded.outgoingVolume > 0
+        }
+        #expect(await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0)) ==
+            .completed(commandID: .init("sleep-silence"), result: .withoutData))
+        try await waitUntil("a player stayed audible at master volume zero", engine: engine, timeout: 2,
+                            mediaState: { "\(String(describing: engine.crossfadeStateForTesting()))" }) {
+            guard let silent = engine.crossfadeStateForTesting() else { return false }
+            return silent.incomingVolume == 0 && silent.outgoingVolume == 0
+        }
         let boundary = fixture.events.snapshot
         let endIndex = try #require(boundary.firstIndex {
             if case let .endedNaturally(id, _) = $0 { id == fixture.first.attemptID } else { false }
@@ -174,12 +182,18 @@ struct AVPlayerCrossfadeTests {
                 } else { false }
             }
         }
-        let fwd = await execute(engine, .seek(commandID: .init("forward"), position: 3))
+        // Seek while paused. Playing, a seek from 3 had one second of media before the boundary at
+        // 4; a loaded host kept the backward seek pending for three, the item played out to 6 and
+        // AVFoundation failed the seek on the item change. That raced the host, not the engine.
+        #expect(await execute(engine, .pause(commandID: .init("hold"))) ==
+            .completed(commandID: .init("hold"), result: .withoutData))
+        let forward = await execute(engine, .seek(commandID: .init("forward"), position: 3))
+        #expect(forward == .completed(commandID: .init("forward"), result: .withoutData), "forward=\(forward)")
         let back = await execute(engine, .seek(commandID: .init("back"), position: 0))
-        defer { print("DIAGSEEK fwd=\(fwd) back=\(back) events=\(fixture.events.snapshot)") }
-        #expect(fwd == .completed(commandID: .init("forward"), result: .withoutData))
-        #expect(back == .completed(commandID: .init("back"), result: .withoutData))
+        #expect(back == .completed(commandID: .init("back"), result: .withoutData),
+                "back=\(back); events=\(fixture.events.snapshot)")
         #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
+        #expect(await execute(engine, .play(commandID: .init("resume"))) == .accepted(commandID: .init("resume")))
         try await waitUntil("backward seek lost the armed boundary", engine: engine, timeout: 30) {
             engine.crossfadeStateForTesting()?.incomingRate ?? 0 > 0
         }

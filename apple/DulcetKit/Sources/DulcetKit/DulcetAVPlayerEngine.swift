@@ -43,6 +43,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private var released = false
     private var desiredRate: Float = 1
     private var masterVolume: Float = 1
+    private var gainVerificationGeneration: UInt64 = 0
+    private let gainVerificationInterval = DispatchTimeInterval.milliseconds(20)
+    private static let gainVerificationAttempts = 100
     private var crossfadeDuration: TimeInterval = 0
     private var overlap: CrossfadeTail?
     private var crossfadeTimeObserver: Any?
@@ -55,10 +58,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         var fraction: Float = 0
     }
 
-    func PROBEvolumes() -> (Float, Float) {
-        var v: (Float, Float) = (0, 0)
-        performOnQueueSynchronously { [self] in v = (masterVolume, player.volume) }
-        return v
+    func currentPlayerVolumeForTesting() -> Float {
+        var volume: Float = 0
+        performOnQueueSynchronously { [self] in volume = player.volume }
+        return volume
     }
 
     func currentPlayerRateForTesting() -> Float {
@@ -1034,10 +1037,42 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         applyFadeVolumes()
     }
 
+    /// AVPlayer can drop a volume write: under audio-device load a newer value has been seen
+    /// overtaken by an older one, and the player went on reporting the older gain for over a
+    /// second (a 0.4 read back as 0.02, a 0 as the faded 0.38). Each write is therefore checked
+    /// on the engine queue and written again until both players report the intended gain; a
+    /// newer write supersedes the check, which gives up after `gainVerificationAttempts`.
     private func applyFadeVolumes() {
+        writeFadeVolumes()
+        gainVerificationGeneration &+= 1
+        scheduleGainVerification(generation: gainVerificationGeneration, attempt: 1)
+    }
+
+    private func writeFadeVolumes() {
+        let gains = intendedGains
+        player.volume = gains.current
+        if let tail = overlap, let gain = gains.tail { tail.player.volume = gain }
+    }
+
+    private var intendedGains: (current: Float, tail: Float?) {
         let fraction = overlap?.fraction ?? 1
-        player.volume = masterVolume * fraction
-        overlap?.player.volume = masterVolume * (1 - fraction)
+        return (masterVolume * fraction, overlap.map { _ in masterVolume * (1 - fraction) })
+    }
+
+    private var fadeVolumesApplied: Bool {
+        let gains = intendedGains
+        return player.volume == gains.current && overlap?.player.volume == gains.tail
+    }
+
+    private func scheduleGainVerification(generation: UInt64, attempt: Int) {
+        queue.asyncAfter(deadline: .now() + gainVerificationInterval) { [weak self] in
+            guard let self, !self.released, self.gainVerificationGeneration == generation,
+                  !self.fadeVolumesApplied else { return }
+            self.writeFadeVolumes()
+            if attempt < Self.gainVerificationAttempts {
+                self.scheduleGainVerification(generation: generation, attempt: attempt + 1)
+            }
+        }
     }
 
     private func endOverlap() {
