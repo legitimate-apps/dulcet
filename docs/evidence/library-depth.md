@@ -949,3 +949,11 @@ restoring both quality choices through the real pickers. Its advancement alterna
 reads one immutable nonempty title snapshot, so a removed title cannot masquerade as
 movement past the probe. UI-test source type-checking passes all five directories;
 runtime acceptance still requires the final full gate linked from PR #340.
+
+A bounded independent review finds no production blocker in the stable-toolbar,
+immutable-title or positive-dismissal changes. It identifies a gap in the startup
+control: the native and Keychain invocations share one step, so a once-per-step
+substring check can miss one wrong destination. The corrected control parses each
+of the four actual `xcodebuild` invocations, requires their acknowledged destination,
+and rejects wrong-device, generic and missing destinations independently for each
+invocation (12 mutations), alongside the eight startup acknowledgment controls.

@@ -6,6 +6,7 @@ satisfy the prerequisite, and the native/UI tests use the device that did satisf
 """
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -52,13 +53,35 @@ with tempfile.TemporaryDirectory(prefix="dulcet-startup-acks-") as directory:
         assert output.read_text() == (f"udid={device}\n" if accepted else ""), (name, output.read_text())
         print(f"PLATFORM IPHONE ACK CONTROL PASS {name} accepted={str(accepted).lower()}")
 
-for name in (
-    "Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone",
-    "Verify iPhone uses the full display",
-    "Verify the first-run Library title wraps on iPhone",
-):
-    step = workflow.split("      - name: " + name, 1)[1].split("      - name: ", 1)[0]
-    assert "steps.platform_iphone_destination.outputs.udid" in step, name
-    assert "name=iPhone 17 Pro" not in step, name
-    assert '-destination "id=$IPHONE_UDID"' in step, name
+
+def verify_destinations(candidate):
+    for name, expected_calls in (
+        ("Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone", 2),
+        ("Verify iPhone uses the full display", 1),
+        ("Verify the first-run Library title wraps on iPhone", 1),
+    ):
+        step = candidate.split("      - name: " + name, 1)[1].split("      - name: ", 1)[0]
+        assert "IPHONE_UDID: ${{ steps.platform_iphone_destination.outputs.udid }}" in step, name
+        commands = [shlex.split(line) for line in step.replace("\\\n", " ").splitlines()
+                    if line.strip().startswith("xcodebuild ")]
+        assert len(commands) == expected_calls, (name, commands)
+        for command in commands:
+            destinations = [command[i + 1] for i, token in enumerate(command) if token == "-destination"]
+            assert destinations == ["id=$IPHONE_UDID"], (name, destinations)
+
+
+verify_destinations(workflow)
+binding = '-destination "id=$IPHONE_UDID"'
+assert workflow.count(binding) == 4
+for index in range(4):
+    for replacement in ('-destination "id=$WRONG_UDID"', '-destination "name=iPhone 17 Pro"', ''):
+        pieces = workflow.split(binding)
+        mutated = binding.join(pieces[:index + 1]) + replacement + binding.join(pieces[index + 1:])
+        try:
+            verify_destinations(mutated)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(("destination mutation escaped", index, replacement))
+    print(f"PLATFORM IPHONE DESTINATION MUTATION CONTROL PASS invocation={index + 1} wrong/generic/missing rejected")
 print("PLATFORM IPHONE DESTINATION CONTROL PASS native/keychain/full-display/first-run use acknowledged UDID")
