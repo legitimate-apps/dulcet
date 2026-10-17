@@ -213,7 +213,7 @@ struct DulcetLibraryCategoryControls: View {
         Picker(DulcetStrings.libraryFilter, selection: binding) {
             Text(DulcetStrings.libraryAll).tag("all")
             Text(DulcetStrings.libraryFilterFavorites).tag("favorites")
-            if store.downloadsEnabled { Text(DulcetStrings.libraryDownloaded).tag("downloaded") }
+            if store.downloadsEnabled && category != "downloaded" { Text(DulcetStrings.libraryDownloaded).tag("downloaded") }
         }
         .accessibilityIdentifier("dulcet.library.\(category).filter")
     }
@@ -230,15 +230,18 @@ struct DulcetLibrarySongsPage: View {
                 Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
                 DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
+                Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
+                    if downloaded {
+                        store.playReaderTracks(model.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
+                    } else { store.librarySession?.shuffleLibrarySongs(using: store) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled((downloaded || store.librarySession?.isOnline != true) && (model.window?.playableTracks.isEmpty ?? true))
+                .accessibilityIdentifier("dulcet.songs.shuffleAll")
+                if !downloaded && store.librarySession?.isOnline == true {
+                    Text(DulcetStrings.libraryRandomQueueHint).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                }
                 DulcetReaderListBody(model: model) { window in
-                    Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
-                        if downloaded {
-                            store.playReaderTracks(window.playableTracks, shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
-                        } else { store.librarySession?.shuffleLibrarySongs(using: store) }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(window.playableTracks.isEmpty)
-                    .accessibilityIdentifier("dulcet.songs.shuffleAll")
                     ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
                         DulcetReaderTrackRow(item: item, index: index + 1) { track in
                             store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)

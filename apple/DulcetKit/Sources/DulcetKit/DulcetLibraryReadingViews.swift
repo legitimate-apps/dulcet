@@ -74,6 +74,7 @@ struct DulcetReaderStatusView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.dulcetAccountMessageShown) private var accountMessageShown
     let window: DulcetLibraryWindow?
+    var localCollection = false
 
     var body: some View {
         if let window, !lines(window).isEmpty || offersRetry(window) {
@@ -96,7 +97,10 @@ struct DulcetReaderStatusView: View {
     }
 
     private func lines(_ window: DulcetLibraryWindow) -> [String] {
-        [
+        if localCollection, case .cached(.offline, _) = window.freshness {
+            return [DulcetReaderCopy.coverageLine(window), DulcetReaderCopy.orderLine(window)].compactMap { $0 }
+        }
+        return [
             DulcetReaderCopy.freshnessLine(window.freshness,
                 includesReason: !accountMessageShown),
             DulcetReaderCopy.coverageLine(window),
@@ -105,6 +109,7 @@ struct DulcetReaderStatusView: View {
     }
 
     private func offersRetry(_ window: DulcetLibraryWindow) -> Bool {
+        if localCollection, case .cached(.offline, _) = window.freshness { return false }
         guard !accountMessageShown,
               window.freshness.offersRetry else { return false }
         // Offline with the network down there is nothing to retry until it returns.
@@ -1093,7 +1098,7 @@ struct DulcetReaderListBody<Rows: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             if let window = model.window {
-                DulcetReaderStatusView(window: window)
+                DulcetReaderStatusView(window: window, localCollection: model.query == .downloaded)
                 if case let .unavailable(reason) = window.freshness, window.items.isEmpty {
                     DulcetReaderUnavailableView(reason: reason, subject: subject)
                 } else if window.items.isEmpty, window.freshness != .loading, window.itemsState != .loading {
