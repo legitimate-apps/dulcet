@@ -605,13 +605,14 @@ public final class DulcetPresentationStore {
 
     /// A sidebar or TV-bar section: Library, at that section's root.
     public func selectLibrarySection(_ section: DulcetLibrarySection) {
+        let destination: DulcetSidebarDestination = myLibraryAvailable ? .browse : .library
+        if selectedDestination != destination {
+            selectDestination(destination)
+        }
         librarySection = section
         readerPath = []
         readerReturn = nil
         readerArrival = nil
-        if !isReaderDestination {
-            selectDestination(.library)
-        }
     }
 
     /// Plays tracks a reader screen resolved.

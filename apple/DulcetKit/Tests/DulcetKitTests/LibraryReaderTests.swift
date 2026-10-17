@@ -1318,6 +1318,30 @@ func aReaderPageFromAnotherDestinationOpensLibraryOnIt() {
 }
 
 @Test @MainActor
+func choosingACatalogSidebarSectionLeavesHomeAndKeepsItsOwnNavigationHistory() {
+    let factory = RecordingReaderFactory()
+    let (store, _, _) = readerModeStore(
+        persisted: DulcetAccountConnectRequest(
+            serverURL: "https://music.example.invalid", username: "listener",
+            password: "fixture-password", allowLocalHTTP: false),
+        providerInstanceID: "provider-reader", factory: factory
+    )
+    let album = DulcetReaderRoute.album(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-home"))
+    store.navigate(to: .listenNow)
+    store.pushReaderPage(album)
+    store.selectLibrarySection(.playlists)
+    #expect(store.selectedDestination == .library, "A catalog sidebar choice must leave Listen Now")
+    #expect(store.librarySection == .playlists)
+    #expect(store.readerPath.isEmpty, "The sidebar opens the chosen section's root")
+    store.navigate(to: .listenNow)
+    #expect(store.readerPath == [album], "Catalog navigation must preserve Home's own detail stack")
+    store.selectLibrarySection(.albums)
+    #expect(store.selectedDestination == .library)
+    #expect(store.librarySection == .albums)
+    #expect(store.readerPath.isEmpty)
+}
+
+@Test @MainActor
 func aPageOpenedIsOwedFocusAndBackNamesWhatThePageItLandedOnHadOpened() {
     let factory = RecordingReaderFactory()
     let (store, _, _) = readerModeStore(
