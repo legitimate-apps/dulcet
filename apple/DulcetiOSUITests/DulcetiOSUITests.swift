@@ -3444,8 +3444,8 @@ final class DulcetiOSUITests: XCTestCase {
         // 4. A failed read, then Try Again.
         guard proxyLyricsFailure(song: failing, on: true, proxy: proxy) != nil else { return }
         afterTest.append { _ = self.proxyLyricsFailure(song: failing, on: false, proxy: proxy) }
-        // Reopen the same account for cleanup: switching from the proxy URL back to the direct
-        // URL would correctly clear its account-bound queue before Up Next can restore the switch.
+        // Restore on the account used by this phase; the helper starts a new fixture queue
+        // before reaching Up Next because every injected account connection clears the old queue.
         autoplayCleanupURL = proxy.url
         guard let failedApp = launchConnected(serverURL: proxy.url, configuration: configuration,
                                               compact: expectedCompact),
@@ -3483,11 +3483,13 @@ final class DulcetiOSUITests: XCTestCase {
             + " retry-reads=\(afterRetry?.forwardedAfterDisarm ?? 0)")
     }
 
-    /// The preceding lyrics phase left a real queue to reopen. Change its persisted AutoPlay
-    /// switch through the app, read it back, and close the player before the next search.
+    /// Connecting a disposable account starts with no queue. Play a known fixture album so
+    /// Up Next exists, change its persisted AutoPlay switch, read it back, then close the player.
     @MainActor
     private func setLyricsProofAutoplay(_ enabled: Bool, in app: XCUIApplication, compact: Bool) -> Bool? {
-        guard openNowPlayingFromBar(in: app, expectingTitle: nil) else { return nil }
+        guard openLibraryAlbum("Threshold Boundary", in: app, compact: compact),
+              tapAlbumPlay(in: app),
+              openNowPlayingFromBar(in: app, expectingTitle: nil) else { return nil }
         if compact {
             let upNext = app.buttons["dulcet.now-playing.up-next"].firstMatch
             guard upNext.waitForExistence(timeout: 10) else {
