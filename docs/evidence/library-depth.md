@@ -746,10 +746,40 @@ existing lyrics-line, empty-state, failed-read receipt and retry assertion remai
 additional exact `Ogg Probe` title assertion after its plain lyrics are shown. The production
 AutoPlay default remains on. This interaction fix still needs runtime validation.
 
-Validation is still in progress. The diagnostic full run is **red**: Mac Library passed
-four of five methods, with the added TableRow assertion failing; the platform job failed
-in existing crossfade tests; and the iPhone job failed in the later lyrics proof after
-all seven Library methods passed. The corrected indexed/Outline queries and explicit
-lyrics setting require runtime validation. The iPad result and the subsequent all-green
-full-run link must be recorded before this repair is handed off. No feature cell is
+The [next full diagnostic at `d3dc1bfa`](https://github.com/legitimate-apps/dulcet/actions/runs/39053289757)
+proves the three Library corrections through the complete methods: **Mac 5 tests / zero
+failures (232.835 seconds), iPad 5 / zero (448.213 seconds), iPhone 7 / zero (636.998
+seconds)**. Mac logs `MY LIBRARY PIN heading=Pinned` without diagnostic enumeration and
+`MY LIBRARY SEARCH selected=Artists count=1 result rows=1 role=outline`; Search also
+completes the recent-query relaunch checks. iPhone again logs the required real scroll.
+The full dispatch remains **red** because later checks expose the following separate
+interactions; those passing Library suites are not an all-green handoff.
+
+- **OBSERVED — lyrics setup on both iPhone and iPad:** the new setup correctly fails its
+  exact off-state assertion: the switch remains `1`. The iPhone synthesized event taps
+  `(201, 380.7)`, the center of its 370-point label-and-gap accessibility row. The recording
+  places the actual native switch at the trailing edge, leaving the tap in blank space.
+  The helper now targets the switch thumb, 24 points inside the trailing edge, and keeps
+  the exact off, persisted-off and prior-setting restoration requirements. Its runtime
+  result is pending; no production setter failure is established by the missed tap.
+- **OBSERVED — TV remote footer navigation:** the failed hierarchy places focus on a
+  nested `Other` inside Sleep Timer, between the fifth star and Lyrics. The Menu's Button
+  itself reports no focus. The test recognizes only the heart and stars as footer controls,
+  so it repeatedly presses Down from Sleep Timer. The corrected bounded path recognizes
+  that focused descendant, moves Right to Lyrics and Left back to the heart, and requires
+  positive proof that the main test traversed Sleep Timer. The shared lyrics helper uses
+  the same focus recognition. All original remote-select, lit-line, favorite and rating
+  assertions remain. A focused leased local TV run is pending.
+- **OBSERVED — native playback check:** the platform leg separately fails
+  `transportChangesDisposeTheOutgoingTail(action: "replace")` because its initial wait
+  observes no overlap in 30.013 seconds, then the required snapshot is nil. The engine queue
+  responds in 0.002 seconds. This evidence was passed to the playback owner; no underlying
+  playback cause is inferred from the responsive queue alone.
+
+Local source type-checking passes all five UI-test directories after the TV correction.
+The attempted local Mac UI worker obtained build capacity but refused to reuse another
+lane's disposable server on port 4533, then released its resources before launching a
+fixture or app. Consequently this repair relies on the hosted `apple-ci` Mac UI run above;
+there is no new local pre-main Sandbox/XPC diagnosis or local Mac UI pass to claim.
+A fresh combined full dispatch must pass every leg before handoff. No feature cell is
 promoted by this test repair.
