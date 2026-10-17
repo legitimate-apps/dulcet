@@ -16,7 +16,7 @@ public struct DulcetQueueEntryID: Hashable, Sendable, CustomStringConvertible {
 public struct DulcetQueueEntry: Identifiable, Hashable, Sendable {
     public let id: DulcetQueueEntryID
     public let track: DulcetTrack
-    /// Added by AutoPlay (spec §14.4) rather than by the person: shown in its own section, after
+    /// Added by AutoPlay (spec §14.8) rather than by the person: shown in its own section, after
     /// everything the person queued.
     public let isAutoplay: Bool
 
@@ -82,7 +82,7 @@ public struct DulcetUpNextModel: Sendable, Hashable {
     public let current: DulcetQueueEntry?
     /// What the person queued, after the current entry.
     public let upcoming: [DulcetQueueEntry]
-    /// What AutoPlay queued after everything the person did (spec §14.4). The queue keeps these
+    /// What AutoPlay queued after everything the person did (spec §14.8). The queue keeps these
     /// last: Add to Queue lands before them, so the two never interleave.
     public let autoplay: [DulcetQueueEntry]
     public let sourceDisplayName: String?

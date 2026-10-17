@@ -106,7 +106,7 @@ public class SleepTimerCountdown(
 }
 
 /**
- * Finds AutoPlay tracks on an OpenSubsonic server (§14.4): tracks like a seed, read from the
+ * Finds AutoPlay tracks on an OpenSubsonic server (§14.8): tracks like a seed, read from the
  * person's own server and never from anywhere else. Each source is tried in turn until [count]
  * new tracks are found:
  * 1. `getSimilarSongs2` for the seed's artist, then `getSimilarSongs` for the seed itself;

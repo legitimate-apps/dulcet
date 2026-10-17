@@ -42,7 +42,7 @@ public struct DulcetSleepTimerState: Sendable, Hashable {
     }
 }
 
-/// The device's listening settings (spec §12.8 crossfade, §14.4 AutoPlay).
+/// The device's listening settings (spec §12.8 crossfade, §14.8 AutoPlay).
 public struct DulcetListeningPreference: Sendable, Hashable {
     public static let maximumCrossfadeSeconds = 12
 

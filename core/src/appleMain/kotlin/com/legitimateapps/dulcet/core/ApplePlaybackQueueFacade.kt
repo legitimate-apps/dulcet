@@ -33,7 +33,7 @@ public class ApplePlaybackQueueItemDto(
     )
 }
 
-/** An AutoPlay request (§14.4): fetch up to [count] tracks like the seed, none of [excludedRawIds]. */
+/** An AutoPlay request (§14.8): fetch up to [count] tracks like the seed, none of [excludedRawIds]. */
 public class ApplePlaybackAutoplayRequestDto internal constructor(
     public val key: String,
     public val seedRawId: String,

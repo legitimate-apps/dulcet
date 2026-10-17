@@ -9,7 +9,7 @@ public class AppleAutoplayOutcome internal constructor(
     public val error: AppleLibraryBrowseErrorDto?,
 )
 
-/** Objective-C-compatible completion-handler facade for AutoPlay's track search (§14.4). */
+/** Objective-C-compatible completion-handler facade for AutoPlay's track search (§14.8). */
 public class AppleAutoplayClient {
     private val scope: CoroutineScope = MainScope()
 

@@ -163,7 +163,7 @@ public struct DulcetUpNextSection: View {
     }
 }
 
-/// The AutoPlay switch as Up Next shows it (spec §14.4).
+/// The AutoPlay switch as Up Next shows it (spec §14.8).
 public struct DulcetAutoplayToggle {
     public let isOn: Bool
     /// False while Shuffle or Repeat is on: AutoPlay then adds nothing, and says why.

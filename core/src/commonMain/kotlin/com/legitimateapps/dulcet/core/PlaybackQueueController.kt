@@ -94,7 +94,7 @@ internal enum class PlaybackStopPoint {
 }
 
 /**
- * The queue wants AutoPlay entries (§14.4). The owner fetches up to [count] tracks like [seed],
+ * The queue wants AutoPlay entries (§14.8). The owner fetches up to [count] tracks like [seed],
  * none of them in [excludedRawIds], and answers with [PlaybackQueueController.appendAutoplay]
  * under the same [key] -- with an empty list when it found nothing or the fetch failed.
  */
@@ -314,7 +314,7 @@ internal class PlaybackQueueController(
     }
 
     /**
-     * The person's AutoPlay setting (§14.4). Turning it off removes the AutoPlay entries that
+     * The person's AutoPlay setting (§14.8). Turning it off removes the AutoPlay entries that
      * have not played yet; the current one, if AutoPlay chose it, plays on.
      */
     fun setAutoplay(enabled: Boolean): PlaybackQueueTransition {

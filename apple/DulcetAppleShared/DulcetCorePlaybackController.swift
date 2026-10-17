@@ -95,7 +95,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// surface sees a new one exactly once, by its sequence, whatever is published after it.
     private var skipNotice: DulcetSkippedTrackNotice?
     private var skipNoticeSequence = 0
-    /// AutoPlay's track search (spec §14.4), one at a time.
+    /// AutoPlay's track search (spec §14.8), one at a time.
     private lazy var autoplayClient = AppleAutoplayClient()
     private var autoplayOperation: (any AppleLibraryBrowseOperation)?
     /// The crossfade last told to the engine, per attempt (spec §12.8). Nothing is sent while
@@ -105,12 +105,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// keeps counting while the device sleeps; the other two are the queue's stop point.
     private var sleepChoice: DulcetSleepTimerChoice?
     private var sleepEndsAt: Date?
-    private let sleepCountdown = SleepTimerCountdown(fadeMilliseconds: DulcetCorePlaybackController.sleepFadeMilliseconds)
+    private var sleepCountdown = SleepTimerCountdown(fadeMilliseconds: 10_000)
+    /// A minute and the fade, in milliseconds. Tests shorten them; nothing else changes them.
+    var sleepTimerTiming: (minute: Int64, fade: Int64) = (60_000, 10_000)
     private lazy var sleepEpoch = clock.now
     private var sleepTicker: Task<Void, Never>?
     /// The gain the sleep fade last set; 1 is the engine's own level.
     private var sleepGain = 1.0
-    static let sleepFadeMilliseconds: Int64 = 10_000
 
     convenience init(
         databaseName: String = "dulcet.db",
@@ -158,7 +159,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         }
     }
 
-    /// The device's AutoPlay and crossfade settings (spec §14.4, §12.8). Without one AutoPlay is
+    /// The device's AutoPlay and crossfade settings (spec §14.8, §12.8). Without one AutoPlay is
     /// off and every boundary is gapless.
     var listeningSettings: DulcetCoreListeningSettings? {
         didSet {
@@ -801,7 +802,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         }
     }
 
-    // MARK: Listening session: AutoPlay, crossfade, sleep timer (spec §14.4, §12.8, §12.13)
+    // MARK: Listening session: AutoPlay, crossfade, sleep timer (spec §14.8, §12.8, §12.13)
 
     private static func queueItem(_ track: DulcetTrack) -> ApplePlaybackQueueItemDto {
         ApplePlaybackQueueItemDto(
@@ -902,7 +903,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             applyEdit(queueClient.setStopPoint(stopPoint: choice?.rawValue))
         case let timed?:
             if hadStopPoint { _ = queueClient.setStopPoint(stopPoint: nil) }
-            let length = Int64(timed.minutes ?? 0) * 60_000
+            let length = Int64(timed.minutes ?? 0) * sleepTimerTiming.minute
+            sleepCountdown = SleepTimerCountdown(fadeMilliseconds: sleepTimerTiming.fade)
             sleepCountdown.start(lengthMilliseconds: length, nowMilliseconds: monotonicMilliseconds())
             sleepEndsAt = Date().addingTimeInterval(TimeInterval(length) / 1_000)
             startSleepTicker()
@@ -963,7 +965,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             execute(.setVolume(commandID: commandID("sleep-fade"), volume: min(max(gain, 0), 1)))
         }
         let remaining = sleepCountdown.remainingMilliseconds(nowMilliseconds: now)?.int64Value ?? 0
-        let untilFade = remaining - Self.sleepFadeMilliseconds
+        let untilFade = remaining - sleepTimerTiming.fade
         return untilFade > 0 ? .milliseconds(min(untilFade, 30_000)) : .milliseconds(200)
     }
 
