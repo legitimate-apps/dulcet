@@ -2623,7 +2623,7 @@
         },
         "ios": {
           "status": "partial",
-          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Platform runtime verification is pending; no device claim is made.",
+          "reason": "Listen Now is the first destination. The native Home-to-album, saved relaunch and Library/Home navigation control passed 1/1 without skips in 35.622 seconds (apple-ci 38991471536 retained Home JUnit and screenshots). Shared tests establish per-account cached first paint and honest REST fallback. Current-app recent-playlist context transport remains a player-session integration dependency; final native integration gates are tracked in docs/evidence/listen-now.md.",
           "promotion_condition": {
             "status": "named",
             "targets": [
@@ -2636,7 +2636,7 @@
         },
         "ipados": {
           "status": "partial",
-          "reason": "Listen Now is the first destination. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use honest public REST fallbacks. ListenNowTest and HomeRecommendationsTest cover core and server behavior. Platform runtime verification is pending; no device claim is made.",
+          "reason": "Listen Now is the first destination. The native Home-to-album, saved relaunch and Library/Home navigation control passed 1/1 without skips in 51.905 seconds (apple-ci 38991471536 retained Home JUnit and screenshots). Shared tests establish per-account cached first paint and honest REST fallback. Current-app recent-playlist context transport remains a player-session integration dependency; final native integration gates are tracked in docs/evidence/listen-now.md.",
           "promotion_condition": {
             "status": "named",
             "targets": [
@@ -2662,7 +2662,7 @@
         },
         "android": {
           "status": "partial",
-          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, real album activation, relaunch, Library and Home controls passed on the API 34 emulator against plain REST and advertised Dulcet Server (core-ci 38992589271). Server personalization and cache-before-network have integration/shared test coverage. Current-app recent-playlist context transport belongs to the player-session integration; final evidence and promotion remain tracked in docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, real album activation, relaunch, Library and Home controls passed on the API 34 emulator against plain REST and advertised Dulcet Server (core-ci 38995786940). Server personalization and cache-before-network have integration/shared test coverage. Current-app recent-playlist context transport belongs to the player-session integration; final evidence and promotion remain tracked in docs/evidence/listen-now.md.",
           "promotion_condition": {
             "status": "named",
             "targets": [
@@ -2675,7 +2675,7 @@
         },
         "androidtv": {
           "status": "partial",
-          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, real album activation, relaunch, Library and Home controls passed on the API 34 emulator against plain REST and advertised Dulcet Server (core-ci 38993487470). Server personalization and cache-before-network have integration/shared test coverage. Current-app recent-playlist context transport belongs to the player-session integration; final evidence and promotion remain tracked in docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, real album activation, relaunch, Library and Home controls passed on the API 34 emulator against plain REST and advertised Dulcet Server (core-ci 38995786940). Server personalization and cache-before-network have integration/shared test coverage. Current-app recent-playlist context transport belongs to the player-session integration; final evidence and promotion remain tracked in docs/evidence/listen-now.md.",
           "promotion_condition": {
             "status": "named",
             "targets": [

@@ -84,12 +84,14 @@ not native UI execution.
 
 | Control | Observed result | Evidence |
 | --- | --- | --- |
-| Android phone Home, plain REST | 1 passed, 0 skipped | [core-ci 38992589271](https://github.com/legitimate-apps/dulcet/actions/runs/38992589271), phone fallback XML |
+| Android phone Home, plain REST | 1 passed, 0 skipped | [core-ci 38995786940](https://github.com/legitimate-apps/dulcet/actions/runs/38995786940), phone fallback XML |
 | Android phone Home, Dulcet Server | 1 passed, 0 skipped | Same run, `listen-now-dulcet/results` XML; whole phone job passed |
 | Android TV Home, plain REST | 1 passed, 0 skipped | Same run, TV fallback XML |
 | Android TV Home, Dulcet Server | 1 passed, 0 skipped | Same run, `listen-now-dulcet/results` XML |
 | Mac hosted production Home | 1 passed, 0 skipped; reached Home, album and return markers | [Apple run 38991471536](https://github.com/legitimate-apps/dulcet/actions/runs/38991471536), Mac Home JUnit and three screen captures |
-| Native iPhone/iPad/Apple TV Home | Pending | [Apple fixture run 38991471536](https://github.com/legitimate-apps/dulcet/actions/runs/38991471536) |
+| iPhone Home | 1 passed, 0 skipped; 35.622 seconds | [Apple run 38991471536](https://github.com/legitimate-apps/dulcet/actions/runs/38991471536), retained Home JUnit/xcresult |
+| iPad Home | 1 passed, 0 skipped; 51.905 seconds | Same run, separate iPad Home JUnit/xcresult |
+| Apple TV Home and corrected Mac connection controls | Pending | [replacement native run 38995086942](https://github.com/legitimate-apps/dulcet/actions/runs/38995086942) |
 | Full core/server/API and Android integration gate | Follow the PR checks; prior full run failed legacy TV setup before server tests | [PR #329 checks](https://github.com/legitimate-apps/dulcet/pull/329/checks) |
 
 Run 38992589271's following TV Library split control still assumed Library was the initial
@@ -104,13 +106,22 @@ Host soaks all passed 20/20 repetitions: [production Library](https://github.com
 (two methods, 40 executions), [simple phone Search](https://github.com/legitimate-apps/dulcet/actions/runs/38991408220)
 (one method, 20 executions), [production phone Search](https://github.com/legitimate-apps/dulcet/actions/runs/38992586654)
 (one method, 20 executions), and [TV Home/Library/Search](https://github.com/legitimate-apps/dulcet/actions/runs/38992589407)
-(ten methods, 200 executions). The production Search control continues to require device-only
+(ten methods, 200 executions). The remaining TV genre/sort/play/playlist controls passed
+[20/20 repetitions](https://github.com/legitimate-apps/dulcet/actions/runs/38995783421)
+(eight methods, 160 executions, zero skips). The production Search control continues to require device-only
 one-character results, unique identities and remote canaries; Home may populate additional valid
 cached catalog rows.
 
-Local Android TV Home instrumentation passed 1/1 in 39.724 seconds against a disposable Dulcet
-Server. The three reviewed photos show the New on Your Server shelf, opened album and relaunched
-Home. They predate the final focus-arrival adjustment; hosted execution validates that adjustment.
+Local Android TV Home instrumentation also passed 1/1 in 39.724 seconds against a disposable
+Dulcet Server. The committed Android photos are from the final hosted production Home controls
+in run 38995786940: both phone and TV Home tests passed on both server types, with all three
+photos retained per fixture. The phone header respects the status bar and hidden empty shelves
+leave no extra vertical gaps. A photograph may show another shelf's loading placeholder while
+the already populated New on Your Server shelf is usable.
+
+![Android phone Listen Now](listen-now/android-phone-home.jpg)
+![Android TV Listen Now](listen-now/android-tv-newest.jpg)
+![Android TV album opened from Home](listen-now/android-tv-album.jpg)
 
 Local Apple simulator enumeration stopped responding before UI execution; no shared runtime
 restart or host reboot was performed. The local phone emulator produced system UI ANRs and was
@@ -128,6 +139,13 @@ Reviewed Mac proof images:
 
 ![Mac Listen Now](listen-now/macos-home.jpg)
 ![Mac album opened from Home](listen-now/macos-album.jpg)
+
+The earlier iPhone and iPad jobs were cancelled during later, unrelated controls. Their retained
+Home JUnit files each contain one passing, non-skipped case; the whole workflow is not reported
+as green. The screenshots below are from those completed Home controls.
+
+![iPhone Listen Now](listen-now/iphone-home.jpg)
+![iPad Listen Now](listen-now/ipad-home.jpg)
 
 ## Integration boundary
 
