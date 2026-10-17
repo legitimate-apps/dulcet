@@ -36,7 +36,7 @@ filtering matches names. Category choices persist on this device for the bound a
 
 ## Downloaded
 
-Downloaded reads completed local download identities and pinned track metadata, without
+Downloaded reads completed local download identities and retained track metadata, without
 requiring a server request. It excludes tracks that are merely cached or streamable.
 Removing a local download removes it from the view. Downloaded filters for albums and
 artists use the known relationships of completed tracks; they do not require a previously
