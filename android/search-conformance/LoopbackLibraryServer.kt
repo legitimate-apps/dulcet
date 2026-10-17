@@ -32,6 +32,9 @@ class LoopbackLibraryServer : AutoCloseable {
         "Ambient" to listOf("ambient-song-1" to "Drift"),
     )
 
+    /** Optional complete song catalog for library-depth UI proofs. */
+    @Volatile var librarySongs: List<Pair<String, String>>? = null
+
     /** An epoch-read refusal for saved-launch connection error presentation proofs. */
     @Volatile var scanFailureCode: Int? = null
 
@@ -165,6 +168,17 @@ class LoopbackLibraryServer : AutoCloseable {
                     """{"value":${quote(name)},"songCount":${songsByGenre[name].orEmpty().size},"albumCount":1}"""
                 }
                 """"genres":{"genre":[$list]}"""
+            }
+            "search3" -> librarySongs?.let { all ->
+                val offset = parameters["songOffset"]?.toIntOrNull() ?: 0
+                val count = parameters["songCount"]?.toIntOrNull() ?: 100
+                "\"searchResult3\":{\"song\":[" + all.drop(offset).take(count).joinToString(",") { (id, title) -> genreSong(id, title) } + "]}"
+            }
+            "getRandomSongs" -> librarySongs?.let { all ->
+                "\"randomSongs\":{\"song\":[" + all.reversed().take(500).joinToString(",") { (id, title) -> genreSong(id, title) } + "]}"
+            }
+            "getTopSongs" -> librarySongs?.let { all ->
+                "\"topSongs\":{\"song\":[" + all.take(5).joinToString(",") { (id, title) -> genreSong(id, title) } + "]}"
             }
             "getArtists" -> """"artists":{"index":[{"name":"F","artist":[{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")}}]}]}"""
             "getArtist" -> """"artist":{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")},""" +

@@ -23,6 +23,11 @@ public class AndroidLibrarySearchSource(context: Context, account: SearchAccount
             override fun updateQuery(text: String) = search.updateQuery(text)
             override fun refresh() = search.refresh()
             override fun close() = search.close()
+            override fun recentSearches(completion: (List<String>) -> Unit) {
+                reader.libraryDepthState { state -> completion((0 until state.recentSearchCount).map(state::recentSearch)) }
+            }
+            override fun recordSearch(text: String) { reader.recordSearch(text) }
+            override fun clearRecentSearches() { reader.clearRecentSearches() }
         }
     }
 }

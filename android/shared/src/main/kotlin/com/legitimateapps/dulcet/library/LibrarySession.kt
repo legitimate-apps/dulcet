@@ -102,6 +102,40 @@ public class LibrarySession internal constructor(
         account.providerInstanceId.takeIf { restoredAccount },
     )
 
+    private val mutableDepth = MutableStateFlow<com.legitimateapps.dulcet.core.LibraryDepthState?>(null)
+    /** Account-bound library choices and pins, persisted by the core. */
+    public val depth: StateFlow<com.legitimateapps.dulcet.core.LibraryDepthState?> = mutableDepth.asStateFlow()
+
+    init { refreshDepth() }
+
+    public fun refreshDepth() {
+        reader.libraryDepthState { mutableDepth.value = it }
+    }
+
+    private val chosenCategories = mutableMapOf<String, Pair<String, String>>()
+    public fun setCategory(category: String, sort: String, filter: String) {
+        chosenCategories[category] = sort to filter
+        if (reader.setLibraryCategory(category, sort, filter)) refreshDepth()
+    }
+
+    public fun setCategorySort(category: String, sort: String) = setCategory(category, sort, chosenCategories[category]?.second ?: mutableDepth.value?.filter(category) ?: "all")
+    public fun setCategoryFilter(category: String, filter: String) = setCategory(category, chosenCategories[category]?.first ?: mutableDepth.value?.sort(category) ?: "title", filter)
+
+    public fun isPinned(item: AndroidLibraryItem): Boolean {
+        val state = mutableDepth.value ?: return false
+        val kind = item.pinKind() ?: return false
+        return (0 until state.pinCount).any { state.pinKind(it) == kind && state.pinRawId(it) == item.rawId }
+    }
+
+    public fun togglePin(item: AndroidLibraryItem) {
+        if (item is AndroidLibraryItem.Playlist && item.local) return
+        val kind = item.pinKind() ?: return
+        if (reader.setLibraryPin(kind, item.rawId, !isPinned(item))) {
+            refreshDepth()
+            surfaces.filter { it.key == "pinned" }.forEach { it.refresh() }
+        }
+    }
+
     private val observationState = MutableStateFlow(LibraryObservationState())
 
     /** Every publication each surface received, in order, and the reachability reports: for tests. */
@@ -304,8 +338,16 @@ public class LibrarySession internal constructor(
     public fun openAlbums(type: AndroidAlbumListType = AndroidAlbumListType.AlphabeticalByName): LibrarySurface {
         require(type in AlbumSort.CHOICES) { "not an album sort" }
         return openSurface("albums:${type.name}") { listener ->
-            reader.openWindow(AndroidLibraryQuery.AlbumList(type), listener)
+            reader.openWindow(if (type == AndroidAlbumListType.ByYear) AndroidLibraryQuery.AlbumList(type, fromYear = 9999, toYear = 1) else AndroidLibraryQuery.AlbumList(type), listener)
         }
+    }
+
+    public fun openSongs(sort: String = "title", filter: String = ""): LibrarySurface = openSurface("songs:$sort:$filter") { reader.openWindow(AndroidLibraryQuery.Songs(sort, filter), it) }
+    public fun openShuffleSongs(): LibrarySurface = openSurface("shuffleSongs") { reader.openWindow(AndroidLibraryQuery.ShuffleSongs, it) }
+    public fun openDownloaded(): LibrarySurface = openSurface("downloaded") { reader.openWindow(AndroidLibraryQuery.Downloaded, it) }
+    public fun openPinned(): LibrarySurface = openSurface("pinned") { reader.openWindow(AndroidLibraryQuery.Pinned, it) }
+    public fun openArtistTopSongs(rawId: String): LibrarySurface = openSurface("artistTopSongs:$rawId") {
+        reader.openWindow(AndroidLibraryQuery.ArtistTopSongs(rawId), it)
     }
 
     /** Every artist, one response (§16.9). The caller closes it. */

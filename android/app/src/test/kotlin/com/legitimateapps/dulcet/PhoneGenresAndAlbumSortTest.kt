@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
+import com.legitimateapps.dulcet.library.toReaderAccount
 import com.legitimateapps.dulcet.library.AlbumSort
 import com.legitimateapps.dulcet.library.LibraryLifecycle
 import com.legitimateapps.dulcet.library.LibraryObservation
@@ -168,7 +169,7 @@ class PhoneGenresAndAlbumSortTest {
         click("library.albums.sort")
         val offered = AlbumSort.CHOICES.map { AlbumSort.tag(it) }
         for (tag in offered) assertTrue(exists("library.albums.sort.$tag"), "the menu offers $tag")
-        assertEquals(listOf("alphabeticalbyname", "alphabeticalbyartist", "newest", "recent", "frequent", "highest", "random"),
+        assertEquals(listOf("alphabeticalbyname", "alphabeticalbyartist", "newest", "recent", "frequent", "highest", "random", "byyear"),
             offered, "the Apple shells' sortChoices, in their order")
         assertTrue(selected("library.albums.sort.alphabeticalbyname"), "the order showing is marked")
 
@@ -179,7 +180,7 @@ class PhoneGenresAndAlbumSortTest {
             "the Albums screen read by title, then newest")
         assertEquals("0", albumsScreenReads().first { it["type"] == "newest" }["offset"], "read from its start")
         assertTrue("albums:Newest" in observed("library.surface").surfaces)
-        assertEquals(AndroidAlbumListType.Newest, AlbumSort.load(context), "the choice is kept on this device")
+        assertEquals("Newest", savedSort(), "the choice is kept for this account on this device")
     }
 
     /** §16.14: offline, an order never read shows what this device has seen, sorted here and labelled. */
@@ -200,7 +201,7 @@ class PhoneGenresAndAlbumSortTest {
     }
 
     @Test fun theOrderChosenEarlierOnThisDeviceIsTheOneTheAlbumsOpenIn() {
-        AlbumSort.save(context, AndroidAlbumListType.Highest)
+        saveSort("Highest")
         host()
         click("library.view.albums")
         await("albums, top rated") { text("library.albums.item.0") == "Album 1 by highest" }
@@ -211,10 +212,24 @@ class PhoneGenresAndAlbumSortTest {
 
     @Test fun onlyTheOffersAreKeptAndAnythingElseStoredOpensByTitle() {
         assertFailsWith<IllegalArgumentException> { AlbumSort.save(context, AndroidAlbumListType.ByGenre) }
-        context.getSharedPreferences("dulcet.ui", 0).edit().putString("library.albumSort", "ByYear").commit()
+        context.getSharedPreferences("dulcet.ui", 0).edit().putString("library.albumSort", "ByGenre").commit()
         assertEquals(AndroidAlbumListType.AlphabeticalByName, AlbumSort.load(context))
         context.getSharedPreferences("dulcet.ui", 0).edit().putString("library.albumSort", "Random").commit()
         assertEquals(AndroidAlbumListType.Random, AlbumSort.load(context), "control: a stored offer is read back")
+    }
+
+    private fun saveSort(sort: String) {
+        val reader = AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true)
+        assertTrue(reader.setLibraryCategory("albums", sort, "all"))
+        assertEquals(sort, savedSort())
+    }
+
+    private fun savedSort(): String {
+        var value: String? = null
+        AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true).libraryDepthState { value = it.sort("albums") }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (value == null && System.nanoTime() < deadline) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(5) }
+        return checkNotNull(value)
     }
 
     // ---- Helpers ------------------------------------------------------------------------------------

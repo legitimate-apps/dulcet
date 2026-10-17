@@ -160,6 +160,8 @@ internal fun TvSearchScreen(
     onActivate: (SearchResultItem) -> Unit,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
+    val recents by presenter.recents.collectAsStateWithLifecycle()
+    var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
     val resources = libraryResources()
     val queryFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
@@ -249,7 +251,8 @@ internal fun TvSearchScreen(
                                     true
                                 }
                                 event.key == Key.DirectionDown && resultFocus.isNotEmpty() -> {
-                                    resultFocus.first().requestFocus()
+                                    resultFocus[rows.indexOfFirst { it.item.type == SearchResultType.Artist }.takeIf { it >= 0 }
+                                        ?: rows.indexOfFirst { it.item.type == SearchResultType.Album }.takeIf { it >= 0 } ?: 0].requestFocus()
                                     true
                                 }
                                 // The field keeps DOWN too, so the way to Try Again is explicit.
@@ -314,7 +317,34 @@ internal fun TvSearchScreen(
                     .semantics { this[SearchObservation] = state },
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                itemsIndexed(rows) { index, row ->
+                if (state.query.isBlank() && recents.isNotEmpty()) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Text(stringResource(SharedR.string.search_recent), style = MaterialTheme.typography.titleLarge)
+                            TvAction(stringResource(SharedR.string.search_clear), "search.recents.clear", onClick = presenter::clearRecents)
+                        }
+                    }
+                    itemsIndexed(recents) { index, query ->
+                        TvAction(query, "search.recent.$index") { presenter.updateQuery(query); presenter.commitQuery() }
+                    }
+                }
+                for (type in listOf(SearchResultType.Artist, SearchResultType.Album, SearchResultType.Track)) {
+                    val all = rows.withIndex().filter { it.value.item.type == type }
+                    val groupRows = if (type in expanded) all else all.take(4)
+                    if (all.isNotEmpty()) item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(when (type) {
+                                SearchResultType.Artist -> SharedR.string.search_group_artists
+                                SearchResultType.Album -> SharedR.string.search_group_albums
+                                SearchResultType.Track -> SharedR.string.search_group_songs
+                            }), style = MaterialTheme.typography.titleLarge)
+                            if (all.size > 4 && type !in expanded) TvAction(stringResource(SharedR.string.search_see_all),
+                                "search.seeAll.${type.name.lowercase()}") { expanded = expanded + type }
+                        }
+                    }
+                    itemsIndexed(groupRows, key = { _, indexed -> indexed.index }) { _, indexed ->
+                    val index = indexed.index
+                    val row = indexed.value
                     val result = row.item
                     val context = LocalContext.current
                     val addition = tvSearchAddition(context, playback, account?.providerInstanceId, result, row.playability)
@@ -333,9 +363,10 @@ internal fun TvSearchScreen(
                         account = account,
                         addition = addition,
                         focusRequester = resultFocus[index],
-                        queryFocusRequester = queryFocus.takeIf { index == 0 },
-                        onActivate = { onActivate(result) },
+                        queryFocusRequester = queryFocus.takeIf { index == (rows.indexOfFirst { it.item.type == SearchResultType.Artist }.takeIf { it >= 0 } ?: rows.indexOfFirst { it.item.type == SearchResultType.Album }.takeIf { it >= 0 } ?: 0) },
+                        onActivate = { presenter.commitQuery(); onActivate(result) },
                     )
+                }
                 }
             }
         }

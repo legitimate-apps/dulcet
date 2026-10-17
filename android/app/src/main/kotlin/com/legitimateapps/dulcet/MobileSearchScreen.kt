@@ -22,6 +22,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -85,6 +89,8 @@ internal fun MobileSearchScreen(
     onQueue: ((SearchResultItem, AndroidQueueInsertion) -> Unit)? = null,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
+    val recents by presenter.recents.collectAsStateWithLifecycle()
+    var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp, vertical = 16.dp),
@@ -98,6 +104,8 @@ internal fun MobileSearchScreen(
                 placeholder = { Text(stringResource(R.string.search_hint)) },
                 leadingIcon = { Icon(DulcetIcons.Search, null) },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { presenter.commitQuery() }),
                 shape = RoundedCornerShape(28.dp),
                 modifier = Modifier.fillMaxWidth().testTag("search.query"),
             )
@@ -147,7 +155,39 @@ internal fun MobileSearchScreen(
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
                     .semantics { this[SearchObservation] = state },
             ) {
-                itemsIndexed(state.rows) { index, row ->
+                if (state.query.isBlank() && recents.isNotEmpty()) {
+                    item {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(SharedR.string.search_recent), Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                            TextButton(onClick = presenter::clearRecents, modifier = Modifier.testTag("search.recents.clear")) {
+                                Text(stringResource(SharedR.string.search_clear))
+                            }
+                        }
+                    }
+                    itemsIndexed(recents) { index, query ->
+                        TextButton(onClick = { presenter.updateQuery(query); presenter.commitQuery() },
+                            modifier = Modifier.fillMaxWidth().testTag("search.recent.$index")) { Text(query) }
+                    }
+                }
+                for (type in listOf(SearchResultType.Artist, SearchResultType.Album, SearchResultType.Track)) {
+                    val all = state.rows.withIndex().filter { it.value.item.type == type }
+                    val groupRows = if (type in expanded) all else all.take(4)
+                    if (all.isNotEmpty()) item {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(when (type) {
+                                SearchResultType.Artist -> SharedR.string.search_group_artists
+                                SearchResultType.Album -> SharedR.string.search_group_albums
+                                SearchResultType.Track -> SharedR.string.search_group_songs
+                            }), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            if (all.size > 4 && type !in expanded) TextButton(
+                                onClick = { expanded = expanded + type },
+                                modifier = Modifier.testTag("search.seeAll.${type.name.lowercase()}"),
+                            ) { Text(stringResource(SharedR.string.search_see_all)) }
+                        }
+                    }
+                    itemsIndexed(groupRows, key = { _, indexed -> indexed.index }) { _, indexed ->
+                    val index = indexed.index
+                    val row = indexed.value
                     val result = row.item
                     val playable = row.playability != AndroidLibraryPlayability.UnavailableOffline
                     MobileSearchResult(
@@ -158,11 +198,12 @@ internal fun MobileSearchScreen(
                         deviceOnly = row.source == AndroidLibrarySearchRowSource.Device &&
                             state.scope == AndroidLibrarySearchScope.ServerAndDevice,
                         unavailableOffline = !playable,
-                        onActivate = { onActivate(result) },
-                        onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { play(result) } },
+                        onActivate = { presenter.commitQuery(); onActivate(result) },
+                        onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { presenter.commitQuery(); play(result) } },
                         onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable }
                             ?.let { queue -> { insertion -> queue(result, insertion) } },
                     )
+                }
                 }
             }
         }

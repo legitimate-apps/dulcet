@@ -110,6 +110,7 @@ internal sealed interface PlaylistAddition {
 /** The account's playlists, with "New playlist". */
 @Composable
 internal fun PlaylistsList(account: SearchAccount, session: LibrarySession, actions: PhoneActions) {
+    val controls = com.legitimateapps.dulcet.library.rememberLibraryCategory(session, "playlists")
     val surface = rememberSurface(session, "playlists") { openPlaylists() }
     val publication by surface.state.collectAsState()
     val current = publication
@@ -121,6 +122,7 @@ internal fun PlaylistsList(account: SearchAccount, session: LibrarySession, acti
     LazyColumn(Modifier.fillMaxSize().testTag("library.playlists")) {
         item {
             Column {
+                LibraryCategoryControls(controls)
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
                     FilledTonalButton(onClick = { naming = true }, modifier = Modifier.testTag("library.playlists.new")) {
                         Icon(DulcetIcons.Add, null, Modifier.size(20.dp)); Spacer(Modifier.size(8.dp))
@@ -218,6 +220,7 @@ internal fun PlaylistScreen(
             IconButton(onClick = session::refresh, modifier = Modifier.testTag("playlist.refresh")) {
                 Icon(DulcetIcons.Refresh, stringResource(R.string.library_refresh))
             }
+            if (playlist != null) LibraryPinButton(session, playlist, "playlist.pin")
             if (editable) {
                 IconButton(onClick = { editing = !editing }, enabled = view != null || editing,
                     modifier = Modifier.testTag("playlist.edit")) {
