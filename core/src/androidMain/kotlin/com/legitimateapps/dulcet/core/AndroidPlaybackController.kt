@@ -1336,7 +1336,7 @@ public class AndroidPlaybackController internal constructor(
 
     /** Resolve only core-approved overlap boundaries; a zero boundary keeps the existing path. */
     private fun prepareOverlap() {
-        if (closed || !ownsActiveQueue() || preloadAttempt != null || activePlan == null ||
+        if (closed || !ownsActiveQueue() || preloadAttempt != null || activePlan == null || engine.isOverlapping ||
             SystemClock.elapsedRealtime() < preloadBlockedUntilMillis) return
         if (boundaries?.player != null && boundaries.overlapPlayer == null) return
         val snapshot = queue.snapshot()

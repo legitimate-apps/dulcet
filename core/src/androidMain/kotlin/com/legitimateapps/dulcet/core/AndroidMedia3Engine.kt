@@ -37,6 +37,7 @@ internal class AndroidMedia3Engine(
     private var overlapMilliseconds = 0L
     private var preloaded: Pair<PlaybackPlan, Player>? = null
     private var tail: Player? = null
+    internal val isOverlapping: Boolean get() = tail != null
     private var fadeStarted = 0L
     private var fadeLength = 0L
     private var sleepGain = 1.0
@@ -317,7 +318,7 @@ internal class AndroidMedia3Engine(
                     player.setPlaybackSpeed(command.rate.toFloat())
                 }
                 is PlaybackCommand.PreloadNext -> {
-                    if (createOverlapPlayer == null || prepareOverlapSource == null || overlapMilliseconds == 0L)
+                    if (createOverlapPlayer == null || prepareOverlapSource == null || overlapMilliseconds == 0L || isOverlapping)
                         return rejected(PlaybackCommandRejectionReason.Unsupported)
                     if (command.plan.androidAttemptId != command.attemptId) return rejected()
                     discardPreload()

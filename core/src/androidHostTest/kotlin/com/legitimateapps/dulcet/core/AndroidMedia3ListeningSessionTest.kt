@@ -162,6 +162,25 @@ class AndroidMedia3ListeningSessionTest {
         }
     }
 
+    @Test fun nextPreloadWaitsForTheOutgoingTailSoThreeTracksUseAtMostTwoPlayers() {
+        val incoming = mutableListOf<PlayerProbe>()
+        Fixture(overlapFactory = { PlayerProbe().apply { state = androidx.media3.common.Player.STATE_READY }
+            .also { incoming += it }.player }).use { f ->
+            f.controller.setAutoplay(false)
+            f.controller.setCrossfade(5)
+            f.play("one", "two", "three")
+            f.progress(35)
+            assertEquals(1, f.controller.state.value.currentIndex)
+            repeat(8) { incoming.first().position += 500; shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500)) }
+            assertEquals(listOf("one", "two"), f.prepared.map { it.itemId.rawId }, "No third stream while the tail is active")
+            assertEquals(2, (listOf(f.probe) + incoming).count { !it.released })
+            repeat(3) { incoming.first().position += 500; shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500)) }
+            assertTrue(f.probe.released)
+            assertEquals(listOf("one", "two", "three"), f.prepared.map { it.itemId.rawId })
+            assertEquals(2, (listOf(f.probe) + incoming).count { !it.released })
+        }
+    }
+
     @Test fun restoringCrossfadeAfterOffOrCancelledStopPointRepreloadsTheBoundary() {
         val incoming = mutableListOf<PlayerProbe>()
         Fixture(overlapFactory = { PlayerProbe().also { incoming += it }.player }).use { f ->
