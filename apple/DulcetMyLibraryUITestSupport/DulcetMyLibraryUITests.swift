@@ -125,7 +125,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(true)
         try launch(connect: false)
         try select("library")
-        XCTAssertTrue(app.staticTexts["dulcet.library.pinned.title"].firstMatch.waitForExistence(timeout: 20))
+        awaitStaticText("dulcet.library.pinned.title", content: "Pinned")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Pinned metadata must survive an offline relaunch")
         try capture("Library-Depth-Pinned-Offline")
         let downloaded = app.buttons["dulcet.library.downloaded"].firstMatch
@@ -243,7 +243,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(songs.waitForExistence(timeout: 30))
         activate(artists)
         XCTAssertTrue(app.buttons["dulcet.search.group.all"].firstMatch.waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["dulcet.search.resultCount"].firstMatch.label, "1 result", "The selected Artists group counts its own results")
+        awaitStaticText("dulcet.search.resultCount", content: "1 result")
         try capture("Library-Depth-Search-Groups")
         activate(field)
         field.typeText("\n")
@@ -548,6 +548,27 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTFail("Remote could not focus " + target.debugDescription)
     }
 #endif
+    /// macOS exposes some SwiftUI Text in AXValue rather than AXLabel. Resolve the exact
+    /// identifier from bound elements: the macOS firstMatch name-index query can miss a Text
+    /// that the same failure's accessibility hierarchy and recording show on screen.
+    @MainActor private func staticTextContent(_ identifier: String) -> String? {
+#if os(macOS)
+        guard let element = app.staticTexts.allElementsBoundByIndex.first(where: { $0.identifier == identifier }) else { return nil }
+#else
+        let element = app.staticTexts[identifier].firstMatch
+        guard element.exists else { return nil }
+#endif
+        return element.label.isEmpty ? element.value as? String : element.label
+    }
+
+    @MainActor private func awaitStaticText(_ identifier: String, content: String) {
+        let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.staticTextContent(identifier) == content
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expected], timeout: 20), .completed,
+                       "Expected visible text \(content) at \(identifier); found \(staticTextContent(identifier) ?? "<absent>")")
+    }
+
     @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String) {
         let expected = NSPredicate(format: "label == %@", label)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)], timeout: 20), .completed)

@@ -160,3 +160,14 @@ image is the launcher Home host before its Pause action. Both use only the publi
 ![iOS Home host before its successful Resume action](system-surfaces/ios-home-widget.jpg)
 
 ![Android Home host renders the live canary and Pause button](system-surfaces/android-home-widget.jpg)
+
+## Integration UI assertion correction (2026-10-17)
+
+The full Apple run [39021621257](https://github.com/legitimate-apps/dulcet/actions/runs/39021621257)
+passed its Mac library browse proof but failed the merged offline-pin heading query and the
+grouped-search count read. OBSERVED: the retained recording at 23 seconds shows Pinned and
+Threshold Boundary after offline relaunch; the failure hierarchy contains the exact heading
+identifier. The search recording shows Artists and 1 result while the label-only assertion read
+an empty string. These failures do not establish lost pin data or an incorrect search count.
+The shared UI selector now resolves exact identifiers from bound static-text elements and reads
+AXValue when AXLabel is empty, retaining both content assertions and their bounded waits.

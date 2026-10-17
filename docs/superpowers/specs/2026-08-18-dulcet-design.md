@@ -7793,6 +7793,10 @@ remain deferred. This source and regression coverage does not claim Pinned widge
 The build-order guard checks the four pure Swift widget extensions separately, requiring no Kotlin
 link flags/provider/dependency and extension-safe APIs; every other native target retains its ordered
 strong DulcetCore linkage requirement.
+The merged Mac UI proofs resolve static text by exact accessibility identifier and accept the
+platform's AXValue as well as AXLabel. Hosted failure recordings showed the offline pinned album
+and the selected Artists count while indexed name queries and label-only reads failed; the
+assertions still require the visible Pinned heading and exactly one artist result.
 
 **2026-10-16 — Personal collection depth and device-only Library state.**
 The shared reader owns per-category sort/filter preferences, pins and recent searches in a new
