@@ -48,12 +48,11 @@ struct AVPlayerCrossfadeTests {
             engine.execute(.release(commandID: .init("cleanup"))) { _ in }
             try? FileManager.default.removeItem(at: fixture.localURL)
         }
-        try await waitUntil("crossfade did not start", engine: engine, timeout: 30) {
-            guard let state = engine.crossfadeStateForTesting() else { return false }
-            return state.incomingRate > 0 && state.outgoingRate > 0 &&
-                state.incomingVolume > 0.05 && state.outgoingVolume > 0.05
+        // The state the wait observed, not a second read: a loaded host can end the two-second
+        // overlap between two reads.
+        let state = try await waitForCrossfadeState("crossfade did not start", engine: engine) {
+            $0.incomingRate > 0 && $0.outgoingRate > 0 && $0.incomingVolume > 0.05 && $0.outgoingVolume > 0.05
         }
-        let state = try #require(engine.crossfadeStateForTesting())
         #expect(state.outgoingPosition < 6, "the old decoder must still be before its physical end")
         #expect(abs(state.incomingVolume + state.outgoingVolume - 1) < 0.02)
         #expect(fixture.controls.publications.last?.sessionID == fixture.next.playbackSessionID)
@@ -126,44 +125,50 @@ struct AVPlayerCrossfadeTests {
         }
         let requestsBeforeBoundary = resource.requestCount
         #expect(requestsBeforeBoundary > 0)
-        try await waitUntil("no-range stream did not overlap", engine: engine, timeout: 30) {
-            guard let state = engine.crossfadeStateForTesting() else { return false }
-            return state.incomingRate > 0 && state.outgoingRate > 0 &&
-                state.incomingVolume > 0 && state.outgoingVolume > 0
+        _ = try await waitForCrossfadeState("no-range stream did not overlap", engine: engine) {
+            $0.incomingRate > 0 && $0.outgoingRate > 0 && $0.incomingVolume > 0 && $0.outgoingVolume > 0
         }
-        _ = try #require(engine.crossfadeStateForTesting())
         #expect(resource.requestCount == requestsBeforeBoundary,
                 "the outgoing stream must keep its decoder, with no reopen or seek request")
     }
 
     @Test(arguments: ["pause", "stop", "seek", "replace", "release"])
     func transportChangesDisposeTheOutgoingTail(action: String) async throws {
-        let fixture = try await CrossfadeFixture.start()
-        let engine = fixture.engine
-        defer {
-            engine.execute(.release(commandID: .init("cleanup"))) { _ in }
-            try? FileManager.default.removeItem(at: fixture.localURL)
-        }
-        try await waitUntil("overlap never began", engine: engine, timeout: 30) {
-            engine.crossfadeStateForTesting()?.incomingVolume ?? 0 > 0.05
-        }
-        _ = try #require(engine.crossfadeStateForTesting())
-        let command: DulcetPlaybackCommand
-        switch action {
-        case "pause": command = .pause(commandID: .init(action))
-        case "stop": command = .stop(commandID: .init(action))
-        case "seek": command = .seek(commandID: .init(action), position: 0.5)
-        case "replace": command = .replaceCurrent(commandID: .init(action), plan: plan(
-            session: "crossfade-b", attempt: "replacement"))
-        default: command = .release(commandID: .init(action))
-        }
-        let outcome = await execute(engine, command)
-        #expect(!outcome.isRejectedForCrossfadeTest)
-        #expect(engine.crossfadeStateForTesting() == nil)
-        #expect(fixture.originalPlayer.rate == 0)
-        #expect(fixture.originalPlayer.items().isEmpty)
-        if ["pause", "stop", "release"].contains(action) {
-            #expect(engine.currentPlayerRateForTesting() == 0)
+        // The command runs in the engine-queue turn that finds the overlap active. Otherwise a
+        // loaded host can let the two-second tail end on its own first, and every expectation
+        // below would pass without the command having disposed anything. When the overlap ends
+        // before the command can be issued, the scenario did not happen; run it again.
+        for attempt in 1...3 {
+            let fixture = try await CrossfadeFixture.start()
+            let engine = fixture.engine
+            defer {
+                engine.execute(.release(commandID: .init("cleanup"))) { _ in }
+                try? FileManager.default.removeItem(at: fixture.localURL)
+            }
+            _ = try await waitForCrossfadeState("overlap never began", engine: engine) {
+                $0.incomingVolume > 0.05
+            }
+            let command: DulcetPlaybackCommand
+            switch action {
+            case "pause": command = .pause(commandID: .init(action))
+            case "stop": command = .stop(commandID: .init(action))
+            case "seek": command = .seek(commandID: .init(action), position: 0.5)
+            case "replace": command = .replaceCurrent(commandID: .init(action), plan: plan(
+                session: "crossfade-b", attempt: "replacement"))
+            default: command = .release(commandID: .init(action))
+            }
+            guard let outcome = await executeDuringOverlap(engine, command) else {
+                #expect(attempt < 3, "the overlap ended before the command could be issued, 3 times")
+                continue
+            }
+            #expect(!outcome.isRejectedForCrossfadeTest)
+            #expect(engine.crossfadeStateForTesting() == nil)
+            #expect(fixture.originalPlayer.rate == 0)
+            #expect(fixture.originalPlayer.items().isEmpty)
+            if ["pause", "stop", "release"].contains(action) {
+                #expect(engine.currentPlayerRateForTesting() == 0)
+            }
+            return
         }
     }
 
@@ -2474,6 +2479,37 @@ private func execute(
     await withCheckedContinuation { continuation in
         engine.execute(command) { continuation.resume(returning: $0) }
     }
+}
+
+/// nil when no overlap was active, in which case the command did not run.
+private func executeDuringOverlap(
+    _ engine: DulcetAVPlayerEngine,
+    _ command: DulcetPlaybackCommand
+) async -> DulcetPlaybackCommandOutcome? {
+    await withCheckedContinuation { continuation in
+        let ran = engine.executeDuringOverlapForTesting(command) { continuation.resume(returning: $0) }
+        if !ran { continuation.resume(returning: nil) }
+    }
+}
+
+private typealias CrossfadeState = (incomingRate: Float, outgoingRate: Float,
+                                    incomingVolume: Float, outgoingVolume: Float, outgoingPosition: Double)
+
+/// The first overlap state that satisfies `predicate`, as that one read observed it. Waiting for a
+/// condition and then reading the state again races the end of the overlap.
+private func waitForCrossfadeState(
+    _ failure: String,
+    engine: DulcetAVPlayerEngine,
+    timeout: TimeInterval = 30,
+    where predicate: (CrossfadeState) -> Bool
+) async throws -> CrossfadeState {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(timeout))
+    while ContinuousClock.now < deadline {
+        if let state = engine.crossfadeStateForTesting(), predicate(state) { return state }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    try await waitUntil(failure, engine: engine, timeout: 0) { false }
+    return try #require(nil as CrossfadeState?, Comment(rawValue: failure))
 }
 
 // This budget is deliberately opt-in. Only waits driven by real AVFoundation loading, readyToPlay,

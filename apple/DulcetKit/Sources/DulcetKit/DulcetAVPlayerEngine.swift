@@ -81,6 +81,21 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
         return state
     }
+    /// Runs `command` in the same engine-queue turn that finds an overlap active, so a test cannot
+    /// mistake a tail that ended on its own for one the command disposed. Returns false, without
+    /// running the command, when no overlap is active.
+    func executeDuringOverlapForTesting(
+        _ command: DulcetPlaybackCommand,
+        completion: @escaping DulcetPlaybackCommandCompletion
+    ) -> Bool {
+        var ran = false
+        performOnQueueSynchronously { [self] in
+            guard overlap != nil else { return }
+            ran = true
+            executeOnQueue(command, completion: completion)
+        }
+        return ran
+    }
     private var playerObservers: [NSKeyValueObservation] = []
     private var notificationObservers: [NSObjectProtocol] = []
     private var cancelSampler: (@Sendable () -> Void)?
