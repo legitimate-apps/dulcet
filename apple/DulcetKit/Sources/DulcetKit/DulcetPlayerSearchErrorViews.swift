@@ -1036,6 +1036,11 @@ struct DulcetNowPlayingView: View {
             )
             : player.audioFormat.codec)
             .font(.caption.monospaced())
+            // One line, scaled down rather than wrapped: at accessibility sizes the row's
+            // controls leave it little width, and a badge wrapped over several lines pushed the
+            // footer below a phone's window.
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
             .dulcetForeground(.secondaryTextOnRegularMaterial)
             .padding(.horizontal, DulcetSpacing.xs)
             .padding(.vertical, DulcetSpacing.xxs)
