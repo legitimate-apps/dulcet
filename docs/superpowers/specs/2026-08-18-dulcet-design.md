@@ -13533,7 +13533,9 @@ Recent playlist picks use only playlist contexts recorded in that user's play hi
 annotations. Imported song-only play counts and last-played times contribute to album shelves;
 `MAX(album plays, sum of song plays)` avoids counting each scrobble twice. Rediscover requires
 a favourite, rating >=4 or at least three plays and no play in 30 days. Daily and station shelves
-have no candidates until that user has an affinity signal. Every candidate is filtered through
+have no candidates until that user has an affinity signal. Personal track shelves omit one- and
+two-star songs; explicit song ratings take precedence over album/artist ratings, with zero
+meaning unrated. Recent/frequent album shelves continue to report actual history. Every candidate is filtered through
 catalog access before selection; no other user's annotations participate.
 
 `dulcet.home` v1 advertises the Dulcet API endpoint. Current `/rest` clients negotiate
@@ -13737,6 +13739,12 @@ the 2026-10-12 §28 entry.
   wins; remote commands are relayed over `/events`; an offline device reconnects with its base
   revision and the server's queue wins unless the person chooses "Continue here".
 - My Library carries the `dulcetLibrary` semantics, plus removal records in the feed.
+- Optional `dulcet.home` v1 exposes `GET /recommendations/home?limit=20` only after capability
+  negotiation. It requires `catalog:read` and `user:read`, returns ordered shelves of visible
+  resources with explanations, bounds each shelf to 1–50 items, and supports private ETag
+  revalidation. Picks use the authenticated user's history, stars and ratings (§29.4.1); reads
+  do not record plays or change My Library. The optional Home conformance profile is `DA-HOME-1`
+  (`docs/dulcet-api/CONFORMANCE.md`).
 - Plays carry a client-generated id recorded once, so retries never double-count.
 - Server-Sent Events with a schema per event type, Standard Webhooks signing with SSRF rules, and
   an MCP endpoint (`docs/dulcet-api/mcp-tools.json`) whose write tools require `user:write`, whose

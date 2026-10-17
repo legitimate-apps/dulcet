@@ -795,7 +795,9 @@ Server offers recent albums and playlists, heavy rotation, new additions, redisc
 rotation, favourites and artist/genre stations. Ranking is an implementation choice, not a
 cross-server identity guarantee. With no preference history, personal shelves are empty and
 new additions and clearly labelled exploration remain useful. Random catalog picks are never
-presented as evidence of personal taste.
+presented as evidence of personal taste. Dulcet Server omits songs rated one or two stars
+from personal mixes and stations; a song rating overrides inherited album/artist ratings,
+and zero is unrated. Recent and frequent shelves still report actual listening history.
 
 Home is a bounded snapshot, not a cursor collection. Persist it per account, display cached
 content with its age, then refresh; retain it on failure. The response carries a private ETag

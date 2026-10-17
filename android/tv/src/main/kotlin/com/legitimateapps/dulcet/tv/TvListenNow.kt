@@ -50,7 +50,9 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                         }
                         LazyRow(horizontalArrangement=Arrangement.spacedBy(20.dp),contentPadding=PaddingValues(vertical=8.dp)) {
                             itemsIndexed(publication.items,key={ _, item -> item::class.simpleName+item.rawId }) { position,item ->
-                                TvCard(account,item,"listenNow.${shelf.wireName}.item.$position",default=position==0) {
+                                // Keep the remote on Home until the person moves down. Several
+                                // shelves can arrive together; none may steal focus from the bar.
+                                TvCard(account,item,"listenNow.${shelf.wireName}.item.$position") {
                                     when(item) {
                                         is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
                                         is AndroidLibraryItem.Track -> playTracks(plays,account.providerInstanceId,shown?.items.orEmpty(),item.rawId,shelf.title) {

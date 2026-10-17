@@ -22,7 +22,11 @@ class HomeRecommendations(private val ctx: ServerContext) {
         fun albumIds(where: String, order: String, vararg args: Any?) = ctx.db.read {
             query("SELECT id FROM ($albums) WHERE $where ORDER BY $order, id LIMIT ?", user, user, *args, limit) { it.string("id") }
         }
-        val affinity = """(COALESCE(a.play_count,0) + 4*MAX(COALESCE(a.rating,0), COALESCE(aa.rating,0), COALESCE(ar.rating,0)) +
+        // A song's explicit rating wins over its album/artist. Zero means unrated, and a low
+        // rating is a veto for new personal picks, even when old plays or inherited stars exist.
+        val rating = "COALESCE(NULLIF(a.rating,0), NULLIF(aa.rating,0), NULLIF(ar.rating,0), 0)"
+        val eligible = "$rating NOT IN (1,2)"
+        val affinity = """(COALESCE(a.play_count,0) + CASE WHEN $rating>=4 THEN 4*($rating-3) ELSE 0 END +
             CASE WHEN a.starred IS NOT NULL OR aa.starred IS NOT NULL OR ar.starred IS NOT NULL THEN 20 ELSE 0 END)"""
         val signals = """LEFT JOIN annotation a ON a.user_id=a_user.id AND a.item_type='song' AND a.item_id=t.id
             LEFT JOIN annotation aa ON aa.user_id=a_user.id AND aa.item_type='album' AND aa.item_id=t.album_id
@@ -30,16 +34,16 @@ class HomeRecommendations(private val ctx: ServerContext) {
         // Bind the user once for every annotation join, including album/artist-only favourites.
         val trackSource = "track t JOIN user a_user ON a_user.id=? $signals"
         fun tracks(where: String, order: String, vararg args: Any?) = ctx.db.read {
-            query("SELECT t.id FROM $trackSource WHERE ($where) AND $visible ORDER BY $order, t.id LIMIT ?", user, *args, limit) { it.string("id") }
+            query("SELECT t.id FROM $trackSource WHERE ($where) AND $eligible AND $visible ORDER BY $order, t.id LIMIT ?", user, *args, limit) { it.string("id") }
         }
         // A deterministic rotation changes daily without trusting a random candidate order or
         // manufacturing affinity for an account that has never listened or liked anything.
         val rotate = "((t.rowid + $day) % (SELECT MAX(rowid) FROM track))"
         val topArtist by lazy { ctx.db.read {
-            string("SELECT t.artist_id FROM $trackSource WHERE $visible AND $affinity>0 GROUP BY t.artist_id ORDER BY SUM($affinity) DESC,t.artist_id LIMIT 1", user)
+            string("SELECT t.artist_id FROM $trackSource WHERE $visible AND $eligible AND $affinity>0 GROUP BY t.artist_id ORDER BY SUM($affinity) DESC,t.artist_id LIMIT 1", user)
         } }
         val topGenre by lazy { ctx.db.read {
-            string("SELECT g.genre FROM $trackSource JOIN track_genre g ON g.track_id=t.id WHERE $visible AND $affinity>0 GROUP BY g.genre ORDER BY SUM($affinity) DESC,g.genre LIMIT 1", user)
+            string("SELECT g.genre FROM $trackSource JOIN track_genre g ON g.track_id=t.id WHERE $visible AND $eligible AND $affinity>0 GROUP BY g.genre ORDER BY SUM($affinity) DESC,g.genre LIMIT 1", user)
         } }
         return buildList {
             fun pick(id: String, title: String, reason: String, type: String, ids: () -> List<String>) {
@@ -61,7 +65,7 @@ class HomeRecommendations(private val ctx: ServerContext) {
                 albumIds("(starred>0 OR rating>=4 OR plays>=3) AND played<?", "played ASC, plays DESC", now-30L*86_400_000)
             }
             pick("dailyMix", "Daily Mix", "A daily rotation of your plays, stars and ratings", "track") { tracks("$affinity>0", "$rotate, $affinity DESC") }
-            pick("favourites", "Favourites Mix", "Tracks you starred or rated four stars and above", "track") { tracks("a.starred IS NOT NULL OR aa.starred IS NOT NULL OR ar.starred IS NOT NULL OR MAX(COALESCE(a.rating,0),COALESCE(aa.rating,0),COALESCE(ar.rating,0))>=4", "$rotate") }
+            pick("favourites", "Favourites Mix", "Tracks you starred or rated four stars and above", "track") { tracks("a.starred IS NOT NULL OR aa.starred IS NOT NULL OR ar.starred IS NOT NULL OR $rating>=4", "$rotate") }
             pick("artistStation", "From Your Artists", "More from an artist you play, star or rate", "track") {
                 topArtist?.let { tracks("t.artist_id=?", "$rotate", it) } ?: emptyList()
             }

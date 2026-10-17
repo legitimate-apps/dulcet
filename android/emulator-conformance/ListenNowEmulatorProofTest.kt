@@ -32,6 +32,7 @@ class ListenNowEmulatorProofTest {
                 await("listenNow.surface")
                 compose.onNodeWithTag("listenNow.open").assertIsSelected()
                 scrollTo("listenNow.newest.item.0")
+                if (isTelevision()) compose.onNodeWithTag("listenNow.open").assertIsFocused()
                 shots.shoot("home-newest")
                 activate("listenNow.newest.item.0")
                 await("album.surface")
@@ -60,8 +61,7 @@ class ListenNowEmulatorProofTest {
     }
     private fun activate(tag: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val mode = instrumentation.targetContext.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
-        if (mode == Configuration.UI_MODE_TYPE_TELEVISION) {
+        if (isTelevision()) {
             // TV Material controls activate through the centre key, as the shipped remote does.
             compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
             compose.waitForIdle()
@@ -72,6 +72,9 @@ class ListenNowEmulatorProofTest {
             compose.onNodeWithTag(tag).performClick()
         }
     }
+    private fun isTelevision(): Boolean =
+        (InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.uiMode and
+            Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
     private fun scrollTo(tag:String) {
         compose.waitUntil("$tag can be reached",30_000) {
             runCatching {

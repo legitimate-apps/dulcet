@@ -23,6 +23,9 @@ class HomeRecommendationsTest {
         ctx.db.write {
             execute("INSERT INTO annotation(user_id,item_type,item_id,starred,rating,play_count,played) VALUES(?,'song',?,?,5,12,?)", alice.id, ids[0], old, old)
             execute("INSERT INTO annotation(user_id,item_type,item_id,rating,play_count,played) VALUES(?,'song',?,0,1,?)", alice.id, ids[1], System.currentTimeMillis())
+            // Explicit dislike overrides inherited album affection, even with a large play count.
+            execute("INSERT INTO annotation(user_id,item_type,item_id,rating,play_count,played) VALUES(?,'song',?,1,200,?)", alice.id, ids[2], System.currentTimeMillis())
+            execute("INSERT INTO annotation(user_id,item_type,item_id,starred,rating) SELECT ?,'album',album_id,?,5 FROM track WHERE id=?", alice.id, old, ids[2])
         }
         ctx.db.write {
             execute("INSERT INTO playlist(id,owner_id,name,public,created,changed) VALUES ('home-playlist',?,'Recent mix',0,?,?)",alice.id,old,old)
@@ -38,8 +41,11 @@ class HomeRecommendationsTest {
             assertTrue(ctx.home.shelves(bob.id).first { it.id=="recentPlaylists" }.ids.isEmpty())
             assertEquals(listOf(ids[0]), shelves.getValue("favourites").ids)
             assertTrue(ids[0] in shelves.getValue("dailyMix").ids)
+            for (shelf in listOf("dailyMix", "favourites", "artistStation", "genreStation")) {
+                assertFalse(ids[2] in shelves.getValue(shelf).ids, "$shelf must omit explicitly low-rated songs")
+            }
             assertEquals(1, shelves.getValue("rediscover").ids.size)
-            assertEquals(2, shelves.getValue("recent").ids.size)
+            assertEquals(3, shelves.getValue("recent").ids.size)
             assertTrue(ctx.home.shelves(bob.id).first { it.id=="dailyMix" }.ids.isEmpty())
             assertTrue(ctx.home.shelves(bob.id).first { it.id=="recent" }.ids.isEmpty())
             ctx.db.write { execute("INSERT OR REPLACE INTO api_user_access(user_id,source_ids) VALUES (?,'[]')",bob.id) }

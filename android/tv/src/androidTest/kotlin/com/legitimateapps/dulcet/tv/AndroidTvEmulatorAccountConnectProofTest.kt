@@ -265,9 +265,12 @@ class AndroidTvEmulatorAccountConnectProofTest {
     private fun openLibraryFromHome() {
         awaitNode("Listen Now after connection", 60_000) { exists("listenNow.surface") }
         val tabs = listOf("listenNow.open", "search.open", "library.open", "browse.open", "tv.account.open")
+        awaitNode("Home has a place for the remote") {
+            tabs.any(::focused) || focusedTags().any { it.startsWith("listenNow.") }
+        }
         repeat(8) { if (tabs.none(::focused)) remote(KeyEvent.KEYCODE_DPAD_UP) }
         repeat(8) { if (!focused("listenNow.open")) remote(KeyEvent.KEYCODE_DPAD_LEFT) }
-        check(focused("listenNow.open")) { "The remote must reach Home in the bar" }
+        check(focused("listenNow.open")) { "The remote must reach Home in the bar; focus=${focusedTags()}" }
         remote(KeyEvent.KEYCODE_DPAD_RIGHT)
         remote(KeyEvent.KEYCODE_DPAD_RIGHT)
         awaitNode("RIGHT from Search reaches Library") { focused("library.open") }

@@ -70,8 +70,18 @@ class AndroidProductionSearchAppConformanceTest {
         }
         compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet")
         compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
-        compose.onNodeWithTag("search.result.2").assertDoesNotExist()
-        println("CONF-41 OBSERVED first-character query returns committed local library rows")
+        // Home has legitimately committed more catalog rows before Search opens. A single
+        // character must still use only device rows, including each seeded canary exactly once.
+        val state = compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
+        val rows = state.rows
+        assertEquals(com.legitimateapps.dulcet.core.AndroidLibrarySearchScope.DeviceWhileServerPending, state.scope)
+        assertFalse(state.serverPending, "No server answer is coming for one character")
+        assertTrue(rows.isNotEmpty() && rows.all { it.source == com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource.Device })
+        val ids = rows.map { it.item.id }
+        assertEquals(ids.size, ids.toSet().size, "No row is shown twice")
+        assertEquals(1, ids.count { it == environment.overlap.id })
+        assertEquals(1, ids.count { it == environment.localOnly.id })
+        println("CONF-41 OBSERVED first-character query returns committed local library rows (${rows.size} device rows)")
     }
 
 }

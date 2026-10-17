@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Run ordinary REST device controls and retain Home photos before the emulator shuts down."""
+from pathlib import Path
+import os
+import subprocess
+import sys
+
+task, surface = sys.argv[1:]
+package = 'com.legitimateapps.dulcet.tv' if surface == 'tv' else 'com.legitimateapps.dulcet.dev'
+try:
+    subprocess.run(['./gradlew', '--no-daemon', '--max-workers=2', task,
+                    '-Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4533',
+                    '-Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true'], check=True)
+finally:
+    subprocess.run(['adb', '-s', 'emulator-5554', 'pull',
+                    f'/sdcard/Android/data/{package}/files/design-tour',
+                    str(Path(os.environ['RUNNER_TEMP']) / 'listen-now-fallback-shots')], check=False)
