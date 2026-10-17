@@ -2659,11 +2659,11 @@
         },
         "android": {
           "status": "partial",
-          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+          "reason": "Android phone completed-download proof passed one test in 112.489 seconds at source 70bcc4e0: after the server relay was cut, the production Downloaded row started local playback; the observer required at least 1,500 ms of advancing media time, zero playback requests, identical bytes and sign-out cleanup. The feature remains partial because this runtime proof is not wired into required CI. See docs/evidence/library-depth.md for artifact identities and bounded scope."
         },
         "androidtv": {
           "status": "partial",
-          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. Android TV completed-download runtime proof is pending; no runtime result is claimed."
+          "reason": "Android TV completed-download proof passed one test in 61.967 seconds at source 70bcc4e0: after the server relay was cut, the production Downloaded row started local playback; the observer required at least 1,500 ms of advancing media time, zero playback requests, identical bytes and sign-out cleanup. The feature remains partial because this runtime proof is not wired into required CI. See docs/evidence/library-depth.md for artifact identities and bounded scope."
         }
       }
     },

@@ -6,8 +6,8 @@ The library-depth feature rows in `FEATURES.yml` remain **partial**, except Down
 on Apple TV, which is **n/a** under the existing tvOS download policy.
 Source implementation and shared-core tests do not establish that a native screen works.
 The Android phone and TV completed-download/offline-playback proofs passed locally.
-Other runtime limits and failed attempts are recorded below. Required CI has not executed
-on this change yet.
+Other runtime limits and failed attempts are recorded below. Required Apple CI and the
+Android host-test soaks are dispatched; their final results are pending.
 The existing Library, My Library and Search rows retain their earlier evidence and statuses.
 
 The native surfaces cover category controls, Downloaded, pins, shuffle entry points,
@@ -139,7 +139,7 @@ conversion. These are execution requirements, not observed results.
 
 | Platform | Producer in `.github/workflows/apple-ci.yml` | JUnit class | New methods | Expected total My Library cases |
 | --- | --- | --- | --- | --- |
-| iPhone | `apple-conformance-ipad-iphone`, iPhone matrix member | `DulcetMyLibraryIPhoneUITests` | Both methods below | 6 |
+| iPhone | `apple-conformance-ipad-iphone`, iPhone matrix member | `DulcetMyLibraryIPhoneUITests` | Both shared methods and iPhone-only method below | 7 |
 | iPad | `apple-conformance-ipad-iphone`, iPad matrix member | `DulcetMyLibraryIPadUITests` | Both methods below | 5 |
 | Mac | `apple-conformance-core` | `DulcetMyLibraryMacUITests` | Both methods below | 5 |
 | Apple TV | `apple-conformance-core` | `DulcetMyLibraryTVUITests` | Pin/destinations method only | 4 |
@@ -149,13 +149,20 @@ conversion. These are execution requirements, not observed results.
   iPad and Mac it also opens Downloaded; Apple TV instead checks that Downloaded is absent.
 - `testLibrarySearchGroupsAndRecentQuerySurviveRelaunch` checks the three group controls,
   expands Artists, submits a query, relaunches and replays the saved query.
+- `testIPhoneLibrarySortShuffleAndArtistDepth` runs only on iPhone. It chooses Release
+  Date, verifies the year-ordering limitation copy and persisted menu selection after
+  relaunch, opens an artist and checks Top Songs plus an album in the discography, then
+  invokes Songs Shuffle All and requires a mini-player queue surface. It does not assert
+  exact discography order, every release group, random-selection eligibility or audible
+  playback.
 
 The required `apple-ci` aggregate consumes each platform's JUnit. A future matrix evidence
 citation uses workflow/job `apple-ci`/`apple-ci` and the platform-specific JUnit class plus
-the exact method above. The new tests do not establish sort-menu behavior, completed
-offline playback, shuffle eligibility or artist grouping on a native screen. Those claims
-remain partial until their own runtime evidence exists. Existing visual-proof attachments
-continue to be exported by the same CI driver.
+the exact method above. The selectors alone establish no runtime behavior. Even after
+the new iPhone method passes, completed offline playback, exact shuffle eligibility,
+discography ordering and release grouping need their own observations; the broad rows
+remain partial until the corresponding platform claims have adequate runtime evidence.
+Existing visual-proof attachments continue to be exported by the same CI driver.
 
 ## Shared policy checks
 
@@ -231,4 +238,21 @@ mounted. This is a host execution blocker, not a diagnosis of an application fai
 **No simulator behavior was verified by that attempt.** Native Mac production integration
 compilation subsequently passed; the Mac UI runner was blocked before application main,
 as recorded above. The final Android phone and TV completed-download proofs passed.
-The hosted 20-repetition Android host-test soak and required Apple CI await publication. No broad platform status is promoted on these bounded results.
+The hosted 20-repetition Android host-test soaks and required Apple CI are dispatched;
+no broad platform status is promoted on these bounded local results.
+
+## Hosted validation in progress
+
+[Apple CI run 38993971381](https://github.com/legitimate-apps/dulcet/actions/runs/38993971381)
+was dispatched for `705a2dc0`, including the iPhone-only library-depth selector and
+execution guard. The earlier run for `14de7a41` was canceled while all four Apple
+platform/conformance legs were still queued; it supplied no native runtime result.
+No result from the replacement run is claimed yet.
+
+The hosted Mac My Library recipe targets the disposable `DulcetMyLibraryMacHost`, built
+from the production Mac and shared Swift sources. `tools/ci/run-my-library-proofs`
+sets `CODE_SIGN_STYLE=Manual`, `CODE_SIGN_IDENTITY=-` and an empty
+`CODE_SIGN_ENTITLEMENTS` for that UI run. This ad-hoc, entitlements-cleared proof is
+separate from the earlier local launch blocked during sandbox initialization. A passing
+hosted UI result would establish the tested app paths under that proof host; it would
+not by itself establish signed production sandbox behavior.
