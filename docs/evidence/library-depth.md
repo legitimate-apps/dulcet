@@ -43,8 +43,10 @@ The shared Apple proof below currently checks that the destination is reachable;
 not download a track or establish offline playback. The Android phone proof
 `AndroidEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable`
 is designed to use the existing real download fixture, cut its relay and open/play the
-Downloaded row. Its execution has not yet been observed, and it is not yet wired into
-required CI. The equivalent Android TV proof is still pending.
+Downloaded row. The equivalent TV method is
+`AndroidTvEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable`.
+Neither execution has yet been observed by this record, and these proofs are not yet
+wired into required CI.
 
 ## Pins
 
@@ -124,3 +126,33 @@ My Library notification without network reads; fresh shuffle actions; and downlo
 relationships without album-detail membership. These are core observations only.
 The implementation owner records actual execution counts separately; this document
 does not convert source inspection into a platform pass.
+
+## Local validation on 2026-10-16
+
+The implementation owners reported these **OBSERVED** local results; the documentation
+reviewer did not rerun the suites:
+
+- The serial DulcetKit Swift package run passed **334 tests in 11 suites**, including
+  account-generation guards, retained preferences after a storage failure, category
+  mutation forwarding and waiting for a fresh shuffle response. This run preceded the
+  final local-playlist pin guard and personal/catalog labeling clarifications.
+- The full core JVM run passed **1,078 tests**, with zero failures or errors, including
+  15 `LibraryDepthTest` cases. Android compilation, iOS Simulator common-test compilation,
+  migration verification and Mac/iOS Simulator/tvOS Simulator debug-framework generation
+  passed in that gate. Those framework builds preceded the final filtered-empty paging
+  and default-category helper changes.
+- A later focused `LibraryDepthTest` run passed **16 tests**, including explicit Load More
+  progression through an empty filtered page. The subsequent 17-case focused run was
+  still pending when this record was written.
+- `tools/typecheck-xcuitest-sources --self-test` passed for all five configured UI-test
+  directories, including the four iOS and four tvOS source files. This checks standalone
+  source types with the tool's XCTest assertion shims; it does not link or execute tests.
+  `tools/verify_xcodegen_regeneration --self-test` also passed.
+
+The new iPhone UI proof attempt failed **before compilation**: Xcode could not resolve
+the selected booted simulator destination. A subsequent 20-second `simctl` device-types
+probe produced no output and exceeded its deadline; the simulator device store remained
+mounted. This is a host execution blocker, not a diagnosis of an application failure.
+**No simulator behavior was verified by that attempt.** Native Mac integration compilation
+and Android runtime proof results were still pending. No new platform status is promoted
+on these package, core or framework results.
