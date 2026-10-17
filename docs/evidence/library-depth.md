@@ -6,10 +6,13 @@ The library-depth feature rows in `FEATURES.yml` remain **partial**, except Down
 on Apple TV, which is **n/a** under the existing tvOS download policy.
 Source implementation and shared-core tests do not establish that a native screen works.
 The Android phone and TV completed-download/offline-playback proofs passed locally.
-Other runtime limits and failed attempts are recorded below. The final Android phone
-and TV host-test soaks passed. The first executed Apple CI run reported a TV compile
-failure and an iPad pin-relaunch failure. A replacement run for the resulting fixes
-is pending; no Apple pass is claimed from those fixes yet.
+Other runtime limits and failed attempts are recorded below. The focused Android phone host-test soak passed. The earlier TV soak is historical;
+subsequent TV production query-reset and freshness-reflow corrections require a fresh soak. The first executed Apple CI run reported a TV compile
+failure and an iPad pin-relaunch failure. The replacement run reached the Mac proof,
+which failed at a pin-heading query and a search crash. A separate local iPhone run
+passed the three new cases and then repeated them after the resulting visual fixes;
+its bounded scope is below.
+The iPad fix and the remaining Apple platform paths still require verification.
 The existing Library, My Library and Search rows retain their earlier evidence and statuses.
 
 The native surfaces cover category controls, Downloaded, pins, shuffle entry points,
@@ -282,8 +285,32 @@ The pinned region now provides a stable view while its reader window loads; fail
 to mount the initial empty reader content is a suspected cause, pending native
 verification. A new core offline-reopen pinned-publication regression passed **1 test
 with zero failures in 7 seconds**, reported by the implementation owner. That core
-result does not establish that the native pinned row renders. No result from the
-replacement Apple run is claimed yet.
+result does not establish that the native pinned row renders.
+
+The replacement [Mac/core job](https://github.com/legitimate-apps/dulcet/actions/runs/38996405838/job/117289872668)
+passed the TV compile that had previously failed, then executed the Mac My Library
+suite: **5 tests with 2 failures in 223.746 seconds**. The offline pin case failed at
+its Pinned-heading query in **38.484 seconds**. Its failure accessibility hierarchy and
+recording nevertheless show the Pinned heading and the `Threshold Boundary` album row
+after offline relaunch. That is positive evidence that the pin metadata rendered in this
+run, and counterevidence to diagnosing this Mac assertion as lost pin data. The reason
+the query failed remains unresolved; the captured accessibility tree marked the app and
+window disabled, while the recording showed no modal or system prompt. The resulting
+source correction gives the heading a stable accessibility identifier, retains the same
+20-second positive wait and adds an offline pinned-region capture. Its runtime effect
+has not yet been verified.
+
+The Mac grouped-search case failed in **60.467 seconds** after the application crashed.
+The exported application console supplies the concrete fatal message:
+`No Observable object of type DulcetPresentationStore found.` It occurred while the
+search result table was being displayed. The crash stack passes through SwiftUI's
+required environment lookup. These observations establish a missing store environment;
+they do not independently identify which table cell or auxiliary hosted view lost it.
+The resulting source correction explicitly injects the store into Mac table cells and
+menu content and extends the hosting regression. A native rerun is still required to
+establish that the crash is resolved. The subsequent execution guards and JUnit conversions did not run after the failed
+suite. This is an application runtime failure under the hosted proof recipe, separate
+from the earlier local pre-main sandbox blocker.
 
 The hosted Mac My Library recipe targets the disposable `DulcetMyLibraryMacHost`, built
 from the production Mac and shared Swift sources. `tools/ci/run-my-library-proofs`
@@ -293,7 +320,58 @@ separate from the earlier local launch blocked during sandbox initialization. A 
 hosted UI result would establish the tested app paths under that proof host; it would
 not by itself establish signed production sandbox behavior.
 
-## Android host-soak correction and final results
+## Bounded iPhone runtime observation
+
+The implementation owner reported a separate native iPhone run at `3f8256f6`, with
+**3 tests passed, zero failures in 151.013 seconds**. The per-test execution guard
+required three terminal `Passed` results. The production Swift sources matched the
+pinned-loading and TV-style fix used by the replacement hosted run.
+
+- `testIPhoneLibrarySortShuffleAndArtistDepth` passed in **62.536 seconds**: selecting
+  release-date sorting survived relaunch, the artist Top Songs and discography appeared,
+  and Shuffle All populated the actual playback queue.
+- `testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable` passed in
+  **57.851 seconds**: a real HTTP cut and saved-account relaunch retained the pinned
+  heading and album metadata, Songs and Downloaded destinations opened, and restoring
+  connectivity allowed unpinning.
+- `testLibrarySearchGroupsAndRecentQuerySurviveRelaunch` passed: Artists, Albums and
+  Songs groups, the See All path and recent-query persistence were exercised.
+
+These are implementation-owner runtime observations. They do not establish iPad behavior
+after its earlier failure, Apple completed-file offline audio, or all library-depth
+interactions on any platform. Review of the captured compact iPhone screens also found
+an artist name squeezed into a narrow header column and a selected Artists count that
+included results from other categories. The owner corrected the compact header and selected-group count, added a count
+assertion and a full-viewport discography capture, and repeated all three native cases.
+
+The final local iPhone run at **`6d3ab4b1` passed 3 tests with zero failures in
+172.904 seconds**. The individual-result guard required three terminal `Passed`
+results. The sort/artist/shuffle case passed in **81.008 seconds**, the pin/offline
+case in **63.599 seconds**, and grouped search/recents in **28.296 seconds**. The pin
+case used the new stable Pinned-heading identifier. Downloaded opened an empty local
+destination; no Apple completed-file offline-audio result is claimed.
+
+The owner reviewed the final compressed captures and observed the full `Alpha Ensemble`
+artist name, an unobscured Albums section with its 2026 release, the offline pinned
+album and explanatory caption, and an Artists-only search count of one. These images
+are from that final run:
+
+| Native state | Capture |
+| --- | --- |
+| Release-date sort | [Release sort](library-depth-iphone/library-depth-release-sort.jpg) |
+| Artist Top Songs and full compact header | [Artist Top Songs](library-depth-iphone/library-depth-artist-top-songs.jpg) |
+| Full-viewport discography | [Artist discography](library-depth-iphone/library-depth-artist-discography.jpg) |
+| Pinned album after offline relaunch | [Offline pin](library-depth-iphone/library-depth-pinned-offline.jpg) |
+| Empty Downloaded destination | [Downloaded](library-depth-iphone/library-depth-downloaded.jpg) |
+| Songs controls | [Songs](library-depth-iphone/library-depth-songs.jpg) |
+| Shuffle queue | [Shuffle All](library-depth-iphone/library-depth-shuffle-all.jpg) |
+| Artists-only grouped search | [Search groups](library-depth-iphone/library-depth-search-groups.jpg) |
+
+The broad feature rows remain partial: the other platform paths, other pin kinds,
+additional category/filter combinations, release-type/date fallback cases and completed
+offline downloads have not been established by this three-case iPhone run.
+
+## Android host-soak correction and bounded results
 
 The [initial phone soak](https://github.com/legitimate-apps/dulcet/actions/runs/38993719454)
 at `14de7a41` executed **300 tests across 20 repetitions**: 10 repetitions passed and
@@ -310,10 +388,12 @@ at `5a9b3a3c` completed **20 passed repetitions, zero failed**, with **320 test
 executions and zero skips** (20 × 16). The existing
 [TV soak](https://github.com/legitimate-apps/dulcet/actions/runs/38993723283) at
 `14de7a41` completed **20 passed repetitions, zero failed**, with **140 test executions**
-(20 × 7). The phone correction changed only phone sources; the TV and shared sources
-are unchanged from that TV run. GitHub reports both final runs successful. These are
-hosted Android host-test observations, separate from the earlier APK-identified emulator
-completed-download proofs and from native Apple runtime behavior.
+(20 × 7). GitHub reports both of those runs successful at their stated revisions. The TV run is
+now historical: subsequent required-CI failures led the implementation owner to correct
+TV production query-reset and freshness-reflow behavior. Those later TV sources require
+a fresh soak; the earlier 20-pass result does not verify them. These are hosted Android
+host-test observations, separate from the earlier APK-identified emulator completed-download
+proofs and from native Apple runtime behavior.
 
 ## Broader required CI and migration repair
 
@@ -335,7 +415,11 @@ schema snapshot. The released `9.db` remains unchanged. The repair adds the genu
 SQLDelight-generated **`10.db`**, its version-10 fixture, registry entry and invariants.
 The snapshot-generation task passed. A composite generation-plus-verification command
 then exited on a Gradle 9.5 implicit task-dependency error; that orchestration failure
-was not a failed migration assertion. A separate Gradle verification run is still pending.
+was not a failed migration assertion. A subsequent standalone verification returned
+`UP-TO-DATE`, which did not establish fresh execution. The owner then ran
+`:core:verifyCommonMainDulcetDatabaseMigration --rerun-tasks` alone: it passed in
+**22 seconds**, with **one actionable task executed** and exit status zero. This is
+the fresh SQLDelight migration verification result, separate from the Python gate below.
 
 The implementation owner subsequently reported the repaired Python historical gate
 passed: **10 fixtures** upgraded to the fresh **70 schema objects**, with **5 protected
@@ -345,3 +429,11 @@ portable semantic checks, the generator's positive control and **7 negative cont
 also passed. The generated snapshot had no difference from the declared SQL schema;
 SQLite integrity and foreign-key checks were clean. These are local migration checks,
 not a rerun of the required core CI job or proof of native Library behavior.
+
+The subsequent [required core CI run at `3f8256f6`](https://github.com/legitimate-apps/dulcet/actions/runs/38999252126)
+completed with an overall failure. Its protected-data migration semantics and core
+build/test/license stages passed. The core-build job later failed at Android app tests;
+the Linux conformance and TV emulator jobs also failed, while the phone emulator job
+passed. The final aggregator therefore failed. This confirms the repaired migration
+gate was exercised successfully in required CI, while Android corrections still require
+their own new results. No overall CI pass is claimed.
