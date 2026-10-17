@@ -1009,6 +1009,14 @@ passing_cases = """\
   <testcase classname="DulcetKitTests"
             name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
   <testcase classname="DulcetKitTests"
+            name="crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="staleAndInvalidCrossfadeCommandsAreRejectedAndZeroKeepsGapless" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="staleAndInvalidCrossfadeCommandsAreRejectedAndZeroKeepsGapless" time="0.1" />
+  <testcase classname="DulcetKitTests"
             name="accountPresentationTransitionsGivenConnectorOutcomes" time="0.1" />
   <testcase classname="DulcetKitTests"
             name="myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack" time="0.1" />
