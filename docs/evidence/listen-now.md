@@ -95,7 +95,8 @@ not native UI execution.
 | Mac hosted production Home | 1 passed, 0 skipped; reached Home, album and return markers | [Apple run 38991471536](https://github.com/legitimate-apps/dulcet/actions/runs/38991471536), Mac Home JUnit and three screen captures |
 | iPhone Home | 1 passed, 0 skipped; 35.622 seconds | [Apple run 38991471536](https://github.com/legitimate-apps/dulcet/actions/runs/38991471536), retained Home JUnit/xcresult |
 | iPad Home | 1 passed, 0 skipped; 51.905 seconds | Same run, separate iPad Home JUnit/xcresult |
-| Apple TV Home and corrected Mac connection controls | Pending | [replacement native run 38995086942](https://github.com/legitimate-apps/dulcet/actions/runs/38995086942) |
+| Corrected Mac connection control | 1 passed, 0 skipped; 0.894 seconds | [Apple run 38995086942](https://github.com/legitimate-apps/dulcet/actions/runs/38995086942), connection-landing JUnit |
+| Apple TV Home | Pending | [replacement native run 38998014475](https://github.com/legitimate-apps/dulcet/actions/runs/38998014475) |
 | Full core/server/API and Android integration gate | Passed: server 132, API conformance 60, shared JVM/Android host 2,327, Android app host 1,753; zero failures/errors/skips | [core-ci 38995786940](https://github.com/legitimate-apps/dulcet/actions/runs/38995786940), actual JUnit case counts |
 
 The full integration run above passed after legacy navigation controls were updated to enter
@@ -144,6 +145,16 @@ unchanged through those swipes. The helper now waits for See All and targets the
 scroll view. This navigation-driver correction still requires a native runtime rerun; Library
 product code is unchanged. The separate light/dark/largest-text and ordinary-server controls
 passed in the same iPad job.
+
+That replacement run also passed Mac Home again (8.991 seconds, actual screen captures), the
+corrected connection landing, all three My Library controls, reader cache/reconnect and quality/
+lyrics controls. It then exposed a production root-navigation regression: choosing the catalog's
+Playlists sidebar row while on Home changed the catalog section but left Home displayed, because
+Home was counted as an active reader destination. Catalog sidebar choices now switch to Library
+(or Browse on a Dulcet Server) before opening the chosen section root, preserving Home's own
+navigation stack. `choosingACatalogSidebarSectionLeavesHomeAndKeepsItsOwnNavigationHistory`
+covers this trigger and return path. Native verification of that fix is pending; the failed
+whole workflow is not reported as green.
 
 Reviewed Mac proof images:
 

@@ -2610,7 +2610,7 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Listen Now opens first; hosted production Home reached populated shelves, activated an album and returned through Library/Home in apple-ci 38991471536 (1 passing test, actual screen captures). Core tests establish cache-before-network. Later legacy account controls needed the new launch destination; their rerun and current-app playlist-context transport remain pending. See docs/evidence/listen-now.md.",
+          "reason": "Listen Now opens first; hosted production Home reached populated shelves, activated an album and returned through Library/Home in apple-ci 38991471536 (1 passing test, actual screen captures). Core tests establish cache-before-network. The corrected account-connection landing also passed in apple-ci 38995086942. A later catalog-sidebar control exposed Home retaining the detail pane when Playlists was chosen; its root-navigation fix and current-app playlist-context transport remain pending verification. See docs/evidence/listen-now.md.",
           "promotion_condition": {
             "status": "named",
             "targets": [
