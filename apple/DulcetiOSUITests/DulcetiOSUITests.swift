@@ -3441,7 +3441,8 @@ final class DulcetiOSUITests: XCTestCase {
         }
         XCTAssertFalse(plainApp.staticTexts["dulcet.lyrics.line.current"].firstMatch.exists,
             "Plain lyrics have no current line, so none may be lit")
-        XCTAssertEqual(plainApp.staticTexts["dulcet.now-playing.title"].firstMatch.label, "Ogg Probe",
+        let plainTitleID = expectedCompact ? "dulcet.lyrics.header.title" : "dulcet.now-playing.title"
+        XCTAssertEqual(plainApp.staticTexts[plainTitleID].firstMatch.label, "Ogg Probe",
                        "The single-result queue must retain its track while the plain lyrics are shown")
         let plainShown = plainLines.count
         attachScreenshot(named: "lyrics-plain", app: plainApp)
