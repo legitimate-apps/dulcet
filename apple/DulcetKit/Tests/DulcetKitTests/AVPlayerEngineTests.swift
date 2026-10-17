@@ -2501,15 +2501,23 @@ private func waitForCrossfadeState(
     _ failure: String,
     engine: DulcetAVPlayerEngine,
     timeout: TimeInterval = 30,
-    where predicate: (CrossfadeState) -> Bool
+    where predicate: @escaping @Sendable (CrossfadeState) -> Bool
 ) async throws -> CrossfadeState {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(timeout))
-    while ContinuousClock.now < deadline {
-        if let state = engine.crossfadeStateForTesting(), predicate(state) { return state }
-        try await Task.sleep(for: .milliseconds(20))
+    let observed = ObservedCrossfadeState()
+    try await waitUntil(failure, engine: engine, timeout: timeout) {
+        if observed.value != nil { return true }
+        guard let state = engine.crossfadeStateForTesting(), predicate(state) else { return false }
+        observed.set(state)
+        return true
     }
-    try await waitUntil(failure, engine: engine, timeout: 0) { false }
-    return try #require(nil as CrossfadeState?, Comment(rawValue: failure))
+    return try #require(observed.value, Comment(rawValue: failure))
+}
+
+private final class ObservedCrossfadeState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var state: CrossfadeState?
+    var value: CrossfadeState? { lock.withLock { state } }
+    func set(_ newValue: CrossfadeState) { lock.withLock { if state == nil { state = newValue } } }
 }
 
 // This budget is deliberately opt-in. Only waits driven by real AVFoundation loading, readyToPlay,
@@ -2541,7 +2549,10 @@ private func waitUntil(
     let clock = ContinuousClock()
     let started = clock.now
     let deadline = clock.now.advanced(by: .seconds(timeout))
-    while !condition(), clock.now < deadline {
+    // Return on the first true evaluation. Evaluating again after the loop would fail a
+    // condition that held only briefly, such as an overlap a loaded host let end in between.
+    while clock.now < deadline {
+        if condition() { return }
         try await Task.sleep(for: .milliseconds(20))
     }
     guard !condition() else { return }
