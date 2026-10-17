@@ -2665,11 +2665,11 @@
         },
         "ios": {
           "status": "partial",
-          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets.",
+          "reason": "The real iOS 26.5 Home widget rendered the canary and its Resume App Intent advanced the existing player in a passing 63.444-second XCUITest. Recently Played, Lock Screen and ControlWidget OS interaction remain unproven; native pins are not yet projected into widgets.",
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "system-widgets-ios-os-trigger-proof",
-            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+            "reason": "The real iOS 26.5 Home widget rendered the canary and its Resume App Intent advanced the existing player in a passing 63.444-second XCUITest. Recently Played, Lock Screen and ControlWidget OS interaction remain unproven; native pins are not yet projected into widgets."
           }
         },
         "ipados": {
@@ -2687,11 +2687,11 @@
         },
         "android": {
           "status": "partial",
-          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets.",
+          "reason": "The Android API 34 Home host rendered the visible canary and its Pause button controlled the existing player in the 21.228-second local emulator proof. Android Recently Played and pinned-item widgets are not implemented, so the combined row remains partial.",
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "system-widgets-android-os-trigger-proof",
-            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+            "reason": "The Android API 34 Home host rendered the visible canary and its Pause button controlled the existing player in the 21.228-second local emulator proof. Android Recently Played and pinned-item widgets are not implemented, so the combined row remains partial."
           }
         },
         "androidtv": {
@@ -2713,11 +2713,11 @@
         },
         "ios": {
           "status": "partial",
-          "reason": "CPTemplate source and simulator signing are configured; Apple managed audio capability and refreshed channel profiles are required for device archives. CarPlay simulator trigger/effect proof is pending.",
+          "reason": "CPTemplate source and simulator entitlements compile and the iOS simulator host installs. Xcode 27 Device Hub does not support CarPlay connections to simulators; a compatible classic Simulator toolchain is needed for CPTemplate trigger/effect proof. Device archives separately require Apple audio capability and refreshed channel profiles.",
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "system-carplay-ios-os-trigger-proof",
-            "reason": "CPTemplate source and simulator signing are configured; Apple managed audio capability and refreshed channel profiles are required for device archives. CarPlay simulator trigger/effect proof is pending."
+            "reason": "CPTemplate source and simulator entitlements compile and the iOS simulator host installs. Xcode 27 Device Hub does not support CarPlay connections to simulators; a compatible classic Simulator toolchain is needed for CPTemplate trigger/effect proof. Device archives separately require Apple audio capability and refreshed channel profiles."
           }
         },
         "ipados": {
@@ -2740,7 +2740,47 @@
     },
     {
       "id": "system.android_auto",
-      "title": "Android Auto media browser and Assistant media session",
+      "title": "MediaLibraryService browse, search and playback for Android Auto clients",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1211-external-system-surfaces",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "ios": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "ipados": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        },
+        "android": {
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "A real Binder MediaBrowser subscribes to four production browse folders, searches/selects the canary into the existing queue and verifies advancing media time and pause/resume.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorSystemSurfacesProofTest/mediaBrowserSearchSelectionStartsTheExistingPlayer"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "n/a",
+          "reason": "This OS surface is not applicable to this platform; the existing native player and system media controls remain available."
+        }
+      }
+    },
+    {
+      "id": "system.android_assistant",
+      "title": "Google Assistant media voice delivery",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1211-external-system-surfaces",
       "gates": [],
       "conformance": [],
@@ -2763,11 +2803,11 @@
         },
         "android": {
           "status": "partial",
-          "reason": "MediaLibraryService browse/search/selection source exists; Android Auto/DHU and Assistant delivery proof is pending.",
+          "reason": "The existing media session exposes transport and search; Assistant recognition-to-session delivery has not been exercised.",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "system-android_auto-android-os-trigger-proof",
-            "reason": "MediaLibraryService browse/search/selection source exists; Android Auto/DHU and Assistant delivery proof is pending."
+            "blocked_on": "system-assistant-android-voice-delivery-proof",
+            "reason": "The existing media session exposes transport and search; Assistant recognition-to-session delivery has not been exercised."
           }
         },
         "androidtv": {

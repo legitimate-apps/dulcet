@@ -7809,8 +7809,8 @@ the next normal archive then activates CarPlay. Pre-grant device builds retain t
 behavior. A portal grant alone cannot alter an installed signed binary. Search is exposed through
 App Intents rather than a CarPlay keyboard template in this first implementation.
 Android Auto uses MediaLibraryService/MediaLibrarySession, a finite browse hierarchy with explicit
-continuation folders, search and validated selection. Same-app or trusted system controllers are
-accepted; arbitrary controllers are rejected. Google Assistant's media search/transport uses that
+continuation folders, search and validated selection. Media3 UID-trusted controllers (including the app UID) are
+accepted; an unverified claimed package name cannot bypass that trust check. Google Assistant's media search/transport uses that
 session; no separate account or cloud action is registered.
 
 New extension IDs are `com.legitimateapps.dulcet[.dev].widgets` on iOS and macOS. DEV/PROD each need
@@ -7818,6 +7818,13 @@ App Group registration, group capability on host/extension IDs, and refreshed ho
 new distribution profiles are `Dulcet CI Dev iOS Widgets App Store`, `Dulcet CI iOS Widgets App Store`,
 `Dulcet CI Mac Dev Widgets App Store`, `Dulcet CI Mac Widgets App Store`; their optional CI profile
 inputs are documented in the evidence file. Both channels compile identical extension sources.
+Hosts and extensions inherit numeric `CURRENT_PROJECT_VERSION=4` for local installation; iOS
+rejects an extension with an empty build version. The project-level release-policy allowlist pins
+this default to `4`; release automation overrides every target together for the selected build.
+On macOS15+, the selected `group.` App Group identifiers require provisioned group authorization.
+The installed Xcode27 Device Hub supports CarPlay only with USB-connected physical devices, not
+simulators (Apple Developer Tools Engineer, https://developer.apple.com/forums/thread/834440).
+Simulator entitlement installation therefore does not establish CarPlay display/interaction proof.
 Release policy permits only the documented app entitlement selector, constrains all widget target
 settings, validates both entitlement variants and maps extensions in export options. No release,
 portal change or new profile is claimed by this source change.

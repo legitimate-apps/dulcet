@@ -73,8 +73,16 @@ class AndroidEmulatorSystemSurfacesProofTest {
                     await("browser pause to reach the player") { !observer.state().playWhenReady }
                     main { browser.play() }
                     requireMediaTimeAdvances(observer, "MediaBrowser resume")
+                    // Deliver through Android's actual receiver boundary even in the regular
+                    // CI path. Passing a ReceiverRestrictedContext to MediaController used to
+                    // crash here; an in-process onReceive call would miss that regression.
+                    context.sendBroadcast(Intent(context, DulcetPlaybackWidget::class.java)
+                        .setAction(DulcetPlaybackWidget.TOGGLE))
+                    await("widget receiver pause to reach the existing player") { !observer.state().playWhenReady }
+                    main { browser.play() }
+                    requireMediaTimeAdvances(observer, "resume after widget receiver")
                     println("ANDROID SYSTEM SURFACES OBSERVED binder-browser=true folders=4 subscriptions=4 " +
-                        "search-selection=true raw-id-match=true advancing-ms=$position pause-resume=true")
+                        "search-selection=true raw-id-match=true advancing-ms=$position pause-resume=true widget-receiver=true")
 
                     // The launcher owns the host and renders the production RemoteViews. The
                     // platform pin request keeps this independent of launcher grid coordinates.
@@ -116,13 +124,29 @@ class AndroidEmulatorSystemSurfacesProofTest {
                         ).use { it.readBytes() }
                         await("home widget to render the real current title") {
                             find(instrumentation.uiAutomation.rootInActiveWindow) {
-                                it.text?.toString() == DisposableServerProbe.CANARY_TITLE &&
+                                it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE &&
                                     it.viewIdResourceName?.endsWith("/widget_title") == true
                             } != null
                         }
+                        // Pinning may animate to a new launcher page after its AX title appears.
+                        // Retain the settled Home host, rather than an intermediate transition.
+                        instrumentation.uiAutomation.waitForIdle(500, 10_000)
+                        check(find(instrumentation.uiAutomation.rootInActiveWindow) {
+                            it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE &&
+                                it.viewIdResourceName?.endsWith("/widget_title") == true
+                        } != null) { "The current Home host must still show the canary after settling" }
+                        val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+                        val scale = 800.0 / maxOf(screenshot.width, screenshot.height)
+                        val preview = android.graphics.Bitmap.createScaledBitmap(screenshot,
+                            (screenshot.width * scale).toInt(), (screenshot.height * scale).toInt(), true)
+                        java.io.FileOutputStream(java.io.File(context.getExternalFilesDir(null), "system-surfaces-widget.jpg")).use {
+                            check(preview.compress(android.graphics.Bitmap.CompressFormat.JPEG, 50, it))
+                        }
+                        if (preview !== screenshot) preview.recycle()
+                        screenshot.recycle()
                         await("home widget Pause button") {
                             val pause = find(instrumentation.uiAutomation.rootInActiveWindow) {
-                                it.text?.toString() == "Pause" && it.viewIdResourceName?.endsWith("/widget_toggle") == true
+                                it.isVisibleToUser && it.text?.toString() == "Pause" && it.viewIdResourceName?.endsWith("/widget_toggle") == true
                             }
                             pause != null && click(pause)
                         }

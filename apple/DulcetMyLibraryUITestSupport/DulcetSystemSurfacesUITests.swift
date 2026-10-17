@@ -1,8 +1,9 @@
 #if os(macOS) || os(iOS)
-#if canImport(AppIntentsTesting)
+#if os(macOS) && canImport(AppIntentsTesting)
 import AppIntentsTesting
 #endif
 import Foundation
+import ObjectiveC
 import XCTest
 
 /// Opt-in system execution proof against the published disposable playback canary.
@@ -17,7 +18,7 @@ final class DulcetSystemSurfacesUITests: XCTestCase {
 #else
         let bundle = "com.legitimateapps.dulcet.dev"
 #endif
-#if canImport(AppIntentsTesting)
+#if os(macOS) && canImport(AppIntentsTesting)
         if #available(macOS 27.0, iOS 27.0, *) {
             let definitions = IntentDefinitions(bundleIdentifier: bundle)
             _ = try await definitions.intents["DulcetPlaySongIntent"]
@@ -39,9 +40,11 @@ final class DulcetSystemSurfacesUITests: XCTestCase {
             // Older simulator runtimes cannot load AppIntentsTesting. Exercise Siri's real
             // recognition-to-app path instead, and retain its response if the runtime refuses it.
             XCUIDevice.shared.siriService.activate(voiceRecognitionText: "Play a song in Dulcet DEV")
-            let siri = XCUIApplication(bundleIdentifier: "com.apple.SiriViewService")
+            let siri = XCUIApplication(bundleIdentifier: "com.apple.siri")
+            _ = siri.staticTexts.firstMatch.waitForExistence(timeout: 15)
             print("DULCET SYSTEM SURFACES SIRI PARAMETER PROMPT " + siri.debugDescription)
             XCUIDevice.shared.siriService.activate(voiceRecognitionText: "UI Playback Canary")
+            _ = siri.staticTexts.firstMatch.waitForExistence(timeout: 15)
             print("DULCET SYSTEM SURFACES SIRI RESPONSE " + siri.debugDescription)
             app.activate()
             try assertCanaryAdvances(in: app)
@@ -71,46 +74,76 @@ final class DulcetSystemSurfacesUITests: XCTestCase {
 
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let icon = springboard.icons["Dulcet DEV"].firstMatch
-        XCTAssertTrue(icon.waitForExistence(timeout: 10), springboard.debugDescription)
-        icon.press(forDuration: 1.5)
-        let editHome = springboard.buttons["Edit Home Screen"].firstMatch
-        XCTAssertTrue(editHome.waitForExistence(timeout: 5), springboard.debugDescription)
-        editHome.tap()
-        let edit = springboard.buttons["Edit"].firstMatch
-        if edit.waitForExistence(timeout: 3) { edit.tap() }
-        var addButton = springboard.buttons["Add Widget"].firstMatch
-        if !addButton.waitForExistence(timeout: 3) { addButton = springboard.buttons["Add"].firstMatch }
-        XCTAssertTrue(addButton.waitForExistence(timeout: 5), springboard.debugDescription)
-        addButton.tap()
-        var widgetSearch = springboard.searchFields.firstMatch
-        if !widgetSearch.waitForExistence(timeout: 3) { widgetSearch = springboard.textFields.firstMatch }
-        XCTAssertTrue(widgetSearch.waitForExistence(timeout: 5), springboard.debugDescription)
-        widgetSearch.tap()
-        widgetSearch.typeText("Dulcet")
-        let result = springboard.staticTexts["Dulcet DEV"].firstMatch
-        XCTAssertTrue(result.waitForExistence(timeout: 10), springboard.debugDescription)
-        result.tap()
-        let addWidget = springboard.buttons["Add Widget"].firstMatch
-        XCTAssertTrue(addWidget.waitForExistence(timeout: 10), springboard.debugDescription)
-        addWidget.tap()
-        let done = springboard.buttons["Done"].firstMatch
-        if done.waitForExistence(timeout: 5) { done.tap() }
-        let resume = springboard.buttons["Resume Dulcet"].firstMatch
-        XCTAssertTrue(resume.waitForExistence(timeout: 20), springboard.debugDescription)
-        XCTAssertTrue(springboard.staticTexts["UI Playback Canary"].firstMatch.exists,
-                      "The real WidgetKit host must render the published current title")
-        let attachment = XCTAttachment(screenshot: springboard.screenshot())
-        attachment.name = "WidgetHost-DulcetNowPlaying"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-        resume.tap()
+        withoutIdleWaits(springboard) {
+            let icon = springboard.icons["Dulcet DEV"].firstMatch
+            XCTAssertTrue(icon.waitForExistence(timeout: 10), springboard.debugDescription)
+            icon.press(forDuration: 1.5)
+            let editHome = springboard.buttons["Edit Home Screen"].firstMatch
+            XCTAssertTrue(editHome.waitForExistence(timeout: 5), springboard.debugDescription)
+            editHome.tap()
+            let edit = springboard.buttons["Edit"].firstMatch
+            if edit.waitForExistence(timeout: 3) { edit.tap() }
+            var addButton = springboard.buttons["Add Widget"].firstMatch
+            if !addButton.waitForExistence(timeout: 3) { addButton = springboard.buttons["Add"].firstMatch }
+            XCTAssertTrue(addButton.waitForExistence(timeout: 5), springboard.debugDescription)
+            addButton.tap()
+            var widgetSearch = springboard.searchFields.firstMatch
+            if !widgetSearch.waitForExistence(timeout: 3) { widgetSearch = springboard.textFields.firstMatch }
+            XCTAssertTrue(widgetSearch.waitForExistence(timeout: 5), springboard.debugDescription)
+            widgetSearch.tap()
+            widgetSearch.typeText("Dulcet")
+            let result = springboard.staticTexts["Dulcet DEV"].firstMatch
+            XCTAssertTrue(result.waitForExistence(timeout: 10), springboard.debugDescription)
+            print("DULCET SYSTEM SURFACES WIDGET PICKER " + springboard.debugDescription)
+            // The widget gallery's remote accessibility element can report no hit point
+            // despite publishing its on-screen frame. Send the event to that observed frame.
+            XCTAssertTrue(springboard.frame.contains(result.frame))
+            result.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            let pickerAttachment = XCTAttachment(screenshot: springboard.screenshot())
+            pickerAttachment.name = "WidgetHost-DulcetPicker"
+            pickerAttachment.lifetime = .keepAlways
+            self.add(pickerAttachment)
+            let addWidget = springboard.buttons["Add Widget"].firstMatch
+            if addWidget.waitForExistence(timeout: 10) {
+                addWidget.tap()
+            } else {
+                // iOS 26.5's remote gallery loses AX after presenting the picker.
+                // A retained simulator recording shows Add Widget at (201, 792)
+                // on this 402×874 phone. Keep the fallback scoped to that observed
+                // layout, then require the actual Home widget and playback effect.
+                XCTAssertEqual(springboard.frame.size, CGSize(width: 402, height: 874))
+                springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.905)).tap()
+            }
+            let done = springboard.buttons["Done"].firstMatch
+            if done.waitForExistence(timeout: 5) { done.tap() }
+            let resume = springboard.buttons["Resume Dulcet"].firstMatch
+            XCTAssertTrue(resume.waitForExistence(timeout: 20), springboard.debugDescription)
+            XCTAssertTrue(springboard.staticTexts["UI Playback Canary"].firstMatch.exists,
+                          "The real WidgetKit host must render the published current title")
+            let attachment = XCTAttachment(screenshot: springboard.screenshot())
+            attachment.name = "WidgetHost-DulcetNowPlaying"
+            attachment.lifetime = .keepAlways
+            self.add(attachment)
+            resume.tap()
+        }
         app.activate()
         XCTAssertEqual(transport.label, "Pause")
         try assertCanaryAdvances(in: app)
         print("DULCET SYSTEM SURFACES OBSERVED widget-host=true current-title=true widget-intent-resume=true advancing-media-time=true")
     }
 #endif
+
+    // SpringBoard's icon lift and edit mode keep animations armed. This is the same
+    // ABI-checked test-only interaction scope as the existing row-menu proofs (TRAPS 48).
+    // Every control and resulting playback state is still explicitly awaited/asserted.
+    private func withoutIdleWaits(_ app: XCUIApplication, _ body: @escaping () -> Void) {
+        let selector = NSSelectorFromString("_performWithInteractionOptions:block:")
+        guard let method = class_getInstanceMethod(type(of: app), selector),
+              let encoding = method_getTypeEncoding(method).map({ String(cString: $0) }),
+              encoding.filter({ !$0.isNumber }) == "v@:I@?" else { body(); return }
+        typealias Perform = @convention(c) (AnyObject, Selector, UInt32, @convention(block) () -> Void) -> Void
+        unsafeBitCast(method_getImplementation(method), to: Perform.self)(app, selector, 3, body)
+    }
 
     private func connectedApp(proofFlag: String) throws -> XCUIApplication {
         let environment = ProcessInfo.processInfo.environment

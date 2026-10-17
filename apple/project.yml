@@ -19,6 +19,9 @@ settings:
     # in-progress version). CFBundleShortVersionString cannot carry a "-dev" suffix, so DEV is
     # told apart by its bundle identifier, name and icon, never by this value.
     MARKETING_VERSION: "0.1.0"
+    # Embedded extensions require a nonempty version even for local simulator builds.
+    # Release automation overrides this setting for host and extensions together.
+    CURRENT_PROJECT_VERSION: "4"
 packages:
   DulcetKit:
     path: DulcetKit

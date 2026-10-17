@@ -23,7 +23,11 @@ class DulcetPlaybackWidget : AppWidgetProvider() {
         if (intent.action != TOGGLE) return
         val pending = goAsync()
         val main = Handler(Looper.getMainLooper())
-        val future = MediaController.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java))).buildAsync()
+        // onReceive receives a ReceiverRestrictedContext, which cannot bind services.
+        // The async controller connection must outlive that callback on the app context.
+        val appContext = context.applicationContext
+        val future = MediaController.Builder(appContext,
+            SessionToken(appContext, ComponentName(appContext, PlaybackService::class.java))).buildAsync()
         val finished = java.util.concurrent.atomic.AtomicBoolean(false)
         fun finish() { if (finished.compareAndSet(false, true)) { MediaController.releaseFuture(future); pending.finish() } }
         main.postDelayed({ finish() }, 8000)

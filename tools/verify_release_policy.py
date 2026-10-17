@@ -152,6 +152,7 @@ PROD_TARGETS = {
     },
 }
 PROJECT_SETTINGS = {
+    "CURRENT_PROJECT_VERSION",  # Numeric shared host/extension default, pinned below.
     "SWIFT_VERSION", "ARCHS", "ENABLE_USER_SCRIPT_SANDBOXING", "GENERATE_INFOPLIST_FILE",
     "CODE_SIGN_STYLE", "DEVELOPMENT_TEAM", "FRAMEWORK_SEARCH_PATHS", "OTHER_LDFLAGS",
     "MARKETING_VERSION",
@@ -198,7 +199,10 @@ XCODEGEN_PROJECT_SETTINGS = {
 }
 # A linker flag can read a file into the binary (-sectcreate, @file), so the allowlisted linker
 # settings are held to their exact values rather than their names.
-PINNED_PROJECT_SETTINGS = {"OTHER_LDFLAGS": "$(inherited) -framework DulcetCore"}
+PINNED_PROJECT_SETTINGS = {
+    "OTHER_LDFLAGS": "$(inherited) -framework DulcetCore",
+    "CURRENT_PROJECT_VERSION": "4",
+}
 PINNED_TARGET_SETTINGS = {"OTHER_LDFLAGS": "$(inherited) -Wl,-export_dynamic"}
 # The build settings that may differ between a DEV target and its PROD twin: spec §22.3's list
 # (identity, name, icon) plus what signing and the plist route need, and the build number the
@@ -589,6 +593,9 @@ def check_prod_configuration(errors: list[str]) -> None:
         errors.extend(script_problems(f"{project}:{number} script", script))
 
     inherited = mapping(yaml_block(lines, ["settings", "base"]) or [])
+    if "CURRENT_PROJECT_VERSION" not in inherited:
+        errors.append(f"{project}: shared CURRENT_PROJECT_VERSION must be defined for embedded extensions")
+    check_values(errors, f"{project} project-level settings", inherited, PINNED_PROJECT_SETTINGS)
     for name in sorted(set(inherited) - PROJECT_SETTINGS):
         errors.append(f"{project}: project-level setting {name} is not allowlisted, and PROD inherits it"
                       + extend("PROJECT_SETTINGS"))

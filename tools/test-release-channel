@@ -601,6 +601,10 @@ def pbx_duplicate_object(root: Path) -> None:
 
 
 MUTATIONS = [
+    ("an empty shared extension build version", edit("apple/project.yml", '    CURRENT_PROJECT_VERSION: "4"', '    CURRENT_PROJECT_VERSION: ""'),
+     "CURRENT_PROJECT_VERSION must be exactly '4'"),
+    ("a missing shared extension build version", edit("apple/project.yml", '    CURRENT_PROJECT_VERSION: "4"\n', ''),
+     "shared CURRENT_PROJECT_VERSION must be defined"),
     ("a pull_request trigger", edit(WORKFLOW, "on:\n  workflow_dispatch:", "on:\n  pull_request:\n  workflow_dispatch:"),
      "workflow_dispatch only"),
     ("a push trigger", edit(WORKFLOW, "on:\n  workflow_dispatch:", "on:\n  push:\n    branches: [main]\n  workflow_dispatch:"),
