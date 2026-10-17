@@ -3197,13 +3197,13 @@ When the queue is about to run out, it keeps playing similar music **from the pe
 never from anywhere else**. A device setting, on by default; Up Next shows an AutoPlay section with
 the switch.
 
-- **The core decides when to ask.** With AutoPlay on and Shuffle and Repeat off, once two or fewer
-  entries follow the current one, `takeAutoplayRequest()` hands out one request: a key, the seed (the
+- **The core decides when to ask.** With AutoPlay on and Shuffle and Repeat off, once one entry or
+  none follows the current one, `takeAutoplayRequest()` hands out one request: a key, the seed (the
   queue's last entry), every track id already queued, and a count of ten. Each key is handed out
   once. The shell answers it with `appendAutoplay(key, items)`; an empty answer is valid, and the
   same key is not asked again until the queue changes at its end. An answer to a key the queue has
   moved past changes nothing. If the queue finished while a request was outstanding, the answer's
-  first entry starts on arrival.
+  first entry starts on arrival; a request made after the queue finished only appends.
 - **Candidates, on OpenSubsonic (`/rest`)**, are tried in turn until enough new tracks are found:
   `getSimilarSongs2` for the seed's artist and `getSimilarSongs` for the seed, `getTopSongs` for the
   artist, then `getRandomSongs` in the seed's genre and finally from the whole library. A source that
