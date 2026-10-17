@@ -2610,22 +2610,47 @@
       "platforms": {
         "macos": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-sleep_timer-macos-production-ui-proof",
+            "reason": "Drive the sleep choices, cancellation and timed fade/stop through this platform app UI against a disposable server; the existing shared controller tests run on macOS and do not establish this platform UI behavior."
+          },
           "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testASleepTimerAtTheEndOfTheTrackStopsWithTheNextEntryPreparedAndClears, testATimedSleepTimerFadesPausesAndRestoresTheLevel) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The menu is in the Now Playing footer. Not yet driven through the app's UI against a server, so the cell stays partial."
         },
         "ios": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-sleep_timer-ios-production-ui-proof",
+            "reason": "Drive the sleep choices, cancellation and timed fade/stop through this platform app UI against a disposable server; the existing shared controller tests run on macOS and do not establish this platform UI behavior."
+          },
           "reason": "The same controller and menu as macOS (footer of Now Playing). Not yet driven through the iPhone app's UI; the controller tests run on macOS only."
         },
         "ipados": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-sleep_timer-ipados-production-ui-proof",
+            "reason": "Drive the sleep choices, cancellation and timed fade/stop through this platform app UI against a disposable server; the existing shared controller tests run on macOS and do not establish this platform UI behavior."
+          },
           "reason": "As iOS; not yet driven through the iPad app's UI."
         },
         "tvos": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-sleep_timer-tvos-production-ui-proof",
+            "reason": "Drive the sleep choices, cancellation and timed fade/stop through this platform app UI against a disposable server; the existing shared controller tests run on macOS and do not establish this platform UI behavior."
+          },
           "reason": "The menu is in the Now Playing control row, reached by the remote; not yet driven by the remote on a simulator."
         },
         "android": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-sleep_timer-android-production-ui-proof",
+            "reason": "Complete production device UI evidence for every timed choice, the timed fade/deadline, end-of-queue and cancellation. The current phone proof covers the 15-minute choice, background countdown, cancellation and end-of-track; host clock tests cover the remaining decisions."
+          },
           "reason": "Service-owned monotonic timer, timed fade, cancellation and core stop points are covered by AndroidMedia3ListeningSessionTest in :core:testAndroidHostTest. PhoneListeningSessionTest and TvListeningSessionTest cover the respective controls. Host tests cited below; see docs/evidence/player-session-android.md for runtime evidence and limits.",
           "evidence": [
             {
@@ -2650,6 +2675,11 @@
         },
         "androidtv": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-sleep_timer-androidtv-production-ui-proof",
+            "reason": "Complete production device UI evidence for every timed choice, the timed fade/deadline, end-of-queue and cancellation. The current phone proof covers the 15-minute choice, background countdown, cancellation and end-of-track; host clock tests cover the remaining decisions. The new TV choices also need a remote-driven device UI run; their D-pad coverage is currently on the host."
+          },
           "reason": "Service-owned monotonic timer, timed fade, cancellation and core stop points are covered by AndroidMedia3ListeningSessionTest in :core:testAndroidHostTest. PhoneListeningSessionTest and TvListeningSessionTest cover the respective controls. Host tests cited below; see docs/evidence/player-session-android.md for runtime evidence and limits. TV uses focused buttons, scrollable choice dialogs and Move Up/Down actions for the remote; no swipe gesture is required.",
           "evidence": [
             {
@@ -2685,22 +2715,47 @@
       "platforms": {
         "macos": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-crossfade-macos-production-ui-proof",
+            "reason": "Land the stacked Apple overlap engine, then drive the saved setting and approved overlap boundary through this platform app against a disposable server; the current controller-only checks do not establish overlapping output."
+          },
           "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testCrossfadeIsSentOnlyForABoundaryBetweenDifferentAlbums) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The setting is in Settings and on the Connection screen. The overlap itself is the AVPlayer engine's, a separate change stacked on this one; until it lands the engine refuses the command and every boundary stays gapless."
         },
         "ios": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-crossfade-ios-production-ui-proof",
+            "reason": "Land the stacked Apple overlap engine, then drive the saved setting and approved overlap boundary through this platform app against a disposable server; the current controller-only checks do not establish overlapping output."
+          },
           "reason": "Setting on the Connection screen; controller as macOS. Overlapping output depends on the stacked engine change."
         },
         "ipados": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-crossfade-ipados-production-ui-proof",
+            "reason": "Land the stacked Apple overlap engine, then drive the saved setting and approved overlap boundary through this platform app against a disposable server; the current controller-only checks do not establish overlapping output."
+          },
           "reason": "As iOS."
         },
         "tvos": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-crossfade-tvos-production-ui-proof",
+            "reason": "Land the stacked Apple overlap engine, then drive the saved setting and approved overlap boundary through this platform app against a disposable server; the current controller-only checks do not establish overlapping output."
+          },
           "reason": "Setting on the Connection screen; overlapping output depends on the stacked engine change."
         },
         "android": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-crossfade-android-production-ui-proof",
+            "reason": "Drive the saved setting and a different-album overlap through the production app on this platform, observe the two-player handoff and reporting, and compare a zero-overlap boundary. Host-injected player gains do not establish actual device output overlap."
+          },
           "reason": "The saved Off/1-12 second setting drives a core-approved Media3 two-player overlap. AndroidMedia3EngineTest covers the natural end and single play accounting, detached tail, fade gains and unchanged zero-overlap boundary; AndroidMedia3ListeningSessionTest covers controller promotion and media-session switching. Host tests cited below; acoustic continuity has not been measured. See docs/evidence/player-session-android.md.",
           "evidence": [
             {
@@ -2719,6 +2774,11 @@
         },
         "androidtv": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-crossfade-androidtv-production-ui-proof",
+            "reason": "Drive the saved setting and a different-album overlap through the production app on this platform, observe the two-player handoff and reporting, and compare a zero-overlap boundary. Host-injected player gains do not establish actual device output overlap. The new TV choices also need a remote-driven device UI run; their D-pad coverage is currently on the host."
+          },
           "reason": "The saved Off/1-12 second setting drives a core-approved Media3 two-player overlap. AndroidMedia3EngineTest covers the natural end and single play accounting, detached tail, fade gains and unchanged zero-overlap boundary; AndroidMedia3ListeningSessionTest covers controller promotion and media-session switching. Host tests cited below; acoustic continuity has not been measured. See docs/evidence/player-session-android.md. TV uses focused buttons, scrollable choice dialogs and Move Up/Down actions for the remote; no swipe gesture is required.",
           "evidence": [
             {
@@ -2748,22 +2808,47 @@
       "platforms": {
         "macos": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-autoplay-macos-production-ui-proof",
+            "reason": "Drive the server candidate chain and Up Next AutoPlay section/switch through this platform app against a disposable server; recorded transport and shared controller tests do not establish the platform UI/server path."
+          },
           "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testAutoplayAsksOnceWhenTheQueueRunsOutAndNotWhenItIsOff) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. The candidate chain (getSimilarSongs2, getSimilarSongs, getTopSongs, random in genre, random) is PlaybackListeningSessionTest's over a recorded transport; it is not yet run against the disposable server, and the Up Next section with its switch is not yet driven through the UI."
         },
         "ios": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-autoplay-ios-production-ui-proof",
+            "reason": "Drive the server candidate chain and Up Next AutoPlay section/switch through this platform app against a disposable server; recorded transport and shared controller tests do not establish the platform UI/server path."
+          },
           "reason": "Up Next shows an AutoPlay section with its switch; controller as macOS. Not yet driven through the iPhone app's UI."
         },
         "ipados": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-autoplay-ipados-production-ui-proof",
+            "reason": "Drive the server candidate chain and Up Next AutoPlay section/switch through this platform app against a disposable server; recorded transport and shared controller tests do not establish the platform UI/server path."
+          },
           "reason": "As iOS."
         },
         "tvos": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-autoplay-tvos-production-ui-proof",
+            "reason": "Drive the server candidate chain and Up Next AutoPlay section/switch through this platform app against a disposable server; recorded transport and shared controller tests do not establish the platform UI/server path."
+          },
           "reason": "Up Next shows the AutoPlay section with its switch, reached by the remote; not yet driven on a simulator."
         },
         "android": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-autoplay-android-production-ui-proof",
+            "reason": "Complete production device UI evidence for AutoPlay request/refill behavior with Shuffle/Repeat and after user queue edits. The current phone proof observes real server candidates, section ordering and switch-off removal; host tests cover request identity and edits."
+          },
           "reason": "The device switch defaults on and the service answers keyed core requests using AutoplayCandidateSource over the account library transport. AndroidMedia3ListeningSessionTest covers one answer per key, user additions before AutoPlay and removal on switch-off; PhoneListeningSessionTest and TvListeningSessionTest cover the separate section and controls. Host tests cited below; see docs/evidence/player-session-android.md.",
           "evidence": [
             {
@@ -2776,6 +2861,11 @@
         },
         "androidtv": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "playback-autoplay-androidtv-production-ui-proof",
+            "reason": "Complete production device UI evidence for AutoPlay request/refill behavior with Shuffle/Repeat and after user queue edits. The current phone proof observes real server candidates, section ordering and switch-off removal; host tests cover request identity and edits. The new TV choices also need a remote-driven device UI run; their D-pad coverage is currently on the host."
+          },
           "reason": "The device switch defaults on and the service answers keyed core requests using AutoplayCandidateSource over the account library transport. AndroidMedia3ListeningSessionTest covers one answer per key, user additions before AutoPlay and removal on switch-off; PhoneListeningSessionTest and TvListeningSessionTest cover the separate section and controls. Host tests cited below; see docs/evidence/player-session-android.md. TV uses focused buttons, scrollable choice dialogs and Move Up/Down actions for the remote; no swipe gesture is required.",
           "evidence": [
             {
@@ -2799,22 +2889,47 @@
       "platforms": {
         "macos": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-macos-production-ui-proof",
+            "reason": "Drive Play Next and Add to Queue through this platform app UI and observe the applied edit plus its brief confirmation, including the empty-player case; existing controller and drag tests do not cover the complete confirmation path."
+          },
           "reason": "Named here and not cited: the shared Apple playback controller is exercised on macOS by DulcetCorePlaybackSystemTests (testQueueAdditionsAreConfirmedOnlyWhenTheyJoinAQueue, testPlayNextIntoAnEmptyPlayerStartsPlaybackAndIntoAQueueStartsNothing, testAMoveAgainstAPresentationThatHidesAnEntryLandsWhereTheListShowsIt) in the playback integration suite, and the presentation models by DulcetKitTests ListeningSessionModelTests; the core decisions by PlaybackListeningSessionTest in :core:jvmTest. Play Next lands after the current entry and Add to Queue at the end of what the person queued, before any AutoPlay entries; the confirmation is a notice above the player that VoiceOver announces. Not yet driven end to end through the UI with long tracks."
         },
         "ios": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-ios-production-ui-proof",
+            "reason": "Drive Play Next and Add to Queue through this platform app UI and observe the applied edit plus its brief confirmation, including the empty-player case; existing controller and drag tests do not cover the complete confirmation path."
+          },
           "reason": "Context-menu Play Next / Add to Queue, drag onto the bar, and Up Next reorder and swipe-to-remove; drags onto the bar are DulcetiOSUITests' existing proofs, named and not cited here because this row also claims the confirmation, which no UI test drives yet."
         },
         "ipados": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-ipados-production-ui-proof",
+            "reason": "Drive Play Next and Add to Queue through this platform app UI and observe the applied edit plus its brief confirmation, including the empty-player case; existing controller and drag tests do not cover the complete confirmation path."
+          },
           "reason": "As iOS."
         },
         "tvos": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-tvos-production-ui-proof",
+            "reason": "Drive Play Next and Add to Queue through this platform app UI and observe the applied edit plus its brief confirmation, including the empty-player case; existing controller and drag tests do not cover the complete confirmation path."
+          },
           "reason": "Context menus by long press on the remote; the confirmation is the same notice. Not yet driven by the remote for this row."
         },
         "android": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-android-production-ui-proof",
+            "reason": "Drive both Play Next and Add to Queue from the production app UI and observe the applied queue plus its one-shot notice and the empty-player no-notice case. Controller and composed UI tests currently establish those steps separately."
+          },
           "reason": "Queue additions confirm only after the edit takes effect; additions to an empty player start playback without a notice. AndroidMedia3ListeningSessionTest covers controller timing; PhoneListeningSessionTest and TvListeningSessionTest cover claim-once toast feedback. Existing queue editing tests continue to cover reorder/remove. Host tests cited below; see docs/evidence/player-session-android.md.",
           "evidence": [
             {
@@ -2827,6 +2942,11 @@
         },
         "androidtv": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "queue-edit-androidtv-production-ui-proof",
+            "reason": "Drive both Play Next and Add to Queue from the production app UI and observe the applied queue plus its one-shot notice and the empty-player no-notice case. Controller and composed UI tests currently establish those steps separately. The new TV choices also need a remote-driven device UI run; their D-pad coverage is currently on the host."
+          },
           "reason": "Queue additions confirm only after the edit takes effect; additions to an empty player start playback without a notice. AndroidMedia3ListeningSessionTest covers controller timing; PhoneListeningSessionTest and TvListeningSessionTest cover claim-once toast feedback. Existing queue editing tests continue to cover reorder/remove. Host tests cited below; see docs/evidence/player-session-android.md. TV uses focused buttons, scrollable choice dialogs and Move Up/Down actions for the remote; no swipe gesture is required.",
           "evidence": [
             {
