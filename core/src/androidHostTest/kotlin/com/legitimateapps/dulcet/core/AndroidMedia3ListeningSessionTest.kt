@@ -117,6 +117,14 @@ class AndroidMedia3ListeningSessionTest {
                 assertTrue(f.controller.dismissQueueConfirmation(notice.sequence))
                 assertFalse(f.controller.dismissQueueConfirmation(notice.sequence), "Only one foreground surface claims it")
             }
+            f.controller.addToQueue(listOf(track("old notice")), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Search, "Search")
+            assertNotNull(f.controller.state.value.queueConfirmation)
+            f.play("replacement")
+            assertNull(f.controller.state.value.queueConfirmation, "A new queue must not announce the superseded edit")
+            f.controller.addToQueue(listOf(track("stopped notice")), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Search, "Search")
+            assertNotNull(f.controller.state.value.queueConfirmation)
+            f.controller.stop()
+            assertNull(f.controller.state.value.queueConfirmation)
         }
     }
 

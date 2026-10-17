@@ -536,6 +536,7 @@ public class AndroidPlaybackController internal constructor(
                 }
                 val song = if (downloaded) null else loadSong(chosen.rawId)
                 if (generation != requestGeneration) return@launch
+                queueConfirmation = null
                 command(PlaybackCommand.Stop(id()))
                 failure = null; consumed = AtomicLong()
                 val kind = when (source) {
@@ -642,6 +643,7 @@ public class AndroidPlaybackController internal constructor(
         if (!live()) return
         requestGeneration++; resolution?.cancel(); startJob?.cancel(); wantsPlay = false
         heldStart = null; needsReconnect = false
+        queueConfirmation = null
         dropHeldAdditions()
         command(PlaybackCommand.Stop(id()))
     }
@@ -1390,7 +1392,8 @@ public class AndroidPlaybackController internal constructor(
         // surface still holding this state must not show it for whatever comes next.
         skipNotice = null
         droppedAdditions = null
-        mutableState.value = mutableState.value.copy(skipNotice = null, droppedAdditions = null)
+        queueConfirmation = null
+        mutableState.value = mutableState.value.copy(skipNotice = null, droppedAdditions = null, queueConfirmation = null)
         resolution?.cancel(); startJob?.cancel(); retryDelivery.cancel(); artworkJob?.cancel(); metadataFill?.cancel()
         timerHandler.removeCallbacks(timerTick)
         deliveries.close(); scope.cancel()
