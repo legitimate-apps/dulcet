@@ -56,4 +56,4 @@ if [ "$mode" = macos ]; then
     grep -Fq 'DULCET DESIGN TOUR screen=listen-now-return reached=true' "$RUNNER_TEMP/dulcet-$mode-home.log"
 fi
 python3 tools/verify-xcode-test-execution "$result" "$suite" "$test_name"
-python3 tools/swift-testing-junit "$result" "$RUNNER_TEMP/dulcet-$mode-home-junit/TEST-ListenNow.xml" ListenNow
+python3 tools/swift-testing-junit "$result" "$RUNNER_TEMP/dulcet-$mode-home-junit/TEST-ListenNow.xml" "${suite##*.}"

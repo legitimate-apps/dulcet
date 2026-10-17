@@ -2804,6 +2804,10 @@ jobs:
             core-conformance/build/test-results/iosSimulatorArm64Test \
             core-conformance/build/test-results/tvosSimulatorArm64Test \
             "$RUNNER_TEMP/dulcet-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-macos-home-junit" \
+            "$RUNNER_TEMP/dulcet-iphone-home-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-home-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-home-junit" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit" \
             "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
