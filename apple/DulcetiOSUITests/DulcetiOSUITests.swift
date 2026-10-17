@@ -3514,7 +3514,12 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         let original = value == "1"
-        if original != enabled { toggle.tap() }
+        if original != enabled {
+            // SwiftUI exposes the section-header label as an outer Switch; its centre can
+            // fall on text that does not toggle. Activate the actual nested switch thumb.
+            let thumb = toggle.descendants(matching: .switch).firstMatch
+            (thumb.exists ? thumb : toggle).tap()
+        }
         let expected = enabled ? "1" : "0"
         guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", expected), object: toggle
