@@ -150,6 +150,19 @@ jobs:
         run: python3 tools/test-contrast-foreground-policy-gate
       - name: Require direct custom foreground modifiers to use the contrast registry
         run: python3 tools/verify_contrast_foreground_policy.py
+      - name: Build the native macOS package tests
+        timeout-minutes: 4
+        run: |
+          set -o pipefail
+          cd apple/DulcetKit
+          # Run 39065179071 passed all 348 native tests in 100.247s, then hit the old
+          # four-minute compile + execution + JUnit budget just after writing the evidence.
+          # Compile separately so the unchanged execution bound measures tests, not compilation.
+          xcodebuild build-for-testing \
+            -scheme DulcetKit-Package \
+            -destination 'platform=macOS' \
+            -parallel-testing-enabled NO \
+            -derivedDataPath "$RUNNER_TEMP/DulcetKitDerivedData"
       - name: Test native macOS presentation and registered-pair contrast ratios
         timeout-minutes: 4
         run: |
@@ -160,7 +173,7 @@ jobs:
           # real AVFoundation: under contention a readiness wait that normally settles in ~4s
           # exceeded its 20s timeout while unrelated instant tests took 6s. The iOS and tvOS
           # invocations below already pass this flag; the macOS package was the one that did not.
-          xcodebuild test \
+          xcodebuild test-without-building \
             -scheme DulcetKit-Package \
             -destination 'platform=macOS' \
             -parallel-testing-enabled NO \

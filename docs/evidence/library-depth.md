@@ -821,3 +821,18 @@ The combined full-conformance gate for these repaired sources is
 The handoff requires successful platform, core, iPad and iPhone legs and the aggregate;
 the local focused passes do not replace that gate. No feature cell is promoted by this
 test repair.
+
+
+A later [required platform run at the documentation head](https://github.com/legitimate-apps/dulcet/actions/runs/39065179071)
+exposes a separate CI phase-budget failure. **OBSERVED:** its native Mac xcresult is
+Passed, with **348 passed / zero failed / zero skipped**; the exported JUnit also has
+348 tests, zero failures, errors or skips. The test log reports all 15 suites passing
+in 100.247 seconds, `TEST SUCCEEDED` at 20:23:07.651 UTC and the JUnit written at
+20:23:10.897. The four-minute step is canceled at 20:23:10.923, immediately after
+that export. Compilation and testing were charged to one step; no test assertion
+failed. The correction separates `build-for-testing` from `test-without-building`,
+each with a four-minute bound and the same DerivedData, scheme, serial execution and
+JUnit export. The test-execution allowance and job bound remain unchanged.
+Local CI policy validation passes across 13 workflows, and the planner control passes
+28,135 checks over 700 Apple-affecting files. Runtime validation must still require
+actual executed native test counts in the subsequent required platform run.
