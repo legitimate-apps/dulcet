@@ -2608,15 +2608,30 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session."
+          "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "system-intents-macos-os-trigger-proof",
+            "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session."
+          }
         },
         "ios": {
           "status": "partial",
-          "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session."
+          "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "system-intents-ios-os-trigger-proof",
+            "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session."
+          }
         },
         "ipados": {
           "status": "partial",
-          "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session."
+          "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "system-intents-ipados-os-trigger-proof",
+            "reason": "App Intent and App Shortcut source exists; OS delivery and playback proof is pending. tvOS SDK compilation is tracked separately; Google Assistant is tracked with the media library session."
+          }
         },
         "tvos": {
           "status": "n/a",
@@ -2641,15 +2656,30 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "system-widgets-macos-os-trigger-proof",
+            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+          }
         },
         "ios": {
           "status": "partial",
-          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "system-widgets-ios-os-trigger-proof",
+            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+          }
         },
         "ipados": {
           "status": "partial",
-          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "system-widgets-ipados-os-trigger-proof",
+            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+          }
         },
         "tvos": {
           "status": "n/a",
@@ -2657,7 +2687,12 @@
         },
         "android": {
           "status": "partial",
-          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+          "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "system-widgets-android-os-trigger-proof",
+            "reason": "Widget extension and Android receiver source exists; actual OS widget hosting and interactive trigger-to-playback proof is pending. Pins are not yet projected into widgets."
+          }
         },
         "androidtv": {
           "status": "n/a",
@@ -2678,7 +2713,12 @@
         },
         "ios": {
           "status": "partial",
-          "reason": "CPTemplate source and simulator signing are configured; Apple managed audio capability and refreshed channel profiles are required for device archives. CarPlay simulator trigger/effect proof is pending."
+          "reason": "CPTemplate source and simulator signing are configured; Apple managed audio capability and refreshed channel profiles are required for device archives. CarPlay simulator trigger/effect proof is pending.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "system-carplay-ios-os-trigger-proof",
+            "reason": "CPTemplate source and simulator signing are configured; Apple managed audio capability and refreshed channel profiles are required for device archives. CarPlay simulator trigger/effect proof is pending."
+          }
         },
         "ipados": {
           "status": "n/a",
@@ -2723,7 +2763,12 @@
         },
         "android": {
           "status": "partial",
-          "reason": "MediaLibraryService browse/search/selection source exists; Android Auto/DHU and Assistant delivery proof is pending."
+          "reason": "MediaLibraryService browse/search/selection source exists; Android Auto/DHU and Assistant delivery proof is pending.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "system-android_auto-android-os-trigger-proof",
+            "reason": "MediaLibraryService browse/search/selection source exists; Android Auto/DHU and Assistant delivery proof is pending."
+          }
         },
         "androidtv": {
           "status": "n/a",
