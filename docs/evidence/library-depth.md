@@ -307,10 +307,43 @@ search result table was being displayed. The crash stack passes through SwiftUI'
 required environment lookup. These observations establish a missing store environment;
 they do not independently identify which table cell or auxiliary hosted view lost it.
 The resulting source correction explicitly injects the store into Mac table cells and
-menu content and extends the hosting regression. A native rerun is still required to
-establish that the crash is resolved. The subsequent execution guards and JUnit conversions did not run after the failed
+menu content. A new native AppKit hosting regression at `c40a6847`,
+`MacGroupedSearchHostingTests.readerResultsRenderThroughTheRootAndNativeTable`, passed
+**2 parameterized cases with zero issues in 1.388 seconds**, after an **8.46-second**
+compile, reported by the implementation owner. It hosts the actual `DulcetRootView`,
+uses 15 native two-column preview rows, and checks the first artist and scrolled last
+song artwork consumers. The test host adds no store environment; the root supplies it.
+This is a native component-hosting result, not the failed end-to-end search flow. No
+without-injection baseline experiment was performed, so it does not independently
+prove the specific source of the earlier missing environment. A hosted UI rerun is
+still required to establish that the observed crash is resolved. The subsequent execution guards and JUnit conversions did not run after the failed
 suite. This is an application runtime failure under the hosted proof recipe, separate
 from the earlier local pre-main sandbox blocker.
+
+The same run's [iPhone job](https://github.com/legitimate-apps/dulcet/actions/runs/38996405838/job/117289872787)
+executed **7 tests with 2 failures in 541.441 seconds**. The three new library-depth
+cases passed: sort/artist/shuffle in **83.359 seconds**, pin/offline destinations in
+**75.033 seconds**, and grouped search/recents in **37.933 seconds**. The suite still
+failed: the existing Browse/add/remove/offline-replay case timed out waiting for an
+album after its final Library navigation, and the existing appearance case timed out
+waiting for a catalog album in the largest-text variant.
+
+Both failure hierarchies show the expected destination. The offline Library case has
+its Recently Added heading at y=900 on a 402×874 viewport, with no album tile composed;
+its final activities navigate to Library and wait 20 seconds without scrolling. The
+largest-text Browse case has its Recently Added section at y=2274; its final activities
+navigate to Browse and wait 30 seconds without scrolling. Compressed recording frames
+show those same pages without a modal: the Library category links fill the first view,
+and the enlarged Server Catalog explanation fills the Browse view. These observations
+support a missing test scroll/reveal step; they do not independently establish the
+album data below the viewport. The suite stopped before its execution guard and JUnit
+conversion, so the three bounded method passes are not an overall proof-bundle pass.
+
+After that iPhone proof step terminated, the old run was canceled while its platform
+job was testing tvOS and the iPad job had only reached simulator first boot. No iPad
+native result is claimed from that run. The corrected-source
+[Apple run 39002109762](https://github.com/legitimate-apps/dulcet/actions/runs/39002109762)
+was dispatched at `f134d55b`; its native results remain pending.
 
 The hosted Mac My Library recipe targets the disposable `DulcetMyLibraryMacHost`, built
 from the production Mac and shared Swift sources. `tools/ci/run-my-library-proofs`
