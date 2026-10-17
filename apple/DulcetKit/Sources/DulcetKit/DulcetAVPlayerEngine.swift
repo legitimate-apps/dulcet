@@ -55,6 +55,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         var fraction: Float = 0
     }
 
+    func PROBEvolumes() -> (Float, Float) {
+        var v: (Float, Float) = (0, 0)
+        performOnQueueSynchronously { [self] in v = (masterVolume, player.volume) }
+        return v
+    }
+
     func currentPlayerRateForTesting() -> Float {
         var rate: Float = 0
         performOnQueueSynchronously { [self] in rate = player.rate }

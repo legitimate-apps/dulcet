@@ -13,6 +13,31 @@ import Network
 /// Real decoded PCM drives the boundary; these fail if overlap is merely reported without
 /// running both players, if the gain ignores master volume, or if a tail leaks playback events.
 @Suite(.serialized)
+struct PROBEVolumeTests {
+    @Test func PROBEsinglePlayerVolumeReadback() async throws {
+        let engine = DulcetAVPlayerEngine()
+        let bytes = makePCMWave(duration: 30)
+        _ = await execute(engine, .prepare(commandID: .init("p"), plan: plan(resource: InMemoryPlaybackResource(data: bytes))))
+        _ = await execute(engine, .play(commandID: .init("play")))
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        var immediate = 0, after100 = 0, after1s = 0
+        for i in 0..<200 {
+            let target: Double = i % 2 == 0 ? 0 : (i % 4 == 1 ? 0.4 : 0.02)
+            _ = await execute(engine, .setVolume(commandID: .init("v\(i)"), volume: target))
+            if engine.PROBEvolumes().1 != Float(target) { immediate += 1
+                try await Task.sleep(nanoseconds: 100_000_000)
+                if engine.PROBEvolumes().1 != Float(target) { after100 += 1
+                    try await Task.sleep(nanoseconds: 900_000_000)
+                    if engine.PROBEvolumes().1 != Float(target) { after1s += 1; print("PROBE LOST i=\(i) target=\(target) got=\(engine.PROBEvolumes())") }
+                }
+            }
+        }
+        print("PROBE RESULT n=200 staleImmediate=\(immediate) staleAfter100ms=\(after100) staleAfter1s=\(after1s) rate=\(engine.currentPlayerRateForTesting())")
+        _ = await execute(engine, .release(commandID: .init("r")))
+    }
+}
+
+@Suite(.serialized)
 struct AVPlayerCrossfadeTests {
     @Test
     func crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds() async throws {
@@ -53,8 +78,9 @@ struct AVPlayerCrossfadeTests {
         let faded = try #require(engine.crossfadeStateForTesting())
         #expect(abs(faded.incomingVolume + faded.outgoingVolume - 0.4) < 0.02)
         #expect(faded.incomingVolume > 0 && faded.outgoingVolume > 0)
-        _ = await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0))
+        let silenceOutcome = await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0))
         let silent = try #require(engine.crossfadeStateForTesting())
+        print("DIAG silence outcome=\(silenceOutcome) in=\(silent.incomingVolume) out=\(silent.outgoingVolume) inRate=\(silent.incomingRate) outRate=\(silent.outgoingRate) outPos=\(silent.outgoingPosition) faded=\(faded)")
         #expect(silent.incomingVolume == 0 && silent.outgoingVolume == 0)
         let boundary = fixture.events.snapshot
         let endIndex = try #require(boundary.firstIndex {
@@ -148,10 +174,11 @@ struct AVPlayerCrossfadeTests {
                 } else { false }
             }
         }
-        #expect(await execute(engine, .seek(commandID: .init("forward"), position: 3)) ==
-            .completed(commandID: .init("forward"), result: .withoutData))
-        #expect(await execute(engine, .seek(commandID: .init("back"), position: 0)) ==
-            .completed(commandID: .init("back"), result: .withoutData))
+        let fwd = await execute(engine, .seek(commandID: .init("forward"), position: 3))
+        let back = await execute(engine, .seek(commandID: .init("back"), position: 0))
+        defer { print("DIAGSEEK fwd=\(fwd) back=\(back) events=\(fixture.events.snapshot)") }
+        #expect(fwd == .completed(commandID: .init("forward"), result: .withoutData))
+        #expect(back == .completed(commandID: .init("back"), result: .withoutData))
         #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
         try await waitUntil("backward seek lost the armed boundary", engine: engine, timeout: 30) {
             engine.crossfadeStateForTesting()?.incomingRate ?? 0 > 0
