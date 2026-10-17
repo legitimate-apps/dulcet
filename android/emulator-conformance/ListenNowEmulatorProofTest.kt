@@ -1,8 +1,11 @@
 package com.legitimateapps.dulcet.emulator
 
 import android.app.Activity
+import android.content.res.Configuration
+import android.view.KeyEvent
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -30,7 +33,7 @@ class ListenNowEmulatorProofTest {
                 compose.onNodeWithTag("listenNow.open").assertIsSelected()
                 scrollTo("listenNow.newest.item.0")
                 shots.shoot("home-newest")
-                compose.onNodeWithTag("listenNow.newest.item.0").performClick()
+                activate("listenNow.newest.item.0")
                 await("album.surface")
                 shots.shoot("opened-album")
                 activity.recreate()
@@ -40,15 +43,34 @@ class ListenNowEmulatorProofTest {
                 await("listenNow.surface")
                 scrollTo("listenNow.newest.item.0")
                 shots.shoot("relaunch")
-                compose.onNodeWithTag("library.open").performClick()
+                activate("library.open")
                 compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("library.surface") or hasTestTag("mylibrary.surface")).fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithTag("listenNow.open").performClick()
+                activate("listenNow.open")
                 await("listenNow.surface")
             }
         }
     }
     private fun await(tag:String) {
-        compose.waitUntil("$tag exists",30_000) { compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() }
+        try {
+            compose.waitUntil("$tag exists",30_000) { compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() }
+        } catch (failure: AssertionError) {
+            println(compose.onRoot(useUnmergedTree=true).printToString())
+            throw failure
+        }
+    }
+    private fun activate(tag: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val mode = instrumentation.targetContext.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
+        if (mode == Configuration.UI_MODE_TYPE_TELEVISION) {
+            // TV Material controls activate through the centre key, as the shipped remote does.
+            compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
+            compose.waitForIdle()
+            compose.onNodeWithTag(tag).assertIsFocused()
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            compose.waitForIdle()
+        } else {
+            compose.onNodeWithTag(tag).performClick()
+        }
     }
     private fun scrollTo(tag:String) {
         compose.waitUntil("$tag can be reached",30_000) {

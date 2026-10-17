@@ -367,10 +367,15 @@ jobs:
           script: |
             adb reverse tcp:4533 tcp:4533
             ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
-            ./gradlew --no-daemon --max-workers=2 ${{ matrix.task }} -Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4533 -Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true
+            app_status=0
+            ./gradlew --no-daemon --max-workers=2 ${{ matrix.task }} -Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4533 -Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true || app_status=$?
+            app_package=com.legitimateapps.dulcet.dev
+            if [ '${{ matrix.surface }}' = tv ]; then app_package=com.legitimateapps.dulcet.tv; fi
+            adb -s emulator-5554 pull /sdcard/Android/data/$app_package/files/design-tour "$RUNNER_TEMP/listen-now-fallback-shots" || true
+            test "$app_status" -eq 0
             mkdir -p "$RUNNER_TEMP/my-library-fallback"
             cp -R ${{ matrix.results }} "$RUNNER_TEMP/my-library-fallback/"
-            tools/ci/with-my-library-fixture --root "${{ steps.root.outputs.path }}/my-library" --music "${{ steps.root.outputs.path }}/music" -- ./gradlew --no-daemon --max-workers=2 ${{ matrix.task }} -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.my_library }} -Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4783 -Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true -Pandroid.testInstrumentationRunnerArguments.dulcetExpectSplit=true
+            tools/ci/with-my-library-fixture --root "${{ steps.root.outputs.path }}/my-library" --music "${{ steps.root.outputs.path }}/music" -- tools/ci/run-android-home-and-library-proof '${{ matrix.task }}' '${{ matrix.results }}' '${{ matrix.my_library }}'
             python3 tools/ci/verify-my-library-android-results ${{ matrix.results }} ${{ matrix.my_library }}
 
       - name: Stop the disposable server
@@ -384,6 +389,8 @@ jobs:
           path: |
             ${{ matrix.results }}
             ${{ runner.temp }}/my-library-fallback
+            ${{ runner.temp }}/listen-now-fallback-shots
+            ${{ runner.temp }}/listen-now-dulcet
             ${{ steps.root.outputs.path }}/my-library/*.log
             core-conformance/build/outputs/androidTest-results/connected
           if-no-files-found: error
