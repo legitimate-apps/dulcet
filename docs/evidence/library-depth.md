@@ -188,9 +188,10 @@ reviewer did not rerun the suites:
   final local-playlist pin guard and personal/catalog labeling clarifications.
 - The full core JVM run passed **1,078 tests**, with zero failures or errors, including
   15 `LibraryDepthTest` cases. Android compilation, iOS Simulator common-test compilation,
-  migration verification and Mac/iOS Simulator/tvOS Simulator debug-framework generation
-  passed in that gate. Those framework builds preceded the final filtered-empty paging
-  and default-category helper changes.
+  SQLDelight migration-task verification and Mac/iOS Simulator/tvOS Simulator
+  debug-framework generation passed in that gate. It did not execute the separate
+  Python historical gate, `tools/migration_gate.py`. Those framework builds preceded
+  the final filtered-empty paging and default-category helper changes.
 - A later focused `LibraryDepthTest` run passed **16 tests**, including explicit Load More
   progression through an empty filtered page. The final focused run then passed **18
   tests with zero failures or errors**, covering default category ordering and retained
@@ -313,3 +314,34 @@ executions and zero skips** (20 × 16). The existing
 are unchanged from that TV run. GitHub reports both final runs successful. These are
 hosted Android host-test observations, separate from the earlier APK-identified emulator
 completed-download proofs and from native Apple runtime behavior.
+
+## Broader required CI and migration repair
+
+The successful focused Android soaks do not establish that all required CI passed.
+In [PR core CI run 38996397552](https://github.com/legitimate-apps/dulcet/actions/runs/38996397552),
+the phone emulator job passed in **10 minutes 29 seconds**, while the TV emulator job
+failed in **8 minutes 50 seconds** when the My Library split proof could not reach its
+catalog-album control. Linux conformance executed **34 tests with 2 failures** in
+**9 minutes 6 seconds**: the TV host `conf82` retry control disappeared, and `conf41`
+one-character local rows timed out after five seconds. These are implementation-owner
+reports from the required run; their causes and corrections require separate evidence.
+They do not erase the bounded completed-download and focused-soak observations above,
+and those successes do not resolve these failures.
+
+The [required core-build job](https://github.com/legitimate-apps/dulcet/actions/runs/38996397552/job/117290103045)
+stopped before Gradle tests because
+`tools/migration_gate.py` found no `library_depth_entry` table in the previous latest
+schema snapshot. The released `9.db` remains unchanged. The repair adds the genuine
+SQLDelight-generated **`10.db`**, its version-10 fixture, registry entry and invariants.
+The snapshot-generation task passed. A composite generation-plus-verification command
+then exited on a Gradle 9.5 implicit task-dependency error; that orchestration failure
+was not a failed migration assertion. A separate Gradle verification run is still pending.
+
+The implementation owner subsequently reported the repaired Python historical gate
+passed: **10 fixtures** upgraded to the fresh **70 schema objects**, with **5 protected
+tables**, file reconciliation and **21 destructive negative controls**, including three
+for the new Library state. Version-10 byte regeneration, the version-7-through-10
+portable semantic checks, the generator's positive control and **7 negative controls**
+also passed. The generated snapshot had no difference from the declared SQL schema;
+SQLite integrity and foreign-key checks were clean. These are local migration checks,
+not a rerun of the required core CI job or proof of native Library behavior.
