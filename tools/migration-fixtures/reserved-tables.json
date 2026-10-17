@@ -23,6 +23,7 @@
     "download",
     "download_policy_state",
     "genre",
+    "library_depth_entry",
     "library_starred",
     "music_folder",
     "mutation_outbox",

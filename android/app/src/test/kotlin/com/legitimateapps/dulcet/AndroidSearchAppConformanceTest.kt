@@ -4,6 +4,9 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -52,11 +55,15 @@ class AndroidSearchAppConformanceTest {
         compose.onNodeWithTag("search.query").performTextInput("echo")
         compose.waitUntil(timeoutMillis = 5_000) { application.presenter.state.value.results.size == 3 }
 
-        compose.onNodeWithTag("search.result.0").assertTextContains("Echo")
-        compose.onNodeWithTag("search.result.1").assertTextContains("Echo Ensemble")
-        compose.onNodeWithTag("search.result.2").assertTextContains("Echo Track")
+        // Merge order is a publication contract; visual groups are Artists / Albums / Songs.
+        // Each row is reached by scrolling, as a touch user does, before checking or activating it.
+        assertEquals(listOf("album::7f-opaque", "artist::f4-opaque", "track::a9-opaque"),
+            application.presenter.state.value.rows.map { it.item.id.rawId })
+        result(0).assertTextContains("Echo")
+        result(1).assertTextContains("Echo Ensemble")
+        result(2).assertTextContains("Echo Track")
         // An album result opens the library's album page in this activity; nothing else is started.
-        compose.onNodeWithTag("search.result.0").performClick()
+        result(0).performClick()
         compose.waitUntil(timeoutMillis = 5_000) { exists("album.surface") }
         assertNull(shadowOf(application).nextStartedActivity, "An album result starts no other activity")
         assertFalse(exists("search.results"))
@@ -65,18 +72,18 @@ class AndroidSearchAppConformanceTest {
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         compose.waitUntil(timeoutMillis = 5_000) { exists("search.results") }
         compose.onNodeWithTag("search.query").assertTextContains("echo")
-        compose.onNodeWithTag("search.result.1").assertTextContains("Echo Ensemble")
+        result(1).assertTextContains("Echo Ensemble")
         assertEquals(1, application.presenters, "Search keeps one presenter across a result opened and left")
 
         // An artist result opens the artist page.
-        compose.onNodeWithTag("search.result.1").performClick()
+        result(1).performClick()
         compose.waitUntil(timeoutMillis = 5_000) { exists("artist.surface") }
         assertNull(shadowOf(application).nextStartedActivity, "An artist result starts no other activity")
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         compose.waitUntil(timeoutMillis = 5_000) { exists("search.results") }
 
         // A track result plays through this app's own player entry, with its opaque identity.
-        compose.onNodeWithTag("search.result.2").performClick()
+        result(2).performClick()
         val routed = assertNotNull(shadowOf(application).nextStartedActivity)
         assertEquals(PlaybackIntents.ACTION_PLAY_TRACK, routed.action)
         assertEquals(application.packageName, routed.`package`)
@@ -85,6 +92,12 @@ class AndroidSearchAppConformanceTest {
         val diagnosticShape = routed.toUri(Intent.URI_INTENT_SCHEME)
         assertFalse(diagnosticShape.contains(application.account.username))
         assertFalse(diagnosticShape.contains(application.account.password))
+    }
+
+    private fun result(index: Int): SemanticsNodeInteraction {
+        val tag = "search.result.$index"
+        compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag(tag))
+        return compose.onNodeWithTag(tag)
     }
 
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()

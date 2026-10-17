@@ -75,12 +75,9 @@ class AndroidTvSearchAppConformanceTest {
         compose.waitUntil(timeoutMillis = 5_000) { application.presenter.state.value.results.size == 3 }
         compose.onNodeWithTag("search.result.0").assertTextContains("Echo")
         compose.onNodeWithTag("search.result.1").assertTextContains("Echo Ensemble")
-        compose.onNodeWithTag("search.result.2").assertTextContains("Echo Track")
 
         compose.onNodeWithTag("search.query").performKeyInput { pressKey(Key.DirectionDown) }
-        compose.onNodeWithTag("search.result.0").assertIsFocused()
-        compose.onNodeWithTag("search.result.0").performKeyInput { pressKey(Key.DirectionDown) }
-        compose.onNodeWithTag("search.result.1").assertIsFocused()
+        compose.onNodeWithTag("search.result.1").assertIsFocused() // Artists is the first result group.
 
         // The artist result opens the library's artist screen above search, in this activity.
         compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionCenter) }
@@ -93,11 +90,10 @@ class AndroidTvSearchAppConformanceTest {
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         compose.waitUntil(timeoutMillis = 5_000) { focused("search.result.1") }
         compose.onNodeWithTag("search.query").assertTextContains("echo")
-        compose.onNodeWithTag("search.result.2").assertTextContains("Echo Track")
         assertEquals(1, application.presenters, "Search keeps one presenter across a result opened and left")
 
         // The album result opens the album screen.
-        compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionUp) }
+        compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionDown) }
         compose.onNodeWithTag("search.result.0").assertIsFocused()
         compose.onNodeWithTag("search.result.0").performKeyInput { pressKey(Key.DirectionCenter) }
         compose.waitUntil(timeoutMillis = 5_000) { exists("album.surface") }
@@ -107,8 +103,8 @@ class AndroidTvSearchAppConformanceTest {
 
         // The track result plays, through this app's own player entry, with its opaque identity.
         compose.onNodeWithTag("search.result.0").performKeyInput { pressKey(Key.DirectionDown) }
-        compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionDown) }
         compose.onNodeWithTag("search.result.2").assertIsFocused()
+        compose.onNodeWithTag("search.result.2").assertTextContains("Echo Track")
         compose.onNodeWithTag("search.result.2").performKeyInput { pressKey(Key.DirectionCenter) }
         val routed = assertNotNull(shadowOf(application).nextStartedActivity)
         assertEquals(PlaybackIntents.ACTION_PLAY_TRACK, routed.action)

@@ -98,7 +98,18 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             /** As a remote reaches the list's status lines: Up until focus leaves the cards for the grid's header. */
             override fun showListStatus() {
                 repeat(64) {
-                    if (focusedAlbum() == null) return
+                    if (focusedAlbum() == null) {
+                        // The taller header now has Load More below status. Reaching that button
+                        // does not reveal the status yet. Settle its retry focus before the shared
+                        // scenario decides whether moving here left the window's end. That move
+                        // may legitimately clear an owed page and retire the retry action.
+                        val retry = compose.onAllNodesWithTag("library.albums.retry").fetchSemanticsNodes()
+                        if (retry.isNotEmpty()) {
+                            compose.onNodeWithTag("library.albums.retry").performSemanticsAction(SemanticsActions.RequestFocus)
+                            compose.waitForIdle()
+                        }
+                        return
+                    }
                     key(Key.DirectionUp)
                 }
                 error("The remote did not leave the album cards; focus is on ${focusedAlbum()}")
@@ -513,12 +524,25 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         val sibling = server.createPlaylist(siblingName, songs.take(1))
         assertEquals(name, server.playlists()[id], "setup: the playlist is on the server")
 
-        // Initial card focus can scroll the home section selector out of the lazy viewport.
-        // Wait for Library itself; press() reveals its sections with the remote before focusing.
         await("Listen Now at launch") { exists("listenNow.surface") }
         show("library.open")
         await("Library") { exists("library.surface") }
-        press("library.view.playlists")
+        await("the launch library's default card") { focused("library.home.0.item.0") }
+        // The late launch default can scroll sections out after an earlier exists() check.
+        // Settle that real focus, then reach Playlists with the remote before selecting it.
+        val sections = listOf("albums", "artists", "genres", "favourites", "playlists")
+            .map { "library.view.$it" } + "library.refresh"
+        repeat(8) { if (sections.none(::focused)) key(Key.DirectionUp) }
+        assertTrue(sections.any(::focused), "UP reaches the library's sections; focused=${focusedTags()}")
+        repeat(sections.size) {
+            val current = sections.indexOfFirst(::focused)
+            assertTrue(current >= 0, "the remote remains on a section; focused=${focusedTags()}")
+            val target = sections.indexOf("library.view.playlists")
+            if (current != target) key(if (current < target) Key.DirectionRight else Key.DirectionLeft)
+        }
+        assertFocused("library.view.playlists")
+        println("PLAYLIST TV OBSERVED launch-default-settled=true sections-reached-by-remote=true focused=${focusedTags()}")
+        key(Key.DirectionCenter)
         await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
         compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(name))
         focus(cardWithText("library.playlists.item.", name))

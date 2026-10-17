@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -30,6 +31,8 @@ import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
+import com.legitimateapps.dulcet.library.rememberLibraryCategory
+import com.legitimateapps.dulcet.library.MyLibrarySort
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.MyLibraryMembership
 import com.legitimateapps.dulcet.library.MyLibraryPublication
@@ -83,7 +86,15 @@ internal fun TvMyLibraryHome(
                 TvAction(stringResource(R.string.tv_refresh), "mylibrary.refresh", icon = DulcetIcons.Refresh) { myLibrary.refresh() }
             }
         }
-        item { TvConnectionNotices(session, accountNotices = true) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvAction(stringResource(SharedR.string.library_downloaded), "mylibrary.view.downloaded") { navigator.open(ROUTE_DOWNLOADED) }
+                TvAction(stringResource(SharedR.string.library_shuffle_all), "mylibrary.shuffleAll", enabled = publication?.songs?.isNotEmpty() == true) {
+                    playTracks(plays, account.providerInstanceId, publication?.songs.orEmpty().map(MyLibrarySong::toTrack), null, "My Library", true) { showNowPlaying(context) }
+                }
+            }
+        }
+        item { TvLibraryPins(account, session, playback, navigator); TvConnectionNotices(session, accountNotices = true) }
         val current = publication
         when {
             current == null || current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing ->
@@ -149,7 +160,9 @@ private fun MyLibraryPublication.tvIsEmpty(): Boolean =
 
 /** Every artist of the library, one grid of cards; an artist opens its screen. */
 @Composable
-internal fun TvMyArtistsGrid(account: SearchAccount, myLibrary: MyLibrarySession, navigator: TvNavigator) {
+internal fun TvMyArtistsGrid(account: SearchAccount, session: LibrarySession, myLibrary: MyLibrarySession, navigator: TvNavigator) {
+    val controls = rememberLibraryCategory(session, "mylibrary.artists")
+    LaunchedEffect(controls.sort) { myLibrary.setSort(if (controls.sort == "recentlyAdded") MyLibrarySort.RecentlyAdded else MyLibrarySort.Alphabetical) }
     EnterRoute()
     val publication by myLibrary.state.collectAsState()
     LazyVerticalGrid(GridCells.Adaptive(180.dp),
@@ -162,6 +175,7 @@ internal fun TvMyArtistsGrid(account: SearchAccount, myLibrary: MyLibrarySession
                     TvAction(stringResource(R.string.tv_back), "mylibrary.artists.back", onClick = navigator.back)
                 }
                 Text(stringResource(R.string.tv_library_artists), style = MaterialTheme.typography.displaySmall)
+                TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added"))
             }
         }
         itemsIndexed(publication?.artists.orEmpty(), key = { _, artist -> artist.rawId }) { position, artist ->
@@ -174,7 +188,9 @@ internal fun TvMyArtistsGrid(account: SearchAccount, myLibrary: MyLibrarySession
 
 /** Every album of the library, one grid of cards; an album opens its screen. */
 @Composable
-internal fun TvMyAlbumsGrid(account: SearchAccount, myLibrary: MyLibrarySession, navigator: TvNavigator) {
+internal fun TvMyAlbumsGrid(account: SearchAccount, session: LibrarySession, myLibrary: MyLibrarySession, navigator: TvNavigator) {
+    val controls = rememberLibraryCategory(session, "mylibrary.albums")
+    LaunchedEffect(controls.sort) { myLibrary.setSort(if (controls.sort == "recentlyAdded") MyLibrarySort.RecentlyAdded else MyLibrarySort.Alphabetical) }
     EnterRoute()
     val publication by myLibrary.state.collectAsState()
     LazyVerticalGrid(GridCells.Adaptive(180.dp),
@@ -187,6 +203,7 @@ internal fun TvMyAlbumsGrid(account: SearchAccount, myLibrary: MyLibrarySession,
                     TvAction(stringResource(R.string.tv_back), "mylibrary.albums.back", onClick = navigator.back)
                 }
                 Text(stringResource(R.string.tv_library_albums), style = MaterialTheme.typography.displaySmall)
+                TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added") + listOf("artist" to "Artist", "year" to "Release Year (Newest First)"))
             }
         }
         itemsIndexed(publication?.albums.orEmpty(), key = { _, album -> album.rawId }) { position, album ->
@@ -201,11 +218,14 @@ internal fun TvMyAlbumsGrid(account: SearchAccount, myLibrary: MyLibrarySession,
 @Composable
 internal fun TvMySongsList(
     account: SearchAccount,
+    session: LibrarySession,
     myLibrary: MyLibrarySession,
     playback: AndroidPlaybackController?,
     playingRawId: String?,
     navigator: TvNavigator,
 ) {
+    val controls = rememberLibraryCategory(session, "mylibrary.songs")
+    LaunchedEffect(controls.sort) { myLibrary.setSort(if (controls.sort == "recentlyAdded") MyLibrarySort.RecentlyAdded else MyLibrarySort.Alphabetical) }
     EnterRoute()
     val publication by myLibrary.state.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -224,6 +244,10 @@ internal fun TvMySongsList(
                     TvAction(stringResource(R.string.tv_back), "mylibrary.songs.back", onClick = navigator.back)
                 }
                 Text(title, style = MaterialTheme.typography.displaySmall)
+                TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added", "artist" to "Artist"))
+                TvAction(stringResource(SharedR.string.library_shuffle_all), "mylibrary.songs.shuffleAll", enabled = tracks.isNotEmpty()) {
+                    playTracks(plays, account.providerInstanceId, tracks, null, title, true) { showNowPlaying(context) }
+                }
             }
         }
         itemsIndexed(songs, key = { _, song -> song.rawId }) { position, song ->

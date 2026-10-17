@@ -1,0 +1,33 @@
+CREATE TABLE library_depth_entry (
+  server_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  value TEXT NOT NULL,
+  issue_seq INTEGER NOT NULL,
+  PRIMARY KEY (server_id, category, raw_id)
+);
+
+selectEntries:
+SELECT category, raw_id, value, issue_seq FROM library_depth_entry WHERE server_id = ? ORDER BY issue_seq DESC, raw_id;
+
+selectEntry:
+SELECT value FROM library_depth_entry WHERE server_id = ? AND category = ? AND raw_id = ?;
+
+putEntry:
+INSERT OR REPLACE INTO library_depth_entry(server_id, category, raw_id, value, issue_seq) VALUES (?, ?, ?, ?, ?);
+
+deleteEntry:
+DELETE FROM library_depth_entry WHERE server_id = ? AND category = ? AND raw_id = ?;
+
+deleteCategory:
+DELETE FROM library_depth_entry WHERE server_id = ? AND category = ?;
+
+localTracks:
+SELECT raw_id FROM cache_track WHERE server_id = ? AND metadata_missing = 0 AND gone = 0 ORDER BY normalized_title, raw_id;
+
+selectUserEntries:
+SELECT category, raw_id, value, issue_seq FROM library_depth_entry
+WHERE server_id = ? AND category != 'albumMetadata' ORDER BY issue_seq DESC, raw_id;
+
+selectAlbumMetadata:
+SELECT raw_id, value FROM library_depth_entry WHERE server_id = ? AND category = 'albumMetadata';

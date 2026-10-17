@@ -1330,7 +1330,9 @@ both additive, seeded with nothing, and not protected data.
   `cache_playlist` rows of every fixture that holds the columns schema 7 added — a cache table, so
   not protected data, but a column a schema added is compared with data — each again with a
   negative control. From schema 9 it also compares the re-derivable `my_library_item` and
-  `my_library_state` rows. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
+  `my_library_state` rows. From schema 10 it also compares `library_depth_entry` rows, with seeded
+  account-scoped preferences, pins and recents and controls that reject overwrites, deletion and
+  account loss. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
   files; from schema 8 the gate also builds the schema from the current `.sq` files alone, requires
   that build to equal the snapshot (so an empty difference is the instrument agreeing, not the
   instrument reading nothing) and requires the newest fixture to equal it object for object
@@ -1339,8 +1341,9 @@ both additive, seeded with nothing, and not protected data.
   by hand: `tools/generate_migration_fixture.py --to N` copies fixture N−1, applies
   `migrations/<N−1>.sqm` as shipped, sets the schema version, adds that version's seed rows and
   vacuums; `--check` regenerates into a temporary directory and requires the committed fixture to
-  be byte-identical. It writes only with SQLite 3.51.0, the build that wrote v4–v9 (v1–v3 were
-  written by 3.50.6; none reserves bytes per page), and refuses any other, since a different build
+  be byte-identical. Writing and byte checks require the recorded SQLite build for that fixture:
+  3.51.0 for v4–v9 and 3.54.0 for v10 (v1–v3 were written by 3.50.6; none reserves bytes per page).
+  They refuse another build, since a different build
   lays pages out differently (revision 104, item 23). That byte check is local; CI runs
   `--all --check-semantic` in the parity gate, which any SQLite build can answer: it regenerates
   every generated fixture and compares the normalised schema, `user_version`, every table's rows and
@@ -7789,6 +7792,49 @@ including cached first paint, freshness, account binding and failure retention. 
 only recent/frequent/newest/random album lists and starred content; unsupported personal shelves
 are empty and hidden. Listen Now is a first destination beside Library and Browse. Track shelves
 play through the existing queue-entry surface. Reading a home never records a play.
+**2026-10-16 — Personal collection depth and device-only Library state.**
+The shared reader owns per-category sort/filter preferences, pins and recent searches in a new
+additive account-bound device table (schema 10). Pins intentionally live **on this device for this
+account**, including with Dulcet Server: they make no server write and do not sync between devices.
+A changed server URL or username purges this state with the seen-cache. User pins protect their
+cached metadata from eviction. Search recents are recorded on a committed search action, trimmed,
+case-folded for deduplication and limited to the latest twelve; clearing recents leaves pins intact.
+Mutation return values acknowledge queue acceptance. A failed device-state write keeps a sanitized
+error on subsequent state reads until a successful write, so a failed write cannot silently revert
+an accepted UI change through an apparently successful read.
+
+Albums retain the existing `getAlbumList2` window and scan-stamp rules: title, artist, `byYear`
+(newest first), `newest` (recently added) and `frequent` (most played). Activity lists remain single
+pages; they never claim whole-library coverage. `byYear` excludes albums whose server supplies no
+year. Optional OpenSubsonic `releaseTypes` and `originalReleaseDate` survive the cache and both
+bridges. An artist's discography is newest first, using original date then year, with Albums,
+EPs & Singles, Compilations and Appears On groups when the server supplies the corresponding
+metadata/credits; untyped releases remain Albums, and undated releases follow dated ones.
+
+Songs uses empty-query `search3`, requesting only songs and paging with `songCount`/`songOffset`
+through the same guarded reader window. A server that rejects this enumeration leaves explicitly
+cached, open-coverage device songs visible; a successful empty response with known device songs
+also offers that labelled local view without asserting current server membership. Local title,
+artist, play-count and text filtering cover the loaded window, not an unseen catalog; the UI states
+that scope. Complete one-response categories and Dulcet Server My Library use the shared local
+sort/filter policy; My Library recently-added order uses membership rank. Unknown play counts,
+release dates and unsupported playlist favorites are never invented.
+
+Downloaded contains actual completed download identities resolved against pinned track metadata,
+works offline and updates when downloads change; merely cached tracks are excluded. Downloaded
+album/artist filters use those track relationships. tvOS retains its existing no-durable-downloads
+policy, so its shell offers no Downloaded entry or filter; Android TV supports downloads.
+`artistTopSongs` calls `getTopSongs` with the
+artist's name when online and falls back to this account's cached plays and stars when unavailable
+or empty. It does not label an unplayed alphabetical sample as Top Songs. Shuffle All online
+requests a fresh `getRandomSongs` selection on every action, with a bounded queue of up to 500
+server-selected songs; every server song is eligible without enumerating a mirror. Offline and
+personal-collection shuffle uses the displayed available collection and states its scope.
+
+OBSERVED core evidence: `LibraryDepthTest` exercises isolation, persistence, recent-search bounds,
+metadata ordering, pin eviction protection, local offline collections, Top Songs fallback, guarded
+song offsets, bounded random selection and category filters. Platform screen evidence is recorded
+separately in `FEATURES.yml`; these core tests do not claim simulator or emulator UI verification.
 
 **2026-10-16 — Opt-in trusted proxy client addresses.**
 Dulcet Server accepts an operator-configured `trusted-proxies` list of literal addresses/CIDRs,

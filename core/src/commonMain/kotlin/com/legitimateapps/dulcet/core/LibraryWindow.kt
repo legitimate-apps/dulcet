@@ -397,6 +397,7 @@ internal data class ListRequestSpec(
     val sizeParameter: String?,
     /** For a single-page list: the size asked for (none for one-response endpoints). */
     val singlePageSize: Int?,
+    val offsetParameter: String = "offset",
     val parse: (String) -> ParsedList,
 ) {
     companion object {
@@ -430,6 +431,18 @@ internal data class ListRequestSpec(
                     ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
                 }
             }
+            is LibraryQuery.Songs -> {
+                val parameters = mapOf("query" to "", "artistCount" to "0", "albumCount" to "0")
+                ListRequestSpec("search3", parameters, canonicalListKey("search3", parameters), true, "songCount", null, offsetParameter = "songOffset", parse = {
+                    val tracks = parseReaderAllSongs(it)
+                    ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
+                })
+            }
+            LibraryQuery.ShuffleSongs -> whole("getRandomSongs", mapOf("size" to "500")) {
+                val tracks = parseReaderRandomSongs(it)
+                ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
+            }
+            LibraryQuery.Downloaded, LibraryQuery.Pinned, is LibraryQuery.ArtistTopSongs,
             is LibraryQuery.Album, is LibraryQuery.Artist, is LibraryQuery.Playlist ->
                 error("a detail query is not a list")
         }
@@ -465,7 +478,7 @@ internal data class ListRequestSpec(
         }
 
         private fun whole(endpoint: String, parameters: Map<String, String>, parse: (String) -> ParsedList) =
-            ListRequestSpec(endpoint, parameters, canonicalListKey(endpoint, parameters), false, null, null, parse)
+            ListRequestSpec(endpoint, parameters, canonicalListKey(endpoint, parameters), false, null, null, parse = parse)
 
         /** Activity-ordered lists and `random` are one page of this size (§16.9). */
         const val SINGLE_PAGE_SIZE = 100
@@ -515,6 +528,7 @@ internal class ListWindow(
      * top on its first live read, so the start of a list is never unreachable (review finding B2).
      */
     private var viewport: IntRange = 0..0
+    private var viewportFirstRawId: String? = null
 
     /**
      * Bumped by every viewport the shell sets. A rebase's re-anchor moves [viewport] only if this is
@@ -556,6 +570,7 @@ internal class ListWindow(
     private val liveThisSession: Boolean get() = spec.listKey in reader.liveListReads
 
     override fun needsRevalidation(): Boolean {
+        if (query == LibraryQuery.ShuffleSongs) return true
         val epoch = reader.sessionEpoch ?: return true
         val state = cache.listState(spec.listKey) ?: return true
         return mustRebase(state, epoch) || !readRecently(state, epoch)
@@ -853,7 +868,7 @@ internal class ListWindow(
             owe()
             return null
         }
-        val parameters = spec.parameters + (sizeParameter to pageSize.toString()) + ("offset" to offset.toString())
+        val parameters = spec.parameters + (sizeParameter to pageSize.toString()) + (spec.offsetParameter to offset.toString())
         val sent = try {
             reader.sendChecked(spec.endpoint, parameters)
         } catch (cancelled: CancellationException) {
@@ -951,6 +966,15 @@ internal class ListWindow(
     override fun loadMore() {
         reader.checkConfined()
         if (closed || !spec.paged) return
+        // A filter can hide every loaded row, leaving no rendered row to advance the viewport.
+        // This explicit action moves its server cursor to the loaded end, admitting ONE more page.
+        if (published.isEmpty()) {
+            cache.listState(spec.listKey)?.takeIf { it.endLoadedOffset > it.firstLoadedOffset }?.let { state ->
+                val lastLoaded = state.endLoadedOffset - 1
+                viewport = lastLoaded..lastLoaded
+                viewportSerial += 1
+            }
+        }
         if (!reader.online) {
             owedExtends += PageMode.Append
             return
@@ -1098,7 +1122,9 @@ internal class ListWindow(
         if (closed || publishedPositions.isEmpty()) return
         val from = firstIndex.coerceIn(0, publishedPositions.lastIndex)
         val to = lastIndex.coerceIn(from, publishedPositions.lastIndex)
-        viewport = publishedPositions[from]..publishedPositions[to]
+        val visiblePositions = publishedPositions.subList(from, to + 1)
+        viewport = visiblePositions.min()..visiblePositions.max()
+        viewportFirstRawId = published.getOrNull(from)?.rawId
         viewportSerial += 1
         if (query is LibraryQuery.AlbumList && published.isNotEmpty()) {
             val itemsFrom = firstIndex.coerceIn(0, published.lastIndex)
@@ -1122,9 +1148,17 @@ internal class ListWindow(
         }
         touchShown(spec.listKey)
         val (read, readPositions) = itemsOf(cache.listRows(spec.listKey), dedupe = true)
+        if (query is LibraryQuery.Songs && read.isEmpty() && cache.localTracks().isNotEmpty()) return localViewOrEmpty(forceSeen = true)
         // Pending playlist creates, deletes and renames are overlaid like a pending star (§18.6).
-        val items = if (query == LibraryQuery.Playlists) reader.playlistOverlay.overlayList(read) else read
-        val positions = if (items === read) readPositions else items.indices.toList()
+        val items = when (val current = query) {
+            LibraryQuery.Playlists -> reader.applyCategory(reader.playlistOverlay.overlayList(read), "playlists")
+            is LibraryQuery.Artists -> reader.applyCategory(read, "artists")
+            is LibraryQuery.AlbumList -> reader.applyCategory(read, "albums")
+            is LibraryQuery.Songs -> reader.applyCategory(read, "songs", current.sort, current.filter)
+            else -> read
+        }
+        val positionsById = read.zip(readPositions).associate { it.first.rawId to it.second }
+        val positions = if (items === read) readPositions else items.mapIndexed { index, item -> positionsById[item.rawId] ?: index }
         publishedPositions = positions
         val current = reader.sessionEpoch
         val liveUnderCurrent = liveThisSession && current != null && state.windowEpoch == current.key
@@ -1138,9 +1172,9 @@ internal class ListWindow(
             header = null,
             items = items,
             itemsState = LibraryItemsState.Present,
-            order = LibraryItemsOrder.Server,
+            order = if (items !== read) LibraryItemsOrder.LocalView else LibraryItemsOrder.Server,
             anchor = anchor,
-            leadingOffset = positions.firstOrNull() ?: state.firstLoadedOffset,
+            leadingOffset = positions.minOrNull() ?: state.firstLoadedOffset,
         )
     }
 
@@ -1148,8 +1182,8 @@ internal class ListWindow(
      * A list never read: offline, the local view of the cached entities of its kind, sorted
      * locally and labelled as such (§16.14); otherwise nothing, loading or unavailable.
      */
-    private fun localViewOrEmpty(): LibraryPublication {
-        val local: List<LibraryItem> = if (!reader.online) {
+    private fun localViewOrEmpty(forceSeen: Boolean = false): LibraryPublication {
+        val rawLocal: List<LibraryItem> = if (forceSeen || !reader.online || (query is LibraryQuery.Songs && failure != null)) {
             when (query) {
                 is LibraryQuery.AlbumList -> cache.localAlbums().let { albums ->
                     val members = albums.map { CacheListMember(CacheItemKind.Album, it.record.rawId) }
@@ -1161,6 +1195,10 @@ internal class ListWindow(
                     val pending = reader.overlay.pending(cache.serverId, members.toSet())
                     artists.zip(members) { artist, member -> artist.toItem(pending[member]) }
                 }
+                is LibraryQuery.Songs -> {
+                    val rows = cache.localTracks().mapIndexed { index, t -> CachedListRow(index, CacheItemKind.Track, track = t) }
+                    itemsOf(rows, true).first
+                }
                 // Never read, offline: only playlists created on this device can be shown.
                 LibraryQuery.Playlists -> reader.playlistOverlay.overlayList(emptyList())
                 else -> emptyList()
@@ -1168,9 +1206,16 @@ internal class ListWindow(
         } else {
             emptyList()
         }
+        val local = when (val current = query) {
+            is LibraryQuery.Songs -> reader.applyCategory(rawLocal, "songs", current.sort, current.filter)
+            is LibraryQuery.AlbumList -> reader.applyCategory(rawLocal, "albums")
+            is LibraryQuery.Artists -> reader.applyCategory(rawLocal, "artists")
+            LibraryQuery.Playlists -> reader.applyCategory(rawLocal, "playlists")
+            else -> rawLocal
+        }
         publishedPositions = local.indices.toList()
         val freshness = if (local.isNotEmpty()) {
-            LibraryFreshness.Cached(null, offlineReason())
+            LibraryFreshness.Cached(null, failure?.let(LibraryCachedReason::Failed) ?: if (reader.online) LibraryCachedReason.Stale else offlineReason())
         } else {
             emptyFreshness()
         }
@@ -1200,7 +1245,8 @@ internal class ListWindow(
 
     private fun firstVisibleAnchorSource(): AnchorSource? {
         if (published.isEmpty()) return null
-        val index = publishedPositions.indexOfFirst { it >= viewport.first }.takeIf { it >= 0 } ?: 0
+        val index = published.indexOfFirst { it.rawId == viewportFirstRawId }.takeIf { it >= 0 }
+            ?: publishedPositions.indexOfFirst { it >= viewport.first }.takeIf { it >= 0 } ?: 0
         return AnchorSource(index, publishedPositions.getOrElse(index) { 0 }, published.map { it.rawId })
     }
 
@@ -1504,7 +1550,7 @@ internal class CollectionDetailWindow(
         }
         val live = liveThisSession && reader.sessionEpoch != null && state?.windowEpoch == reader.sessionEpoch?.key
         return LibraryPublication(
-            query, 0, cachedFreshness(state?.fetchedAtWall, live), null, null, header, items, itemsState,
+            query, 0, cachedFreshness(state?.fetchedAtWall, live), null, null, header, newestDiscography(items, rawId), itemsState,
             LibraryItemsOrder.Server, itemsUnavailableReason = itemsUnavailable,
         )
     }
@@ -1607,6 +1653,9 @@ internal fun CachedAlbum.toItem(pending: PendingUserState?): LibraryItem.Album {
         userRating = pending?.userRating ?: record.userState.userRating,
         playCount = record.userState.playCount,
         detailComplete = detailComplete,
+        releaseTypes = record.releaseTypes,
+        originalReleaseDate = record.originalReleaseDate,
+        discographyGroup = discographyGroup(record.releaseTypes),
     )
 }
 

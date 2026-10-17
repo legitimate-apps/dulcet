@@ -18,6 +18,7 @@ import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
+import com.legitimateapps.dulcet.library.toReaderAccount
 import com.legitimateapps.dulcet.library.AlbumSort
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.search.SearchAccount
@@ -52,6 +53,7 @@ class TvGenresAndAlbumSortTest {
     private var controller: AndroidPlaybackController? = null
 
     @After fun close() {
+        server.releaseAlbumPages()
         controller?.close()
         var closed = false
         AndroidLibraryReader.closeCurrent { closed = true }
@@ -159,6 +161,7 @@ class TvGenresAndAlbumSortTest {
     }
 
     @Test fun theAlbumOrdersAreUpFromTheAlbumsAndChoosingOneKeepsTheRemoteOnIt() {
+        server.holdAlbumPages = true
         host()
         focus("library.view.albums")
         key(Key.DirectionCenter)
@@ -167,8 +170,22 @@ class TvGenresAndAlbumSortTest {
         }
         assertTrue(selected("library.albums.sort.alphabeticalbyname"), "the order showing is marked")
         key(Key.DirectionUp)
-        val landed = focusedTags().single()
-        assertTrue(landed.startsWith("library.albums.sort."), "UP from the first albums reaches the orders: $landed")
+        var landed = focusedTags().single()
+        assertEquals("library.albums.loadMore", landed, "Open coverage exposes paging above the albums")
+        val frame = compose.onNodeWithTag("library.albums").fetchSemanticsNode().config[
+            com.legitimateapps.dulcet.library.LibraryObservation].surfaces.getValue("albums:AlphabeticalByName").last()
+        assertEquals(com.legitimateapps.dulcet.core.AndroidLibraryCoverage.Open, frame.coverage)
+        assertEquals(2, frame.itemCount)
+        assertTrue(exists("library.albums.loadMore"), "The focused paging action is composed")
+        repeat(4) {
+            if (!landed.startsWith("library.albums.sort.") && !landed.startsWith("library.albums.filter.")) {
+                key(Key.DirectionUp)
+                landed = focusedTags().single()
+            }
+        }
+        assertTrue(landed.startsWith("library.albums.sort.") || landed.startsWith("library.albums.filter."),
+            "UP through the paging header reaches its sort/filter controls: $landed")
+        server.releaseAlbumPages()
         focus("library.albums.sort.alphabeticalbyname")
         key(Key.DirectionRight)
         key(Key.DirectionRight)
@@ -177,7 +194,7 @@ class TvGenresAndAlbumSortTest {
         await("the albums, newest first") { texts("library.albums.item.0").first() == "Album 1 by newest" }
         assertFocused("library.albums.sort.newest")
         assertTrue(selected("library.albums.sort.newest") && !selected("library.albums.sort.alphabeticalbyname"))
-        assertEquals(AndroidAlbumListType.Newest, AlbumSort.load(context), "the choice is kept on this device")
+        assertEquals("Newest", savedSort(), "the choice is kept for this account on this device")
         assertEquals(listOf("alphabeticalByName", "newest"),
             server.requests("getAlbumList2").filter { it["size"] != "20" }.map { it["type"] }.distinct(),
             "the Albums screen read by title, then newest, each its own window")
@@ -205,7 +222,7 @@ class TvGenresAndAlbumSortTest {
     }
 
     @Test fun theOrderChosenEarlierOnThisDeviceIsTheOneTheAlbumsOpenIn() {
-        AlbumSort.save(context, AndroidAlbumListType.Frequent)
+        saveSort("Frequent")
         host()
         focus("library.view.albums")
         key(Key.DirectionCenter)
@@ -213,6 +230,20 @@ class TvGenresAndAlbumSortTest {
             focused("library.albums.item.0") && texts("library.albums.item.0").first() == "Album 1 by frequent"
         }
         assertTrue(selected("library.albums.sort.frequent"))
+    }
+
+    private fun saveSort(sort: String) {
+        val reader = AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true)
+        assertTrue(reader.setLibraryCategory("albums", sort, "all"))
+        assertEquals(sort, savedSort())
+    }
+
+    private fun savedSort(): String {
+        var value: String? = null
+        AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true).libraryDepthState { value = it.sort("albums") }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (value == null && System.nanoTime() < deadline) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(5) }
+        return checkNotNull(value)
     }
 
     // ---- Helpers ------------------------------------------------------------------------------------

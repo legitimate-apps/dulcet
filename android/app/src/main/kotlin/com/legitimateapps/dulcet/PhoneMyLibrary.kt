@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
+import com.legitimateapps.dulcet.library.rememberLibraryCategory
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.MyLibraryAlbum
 import com.legitimateapps.dulcet.library.MyLibraryArtist
@@ -77,7 +78,7 @@ import com.legitimateapps.dulcet.ui.DulcetIcons
  */
 
 /** My Library's sections, in the Apple shells' order. */
-internal enum class MyLibraryView { Recent, Artists, Albums, Songs, Playlists }
+internal enum class MyLibraryView { Recent, Artists, Albums, Songs, Playlists, Downloaded }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,12 +91,14 @@ internal fun MyLibraryHome(
 ) {
     var view by rememberSaveable { mutableStateOf(MyLibraryView.Recent) }
     val publication by myLibrary.state.collectAsState()
-    val sort by myLibrary.sort.collectAsState()
+    val controls = rememberLibraryCategory(session, "mylibrary.${view.name.lowercase()}")
     // Recently Added is always newest first, whatever order a list section was left in.
-    LaunchedEffect(view) { if (view == MyLibraryView.Recent) myLibrary.setSort(MyLibrarySort.RecentlyAdded) }
+    LaunchedEffect(view, controls.sort) {
+        myLibrary.setSort(if (view == MyLibraryView.Recent || controls.sort == "recentlyAdded") MyLibrarySort.RecentlyAdded else MyLibrarySort.Alphabetical)
+    }
     Column(Modifier.fillMaxSize().testTag("mylibrary.surface")) {
         TopAppBar(
-            title = { Text(stringResource(R.string.tab_library), fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(SharedR.string.library_my_library_title), fontWeight = FontWeight.Bold) },
             actions = {
                 IconButton(onClick = { myLibrary.refresh() }, modifier = Modifier.testTag("mylibrary.refresh")) {
                     Icon(DulcetIcons.Refresh, stringResource(R.string.library_refresh))
@@ -113,33 +116,31 @@ internal fun MyLibraryHome(
                     MyLibraryView.Albums -> R.string.library_view_albums
                     MyLibraryView.Songs -> SharedR.string.library_favourites_songs
                     MyLibraryView.Playlists -> R.string.library_view_playlists
+                    MyLibraryView.Downloaded -> SharedR.string.library_downloaded
                 })) },
                 modifier = Modifier.testTag("mylibrary.view.${option.name.lowercase()}"),
             )
         }
         if (view == MyLibraryView.Artists || view == MyLibraryView.Albums || view == MyLibraryView.Songs) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(SharedR.string.library_sort_by), style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = {
-                    myLibrary.setSort(if (sort == MyLibrarySort.RecentlyAdded) MyLibrarySort.Alphabetical else MyLibrarySort.RecentlyAdded)
-                }, modifier = Modifier.testTag("mylibrary.sort")) {
-                    Text(stringResource(if (sort == MyLibrarySort.RecentlyAdded) SharedR.string.library_home_newest else SharedR.string.library_sort_az))
-                }
-            }
+            LibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added") +
+                if (view == MyLibraryView.Albums) listOf("artist" to "Artist", "year" to "Release Year (Newest First)") else emptyList())
         }
-        ConnectionNotices(session, accountNotices = true)
+        ConnectionNotices(session, accountNotices = true, local = view == MyLibraryView.Downloaded)
+        LibraryPins(account, session, actions)
         val current = publication
         when {
+            view == MyLibraryView.Downloaded -> DeviceSongs(account, session, actions, true, null)
+            view == MyLibraryView.Playlists -> PlaylistsList(account, session, actions)
             current == null || current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing ->
                 StatementText("…", "mylibrary.loading")
-            current.isEmpty() -> MyLibraryEmpty(openBrowse)
+            publication?.isEmpty() == true -> MyLibraryEmpty(openBrowse)
             else -> when (view) {
                 MyLibraryView.Recent -> MyLibraryRecent(account, myLibrary, current, actions)
                 MyLibraryView.Artists -> MyLibraryArtists(myLibrary, current, actions)
                 MyLibraryView.Albums -> MyLibraryAlbums(account, myLibrary, current, actions)
                 MyLibraryView.Songs -> MyLibrarySongs(myLibrary, current, actions, playingRawId = null)
                 MyLibraryView.Playlists -> PlaylistsList(account, session, actions)
+                MyLibraryView.Downloaded -> DeviceSongs(account, session, actions, true, null)
             }
         }
     }
@@ -222,6 +223,10 @@ private fun MyLibraryAlbums(account: SearchAccount, myLibrary: MyLibrarySession,
 private fun MyLibrarySongs(myLibrary: MyLibrarySession, publication: MyLibraryPublication, actions: PhoneActions, playingRawId: String?) {
     val tracks = publication.songs.map(MyLibrarySong::toTrack)
     LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.songs")) {
+        item {
+            TextButton(onClick = { actions.playTracksFrom(tracks, null, "My Library", true) }, enabled = tracks.isNotEmpty(),
+                modifier = Modifier.testTag("mylibrary.songs.shuffleAll")) { Text(stringResource(SharedR.string.library_shuffle_all)) }
+        }
         itemsIndexed(publication.songs, key = { _, song -> song.rawId }) { position, song ->
             MyLibraryTrackRow(myLibrary, song, tracks, position, "mylibrary.songs.$position", playingRawId, actions)
         }

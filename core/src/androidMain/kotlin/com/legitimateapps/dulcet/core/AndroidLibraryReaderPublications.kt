@@ -34,6 +34,11 @@ public sealed interface AndroidLibraryQuery {
     public data object Playlists : AndroidLibraryQuery
     public data class Playlist(val rawId: String) : AndroidLibraryQuery
     public data object Starred : AndroidLibraryQuery
+    public data class Songs(val sort: String = "title", val filter: String = "") : AndroidLibraryQuery
+    public data object ShuffleSongs : AndroidLibraryQuery
+    public data object Downloaded : AndroidLibraryQuery
+    public data object Pinned : AndroidLibraryQuery
+    public data class ArtistTopSongs(val rawId: String) : AndroidLibraryQuery
     public data object Genres : AndroidLibraryQuery
     public data class SongsByGenre(val genre: String, val musicFolderId: String? = null) : AndroidLibraryQuery
 }
@@ -146,6 +151,9 @@ public sealed interface AndroidLibraryItem {
         val playCount: Long?,
         /** The album's track list has been read, so an empty one means no tracks (§16.11). */
         val detailComplete: Boolean,
+        val releaseTypes: List<String> = emptyList(),
+        val originalReleaseDate: String? = null,
+        val discographyGroup: String = "albums",
     ) : AndroidLibraryItem
 
     public data class Artist(
@@ -386,6 +394,11 @@ internal fun AndroidLibraryQuery.toCore(): LibraryQuery = when (this) {
     AndroidLibraryQuery.Playlists -> LibraryQuery.Playlists
     is AndroidLibraryQuery.Playlist -> LibraryQuery.Playlist(rawId.nonBlankId())
     AndroidLibraryQuery.Starred -> LibraryQuery.Starred
+    is AndroidLibraryQuery.Songs -> LibraryQuery.Songs(sort, filter)
+    AndroidLibraryQuery.ShuffleSongs -> LibraryQuery.ShuffleSongs
+    AndroidLibraryQuery.Downloaded -> LibraryQuery.Downloaded
+    AndroidLibraryQuery.Pinned -> LibraryQuery.Pinned
+    is AndroidLibraryQuery.ArtistTopSongs -> LibraryQuery.ArtistTopSongs(rawId.nonBlankId())
     AndroidLibraryQuery.Genres -> LibraryQuery.Genres
     is AndroidLibraryQuery.SongsByGenre -> LibraryQuery.SongsByGenre(
         genre.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("missing genre"),
@@ -476,6 +489,7 @@ internal fun LibraryItem.toAndroid(): AndroidLibraryItem = when (this) {
     is LibraryItem.Album -> AndroidLibraryItem.Album(
         rawId, title, artistName, artistRawId, year, genre, durationMilliseconds, songCount, artworkKey,
         favourite = starred, rating = userRating, playCount = playCount, detailComplete = detailComplete,
+        releaseTypes = releaseTypes, originalReleaseDate = originalReleaseDate, discographyGroup = discographyGroup,
     )
     is LibraryItem.Artist -> AndroidLibraryItem.Artist(rawId, name, albumCount, artworkKey, favourite = starred, rating = userRating)
     is LibraryItem.Track -> AndroidLibraryItem.Track(

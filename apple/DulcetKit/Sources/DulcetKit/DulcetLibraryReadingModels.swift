@@ -199,6 +199,9 @@ public struct DulcetReaderItem: Identifiable, Sendable, Hashable {
     public let albumTitle: String?
     public let albumID: DulcetProviderItemID?
     public let year: Int?
+    public let originalReleaseDate: String?
+    public let releaseTypes: [String]
+    public let discographyGroup: String?
     public let genre: String?
     public let duration: Duration?
     public let songCount: Int?
@@ -259,7 +262,10 @@ public struct DulcetReaderItem: Identifiable, Sendable, Hashable {
         pendingChanges: Bool = false,
         local: Bool = false,
         comment: String? = nil,
-        isPublic: Bool? = nil
+        isPublic: Bool? = nil,
+        originalReleaseDate: String? = nil,
+        releaseTypes: [String] = [],
+        discographyGroup: String? = nil
     ) {
         guard let itemKind = DulcetReaderItemKind(rawValue: kind) else { return nil }
         self.kind = itemKind
@@ -270,6 +276,9 @@ public struct DulcetReaderItem: Identifiable, Sendable, Hashable {
         self.albumTitle = albumTitle
         albumID = albumRawID.map { DulcetProviderItemID(providerInstanceID: providerInstanceID, rawID: $0) }
         self.year = year
+        self.originalReleaseDate = originalReleaseDate
+        self.releaseTypes = releaseTypes
+        self.discographyGroup = discographyGroup
         self.genre = genre
         duration = durationMilliseconds.map { .milliseconds($0) }
         self.songCount = songCount
@@ -424,6 +433,7 @@ public enum DulcetAlbumListType: String, Sendable, Hashable, CaseIterable, Ident
     case highest
     case starred
     case random
+    case byYear
 
     public var id: String { rawValue }
 }
@@ -453,6 +463,11 @@ public enum DulcetLibraryQuery: Sendable, Hashable {
     case listenNow(DulcetListenNowShelf)
     case albums(DulcetAlbumListType)
     case artists
+    case songs
+    case shuffleSongs
+    case downloaded
+    case pinned
+    case artistTopSongs(rawID: String)
     case artist(rawID: String)
     case album(rawID: String)
     case playlists
@@ -468,6 +483,11 @@ public enum DulcetLibraryQuery: Sendable, Hashable {
         case let .listenNow(shelf): ("listenNow", nil, shelf.rawValue, nil)
         case let .albums(type): ("albumList", nil, type.rawValue, nil)
         case .artists: ("artists", nil, nil, nil)
+        case .songs: ("songs", nil, nil, nil)
+        case .shuffleSongs: ("shuffleSongs", nil, nil, nil)
+        case .downloaded: ("downloaded", nil, nil, nil)
+        case .pinned: ("pinned", nil, nil, nil)
+        case let .artistTopSongs(rawID): ("artistTopSongs", rawID, nil, nil)
         case let .artist(rawID): ("artist", rawID, nil, nil)
         case let .album(rawID): ("album", rawID, nil, nil)
         case .playlists: ("playlists", nil, nil, nil)
