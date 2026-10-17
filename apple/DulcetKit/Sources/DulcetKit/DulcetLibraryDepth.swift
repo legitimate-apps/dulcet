@@ -125,6 +125,7 @@ struct DulcetLibraryDepthHome: View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
                 Text(DulcetStrings.libraryPinned).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("dulcet.library.pinned.title")
                 DulcetReaderScreen(query: .pinned) { model in
                     // Mount a real view before the first window so ReaderScreen's onAppear
                     // opens the subscription even when there are no published rows yet.
