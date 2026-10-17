@@ -35,6 +35,10 @@ struct AVPlayerCrossfadeTests {
             .completed(commandID: .init("fade-master"), result: .withoutData))
         let faded = try #require(engine.crossfadeStateForTesting())
         #expect(abs(faded.incomingVolume + faded.outgoingVolume - 0.4) < 0.02)
+        #expect(faded.incomingVolume > 0 && faded.outgoingVolume > 0)
+        _ = await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0))
+        let silent = try #require(engine.crossfadeStateForTesting())
+        #expect(silent.incomingVolume == 0 && silent.outgoingVolume == 0)
         let boundary = fixture.events.snapshot
         let endIndex = try #require(boundary.firstIndex {
             if case let .endedNaturally(id, _) = $0 { id == fixture.first.attemptID } else { false }
@@ -55,6 +59,30 @@ struct AVPlayerCrossfadeTests {
         #expect(after.filter { if case .advancedToPreloaded = $0 { true } else { false } }.count == 1)
         #expect(!after.dropFirst(endIndex + 2).contains { $0.attemptID == fixture.first.attemptID })
         #expect(fixture.originalPlayer.rate == 0)
+    }
+
+    @Test
+    func aStreamWithoutByteRangesOverlapsWithoutReopeningTheOutgoingResource() async throws {
+        let resource = WholeRepresentationPlaybackResource(data: makePCMWave(duration: 6))
+        let fixture = try await CrossfadeFixture.start(outgoingResource: resource)
+        let engine = fixture.engine
+        defer {
+            engine.execute(.release(commandID: .init("cleanup"))) { _ in }
+            try? FileManager.default.removeItem(at: fixture.localURL)
+        }
+        try await waitUntil("no-range stream did not start", engine: engine, timeout: 30) {
+            fixture.events.containsProgressBegan
+        }
+        let requestsBeforeBoundary = resource.requestCount
+        #expect(requestsBeforeBoundary > 0)
+        try await waitUntil("no-range stream did not overlap", engine: engine, timeout: 30) {
+            guard let state = engine.crossfadeStateForTesting() else { return false }
+            return state.incomingRate > 0 && state.outgoingRate > 0 &&
+                state.incomingVolume > 0 && state.outgoingVolume > 0
+        }
+        _ = try #require(engine.crossfadeStateForTesting())
+        #expect(resource.requestCount == requestsBeforeBoundary,
+                "the outgoing stream must keep its decoder, with no reopen or seek request")
     }
 
     @Test(arguments: ["pause", "stop", "seek", "replace", "release"])
@@ -199,10 +227,13 @@ private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Senda
     private nonisolated let seekLock = NSLock()
     private nonisolated(unsafe) var shouldHold = false
     private nonisolated(unsafe) var heldSeek: (CMTime, CMTime, CMTime, @Sendable (Bool) -> Void)?
+    private nonisolated(unsafe) var latestCallback: (@Sendable (CMTime) -> Void)?
     private nonisolated(unsafe) var originalCallback: (@Sendable (CMTime) -> Void)?
     private nonisolated(unsafe) var callbackQueue: DispatchQueue?
 
-    nonisolated func holdSeek() { seekLock.withLock { shouldHold = true } }
+    nonisolated func holdSeek() {
+        seekLock.withLock { shouldHold = true; originalCallback = latestCallback }
+    }
     nonisolated var hasHeldSeek: Bool { seekLock.withLock { heldSeek != nil } }
 
     nonisolated override func seek(
@@ -233,7 +264,8 @@ private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Senda
         forInterval interval: CMTime, queue: DispatchQueue?, using block: @escaping @Sendable (CMTime) -> Void
     ) -> Any {
         seekLock.withLock {
-            if originalCallback == nil { originalCallback = block; callbackQueue = queue }
+            latestCallback = block
+            callbackQueue = queue
         }
         return super.addPeriodicTimeObserver(forInterval: interval, queue: queue, using: block)
     }
@@ -260,7 +292,10 @@ private struct CrossfadeFixture {
     let first: DulcetPlaybackPlan
     let next: DulcetPlaybackPlan
 
-    static func start(player: AVQueuePlayer = AVQueuePlayer()) async throws -> CrossfadeFixture {
+    static func start(
+        player: AVQueuePlayer = AVQueuePlayer(),
+        outgoingResource: (any DulcetPlaybackResourceLoading)? = nil
+    ) async throws -> CrossfadeFixture {
         let controls = RecordingSystemMediaControls()
         let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: controls)
         let events = PlaybackEventRecorder()
@@ -268,7 +303,7 @@ private struct CrossfadeFixture {
         let bytes = makePCMWave(duration: 6)
         let localURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
         try bytes.write(to: localURL)
-        let first = plan(resource: DulcetLocalFilePlaybackResource(
+        let first = plan(resource: outgoingResource ?? DulcetLocalFilePlaybackResource(
             fileURL: localURL, exactByteLength: Int64(bytes.count)),
             session: "crossfade-a", attempt: "crossfade-a")
         let next = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 6)),
@@ -363,6 +398,8 @@ struct AVPlayerWholeRepresentationTests {
     }
 }
 
+#endif
+
 /// Answers every read, whatever its range, with the whole representation and no range support,
 /// as a server does for a transcode it has not cached.
 private final class WholeRepresentationPlaybackResource: DulcetPlaybackResourceLoading, @unchecked Sendable {
@@ -400,7 +437,6 @@ private final class WholeRepresentationPlaybackResource: DulcetPlaybackResourceL
         return InMemoryPlaybackOperation()
     }
 }
-#endif
 
 /// Spec §12.12: a failure that belongs to the item moves the queue past it. AVFoundation failing
 /// to decode an item's own media is that failure, so the engine must name it `.undecodable`
