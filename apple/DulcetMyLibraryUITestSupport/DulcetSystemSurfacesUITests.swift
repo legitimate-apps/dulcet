@@ -10,29 +10,7 @@ import XCTest
 @MainActor
 final class DulcetSystemSurfacesUITests: XCTestCase {
     func testSystemIntentStartsPlaybackAndControlsTheExistingPlayer() async throws {
-        let environment = ProcessInfo.processInfo.environment
-        guard environment["DULCET_SYSTEM_SURFACES_PROOF"] == "1" else {
-            throw XCTSkip("Requires an explicitly provisioned disposable system-surfaces fixture")
-        }
-        guard let base = environment["DULCET_UI_TEST_SERVER_URL"],
-              let url = URLComponents(string: base),
-              ["127.0.0.1", "localhost", "::1"].contains(url.host ?? ""),
-              let username = environment["DULCET_UI_TEST_USERNAME"],
-              let password = environment["DULCET_UI_TEST_PASSWORD"] else {
-            XCTFail("Provide the loopback disposable server and its published fixture credentials")
-            return
-        }
-        continueAfterFailure = false
-        let app = XCUIApplication()
-        app.launchArguments = [
-            "-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", base,
-            "-dulcet-debug-account-username", username, "-dulcet-debug-account-password", password,
-            "-dulcet-debug-account-fixture", UUID().uuidString,
-        ]
-        app.launch()
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 20))
-        let catalog = app.buttons["dulcet.library.album"].firstMatch
-        XCTAssertTrue(catalog.waitForExistence(timeout: 40), "The disposable catalog must load before system execution: " + app.debugDescription)
+        let app = try connectedApp(proofFlag: "DULCET_SYSTEM_SURFACES_PROOF")
 
 #if os(macOS)
         let bundle = "com.legitimateapps.dulcet.dev.my-library-proof"
@@ -60,8 +38,10 @@ final class DulcetSystemSurfacesUITests: XCTestCase {
 #if os(iOS)
             // Older simulator runtimes cannot load AppIntentsTesting. Exercise Siri's real
             // recognition-to-app path instead, and retain its response if the runtime refuses it.
-            XCUIDevice.shared.siriService.activate(voiceRecognitionText: "Play UI Playback Canary in Dulcet DEV")
+            XCUIDevice.shared.siriService.activate(voiceRecognitionText: "Play a song in Dulcet DEV")
             let siri = XCUIApplication(bundleIdentifier: "com.apple.SiriViewService")
+            print("DULCET SYSTEM SURFACES SIRI PARAMETER PROMPT " + siri.debugDescription)
+            XCUIDevice.shared.siriService.activate(voiceRecognitionText: "UI Playback Canary")
             print("DULCET SYSTEM SURFACES SIRI RESPONSE " + siri.debugDescription)
             app.activate()
             try assertCanaryAdvances(in: app)
@@ -69,6 +49,95 @@ final class DulcetSystemSurfacesUITests: XCTestCase {
 #else
             throw XCTSkip("AppIntentsTesting requires macOS 27")
 #endif
+    }
+
+#if os(iOS)
+    func testHomeWidgetRendersAndItsIntentResumesPlayback() throws {
+        let app = try connectedApp(proofFlag: "DULCET_WIDGET_HOST_PROOF")
+        let sidebar = app.staticTexts["dulcet.sidebar.search"].firstMatch
+        if sidebar.exists { sidebar.tap() } else { app.tabBars.buttons["Search"].tap() }
+        let search = app.textFields["dulcet.search.field"].firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 10), app.debugDescription)
+        search.tap()
+        search.typeText("UI Playback Canary")
+        let song = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.search.result.' AND label CONTAINS 'UI Playback Canary'")).firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 30), app.debugDescription)
+        song.tap()
+        try assertCanaryAdvances(in: app)
+        let transport = app.buttons["dulcet.mini-player.play-pause"]
+        XCTAssertEqual(transport.label, "Pause")
+        transport.tap()
+        XCTAssertEqual(transport.label, "Play")
+
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let icon = springboard.icons["Dulcet DEV"].firstMatch
+        XCTAssertTrue(icon.waitForExistence(timeout: 10), springboard.debugDescription)
+        icon.press(forDuration: 1.5)
+        let editHome = springboard.buttons["Edit Home Screen"].firstMatch
+        XCTAssertTrue(editHome.waitForExistence(timeout: 5), springboard.debugDescription)
+        editHome.tap()
+        let edit = springboard.buttons["Edit"].firstMatch
+        if edit.waitForExistence(timeout: 3) { edit.tap() }
+        var addButton = springboard.buttons["Add Widget"].firstMatch
+        if !addButton.waitForExistence(timeout: 3) { addButton = springboard.buttons["Add"].firstMatch }
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5), springboard.debugDescription)
+        addButton.tap()
+        var widgetSearch = springboard.searchFields.firstMatch
+        if !widgetSearch.waitForExistence(timeout: 3) { widgetSearch = springboard.textFields.firstMatch }
+        XCTAssertTrue(widgetSearch.waitForExistence(timeout: 5), springboard.debugDescription)
+        widgetSearch.tap()
+        widgetSearch.typeText("Dulcet")
+        let result = springboard.staticTexts["Dulcet DEV"].firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 10), springboard.debugDescription)
+        result.tap()
+        let addWidget = springboard.buttons["Add Widget"].firstMatch
+        XCTAssertTrue(addWidget.waitForExistence(timeout: 10), springboard.debugDescription)
+        addWidget.tap()
+        let done = springboard.buttons["Done"].firstMatch
+        if done.waitForExistence(timeout: 5) { done.tap() }
+        let resume = springboard.buttons["Resume Dulcet"].firstMatch
+        XCTAssertTrue(resume.waitForExistence(timeout: 20), springboard.debugDescription)
+        XCTAssertTrue(springboard.staticTexts["UI Playback Canary"].firstMatch.exists,
+                      "The real WidgetKit host must render the published current title")
+        let attachment = XCTAttachment(screenshot: springboard.screenshot())
+        attachment.name = "WidgetHost-DulcetNowPlaying"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        resume.tap()
+        app.activate()
+        XCTAssertEqual(transport.label, "Pause")
+        try assertCanaryAdvances(in: app)
+        print("DULCET SYSTEM SURFACES OBSERVED widget-host=true current-title=true widget-intent-resume=true advancing-media-time=true")
+    }
+#endif
+
+    private func connectedApp(proofFlag: String) throws -> XCUIApplication {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment[proofFlag] == "1" else {
+            throw XCTSkip("Requires an explicitly provisioned disposable system-surfaces fixture")
+        }
+        guard let base = environment["DULCET_UI_TEST_SERVER_URL"],
+              let url = URLComponents(string: base),
+              ["127.0.0.1", "localhost", "::1"].contains(url.host ?? ""),
+              let username = environment["DULCET_UI_TEST_USERNAME"],
+              let password = environment["DULCET_UI_TEST_PASSWORD"] else {
+            XCTFail("Provide the loopback disposable server and its published fixture credentials")
+            throw NSError(domain: "DulcetSystemSurfacesFixture", code: 1)
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", base,
+            "-dulcet-debug-account-username", username, "-dulcet-debug-account-password", password,
+            "-dulcet-debug-account-fixture", UUID().uuidString,
+        ]
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 20))
+        let catalog = app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertTrue(catalog.waitForExistence(timeout: 40), "The disposable catalog must load before system execution: " + app.debugDescription)
+
+        return app
     }
 
     private func assertCanaryAdvances(in app: XCUIApplication) throws {

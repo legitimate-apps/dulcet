@@ -58,6 +58,24 @@ class PlaybackServiceOwnershipTest {
         } finally { androidx.media3.session.MediaController.releaseFuture(future); lifecycle.destroy() }
     }
 
+    // Exercise the shared module's internal production callback without widening its API.
+    @Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
+    @Test fun anUntrustedControllerCannotGainAccessByClaimingOurPackageName() {
+        val lifecycle = Robolectric.buildService(PlaybackService::class.java).create()
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
+        try {
+            val callback = com.legitimateapps.dulcet.playback.SystemMediaLibrary(context, scope) { null }
+            val claimedIdentity = androidx.media3.session.MediaSession.ControllerInfo.createTestOnlyControllerInfo(
+                context.packageName, 12345, 12345, 1, 1, false, android.os.Bundle.EMPTY, false)
+            val result = callback.onConnectAsync(lifecycle.get().sessions.single(), claimedIdentity).get()
+            assertFalse(result.isAccepted, "Media3's trust check must authorize the UID; a claimed package is insufficient")
+        } finally {
+            scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+            lifecycle.destroy()
+        }
+    }
+
 }
 
 /** Only account storage is replaced; service, controller and Media3 session are production. */

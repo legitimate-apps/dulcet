@@ -2,6 +2,9 @@ package com.legitimateapps.dulcet
 
 import android.content.ComponentName
 import android.content.Intent
+import android.appwidget.AppWidgetManager
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.media3.common.MediaItem
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaBrowser
@@ -72,6 +75,60 @@ class AndroidEmulatorSystemSurfacesProofTest {
                     requireMediaTimeAdvances(observer, "MediaBrowser resume")
                     println("ANDROID SYSTEM SURFACES OBSERVED binder-browser=true folders=4 subscriptions=4 " +
                         "search-selection=true raw-id-match=true advancing-ms=$position pause-resume=true")
+
+                    // The launcher owns the host and renders the production RemoteViews. The
+                    // platform pin request keeps this independent of launcher grid coordinates.
+                    if (InstrumentationRegistry.getArguments().getString("dulcetSystemWidgetProof") == "true") {
+                        main { browser.seekTo(0) }
+                        instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
+                            flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+                        }
+                        val widgets = AppWidgetManager.getInstance(context)
+                        check(widgets.isRequestPinAppWidgetSupported) { "This emulator launcher does not support pinned widgets" }
+                        val provider = ComponentName(context, DulcetPlaybackWidget::class.java)
+                        val oldIds = widgets.getAppWidgetIds(provider).toSet()
+                        check(main { widgets.requestPinAppWidget(provider, null, null) })
+                        fun find(node: AccessibilityNodeInfo?, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+                            if (node == null) return null
+                            if (predicate(node)) return node
+                            for (index in 0 until node.childCount) find(node.getChild(index), predicate)?.let { return it }
+                            return null
+                        }
+                        fun click(node: AccessibilityNodeInfo): Boolean {
+                            var candidate: AccessibilityNodeInfo? = node
+                            while (candidate != null) {
+                                if (candidate.isClickable) return candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                candidate = candidate.parent
+                            }
+                            return false
+                        }
+                        await("launcher widget pin confirmation") {
+                            val root = instrumentation.uiAutomation.rootInActiveWindow
+                            val add = find(root) { node ->
+                                node.packageName?.toString()?.let { it.contains("launcher") } == true &&
+                                    node.text?.toString() in listOf("Add", "Add automatically", "Add to home screen")
+                            }
+                            add != null && click(add)
+                        }
+                        await("launcher to bind the production widget") { widgets.getAppWidgetIds(provider).any { it !in oldIds } }
+                        android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                            instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME")
+                        ).use { it.readBytes() }
+                        await("home widget to render the real current title") {
+                            find(instrumentation.uiAutomation.rootInActiveWindow) {
+                                it.text?.toString() == DisposableServerProbe.CANARY_TITLE &&
+                                    it.viewIdResourceName?.endsWith("/widget_title") == true
+                            } != null
+                        }
+                        await("home widget Pause button") {
+                            val pause = find(instrumentation.uiAutomation.rootInActiveWindow) {
+                                it.text?.toString() == "Pause" && it.viewIdResourceName?.endsWith("/widget_toggle") == true
+                            }
+                            pause != null && click(pause)
+                        }
+                        await("widget pause to reach the existing player") { !observer.state().playWhenReady }
+                        println("ANDROID SYSTEM SURFACES OBSERVED launcher-widget=true current-title=true widget-pause=true")
+                    }
                 } finally { main { browser.release() } }
             }
         }

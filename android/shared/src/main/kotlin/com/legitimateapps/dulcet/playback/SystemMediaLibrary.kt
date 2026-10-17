@@ -33,7 +33,9 @@ internal class SystemMediaLibrary(
 
     override fun onConnectAsync(session: MediaSession, controller: MediaSession.ControllerInfo): ListenableFuture<MediaSession.ConnectionResult> =
         com.google.common.util.concurrent.Futures.immediateFuture(
-            if (controller.packageName == context.packageName || controller.isTrusted)
+            // Media3's trust check includes our UID. A claimed package name alone is not
+            // authentication when the connecting package is not visible to the service.
+            if (controller.isTrusted)
                 MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
                     .setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS)
                     .setAvailablePlayerCommands(session.player.availableCommands.buildUpon()
