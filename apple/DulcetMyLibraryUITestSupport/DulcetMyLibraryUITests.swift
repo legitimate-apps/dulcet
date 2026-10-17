@@ -96,6 +96,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         app.terminate()
         try launch(connect: false)
         try select("library")
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            // Offline status and the category rows put Recently Added below the compact
+            // viewport. Prove the regression condition before driving the real scroll.
+            XCTAssertTrue(app.buttons["dulcet.myLibrary.section.recent"].waitForExistence(timeout: 20))
+            XCTAssertFalse(albumTile(album.title).exists,
+                           "The compact offline root must begin with its lazy album grid below the viewport")
+            let scrolls = revealPhoneAlbumTile(albumTile(album.title))
+            XCTAssertGreaterThan(scrolls, 0, "The offline relaunch proof must actually reveal the lazy grid")
+            XCTAssertTrue(albumTile(album.title).isHittable)
+            print("MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=\(scrolls)")
+        }
+#endif
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline relaunch paints the durable pending add before reconnect")
         let pendingAfterRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingAfterRelaunch)
@@ -103,6 +116,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(false)
         try launch()
         try select("library")
+        revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
@@ -125,7 +139,23 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(true)
         try launch(connect: false)
         try select("library")
-        XCTAssertTrue(app.staticTexts["dulcet.library.pinned.title"].firstMatch.waitForExistence(timeout: 20))
+#if os(macOS)
+        let pinQuery = app.staticTexts.matching(identifier: "dulcet.library.pinned.title")
+        print("MY LIBRARY PIN QUERY firstMatch=\(pinQuery.firstMatch.exists) indexed=\(pinQuery.element(boundBy: 0).exists) count=\(pinQuery.count)")
+        let anyPin = app.descendants(matching: .any).matching(identifier: "dulcet.library.pinned.title").element(boundBy: 0)
+        print("MY LIBRARY PIN ANY exists=\(anyPin.exists)")
+        print("MY LIBRARY PIN ENUMERATED \(app.staticTexts.allElementsBoundByIndex.filter { $0.identifier == "dulcet.library.pinned.title" }.map { "label=\($0.label) value=\($0.value ?? "nil")" })")
+#endif
+#if os(macOS)
+        // Resolve the identified heading across native roles. The failure snapshot contains
+        // this StaticText, while XCTest's type-restricted firstMatch lookup misses it.
+        let pinnedHeading = app.descendants(matching: .any)
+            .matching(identifier: "dulcet.library.pinned.title").element(boundBy: 0)
+#else
+        let pinnedHeading = app.staticTexts["dulcet.library.pinned.title"].firstMatch
+#endif
+        XCTAssertTrue(pinnedHeading.waitForExistence(timeout: 20))
+        XCTAssertEqual(pinnedHeading.label, "Pinned", "The actual pinned section heading must be present")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Pinned metadata must survive an offline relaunch")
         try capture("Library-Depth-Pinned-Offline")
         let downloaded = app.buttons["dulcet.library.downloaded"].firstMatch
@@ -243,7 +273,26 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(songs.waitForExistence(timeout: 30))
         activate(artists)
         XCTAssertTrue(app.buttons["dulcet.search.group.all"].firstMatch.waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["dulcet.search.resultCount"].firstMatch.label, "1 result", "The selected Artists group counts its own results")
+#if os(macOS)
+        let countQuery = app.staticTexts.matching(identifier: "dulcet.search.resultCount")
+        print("MY LIBRARY SEARCH COUNT exists=\(countQuery.firstMatch.exists) label=\(countQuery.firstMatch.label) value=\(countQuery.firstMatch.value ?? "nil")")
+#endif
+        let resultCount = app.staticTexts["dulcet.search.resultCount"].firstMatch
+        XCTAssertTrue(resultCount.waitForExistence(timeout: 10))
+#if os(macOS)
+        let countText = NSPredicate(format: "value == %@", "1 result")
+#else
+        let countText = NSPredicate(format: "label == %@", "1 result")
+#endif
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: countText, object: resultCount)], timeout: 20), .completed,
+                       "The selected Artists group counts its own results")
+#if os(macOS)
+        XCTAssertEqual(resultCount.value as? String, "1 result")
+        XCTAssertEqual(app.tables.firstMatch.rows.count, 1, "Artists See All must contain only the fixture artist")
+        print("MY LIBRARY SEARCH selected=Artists count=\(resultCount.value ?? "nil") rows=\(app.tables.firstMatch.rows.count)")
+#else
+        XCTAssertEqual(resultCount.label, "1 result")
+#endif
         try capture("Library-Depth-Search-Groups")
         activate(field)
         field.typeText("\n")
@@ -459,15 +508,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func albumTile(_ title: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier == 'dulcet.library.album' AND label BEGINSWITH %@", title)).firstMatch
     }
-    @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) {
+    @discardableResult
+    @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) -> Int {
 #if os(iOS)
-        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return 0 }
         // Library's destination rows and Browse's largest-text introduction precede a lazy
         // album grid. Reach that grid with touch scrolling before asserting its publication.
-        for _ in 0..<8 {
-            if tile.exists && tile.isHittable { return }
+        for scrolls in 0..<8 {
+            if tile.exists && tile.isHittable { return scrolls }
             app.scrollViews.firstMatch.swipeUp()
         }
+        return 8
+#else
+        return 0
 #endif
     }
     @MainActor private func openAlbum(_ title: String) throws {
@@ -618,7 +671,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return try XCTUnwrap(result.load()).get()
     }
     private func setOffline(_ offline: Bool) throws {
-        _ = try fetch(URL(string: base + "/fixture/network?offline=\(offline ? "1" : "0")")!)
+        let response = try fetch(URL(string: base + "/fixture/network?offline=\(offline ? "1" : "0")")!)
+        XCTAssertEqual(String(data: response, encoding: .utf8), offline ? "offline" : "online",
+                       "The disposable route must acknowledge the requested network condition")
     }
 }
 
