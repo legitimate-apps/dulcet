@@ -110,6 +110,11 @@ class TvPlayBeforeBindTest {
 
     /** Opens the first home card, an album, and waits for its Play to hold focus. */
     private fun openFirstAlbum() {
+        await("Home's section bar") { focused("listenNow.open") }
+        key(Key.DirectionRight)
+        key(Key.DirectionRight)
+        assertTrue(focused("library.open"), "The remote reaches Library from Home")
+        key(Key.DirectionCenter)
         await("the first home card to take focus") { focused("library.home.0.item.0") }
         key(Key.DirectionCenter)
         await("the album and focus on Play") { exists("album.play") && focused("album.play") }

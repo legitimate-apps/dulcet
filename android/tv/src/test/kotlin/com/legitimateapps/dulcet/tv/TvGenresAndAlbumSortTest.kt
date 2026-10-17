@@ -68,7 +68,10 @@ class TvGenresAndAlbumSortTest {
     private fun host() {
         compose.setContent { MaterialTheme { TvLibraryEntry(account) { _, _ -> } } }
         compose.waitForIdle()
-        // The library's default focus is unchanged: its first card takes the remote from the bar.
+        // Start from Home, then enter the Library whose sections this control exercises.
+        await("the Library tab") { exists("library.open") }
+        focus("library.open")
+        key(Key.DirectionCenter)
         reachSectionsFromFirstCard()
     }
 
