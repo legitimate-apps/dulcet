@@ -100,6 +100,9 @@ def materialize(root: Path) -> None:
         # Android TV has its own app/runtime and evidence class; copying only the mobile sources
         # would make this fixture reject a valid TV promotion before its mutation cases run.
         "android/tv/src",
+        # Home's phone/TV runtime proof is shared by both instrumented targets from this
+        # directory. Preserve its declarations in the synthetic evidence baseline too.
+        "android/emulator-conformance",
         # library.browse cites the core reader's own conformance tests for CONF-82 and CONF-87,
         # whose rules the disposable corpus cannot reach; the gate looks their names up here.
         "core/src/commonTest",
@@ -1304,6 +1307,14 @@ passing_cases = """\
             name="testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPadOS" time="0.1" />
   <testcase classname="DulcetTVAccountConnectStatesUITests"
             name="testEveryAccountConnectStateIsReachedByRemoteOnAppleTV" time="0.1" />
+  <testcase classname="DulcetMacDesignTourTest"
+            name="testDesignTour" time="0.1" />
+  <testcase classname="DulcetDesignTourUITests"
+            name="testListenNowLaunchAlbumAndRelaunch" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testListenNowLaunchAlbumAndRelaunch" time="0.1" />
+  <testcase classname="ListenNowEmulatorProofTest"
+            name="homeLaunchAlbumAndCachedRelaunch" time="0.1" />
   <testcase classname="DulcetMacDownloadHandoffAppTest"
             name="aKilledAppsDownloadIsReconciledByTheReplacementProcessThroughTheHostedMacApp" time="0.1" />
   <testcase classname="DulcetMacDownloadRowAppTest"
