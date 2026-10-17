@@ -6968,7 +6968,11 @@ because the median is above 75 minutes. Either reading adopts the split.
    is killed by the job and reported against whichever step was active: the worst case is 74.1
    for the platform leg and 219.8 for the conformance leg. The composite's own cap is 190 minutes,
    1.37x its projected maximum of 138.7 (measured 83.7, plus the same 27 and 28), the ratio its
-   earlier 85 had to the 62.2 it was raised from. Every other per-step cap is unchanged. Re-size from the
+   earlier 85 had to the 62.2 it was raised from. *Since 2026-10-17* the serial native macOS
+   test step has a six-minute cap. Run 39054152378 passed all 355 tests (110.482 seconds of test
+   execution), but compilation, tests and result-bundle finalization exhausted its four-minute
+   cap before JUnit conversion. Six minutes is a projection at 1.5 times that observed lower
+   bound; the platform leg remains 80 minutes. Every other per-step cap is unchanged. Re-size from the
    legs' history as it grows.
 6. **`tools/verify_ci_policy.py` enforces the shape, and a control proves each rule fires.** The
    aggregator must be named `apple-ci` and must run `if: always()`. It must need every macOS job and
