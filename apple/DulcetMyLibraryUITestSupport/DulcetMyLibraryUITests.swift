@@ -288,8 +288,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
                        "The selected Artists group counts its own results")
 #if os(macOS)
         XCTAssertEqual(resultCount.value as? String, "1 result")
-        XCTAssertEqual(app.tables.firstMatch.rows.count, 1, "Artists See All must contain only the fixture artist")
-        print("MY LIBRARY SEARCH selected=Artists count=\(resultCount.value ?? "nil") rows=\(app.tables.firstMatch.rows.count)")
+        XCTAssertEqual(app.tables.firstMatch.tableRows.count, 1, "Artists See All must contain only the fixture artist")
+        print("MY LIBRARY SEARCH selected=Artists count=\(resultCount.value ?? "nil") rows=\(app.tables.firstMatch.tableRows.count)")
 #else
         XCTAssertEqual(resultCount.label, "1 result")
 #endif
