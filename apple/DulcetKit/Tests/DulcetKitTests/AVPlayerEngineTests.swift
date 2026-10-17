@@ -165,6 +165,9 @@ struct AVPlayerCrossfadeTests {
         player.deliverOriginalTimestamp(4.1)
         #expect(engine.crossfadeStateForTesting() == nil)
         #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
+        _ = await execute(engine, .setCrossfade(commandID: .init("policy-during-seek"),
+            attemptID: fixture.first.attemptID, duration: 2))
+        player.captureLatestCallbackForReplay()
         if replaceDuringSeek {
             let replacement = plan(resource: DulcetLocalFilePlaybackResource(
                 fileURL: fixture.localURL, exactByteLength: Int64(makePCMWave(duration: 6).count)),
@@ -190,11 +193,12 @@ struct AVPlayerCrossfadeTests {
     @Test
     func staleAndInvalidCrossfadeCommandsAreRejectedAndZeroKeepsGapless() async throws {
         let player = AVQueuePlayer()
+        player.volume = 0.7
         let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
         defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
-        let first = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 2)))
+        let first = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 6)))
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: first))
         #expect(await execute(engine, .setCrossfade(commandID: .init("stale"),
             attemptID: .init("stale"), duration: 1)) ==
@@ -214,10 +218,11 @@ struct AVPlayerCrossfadeTests {
         }
         #expect(engine.crossfadeStateForTesting() == nil)
         #expect(player.currentItem != nil, "gapless continues on the original queue")
+        #expect(abs(player.volume - 0.7) < 0.001, "zero keeps the existing player's gain")
         let ended = try #require(events.snapshot.first {
             if case let .endedNaturally(id, _) = $0 { id == first.attemptID } else { false }
         })
-        if case let .endedNaturally(_, position) = ended { #expect(abs(position - 2) < 0.1) }
+        if case let .endedNaturally(_, position) = ended { #expect(abs(position - 6) < 0.1) }
     }
 }
 
@@ -235,6 +240,9 @@ private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Senda
         seekLock.withLock { shouldHold = true; originalCallback = latestCallback }
     }
     nonisolated var hasHeldSeek: Bool { seekLock.withLock { heldSeek != nil } }
+    nonisolated func captureLatestCallbackForReplay() {
+        seekLock.withLock { originalCallback = latestCallback }
+    }
 
     nonisolated override func seek(
         to time: CMTime, toleranceBefore: CMTime, toleranceAfter: CMTime,

@@ -119,6 +119,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         )
     ) {
         self.player = player
+        self.masterVolume = player.volume
         self.clock = clock
         self.usesAVFoundationMediaStack = usesAVFoundationMediaStack
         self.audioSession = audioSession
@@ -378,6 +379,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 return
             }
             crossfadeDuration = duration
+            if usesAVFoundationMediaStack {
+                if duration > 0 || overlap != nil { installCrossfadeTimeObserver() }
+                else { removeCrossfadeTimeObserver() }
+            }
             completion(.completed(commandID: commandID, result: .withoutData))
         case let .setRate(commandID, rate):
             guard rate.isFinite, rate > 0, rate <= 2 else {
@@ -582,6 +587,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private func stop(reason: DulcetPlaybackSkipReason) {
         endOverlap()
         crossfadeDuration = 0
+        removeCrossfadeTimeObserver()
         guard let current else {
             player.pause()
             player.removeAllItems()
@@ -936,6 +942,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         ))
         outgoing.invalidate()
         crossfadeDuration = 0
+        if !retainingTail { removeCrossfadeTimeObserver() }
         incoming.isPreloaded = false
         // The listener asked for music, not for one item: the preloaded item inherits the
         // outgoing item's play request. Without this the sampler -- which only samples a context
@@ -1008,10 +1015,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             overlap = nil
         }
         applyFadeVolumes()
+        if crossfadeDuration == 0 { removeCrossfadeTimeObserver() }
     }
 
     private func installCrossfadeTimeObserver() {
-        guard !released, crossfadeTimeObserver == nil else { return }
+        guard !released, crossfadeTimeObserver == nil, current?.isSeeking != true,
+              crossfadeDuration > 0 || overlap != nil else { return }
         let observedPlayer = player
         let generation = crossfadeObservationGeneration
         crossfadeTimeObserver = player.addPeriodicTimeObserver(
