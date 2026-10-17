@@ -163,6 +163,43 @@ class PlaybackListeningSessionTest {
         assertEquals(listOf("c"), late.snapshot.rawIds())
     }
 
+    @Test
+    fun anAnsweredRequestStartsNothingLaterWhenTheFinishedQueueAsksAgain() {
+        val fixture = fixture()
+        fixture.controller.setAutoplay(true)
+        val first = assertNotNull(fixture.controller.replaceAndStart(request(listOf("a"))).startDirective)
+        val ask = assertNotNull(fixture.controller.takeAutoplayRequest())
+        // The server found nothing; the request is answered, not outstanding.
+        assertNull(fixture.controller.appendAutoplay(ask.key, emptyList()).startDirective)
+        fixture.playPast(first.attemptId, 3)
+        val ended = fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(first.attemptId, 180.seconds))
+        assertNull(ended.startDirective)
+        // Toggling the setting on the finished queue asks again; its answer only appends.
+        fixture.controller.setAutoplay(false)
+        fixture.controller.setAutoplay(true)
+        val again = assertNotNull(fixture.controller.takeAutoplayRequest())
+        val answered = fixture.controller.appendAutoplay(again.key, items(listOf("x")))
+        assertNull(answered.startDirective, "a setting change on a finished queue must not start music")
+        assertEquals(listOf("a", "x"), answered.snapshot.rawIds())
+    }
+
+    @Test
+    fun onlyTheRequestOutstandingAtTheEndStartsItsAnswer() {
+        val fixture = fixture()
+        fixture.controller.setAutoplay(true)
+        val first = assertNotNull(fixture.controller.replaceAndStart(request(listOf("a"))).startDirective)
+        val ask = assertNotNull(fixture.controller.takeAutoplayRequest())
+        fixture.playPast(first.attemptId, 3)
+        fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(first.attemptId, 180.seconds))
+        // A track added to the finished queue makes the outstanding answer stale and asks anew.
+        fixture.controller.enqueue(insertion(listOf("q"), QueueInsertionMode.Append))
+        assertNull(fixture.controller.appendAutoplay(ask.key, items(listOf("x"))).startDirective)
+        val again = assertNotNull(fixture.controller.takeAutoplayRequest())
+        val answered = fixture.controller.appendAutoplay(again.key, items(listOf("y")))
+        assertNull(answered.startDirective, "the added track does not start by itself")
+        assertEquals(listOf("a", "q", "y"), answered.snapshot.rawIds())
+    }
+
     // ---- Sleep timer stop points ------------------------------------------------------------------
 
     @Test

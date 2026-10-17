@@ -9,7 +9,9 @@
     {"id": "account.connect", "platform": "tvos", "reason": "The obsolete explicit-reconnect function citation is replaced by the executed Swift Testing display name, Saved credentials reconnect without a tap (spec 13.1, CONF-10b). The simulator account-state proof also observes automatic relaunch and outage recovery. This declares the removed citation identity; the existing simulator shipping decision and lack of signed physical Apple TV evidence remain unchanged.", "pr": "#306"}
   ],
   "accepted_promotions": [
-    {"id": "account.connect", "platform": "tvos", "reason": "Promoted on the existing simulator CONF-09b and CONF-10e evidence without a new row, by the maintainer's 2026-10-10 decision recorded in spec 28: a signed physical Apple TV run is not required and is not claimed.", "pr": "#300"}
+    {"id": "account.connect", "platform": "tvos", "reason": "Promoted on the existing simulator CONF-09b and CONF-10e evidence without a new row, by the maintainer's 2026-10-10 decision recorded in spec 28: a signed physical Apple TV run is not required and is not claimed.", "pr": "#300"},
+    {"id": "library.downloaded", "platform": "android", "reason": "Promoted after required core-ci run 39007768787 at a076bbf3 passed and its aggregate consumed both explicit Downloaded method identities (208 required identities, 216 JUnit reports). Those evidence rows were added while partial in 44c18c74; this records fulfillment of the existing promotion condition without inventing a new test citation.", "pr": "#336"},
+    {"id": "library.downloaded", "platform": "androidtv", "reason": "Promoted after required core-ci run 39007768787 at a076bbf3 passed and its aggregate consumed both explicit Downloaded method identities (208 required identities, 216 JUnit reports). Those evidence rows were added while partial in 44c18c74; this records fulfillment of the existing promotion condition without inventing a new test citation.", "pr": "#336"}
   ],
   "features": [
     {
@@ -2596,6 +2598,391 @@
             }
           ],
           "reason": "The TV offers the choice on its Account screen, below Sign out. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. The control and the hand-off are Robolectric evidence; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5). The cap is also driven end to end on an API 34 Android TV emulator in core-ci (AndroidTvEmulatorStreamingQualityProofTest): the server's own answer is read at a relay in front of it, transcoded with the cap and the FLAC original without it; it executed and passed, one testcase with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The cap is written to the settings store directly there; choosing it through the Account screen is the Robolectric rows' claim. No physical device was used."
+        }
+      }
+    },
+    {
+      "id": "library.sort_filter",
+      "title": "Sort and filter Library categories",
+      "spec": "docs/evidence/library-depth.md#sort-and-filter-scope",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-category-controls-and-persistence",
+            "reason": "Shared policy tests and source implementation do not establish native category controls. Add and execute Mac UI proofs for the supported Albums, Artists, Songs and Playlists sorts/filters and Dulcet Server My Library choices; verify category-specific persistence after relaunch and present loaded-window/server-order limits. Record passing required-CI results before promotion."
+          },
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-category-controls-and-persistence",
+            "reason": "The selected iPhone proof covers Release Date selection and its relaunch persistence, but not the other categories or filters. Add and execute iPhone UI proofs for the supported Albums, Artists, Songs and Playlists sorts/filters and Dulcet Server My Library choices; verify category-specific persistence after relaunch and present loaded-window/server-order limits. Record passing required-CI results before promotion."
+          },
+          "reason": "The local iPhone native proof at 6d3ab4b1 passed Release Date selection and relaunch persistence. Other category sorts, filters, ordering and My Library choices remain unproven in native runtime. The feature remains partial pending broader native and required-CI evidence; see docs/evidence/library-depth.md for exact scope."
+        },
+        "ipados": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-category-controls-and-persistence",
+            "reason": "Shared policy tests and source implementation do not establish native category controls. Add and execute iPad UI proofs for the supported Albums, Artists, Songs and Playlists sorts/filters and Dulcet Server My Library choices; verify category-specific persistence after relaunch and present loaded-window/server-order limits. Record passing required-CI results before promotion."
+          },
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-native-category-controls-and-persistence",
+            "reason": "Shared policy tests and source implementation do not establish native category controls. Add and execute Apple TV UI proofs for the supported Albums, Artists, Songs and Playlists sorts/filters and Dulcet Server My Library choices; verify category-specific persistence after relaunch and present loaded-window/server-order limits. Record passing required-CI results before promotion."
+          },
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-category-controls-and-persistence",
+            "reason": "Shared policy tests and source implementation do not establish native category controls. Add and execute Android phone UI proofs for the supported Albums, Artists, Songs and Playlists sorts/filters and Dulcet Server My Library choices; verify category-specific persistence after relaunch and present loaded-window/server-order limits. Record passing required-CI results before promotion."
+          },
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-category-controls-and-persistence",
+            "reason": "Shared policy tests and source implementation do not establish native category controls. Add and execute Android TV UI proofs for the supported Albums, Artists, Songs and Playlists sorts/filters and Dulcet Server My Library choices; verify category-specific persistence after relaunch and present loaded-window/server-order limits. Record passing required-CI results before promotion."
+          },
+          "reason": "Native category controls and shared persisted account policy are implemented. Sort-menu selection and row ordering/filtering still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        }
+      }
+    },
+    {
+      "id": "library.downloaded",
+      "title": "Browse music downloaded on this device",
+      "spec": "docs/evidence/library-depth.md#downloaded",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-completed-download-offline-proof",
+            "reason": "The Mac pin/destination selector checks Downloaded reachability only. Add and execute a native proof that completes a production download, makes the server unreachable, browses and plays that completed file with no network read, excludes merely cached tracks, and observes removal from Downloaded. Consume its passing result in required CI before promotion."
+          },
+          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-completed-download-offline-proof",
+            "reason": "The iPhone pin/destination selector checks Downloaded reachability only. Add and execute a native proof that completes a production download, makes the server unreachable, browses and plays that completed file with no network read, excludes merely cached tracks, and observes removal from Downloaded. Consume its passing result in required CI before promotion."
+          },
+          "reason": "The local iPhone pin/destination proof at 6d3ab4b1 passed Downloaded destination reachability after offline relaunch. It opened an empty destination, did not complete a download and did not establish completed-file offline browsing or playback. This remains partial pending that native path and required-CI evidence; see docs/evidence/library-depth.md."
+        },
+        "ipados": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-completed-download-offline-proof",
+            "reason": "The iPad pin/destination selector checks Downloaded reachability only. Add and execute a native proof that completes a production download, makes the server unreachable, browses and plays that completed file with no network read, excludes merely cached tracks, and observes removal from Downloaded. Consume its passing result in required CI before promotion."
+          },
+          "reason": "The corrected hosted iPad My Library proof at 128b9d39 passed Downloaded destination reachability after offline relaunch. It did not complete a download or establish completed-file offline browsing and playback through Downloaded. The feature remains partial pending that path and required-CI evidence; see docs/evidence/library-depth.md."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS has no durable user-managed media download contract in v1. The Downloaded link and filter are hidden; the native TV proof checks their absence after a positive pinned-item control. Android TV retains downloaded-media support."
+        },
+        "android": {
+          "status": "shipped",
+          "reason": "Required core-ci run 39007768787 at a076bbf3 passed all jobs and consumed 208 exact method identities across 216 JUnit reports, including the non-skipped Android phone completed-download proof. That native method establishes Downloaded browsing and row activation with the server unreachable, advancing local-file playback, zero server requests, byte identity and sign-out cleanup. The recorded required-CI promotion condition is met; see docs/evidence/library-depth.md.",
+          "evidence": [
+            {
+              "observes": "on an API 34 Android phone emulator in required core-ci, completes a production download, rejects a control request through the cut relay, browses Downloaded and activates its completed row, observes at least 1,500 ms of advancing local playback with zero server requests, rechecks identical bytes, and confirms sign-out removes files and unfinished tasks",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "shipped",
+          "reason": "Required core-ci run 39007768787 at a076bbf3 passed all jobs and consumed 208 exact method identities across 216 JUnit reports, including the non-skipped Android TV completed-download proof. That native method establishes Downloaded browsing and row activation with the server unreachable, advancing local-file playback, zero server requests, byte identity and sign-out cleanup. The recorded required-CI promotion condition is met; see docs/evidence/library-depth.md.",
+          "evidence": [
+            {
+              "observes": "on an API 34 Android TV emulator in required core-ci, completes a production download, rejects a control request through the cut relay, browses Downloaded and activates its completed row, observes at least 1,500 ms of advancing local playback with zero server requests, rechecks identical bytes, and confirms sign-out removes files and unfinished tasks",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "library.pins",
+      "title": "Pin albums, artists, playlists and songs to Library",
+      "spec": "docs/evidence/library-depth.md#pins",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-all-item-pin-persistence-proof",
+            "reason": "The shared Apple selector covers an album pin only, and its first iPad run failed to render the offline shortcut. Add and execute Mac native proofs for album, artist, playlist and song shortcuts at the top of Library, pin/unpin persistence after relaunch, account isolation and independence from favorites/My Library membership. Require metadata-retention core checks plus passing platform CI; a pin does not promise downloaded audio."
+          },
+          "reason": "The hosted Mac proof at 7b2675e7 failed its Pinned-heading query, while the failure hierarchy and recording visibly contain the pinned album after offline relaunch. This does not establish lost pin data or a passing full pin flow. A stable heading identifier is added in source but awaits Mac runtime verification; other item kinds remain unproven. See docs/evidence/library-depth.md."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-all-item-pin-persistence-proof",
+            "reason": "The shared Apple selector covers an album pin only, and its first iPad run failed to render the offline shortcut. Add and execute iPhone native proofs for album, artist, playlist and song shortcuts at the top of Library, pin/unpin persistence after relaunch, account isolation and independence from favorites/My Library membership. Require metadata-retention core checks plus passing platform CI; a pin does not promise downloaded audio."
+          },
+          "reason": "The local iPhone proof at 6d3ab4b1 passed album pinning, a real server cut, saved-account relaunch, pinned metadata rendering through the stable heading identifier, and online unpinning. Other item kinds and account-isolation controls remain unproven in native runtime. Pins stay device-local per account, and the feature remains partial; see docs/evidence/library-depth.md."
+        },
+        "ipados": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-all-item-pin-persistence-proof",
+            "reason": "The shared Apple selector covers an album pin only, and its first iPad run failed to render the offline shortcut. Add and execute iPad native proofs for album, artist, playlist and song shortcuts at the top of Library, pin/unpin persistence after relaunch, account isolation and independence from favorites/My Library membership. Require metadata-retention core checks plus passing platform CI; a pin does not promise downloaded audio."
+          },
+          "reason": "The corrected hosted iPad My Library suite at 128b9d39 passed all five cases; its pin/offline-destination case passed in 104.146 seconds with an exact-method execution guard, observing pinned album metadata after a real server cut and saved-account relaunch. Other pin kinds and native account-isolation controls remain unproven. Pins remain device-local per account; see docs/evidence/library-depth.md."
+        },
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-native-all-item-pin-persistence-proof",
+            "reason": "The shared Apple selector covers an album pin only, and its first iPad run failed to render the offline shortcut. Add and execute Apple TV native proofs for album, artist, playlist and song shortcuts at the top of Library, pin/unpin persistence after relaunch, account isolation and independence from favorites/My Library membership. Require metadata-retention core checks plus passing platform CI; a pin does not promise downloaded audio."
+          },
+          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-all-item-pin-persistence-proof",
+            "reason": "Android host pin checks passed, but native emulator coverage for every pin item kind is incomplete. Add and execute Android phone native proofs for album, artist, playlist and song shortcuts at the top of Library, pin/unpin persistence after relaunch, account isolation and independence from favorites/My Library membership. Require metadata-retention core checks plus passing platform CI; a pin does not promise downloaded audio."
+          },
+          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-all-item-pin-persistence-proof",
+            "reason": "Android host pin checks passed, but native emulator coverage for every pin item kind is incomplete. Add and execute Android TV native proofs for album, artist, playlist and song shortcuts at the top of Library, pin/unpin persistence after relaunch, account isolation and independence from favorites/My Library membership. Require metadata-retention core checks plus passing platform CI; a pin does not promise downloaded audio."
+          },
+          "reason": "Device-local, per-account pins and metadata retention are implemented. The new shared Apple proof covers album pinning/relaunch only; other item kinds and platform execution remain unproven. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        }
+      }
+    },
+    {
+      "id": "library.shuffle_all",
+      "title": "Shuffle a server-wide selection or available local collection",
+      "spec": "docs/evidence/library-depth.md#shuffle",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-fresh-shuffle-and-local-scope-proof",
+            "reason": "Add and execute a Mac native proof that activates Library/Songs Shuffle All and observes a new queue from a fresh server-random selection beyond the visible song page, honoring the requested 500-song bound and server eligibility. Also prove offline/Downloaded and Dulcet Server My Library shuffles use their stated playable local/saved scope. A mini-player appearing alone does not establish those scopes; consume passing required-CI results before promotion."
+          },
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-fresh-shuffle-and-local-scope-proof",
+            "reason": "Add and execute a iPhone native proof that activates Library/Songs Shuffle All and observes a new queue from a fresh server-random selection beyond the visible song page, honoring the requested 500-song bound and server eligibility. Also prove offline/Downloaded and Dulcet Server My Library shuffles use their stated playable local/saved scope. A mini-player appearing alone does not establish those scopes; consume passing required-CI results before promotion."
+          },
+          "reason": "The local iPhone native proof at 6d3ab4b1 passed the Songs Shuffle All path into the actual queue. Online requests still select at most 500 server-eligible songs; offline, Downloaded and My Library scopes and wider queue behavior need native proof and required-CI evidence. The feature remains partial; see docs/evidence/library-depth.md."
+        },
+        "ipados": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-fresh-shuffle-and-local-scope-proof",
+            "reason": "Add and execute a iPad native proof that activates Library/Songs Shuffle All and observes a new queue from a fresh server-random selection beyond the visible song page, honoring the requested 500-song bound and server eligibility. Also prove offline/Downloaded and Dulcet Server My Library shuffles use their stated playable local/saved scope. A mini-player appearing alone does not establish those scopes; consume passing required-CI results before promotion."
+          },
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-native-fresh-shuffle-and-local-scope-proof",
+            "reason": "Add and execute a Apple TV native proof that activates Library/Songs Shuffle All and observes a new queue from a fresh server-random selection beyond the visible song page, honoring the requested 500-song bound and server eligibility. Also prove offline and Dulcet Server My Library shuffles use their stated playable local/saved scope. Apple TV has no durable Downloaded surface. A mini-player appearing alone does not establish those scopes; consume passing required-CI results before promotion."
+          },
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-fresh-shuffle-and-local-scope-proof",
+            "reason": "Add and execute a Android phone native proof that activates Library/Songs Shuffle All and observes a new queue from a fresh server-random selection beyond the visible song page, honoring the requested 500-song bound and server eligibility. Also prove offline/Downloaded and Dulcet Server My Library shuffles use their stated playable local/saved scope. A mini-player appearing alone does not establish those scopes; consume passing required-CI results before promotion."
+          },
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-fresh-shuffle-and-local-scope-proof",
+            "reason": "Add and execute a Android TV native proof that activates Library/Songs Shuffle All and observes a new queue from a fresh server-random selection beyond the visible song page, honoring the requested 500-song bound and server eligibility. Also prove offline/Downloaded and Dulcet Server My Library shuffles use their stated playable local/saved scope. A mini-player appearing alone does not establish those scopes; consume passing required-CI results before promotion."
+          },
+          "reason": "Online entry points request a fresh getRandomSongs selection of up to 500 eligible songs; offline and personal-collection entry points use their stated scope. Native playback and queue coverage still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        }
+      }
+    },
+    {
+      "id": "library.artist_depth",
+      "title": "Artist Top Songs and newest-first grouped discography",
+      "spec": "docs/evidence/library-depth.md#artist-depth",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-top-songs-and-release-groups-proof",
+            "reason": "Add and execute Mac native artist proofs for server-provided Top Songs and the known-plays/favorites fallback, newest-first original release date/year ordering, undated releases, and Albums/EPs and Singles/Compilations/Appears On grouping where supplied. Verify the missing-metadata limitation copy. The iPhone selector currently checks a Top Songs heading and one discography album only; require the missing observations in passing platform CI before promotion."
+          },
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-top-songs-and-release-groups-proof",
+            "reason": "Add and execute iPhone native artist proofs for server-provided Top Songs and the known-plays/favorites fallback, newest-first original release date/year ordering, undated releases, and Albums/EPs and Singles/Compilations/Appears On grouping where supplied. Verify the missing-metadata limitation copy. The iPhone selector currently checks a Top Songs heading and one discography album only; require the missing observations in passing platform CI before promotion."
+          },
+          "reason": "The local iPhone native proof at 6d3ab4b1 passed Top Songs and discography controls. Its captured screens confirm the full compact artist name and a visible Albums section with the 2026 release. Other release-type groups, unknown dates and the known-track fallback still need native proof, so this remains partial. See docs/evidence/library-depth.md."
+        },
+        "ipados": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-top-songs-and-release-groups-proof",
+            "reason": "Add and execute iPad native artist proofs for server-provided Top Songs and the known-plays/favorites fallback, newest-first original release date/year ordering, undated releases, and Albums/EPs and Singles/Compilations/Appears On grouping where supplied. Verify the missing-metadata limitation copy. The iPhone selector currently checks a Top Songs heading and one discography album only; require the missing observations in passing platform CI before promotion."
+          },
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-native-top-songs-and-release-groups-proof",
+            "reason": "Add and execute Apple TV native artist proofs for server-provided Top Songs and the known-plays/favorites fallback, newest-first original release date/year ordering, undated releases, and Albums/EPs and Singles/Compilations/Appears On grouping where supplied. Verify the missing-metadata limitation copy. The iPhone selector currently checks a Top Songs heading and one discography album only; require the missing observations in passing platform CI before promotion."
+          },
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-top-songs-and-release-groups-proof",
+            "reason": "Add and execute Android phone native artist proofs for server-provided Top Songs and the known-plays/favorites fallback, newest-first original release date/year ordering, undated releases, and Albums/EPs and Singles/Compilations/Appears On grouping where supplied. Verify the missing-metadata limitation copy. The iPhone selector currently checks a Top Songs heading and one discography album only; require the missing observations in passing platform CI before promotion."
+          },
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-top-songs-and-release-groups-proof",
+            "reason": "Add and execute Android TV native artist proofs for server-provided Top Songs and the known-plays/favorites fallback, newest-first original release date/year ordering, undated releases, and Albums/EPs and Singles/Compilations/Appears On grouping where supplied. Verify the missing-metadata limitation copy. The iPhone selector currently checks a Top Songs heading and one discography album only; require the missing observations in passing platform CI before promotion."
+          },
+          "reason": "Shared Top Songs fallback and release-metadata grouping are implemented. Native Top Songs, grouping and unknown-date presentation still need platform runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        }
+      }
+    },
+    {
+      "id": "search.groups_recents",
+      "title": "Grouped search results and per-account recent queries",
+      "spec": "docs/evidence/library-depth.md#search-groups-and-recent-queries",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-group-search-and-recent-query-proof",
+            "reason": "The selected shared Apple method covers group controls, Artists expansion and recent-query replay; it does not prove all result destinations. Add and execute Mac UI proofs for Artists/Albums/Songs result identity and navigation/playback, each See All group beyond its preview with server-result limits disclosed, and recent-query replay, clear and account-specific relaunch persistence. Record passing required-CI results before promotion."
+          },
+          "reason": "The hosted Mac grouped-search method at 7b2675e7 crashed with a missing DulcetPresentationStore environment. Explicit store injection at table cell and menu hosting boundaries is implemented but awaits native verification. Group interaction and durable recents remain partial; see docs/evidence/library-depth.md."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-group-search-and-recent-query-proof",
+            "reason": "The selected shared Apple method covers group controls, Artists expansion and recent-query replay; it does not prove all result destinations. Add and execute iPhone UI proofs for Artists/Albums/Songs result identity and navigation/playback, each See All group beyond its preview with server-result limits disclosed, and recent-query replay, clear and account-specific relaunch persistence. Record passing required-CI results before promotion."
+          },
+          "reason": "The local iPhone native proof at 6d3ab4b1 passed Artists/Albums/Songs groups, See All and recent-query persistence after relaunch, including the selected Artists count of one. Result interactions and broader group coverage still need native proof and required-CI evidence. This remains partial; see docs/evidence/library-depth.md."
+        },
+        "ipados": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-group-search-and-recent-query-proof",
+            "reason": "The selected shared Apple method covers group controls, Artists expansion and recent-query replay; it does not prove all result destinations. Add and execute iPad UI proofs for Artists/Albums/Songs result identity and navigation/playback, each See All group beyond its preview with server-result limits disclosed, and recent-query replay, clear and account-specific relaunch persistence. Record passing required-CI results before promotion."
+          },
+          "reason": "The corrected hosted iPad My Library suite at 128b9d39 passed all five cases; grouped search/recent-query persistence passed in 67.886 seconds with the exact-method execution guard. Other result interactions and wider group coverage remain unproven, so this stays partial. See docs/evidence/library-depth.md."
+        },
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-native-group-search-and-recent-query-proof",
+            "reason": "The shared Apple search selector excludes tvOS. Add and execute Apple TV UI proofs for Artists/Albums/Songs result identity and navigation/playback, each See All group beyond its preview with server-result limits disclosed, and recent-query replay, clear and account-specific relaunch persistence. Record passing required-CI results before promotion."
+          },
+          "reason": "Native Artists/Albums/Songs previews, group expansion and device-local recent queries are implemented. The shared Apple search proof excludes tvOS; platform execution and result interaction still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "android": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-group-search-and-recent-query-proof",
+            "reason": "Passing Android host tests do not establish emulator result navigation. Add and execute Android phone UI proofs for Artists/Albums/Songs result identity and navigation/playback, each See All group beyond its preview with server-result limits disclosed, and recent-query replay, clear and account-specific relaunch persistence. Record passing required-CI results before promotion."
+          },
+          "reason": "Native Artists/Albums/Songs previews, group expansion and device-local recent queries are implemented. The shared Apple search proof excludes tvOS; platform execution and result interaction still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+        },
+        "androidtv": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-group-search-and-recent-query-proof",
+            "reason": "Passing Android host tests do not establish emulator result navigation. Add and execute Android TV UI proofs for Artists/Albums/Songs result identity and navigation/playback, each See All group beyond its preview with server-result limits disclosed, and recent-query replay, clear and account-specific relaunch persistence. Record passing required-CI results before promotion."
+          },
+          "reason": "At dcc2ff38 the native TV grouped-search proof passed in 10.437 seconds using actual D-pad actions: See All focus, Albums expansion, the fifth album beyond the preview, opaque-identity activation and return to the bar. Other groups, recent-query persistence and wider interactions still need native and required-CI evidence. The feature remains partial; see docs/evidence/library-depth.md."
         }
       }
     },

@@ -164,3 +164,12 @@ public fun rememberOutcomeLines(session: LibrarySession, targets: List<AndroidLi
     DisposableEffect(session) { onDispose { seen.forEach(session::dismissOutcome) } }
     return shown.mapNotNull { target -> resources.outcomeLines(outcomes, target)?.let { target to it } }
 }
+
+/** Stable core pin kinds; opaque item IDs are never encoded into a compound key. */
+public fun AndroidLibraryItem.pinKind(): String? = when (this) {
+    is AndroidLibraryItem.Album -> "album"
+    is AndroidLibraryItem.Artist -> "artist"
+    is AndroidLibraryItem.Track -> "track"
+    is AndroidLibraryItem.Playlist -> "playlist"
+    else -> null
+}

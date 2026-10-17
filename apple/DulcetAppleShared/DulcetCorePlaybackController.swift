@@ -237,6 +237,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         // (§12.12 rule 5). Configuring the same server again keeps it.
         if self.presentationAccount?.providerInstanceID != presentationAccount.providerInstanceID {
             skipNotice = nil
+            // A sleep timer set for the end of a track or of the queue belongs to the queue left.
+            if sleepChoice == .endOfTrack || sleepChoice == .endOfQueue {
+                _ = queueClient.setStopPoint(stopPoint: nil)
+                cancelSleepTimer()
+            }
         }
         let coreAccount = PlaybackEndpointAccount(
             providerInstanceId: presentationAccount.providerInstanceID,
@@ -597,6 +602,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         autoplayOperation?.cancel()
         autoplayOperation = nil
         sentCrossfade = nil
+        // The core's stop point outlives this controller's account: left set, the next session
+        // would stop at its first track's end with no timer shown.
+        _ = queueClient.setStopPoint(stopPoint: nil)
         cancelSleepTimer()
         execute(.stop(commandID: commandID("disconnect")))
         // A notice names a track of the queue just left, so it goes with it: signing out must not

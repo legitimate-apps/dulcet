@@ -23,10 +23,11 @@ it are written down. This tool is those steps:
     tools/generate_migration_fixture.py --all --check-semantic
                                                            # every version with a seed (CI)
 
-Fixtures v1-v3 were written with SQLite 3.50.6 and v4-v9 with SQLite 3.51.0, by Python's sqlite3
-module; none reserves bytes per page. Writing and --check refuse any SQLite version but 3.51.0,
-and refuse a result that reserves bytes, because a different build lays pages out differently and a
-regeneration would then differ for reasons that have nothing to do with the schema. --check is
+Fixtures v1-v3 were written with SQLite 3.50.6, v4-v9 with SQLite 3.51.0, and v10 with
+SQLite 3.54.0, by Python's sqlite3 module; none reserves bytes per page. Writing and --check
+require the SQLite version recorded for that fixture and refuse a result that reserves bytes, because
+a different build lays pages out differently and a regeneration would then differ for reasons that
+have nothing to do with the schema. --check is
 therefore a local check. --check-semantic runs anywhere, and is what CI runs: it compares the
 normalised schema (sqlite_master, whitespace collapsed), PRAGMA user_version and every table's rows,
 and the files/ tree, between the committed fixture and a regeneration.
@@ -49,6 +50,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tools/migration-fixtures"
 MIGRATIONS = ROOT / "core/src/commonMain/sqldelight/migrations"
 SQLITE_VERSION = "3.51.0"
+SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0"}
 PAGE_SIZE = 4096
 
 
@@ -190,7 +192,34 @@ def seed_v9(connection):
     connection.execute("UPDATE cache_meta SET last_issued = MAX(last_issued, 47) WHERE singleton_id = 1")
 
 
-SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9}
+def seed_v10(connection):
+    """Library depth (9.sqm): device preferences, pins, recents and optional album metadata.
+
+    Shared category/item IDs in two accounts make namespace loss observable to the row gate.
+    """
+    rows = [
+        ("server:fixture-alpha", "category", "songs", '["artist","favorites"]', 48),
+        ("server:fixture-alpha", "pin.album", "album:depth-shared", "", 49),
+        ("server:fixture-alpha", "search", "thresholdboundary", "ThresholdBoundary", 50),
+        ("server:fixture-alpha", "albumMetadata", "album:depth-shared", '{"types":["ep"],"date":"2026-10-16"}', 51),
+        ("server:fixture-beta", "category", "songs", '["title","all"]', 52),
+        ("server:fixture-beta", "pin.album", "album:depth-shared", "", 53),
+        ("server:fixture-beta", "search", "thresholdboundary", "thresholdboundary", 54),
+    ]
+    connection.executemany(
+        "INSERT INTO library_depth_entry (server_id, category, raw_id, value, issue_seq) "
+        "VALUES (?, ?, ?, ?, ?)", rows,
+    )
+    connection.execute("UPDATE cache_meta SET last_issued = MAX(last_issued, 54) WHERE singleton_id = 1")
+
+
+SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10}
+
+
+def require_sqlite_version(version):
+    expected = SQLITE_VERSION_BY_FIXTURE.get(version, SQLITE_VERSION)
+    if sqlite3.sqlite_version != expected:
+        fail(f"fixture v{version} was written with SQLite {expected}; this is {sqlite3.sqlite_version}")
 
 
 def fail(message):
@@ -318,8 +347,7 @@ def main():
     if args.check or args.check_semantic:
         check(args.to, args.check_semantic)
         return
-    if sqlite3.sqlite_version != SQLITE_VERSION:
-        fail(f"fixtures from v4 were written with SQLite {SQLITE_VERSION}; this is {sqlite3.sqlite_version}")
+    require_sqlite_version(args.to)
     committed = FIXTURES / f"v{args.to}"
     with tempfile.TemporaryDirectory(prefix="dulcet-fixture-") as directory:
         generated = Path(directory) / f"v{args.to}"
@@ -345,8 +373,7 @@ def check(version, semantic_only):
                 fail(f"{committed} differs from what this tool generates: {'; '.join(differences)}")
         print(f"{committed}: same schema and rows as its regeneration (SQLite {sqlite3.sqlite_version})")
         return
-    if sqlite3.sqlite_version != SQLITE_VERSION:
-        fail(f"fixtures from v4 were written with SQLite {SQLITE_VERSION}; this is {sqlite3.sqlite_version}")
+    require_sqlite_version(version)
     with tempfile.TemporaryDirectory(prefix="dulcet-fixture-") as directory:
         generated = Path(directory) / f"v{version}"
         generate(version, generated)

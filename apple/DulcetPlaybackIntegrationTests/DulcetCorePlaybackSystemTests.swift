@@ -1041,6 +1041,34 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertNil(stopped.sleepTimer, "the timer is spent")
     }
 
+    /// Signing out takes an end-of-track timer with it, in the core too: the next session's
+    /// boundary hands over as usual instead of stopping with no timer shown.
+    func testSigningOutClearsAnEndOfTrackStopPoint() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "b")
+        fixture.controller.setSleepTimer(.endOfTrack)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.sleepTimer?.choice, .endOfTrack)
+        await fixture.waitFor {
+            fixture.engine.commands.contains { $0.kind == "discard" && $0.attempt == preload.attempt.rawValue }
+        }
+        let preloadsBefore = fixture.engine.count("preload")
+
+        fixture.controller.disconnect()
+        fixture.controller.configure(account: account(provider))
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let replayed = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
+        fixture.emit(.ready(attemptID: replayed, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: replayed, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.engine.count("preload") > preloadsBefore }
+        XCTAssertGreaterThan(fixture.engine.count("preload"), preloadsBefore, "a left-over stop point would own the boundary")
+        XCTAssertNil(fixture.controller.currentPresentation.nowPlaying?.sleepTimer)
+    }
+
     /// A timed choice fades the level through `setVolume`, pauses at the deadline and puts the
     /// level back for the next play. Cancelling another one leaves playback alone.
     func testATimedSleepTimerFadesPausesAndRestoresTheLevel() async throws {
