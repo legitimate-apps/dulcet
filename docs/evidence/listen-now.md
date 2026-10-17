@@ -270,6 +270,37 @@ and ordinary-server navigation (9.237). The individual xcresult execution guard 
 three methods before JUnit emission. The local compiler was Xcode 27; hosted CI selects Xcode
 26.4.1. A failed hosted fixture setup is not counted as a passing control.
 
+## Completed native follow-up (2026-10-17)
+
+The full hosted [Apple run 39019373903](https://github.com/legitimate-apps/dulcet/actions/runs/39019373903)
+executed the following controls on `cd3635a3`; every positive count below excludes skips:
+
+- iPhone Library **4/4**, Home **1/1** (44.470 seconds), and the corrected album drag **1/1**
+  (98.724 seconds). The entire iPhone producer passed.
+- iPad Library **3/3**, Home **1/1** (49.527 seconds), and the corrected album drag **1/1**
+  (125.914 seconds). The entire iPad producer passed.
+- Apple TV Home **1/1** (25.099 seconds), including the exact Library action identifier,
+  album activation, relaunch and Library/Home navigation.
+- Mac catalog Playlists edits **1/1** (9.192 seconds), with independent server reads after
+  rendered create/add/remove/reorder/rename/delete actions; playlist Play **1/1** (1.734 seconds).
+- The platform producer passed, supplementing the earlier four-runtime sidebar regression
+  `choosingACatalogSidebarSectionLeavesHomeAndKeepsItsOwnNavigationHistory`.
+
+Individual xcresult execution guards confirmed those methods. The full workflow failed in
+its TV membership control (43.699 seconds): the focused album's full-grid native context menu
+stayed closed after real remote holds. This also happened in the earlier controlled main
+comparison. The result does not identify a toolchain or product cause.
+
+The original membership proof used Browse's horizontal shelf. Its lazy offscreen album must
+first be revealed with real remote movement. The driver now walks RIGHT to reveal the named
+album, verifies its focus, and performs the original hold and membership actions. It also waits
+for section-bar focus after each Menu, rather than sending another Menu during a pop. On a fresh
+leased tvOS 26.5 simulator, this corrected shelf path passed **1/1 in 103.615 seconds** through
+Add, removal, relaunch and offline replay, including independent server checks. The exact
+execution guard and JUnit confirmed the passing method. No membership assertion was removed.
+This proves the shelf path; the full-grid context-menu limitation remains unresolved. No Library
+product implementation or playback engine changed.
+
 ## Integration boundary
 
 Server playlist recency accepts actual API play contexts and optional submitted REST scrobble

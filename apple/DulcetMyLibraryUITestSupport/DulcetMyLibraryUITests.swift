@@ -46,10 +46,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
         try select("browse")
 #if os(tvOS)
-        try openAlbumList()
-        let tile = albumTile(album.title)
-        XCTAssertTrue(tile.waitForExistence(timeout: 30))
-        focus(tile)
+        let tile = try focusBrowseShelfAlbum(album.title)
         let contextAdd = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         // As in the TV design tour, the first hold can leave the album focused without
         // opening its native menu. Retry a longer real hold only on that same focused tile.
@@ -436,9 +433,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(tvOS)
         // Menu returns to the section bar from roots; from a pushed page it pops first.
         let remote = XCUIRemote.shared
+        let focusedTab = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.tab.' AND hasFocus == true")).firstMatch
         for _ in 0..<6 {
-            if app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.tab.' AND hasFocus == true")).firstMatch.exists { break }
+            if focusedTab.exists { break }
             remote.press(.menu)
+            // A pop and the subsequent transfer to the section bar are separate transitions.
+            // Observe the latter before another Menu could leave the foreground app.
+            if focusedTab.waitForExistence(timeout: 2) { break }
         }
         let order = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"]
         for _ in 0..<12 {
@@ -447,7 +448,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 remote.press(target > current ? .right : .left)
             } else { remote.press(.up) }
         }
-        XCTFail("Remote could not reach \(section)")
+        XCTFail("Remote could not reach \(section): \(app.debugDescription)")
 #else
         activate(control)
 #if os(iOS)
@@ -541,6 +542,25 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
     }
 #if os(tvOS)
+    @MainActor private func focusBrowseShelfAlbum(_ title: String) throws -> XCUIElement {
+        // The membership context-menu proof uses Browse's horizontal shelf, its original
+        // production path. Real RIGHT movement composes lazy tiles outside the viewport.
+        let shelf = app.otherElements["dulcet.reader.home.recentlyAdded"].firstMatch
+        let tiles = shelf.buttons.matching(identifier: "dulcet.library.album")
+        XCTAssertTrue(tiles.firstMatch.waitForExistence(timeout: 30), "Browse must publish its album shelf")
+        focus(tiles.firstMatch)
+        let tile = tiles.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+        for _ in 0..<20 {
+            if tile.exists {
+                focus(tile)
+                XCTAssertTrue(tile.hasFocus, "The named shelf album must hold focus before its menu")
+                return tile
+            }
+            XCUIRemote.shared.press(.right)
+        }
+        XCTFail("The remote did not reveal shelf album \(title): \(app.debugDescription)")
+        return tile
+    }
     private func isFocused(_ target: XCUIElement) -> Bool {
         if target.hasFocus { return true }
         // tvOS context-menu actions sit inside a focused cell rather than holding focus themselves.

@@ -603,6 +603,11 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         server.createPlaylist(ownName, songs.take(1))
 
         if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+        await("Library and its initial card focus before opening Playlists") {
+            exists("library.surface") && focused("library.home.0.item.0")
+        }
+        // The first data publication moves focus and can scroll the lazy section row away.
+        // Settle it before revealHomeSections reaches Playlists with the remote.
         press("library.view.playlists")
         for (name in listOf(othersName, ownName)) {
             await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
