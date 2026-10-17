@@ -662,7 +662,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     // Paint the device library immediately while the saved account reconnects.
                     currentSnapshot = Self.snapshot(
                         state: .libraryBrowse,
-                        destination: .library,
+                        destination: .listenNow,
                         form: restoredRequest,
                         status: .saved(serverName: serverName)
                     )
@@ -818,6 +818,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     form: currentSnapshot.accountForm,
                     status: currentSnapshot.accountConnection
                 )
+            case .listenNow:
+                cancelSearchRequest()
+                publish(state: .libraryBrowse, destination: .listenNow, form: currentSnapshot.accountForm, status: currentSnapshot.accountConnection)
             case .library, .browse:
                 cancelSearchRequest()
                 openLibrary(reason: .entered)
@@ -1018,8 +1021,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     // "Connected" read as an app that had not moved. Android's phone and TV apps
                     // replace their connect screen with the library the same way. A connection was
                     // just established, so anything held is another session's.
-                    if origin == .library || origin == .settings {
-                        self.openLibrary(reason: .connected)
+                    if origin == .library || origin == .listenNow || origin == .settings {
+                        if self.readerOwnsLibrary {
+                            self.publish(state: .libraryBrowse, destination: origin == .settings ? .listenNow : origin, form: request, status: .connected(account))
+                        } else { self.openLibrary(reason: .connected) }
                     }
                 } catch {
                     let failure = DulcetAccountErrorPresenter.presentation(
@@ -1092,6 +1097,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 openConnectedReader(account: account, request: request)
                 publishInPlace(status: .connected(account), form: request)
                 switch currentSnapshot.selectedDestination {
+                case .listenNow:
+                    break
                 case .library, .browse:
                     openLibrary(reason: .connected)
                 case .search:

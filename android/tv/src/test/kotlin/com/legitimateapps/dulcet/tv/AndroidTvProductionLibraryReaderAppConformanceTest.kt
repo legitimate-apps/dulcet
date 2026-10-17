@@ -270,7 +270,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     @Test fun albumsAndArtistsOpenFromTheRemoteAndBackReturnsFocusToWhatOpenedThem() {
         environment.proxy.unpark()
         // The app opens on the library: the first card takes focus when the rows arrive.
-        await("the library at launch") { exists("library.surface") }
+        await("Listen Now at launch") { exists("listenNow.surface") }
+        show("library.open")
+        await("Library") { exists("library.surface") }
         await("the first home row's first card to take focus") { focused("library.home.0.item.0") }
 
         press("library.view.albums")
@@ -306,7 +308,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         show("search.open")
         await("search") { exists("search.query") && !exists("library.surface") }
         back()
-        await("Back from search to the library") { exists("library.surface") && !exists("search.query") }
+        await("Back from search to Listen Now") { exists("listenNow.surface") && !exists("search.query") }
         println("TV NAVIGATION OBSERVED albums=$album artist=$ARTIST artist-album=$second")
     }
 
@@ -513,7 +515,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
         // Initial card focus can scroll the home section selector out of the lazy viewport.
         // Wait for Library itself; press() reveals its sections with the remote before focusing.
-        await("the launch library") { exists("library.surface") }
+        await("Listen Now at launch") { exists("listenNow.surface") }
+        show("library.open")
+        await("Library") { exists("library.surface") }
         press("library.view.playlists")
         await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
         compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(name))

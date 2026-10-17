@@ -67,6 +67,13 @@ class TvMyLibraryTest {
         val myLibrary = MyLibrarySession(source).also { myLibrarySessions += it }
         compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = null, myLibrary = myLibrary) { _, _ -> } } }
         compose.waitForIdle()
+        // These tests exercise Library; enter it from the new Listen Now landing tab by remote.
+        await("Listen Now") { exists("listenNow.surface") }
+        val tabs=listOf("listenNow.open","search.open","library.open","browse.open","tv.account.open")
+        repeat(6) { if(tabs.none(::focused)) key(Key.DirectionUp) }
+        repeat(8) { if(!focused("listenNow.open")) key(Key.DirectionLeft) }
+        assertFocused("listenNow.open")
+        key(Key.DirectionRight); key(Key.DirectionRight); key(Key.DirectionCenter)
     }
 
     // ---- The split -----------------------------------------------------------------------------------

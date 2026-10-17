@@ -1110,7 +1110,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         let deferred = ReaderDeferredConnector()
         let (second, secondSession) = makeStore(connector: deferred)
         XCTAssertEqual(second.snapshot.state, .libraryBrowse, "A saved account opens straight into its library")
-        XCTAssertEqual(second.selectedDestination, .library)
+        XCTAssertEqual(second.selectedDestination, .listenNow)
         XCTAssertEqual(secondSession.mode, .deviceOnly, "The device library remains readable while negotiation is held")
         var cachedPublications: [DulcetLibraryWindow] = []
         let cachedAlbums = try XCTUnwrap(secondSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {

@@ -20,7 +20,7 @@ import XCTest
 /// are focused for their shots, never pressed.
 final class DulcetTVDesignTourUITests: XCTestCase {
     /// Section order in the tvOS section bar, which is also the order the remote traverses.
-    private static let sections = ["library", "search", "nowPlaying", "settings"]
+    private static let sections = ["listenNow", "library", "search", "nowPlaying", "settings"]
     private static let album = "Threshold Boundary"
     private var shotNumber = 0
 
@@ -68,11 +68,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             app.launch()
             guard let section = self.launchSection(app) else { return false }
             if section == "Connection" {
-                guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 60) else { return false }
-                app.terminate()
-                app.launch()
-                guard self.launchSection(app) == "Library" else { return false }
+                guard app.navigationBars["Listen Now"].waitForExistence(timeout:60) else { return false }
             }
+            guard self.selectSection(app, "library") else { return false }
             let tile = app.buttons.matching(identifier: "dulcet.library.album").firstMatch
             // Artwork arrives after the tiles. Three seconds is a pause, not a wait for covers:
             // a relaunch has been seen to still show the placeholder covers here.
@@ -268,7 +266,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var section: String?
         _ = waitFor(30) {
             let bar = app.navigationBars.firstMatch
-            section = bar.exists && ["Connection", "Library"].contains(bar.identifier) ? bar.identifier : nil
+            section = bar.exists && ["Connection", "Listen Now"].contains(bar.identifier) ? bar.identifier : nil
             return section != nil
         }
         return section
@@ -328,7 +326,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 // as Library's proven first shot, so a previous list's scroll/focus is not reused.
                 app.terminate()
                 app.launch()
-                guard self.launchSection(app) == "Library", self.selectLibrarySection(app, "home") else { return false }
+                guard self.launchSection(app) == "Listen Now", self.selectSection(app, "library"), self.selectLibrarySection(app, "home") else { return false }
                 let all = app.buttons["dulcet.reader.home.\(row).all"].firstMatch
                 guard all.waitForExistence(timeout: 30), self.focusHomeAllByRemote(all, in: app) else { return false }
                 remote.press(.select)
@@ -684,7 +682,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         defer { refused.release(); silent.release() }
         app.launchArguments = []
         app.launch()
-        if launchSection(app) == "Library" {
+        if launchSection(app) == "Listen Now" {
             guard connectByLaunchHook(app, server: server), signOutByRemote(app) else { return }
             app.terminate()
             app.launchArguments = []
@@ -805,7 +803,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         app.terminate()
         app.launchArguments = []
         app.launch()
-        return self.launchSection(app) == "Library" && self.selectSection(app, "settings")
+        return self.launchSection(app) == "Listen Now" && self.selectSection(app, "settings")
             && self.element(labelPrefix: "Reconnect to", in: app).waitForExistence(timeout: 15)
     }
 
@@ -822,11 +820,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         ]
         app.launch()
         let deadline = ContinuousClock.now.advanced(by: .seconds(60))
-        while app.navigationBars.firstMatch.identifier != "Library", ContinuousClock.now < deadline {
+        while app.navigationBars.firstMatch.identifier != "Listen Now", ContinuousClock.now < deadline {
             Thread.sleep(forTimeInterval: 0.25)
         }
-        guard app.navigationBars.firstMatch.identifier == "Library" else {
-            XCTFail("A connection made at launch must land on Library: " + app.debugDescription)
+        guard app.navigationBars.firstMatch.identifier == "Listen Now" else {
+            XCTFail("A connection made at launch must land on Listen Now: " + app.debugDescription)
             return false
         }
         guard selectSection(app, "settings") else {

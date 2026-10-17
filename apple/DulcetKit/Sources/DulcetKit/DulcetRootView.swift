@@ -383,9 +383,9 @@ private struct DulcetIOSShell: View {
     @State private var playerTransition = DulcetPlayerTransition()
     /// The last place the person was, so a Now Playing destination arriving from elsewhere (the
     /// Show Now Playing command, a restored selection) opens the player over that place.
-    @State private var lastPlace: DulcetSidebarDestination = .library
+    @State private var lastPlace: DulcetSidebarDestination = .listenNow
 
-    static let places: [DulcetSidebarDestination] = [.library, .search, .settings]
+    static let places: [DulcetSidebarDestination] = [.listenNow, .library, .search, .settings]
 
     private var compact: Bool { horizontalSizeClass == .compact }
 
@@ -599,7 +599,7 @@ struct DulcetDestinationStack: View {
     private var showing: Bool { tab.map { $0 == store.selectedDestination } ?? true }
 
     var body: some View {
-        if (destination == .library || destination == .browse), store.readerOwnsLibrary {
+        if (destination == .listenNow || destination == .library || destination == .browse), store.readerOwnsLibrary {
             readerStack
         } else {
             snapshotStack
@@ -610,7 +610,10 @@ struct DulcetDestinationStack: View {
     /// Each screen holds its own window, so a hidden tab keeps its rows without a snapshot.
     private var readerStack: some View {
         NavigationStack(path: readerPath) {
-            DulcetReaderCollectionRoot(destination: destination)
+            Group {
+                if destination == .listenNow { DulcetListenNowView() }
+                else { DulcetReaderCollectionRoot(destination: destination) }
+            }
                 .allowsHitTesting(showing)
                 .modifier(bar(drawsNotices: showing && store.readerPath.isEmpty))
                 .navigationDestination(for: StackRoute.self) { path in
@@ -847,7 +850,7 @@ private struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore
     /// The rows to show. The Mac lists Now Playing as a place; iOS presents it over the content
     /// from the now-playing bar instead, and leaves it out.
-    var destinations: [DulcetSidebarDestination] = [.library, .search, .nowPlaying, .settings]
+    var destinations: [DulcetSidebarDestination] = [.listenNow, .library, .search, .nowPlaying, .settings]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// The column takes more room at the accessibility text sizes: at the default width the rows'
@@ -860,6 +863,9 @@ private struct DulcetSidebar: View {
         VStack(spacing: 0) {
             List(selection: selection) {
                 Section {
+                    if destinations.contains(.listenNow) {
+                        sidebarRow("Listen Now", symbol: "play.circle", destination: .listenNow)
+                    }
                     if destinations.contains(.library) {
                         sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
                     }
@@ -1064,6 +1070,8 @@ private struct DulcetStateSurface: View {
                 store: store,
                 allowsProgrammaticFocus: allowsProgrammaticFocus
             )
+        case .listenNow:
+            if store.readerOwnsLibrary { DulcetListenNowView() } else { librarySurface }
         case .library, .browse:
             if store.readerOwnsLibrary {
                 DulcetReaderCollectionRoot(destination: store.selectedDestination)
@@ -1219,6 +1227,7 @@ private extension DulcetStateSurface {
 extension DulcetSidebarDestination {
     var symbolName: String {
         switch self {
+        case .listenNow: "play.circle"
         case .library: "rectangle.grid.2x2"
         case .browse: "globe"
         case .search: "magnifyingglass"
@@ -1229,6 +1238,7 @@ extension DulcetSidebarDestination {
 
     var windowTitle: String {
         switch self {
+        case .listenNow: "Listen Now"
         case .library: DulcetStrings.library
         case .browse: DulcetStrings.browseSection
         case .search: DulcetStrings.search
