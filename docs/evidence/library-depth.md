@@ -7,7 +7,10 @@ on Apple TV, which is **n/a** under the existing tvOS download policy.
 Source implementation and shared-core tests do not establish that a native screen works.
 The Android phone and TV completed-download/offline-playback proofs passed locally.
 Other runtime limits and failed attempts are recorded below. The focused Android phone host-test soak passed. The earlier TV soak is historical;
-subsequent TV production query-reset and freshness-reflow corrections require a fresh soak. The first executed Apple CI run reported a TV compile
+subsequent TV production query-reset and freshness-reflow corrections require a fresh soak.
+The final Android/core source at `dcc2ff38` passed required core CI and parity; those
+required results are distinct from the pending focused TV soak and Apple native proof.
+The first executed Apple CI run reported a TV compile
 failure and an iPad pin-relaunch failure. The replacement run reached the Mac proof,
 which failed at a pin-heading query and a search crash. A separate local iPhone run
 passed the three new cases and then repeated them after the resulting visual fixes;
@@ -81,7 +84,10 @@ and unfinished tasks after sign-out. Its saved image shows the focused canary un
 Downloaded, local offline copy, All/Favorites, sorting and Shuffle All; network retry and
 the redundant Downloaded filter are absent. These results establish this completed-file
 path on both Android shells; they do not establish every other library-depth interaction.
-The proofs are not yet wired into required CI.
+Both methods subsequently executed and passed in required core CI at `dcc2ff38`,
+as recorded below. This revision adds their explicit required-verifier identities;
+the next required run must prove that guard is consumed before their feature cells
+are promoted.
 
 The final Android APKs were assembled from source through `70bcc4e0`. Their SHA-256
 identifies the runtime artifacts independently of later evidence-only commits:
@@ -343,7 +349,14 @@ After that iPhone proof step terminated, the old run was canceled while its plat
 job was testing tvOS and the iPad job had only reached simulator first boot. No iPad
 native result is claimed from that run. The corrected-source
 [Apple run 39002109762](https://github.com/legitimate-apps/dulcet/actions/runs/39002109762)
-was dispatched at `f134d55b`; its native results remain pending.
+was dispatched at `f134d55b`, then canceled while all four native jobs were still
+queued. The next change adds a phone-only test helper that performs up to eight real
+upward touch swipes until the album tile exists and is hittable before those exact two
+assertions. It retains the original 20- and 30-second existence checks and does not
+change the Mac, iPad or TV tests. Standalone UI-source typechecking passed all five
+directories. This source correction has not yet supplied an after-scroll native pass.
+[Apple run 39002314622](https://github.com/legitimate-apps/dulcet/actions/runs/39002314622)
+was dispatched at `128b9d39` for that correction; its native results remain pending.
 
 The hosted Mac My Library recipe targets the disposable `DulcetMyLibraryMacHost`, built
 from the production Mac and shared Swift sources. `tools/ci/run-my-library-proofs`
@@ -428,6 +441,55 @@ a fresh soak; the earlier 20-pass result does not verify them. These are hosted 
 host-test observations, separate from the earlier APK-identified emulator completed-download
 proofs and from native Apple runtime behavior.
 
+A separate [phone search conformance soak](https://github.com/legitimate-apps/dulcet/actions/runs/39001870740)
+at `f134d55b` passed **20 repetitions, zero failures**, each executing
+`AndroidSearchAppConformanceTest`'s selected conformance method: **20 test executions
+with zero skips**. The owning implementation agent checked the result line and JSON.
+This is focused phone host-test evidence for that search path, separate from the earlier
+320-execution depth/category soak. The separate [TV production soak](https://github.com/legitimate-apps/dulcet/actions/runs/39001872018)
+completed **19 passed repetitions and 1 failed**, with **560 test executions, 1 failure
+and zero skips**. Its changed Library/Search class selection was 28 tests per repetition.
+Iteration one failed `aPlaylistIsDeletedWithTheRemoteOnlyAfterItAsksAndCancelKeepsIt`;
+iterations 2 through 20 passed. The later TV search focus correction is not covered by
+that earlier source. The normal host-test replacement and final corrections remain
+pending; neither historical TV success nor the focused phone result verifies them.
+
+The [real-server phone production-search soak](https://github.com/legitimate-apps/dulcet/actions/runs/39004170545)
+at `06ce9f7f` separately passed **20 repetitions, zero failures**, with **20 test
+executions and zero skips**. It selects
+`AndroidProductionSearchAppConformanceTest.conf41ProductionQueryMergesAndRoutesOpaqueId`
+against the disposable server, distinct from the earlier non-production search class.
+The owner also reported that method passed once in each local prod and dev channel,
+with zero failures, errors or skips. These results cover the corrected search proof;
+they do not turn the earlier TV playlist failure into a pass or establish all required CI.
+
+At the final TV source `dcc2ff38`, the implementation owner reported **2 native
+emulator cases passed**. The My Library fallback proof with `myLibrarySplit=false`
+passed in **6.428 seconds**, exercising the ordinary server Library path. The new
+`AndroidTvEmulatorGroupedSearchProofTest.theRemoteExpandsAlbumsWalksPastThePreviewAndReturnsToTheBar`
+passed in **10.437 seconds**. That case uses actual D-pad Up/Down/Center actions to
+reach See All, expand Albums, move beyond the preview to the fifth album, activate its
+opaque identity, and return to the query/bar without overlap. The owner reviewed
+compressed captures of See All focus, the long-title results and the album detail's
+Play control. This supplies the missing bounded remote-navigation observation; it does
+not establish all grouped-search, pin, sort or artist paths.
+
+The final TV native proof used these artifact identities, distinct from the earlier
+completed-download APKs:
+
+| APK at `dcc2ff38` | SHA-256 |
+| --- | --- |
+| TV app | `1312ac5c21fa0109d39972d55e1453f28d14ad16bd55db9cde7cf734b2cea56f` |
+| TV instrumentation | `c6db5ff45611c0cf498a88e5c30804d9ca970feeccf8540900b703c58bfe1738` |
+
+The owner also reported final local TV production conformance **34/34 passed**, regular
+host tests **88/88 passed**, both APKs compiled, and the final search-signature guard
+**1/1 passed in 8.505 seconds**. The replacement
+[TV production soak](https://github.com/legitimate-apps/dulcet/actions/runs/39005155830)
+selects 28 methods per repetition at that final source and remains pending. The earlier
+19/1 soak and required-CI focus failure are not represented as passes by these local
+and bounded native results.
+
 ## Broader required CI and migration repair
 
 The successful focused Android soaks do not establish that all required CI passed.
@@ -470,3 +532,69 @@ the Linux conformance and TV emulator jobs also failed, while the phone emulator
 passed. The final aggregator therefore failed. This confirms the repaired migration
 gate was exercised successfully in required CI, while Android corrections still require
 their own new results. No overall CI pass is claimed.
+
+At `128b9d39`, the [required parity gate](https://github.com/legitimate-apps/dulcet/actions/runs/39002296862)
+passed. The [required core run](https://github.com/legitimate-apps/dulcet/actions/runs/39002296930)
+completed with both phone and TV emulator jobs successful, while core-build, Linux
+conformance and the aggregator failed. Core-build's TV suite executed **88 tests with
+2 failures**: the account-entry remote walk did not reach the fourth result, and the
+album-sort remote walk encountered the Load More control before its expected sort
+control. Linux conformance stopped in the phone production-search class: **32 tests
+with 1 failure**, waiting for the `Dulcet local only` result at `search.result.1`.
+These newer failures are distinct from the historical `3f8256f6` failures. Their final
+corrections and fresh required results remain pending; passing focused phone search or
+emulator paths does not establish those failed host interactions.
+
+At the newer `06ce9f7f` revision, [required parity](https://github.com/legitimate-apps/dulcet/actions/runs/39004173339)
+passed and [required core CI](https://github.com/legitimate-apps/dulcet/actions/runs/39004173308)
+remained failed. This time Linux conformance and both phone and TV emulator jobs passed;
+the previous production-search failure did not recur. Core-build failed its TV suite
+with **88 tests and 1 failure**, the account-entry remote walk's fourth-result assertion.
+The aggregator therefore failed. Later local TV corrections reportedly passed the full
+34-case production conformance selection and 88 regular tests. Fresh hosted results
+for those final sources were still pending at that snapshot; the final result follows. The earlier required failures remain
+historical observations at their stated revisions.
+
+The final-source [required core CI run at `dcc2ff38`](https://github.com/legitimate-apps/dulcet/actions/runs/39005156175)
+completed **successfully**. Core-build, Linux conformance, both phone and TV emulator
+jobs, and the required aggregator all passed. The accompanying
+[required parity gate](https://github.com/legitimate-apps/dulcet/actions/runs/39005156174)
+also passed. These are the latest required Android/core results, superseding the earlier
+failed revisions for that scope. They do not supply an Apple native pass or turn the
+separately pending TV repeated-test soak into a completed result.
+
+The final required artifacts were inspected by the documentation reviewer, with these
+JUnit totals. Shared core results duplicated in the Android app artifact are not added
+a second time:
+
+| Required artifact scope at `dcc2ff38` | Tests | Failures/errors | Skips |
+| --- | ---: | ---: | ---: |
+| Core JVM | 1,082 | 0 | 0 |
+| Core Android host | 1,272 | 0 | 0 |
+| Regular phone prod + dev | 424 (212 each) | 0 | 0 |
+| Regular TV | 88 | 0 | 0 |
+| Linux phone production app | 32 | 0 | 0 |
+| Linux TV production app | 34 | 0 | 0 |
+| Linux core conformance JVM / Android host | 71 / 65 | 0 | 0 |
+| Phone emulator app main / My Library split rerun / core conformance | 15 / 1 / 13 | 0 | 1 / 0 / 0 |
+| TV emulator app main / My Library split rerun / core conformance | 16 / 1 / 13 | 0 | 1 / 0 / 0 |
+
+Each emulator's one skipped case is the existing AutoSkip proof. Both Downloaded methods
+and the TV grouped-search remote case are present as passing, non-skipped testcases.
+The phone and TV Downloaded test identities are respectively
+`AndroidEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable`
+and
+`AndroidTvEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable`.
+They ran once each in the required `core-ci` workflow's emulator jobs, whose immutable
+artifacts the required `core-ci` aggregator downloaded.
+
+That passing run did not yet explicitly require these two method identities in
+`tools/verify-parity-evidence`: their partial feature cells had no formal evidence entries,
+and the separate selected-method guard covered only My Library split. This revision
+adds both `core-ci/core-ci` evidence entries while keeping the cells partial. Replaying
+the verifier against the actual final artifacts passed with **208 required identities
+and 216 XML reports**. Two independent negative controls, removing only the phone or
+only the TV Downloaded method, were each rejected with the exact missing method name.
+This verifies the proposed guard against the observed artifacts; promotion waits for
+the next required CI run to consume it successfully. The recorded remaining condition
+is that guard, without adding new feature criteria after the runtime proof passed.

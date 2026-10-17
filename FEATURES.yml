@@ -2709,7 +2709,15 @@
             "blocked_on": "android-completed-download-runtime-proof-in-required-ci",
             "reason": "The local Android phone completed-file proof passed. Wire AndroidEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable into required CI with a selected-test execution guard and consumed JUnit; require completed bytes, rejected relay control, native row activation, advancing local playback, zero server requests, byte identity and sign-out cleanup. Promote only after that required run passes."
           },
-          "reason": "Android phone completed-download proof passed one test in 112.489 seconds at source 70bcc4e0: after the server relay was cut, the production Downloaded row started local playback; the observer required at least 1,500 ms of advancing media time, zero playback requests, identical bytes and sign-out cleanup. The feature remains partial because this runtime proof is not wired into required CI. See docs/evidence/library-depth.md for artifact identities and bounded scope."
+          "reason": "The required dcc2ff38 core-ci emulator JUnit records one passing, non-skipped phone completed-download case, and the required run passed. The new explicit evidence identity makes the required parity verifier reject a missing, failed or skipped method. The feature remains partial until that exact guard is consumed successfully in required CI; the earlier run did not yet require the method identity. See docs/evidence/library-depth.md for scope and artifact evidence.",
+          "evidence": [
+            {
+              "observes": "on an API 34 Android phone emulator in required core-ci, completes a production download, rejects a control request through the cut relay, browses Downloaded and activates its completed row, observes at least 1,500 ms of advancing local playback with zero server requests, rechecks identical bytes, and confirms sign-out removes files and unfinished tasks",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable"
+            }
+          ]
         },
         "androidtv": {
           "status": "partial",
@@ -2718,7 +2726,15 @@
             "blocked_on": "androidtv-completed-download-runtime-proof-in-required-ci",
             "reason": "The local Android TV completed-file proof passed. Wire AndroidTvEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable into required CI with a selected-test execution guard and consumed JUnit; require completed bytes, rejected relay control, native row activation, advancing local playback, zero server requests, byte identity and sign-out cleanup. Promote only after that required run passes."
           },
-          "reason": "Android TV completed-download proof passed one test in 61.967 seconds at source 70bcc4e0: after the server relay was cut, the production Downloaded row started local playback; the observer required at least 1,500 ms of advancing media time, zero playback requests, identical bytes and sign-out cleanup. The feature remains partial because this runtime proof is not wired into required CI. See docs/evidence/library-depth.md for artifact identities and bounded scope."
+          "reason": "The required dcc2ff38 core-ci emulator JUnit records one passing, non-skipped TV completed-download case, and the required run passed. The new explicit evidence identity makes the required parity verifier reject a missing, failed or skipped method. The feature remains partial until that exact guard is consumed successfully in required CI; the earlier run did not yet require the method identity. See docs/evidence/library-depth.md for scope and artifact evidence.",
+          "evidence": [
+            {
+              "observes": "on an API 34 Android TV emulator in required core-ci, completes a production download, rejects a control request through the cut relay, browses Downloaded and activates its completed row, observes at least 1,500 ms of advancing local playback with zero server requests, rechecks identical bytes, and confirms sign-out removes files and unfinished tasks",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvEmulatorLibraryDepthProofTest/downloadedViewBrowsesAndPlaysCompletedMusicWithTheServerUnreachable"
+            }
+          ]
         }
       }
     },
@@ -2974,7 +2990,7 @@
             "blocked_on": "androidtv-native-group-search-and-recent-query-proof",
             "reason": "Passing Android host tests do not establish emulator result navigation. Add and execute Android TV UI proofs for Artists/Albums/Songs result identity and navigation/playback, each See All group beyond its preview with server-result limits disclosed, and recent-query replay, clear and account-specific relaunch persistence. Record passing required-CI results before promotion."
           },
-          "reason": "Native Artists/Albums/Songs previews, group expansion and device-local recent queries are implemented. The shared Apple search proof excludes tvOS; platform execution and result interaction still need runtime proof. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+          "reason": "At dcc2ff38 the native TV grouped-search proof passed in 10.437 seconds using actual D-pad actions: See All focus, Albums expansion, the fifth album beyond the preview, opaque-identity activation and return to the bar. Other groups, recent-query persistence and wider interactions still need native and required-CI evidence. The feature remains partial; see docs/evidence/library-depth.md."
         }
       }
     }
