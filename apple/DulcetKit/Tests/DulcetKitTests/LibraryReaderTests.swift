@@ -1171,7 +1171,7 @@ private func readerModeStore(
 }
 
 @Test @MainActor
-func theAppOpensTheDeviceLibraryWhileTheSavedAccountReconnects() throws {
+func theAppOpensCachedListenNowWhileTheSavedAccountReconnects() throws {
     let factory = RecordingReaderFactory()
     let connector = ReaderTestConnector()
     let browser = ForbiddenLibraryBrowser()
@@ -1185,7 +1185,7 @@ func theAppOpensTheDeviceLibraryWhileTheSavedAccountReconnects() throws {
         persisted: saved, providerInstanceID: "provider-reader", factory: factory,
         connector: connector, browser: browser)
 
-    #expect(store.selectedDestination == .library)
+    #expect(store.selectedDestination == .listenNow)
     #expect(store.readerOwnsLibrary)
     #expect(session.mode == .deviceOnly)
     let reader = try #require(factory.made.first)
@@ -1208,6 +1208,7 @@ func backFromTheMenuBarLeavesOnePageAndOnlyOnTheLibrary() throws {
     )
     let (store, _, _) = readerModeStore(
         persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    store.navigate(to: .library)
     #expect(!store.canGoBackInLibrary, "nothing is pushed yet")
     let album = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-1")
     let artist = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "artist-1")
@@ -1282,6 +1283,7 @@ func reconnectFromTheLibraryConnectsInPlaceAndSavesTheReachedAddress() throws {
         persisted: saved, providerInstanceID: "provider-reader", factory: factory,
         connector: connector, browser: browser)
     store.submitAccountConnection()
+    store.navigate(to: .library)
     #expect(store.selectedDestination == .library, "Reconnect on the library connects where the person is")
     connector.complete(.connected(DulcetConnectedAccountSummary(
         serverName: "Navidrome", normalizedServerURL: "https://music.example.invalid")))
@@ -1327,6 +1329,30 @@ func aReaderPageFromAnotherDestinationOpensLibraryOnIt() {
     #expect(store.readerPath.isEmpty, "choosing the tab showing returns it to its root")
     store.selectLibrarySection(.genres)
     #expect(store.librarySection == .genres)
+}
+
+@Test @MainActor
+func choosingACatalogSidebarSectionLeavesHomeAndKeepsItsOwnNavigationHistory() {
+    let factory = RecordingReaderFactory()
+    let (store, _, _) = readerModeStore(
+        persisted: DulcetAccountConnectRequest(
+            serverURL: "https://music.example.invalid", username: "listener",
+            password: "fixture-password", allowLocalHTTP: false),
+        providerInstanceID: "provider-reader", factory: factory
+    )
+    let album = DulcetReaderRoute.album(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-home"))
+    store.navigate(to: .listenNow)
+    store.pushReaderPage(album)
+    store.selectLibrarySection(.playlists)
+    #expect(store.selectedDestination == .library, "A catalog sidebar choice must leave Listen Now")
+    #expect(store.librarySection == .playlists)
+    #expect(store.readerPath.isEmpty, "The sidebar opens the chosen section's root")
+    store.navigate(to: .listenNow)
+    #expect(store.readerPath == [album], "Catalog navigation must preserve Home's own detail stack")
+    store.selectLibrarySection(.albums)
+    #expect(store.selectedDestination == .library)
+    #expect(store.librarySection == .albums)
+    #expect(store.readerPath.isEmpty)
 }
 
 @Test @MainActor
@@ -1958,7 +1984,7 @@ func savedAutomaticReconnectJoinsBacksOffAndRespondsToLifecycle() throws {
     let (store, session, _) = readerModeStore(persisted: saved,
         providerInstanceID: "provider-reader", factory: factory, connector: connector,
         reachability: reachability, delays: delays)
-    #expect(store.selectedDestination == .library)
+    #expect(store.selectedDestination == .listenNow)
     #expect(session.mode == .deviceOnly)
     #expect(connector.requests.count == 1)
     store.submitAccountConnection()
@@ -1971,7 +1997,7 @@ func savedAutomaticReconnectJoinsBacksOffAndRespondsToLifecycle() throws {
             automaticRetryFloor: floor)))
     }
     fail(.transportUnreachable)
-    #expect(store.selectedDestination == .library, "failure never takes away the library")
+    #expect(store.selectedDestination == .listenNow, "failure never takes away the library")
     delays.advance(by: .milliseconds(1999))
     #expect(connector.requests.count == 1)
     delays.advance(by: .milliseconds(1))

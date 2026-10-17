@@ -180,6 +180,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * opened the screen it leaves (TvFocusMemory), scrolled back into view if a list had moved on.
  */
 
+internal const val ROUTE_LISTEN_NOW = "listenNow"
 internal const val ROUTE_SEARCH = "search"
 internal const val ROUTE_LIBRARY = "library"
 internal const val ROUTE_BROWSE = "browse"
@@ -248,7 +249,7 @@ internal fun TvLibraryEntry(
     val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
     // The split says the server advertises the extension; bring the device's library up to its.
     LaunchedEffect(split) { if (split) myLibrarySession.refresh() }
-    val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_LIBRARY) }
+    val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_LISTEN_NOW) }
     val memory = remember { TvFocusMemory() }
     val states = rememberSaveableStateHolder()
     val playbackState by remember(playback) { playback?.state ?: MutableStateFlow(AndroidPlaybackState()) }
@@ -258,8 +259,8 @@ internal fun TvLibraryEntry(
         if (routes.size > 1) {
             val left = routes.removeAt(routes.lastIndex)
             if (left !in routes) { states.removeState(left); memory.forget(left) }
-        } else if (routes.single() != ROUTE_LIBRARY) {
-            show(routes, states, memory, ROUTE_LIBRARY)
+        } else if (routes.single() != ROUTE_LISTEN_NOW) {
+            show(routes, states, memory, ROUTE_LISTEN_NOW)
         }
     }
     val navigator = remember(routes) {
@@ -274,7 +275,7 @@ internal fun TvLibraryEntry(
     }
     // Back walks down the routes, then from the search root to the library, the screen the app opens
     // on; from the library it leaves the app.
-    BackHandler(enabled = routes.size > 1 || routes.single() != ROUTE_LIBRARY) { navigator.back() }
+    BackHandler(enabled = routes.size > 1 || routes.single() != ROUTE_LISTEN_NOW) { navigator.back() }
 
     val top = routes.last()
     val navigation = remember { TvNavigationFocus() }
@@ -283,6 +284,7 @@ internal fun TvLibraryEntry(
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             TvTopBar(top, routes.first(), playbackState.hasSession, navigation,
+                onListenNow = { show(routes, states, memory, ROUTE_LISTEN_NOW) },
                 onSearch = { show(routes, states, memory, ROUTE_SEARCH) },
                 onLibrary = { show(routes, states, memory, ROUTE_LIBRARY) },
                 onNowPlaying = { context.startActivity(PlaybackIntents.showNowPlaying(context)) },
@@ -292,7 +294,7 @@ internal fun TvLibraryEntry(
             // Under the bar on the library's home, the screen that offers to reconnect the saved account:
             // DOWN from the bar and UP out of the screen below both reach it, wherever the remote is
             // along them, so its place does not depend on how wide the bar's tabs happen to be.
-            if (top == ROUTE_LIBRARY || top == ROUTE_BROWSE) TvSavedAccountNotice(session, account, navigation)
+            if (top == ROUTE_LISTEN_NOW || top == ROUTE_LIBRARY || top == ROUTE_BROWSE) TvSavedAccountNotice(session, account, navigation)
             Box(Modifier.fillMaxWidth().weight(1f).focusProperties {
                 onExit = {
                     if (navigation.reconnectShown && requestedFocusDirection == FocusDirection.Up) {
@@ -309,6 +311,7 @@ internal fun TvLibraryEntry(
                 ) {
                     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
                     when {
+                        top == ROUTE_LISTEN_NOW -> TvListenNow(account, session, playback, navigator)
                         top == ROUTE_SEARCH -> search(navigator, playback)
                         top == ROUTE_LIBRARY && split ->
                             TvMyLibraryHome(account, session, myLibrarySession, playback, navigator)
@@ -369,6 +372,7 @@ private fun show(routes: SnapshotStateList<String>, states: androidx.compose.run
  * so a screen's default focus asks here whether the person has moved along the bar ([allowsDefault]).
  */
 internal class TvNavigationFocus {
+    val listenNow = FocusRequester()
     val search = FocusRequester()
     val library = FocusRequester()
     val browse = FocusRequester()
@@ -436,15 +440,18 @@ internal fun TvTopBar(
     /** With `dulcetLibrary` advertised, the catalog is its own root beside My Library (spec §29.4). */
     browse: Boolean = false,
     onBrowse: () -> Unit = {},
+    onListenNow: () -> Unit = {},
 ) {
     focus.current = when {
         top == ROUTE_ACCOUNT -> focus.account
+        root == ROUTE_LISTEN_NOW -> focus.listenNow
         root == ROUTE_LIBRARY -> focus.library
         root == ROUTE_BROWSE -> focus.browse
         else -> focus.search
     }
     focus.currentTag = when {
         top == ROUTE_ACCOUNT -> "tv.account.open"
+        root == ROUTE_LISTEN_NOW -> "listenNow.open"
         root == ROUTE_LIBRARY -> "library.open"
         root == ROUTE_BROWSE -> "browse.open"
         else -> "search.open"
@@ -460,6 +467,7 @@ internal fun TvTopBar(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
         )
+        TvTab("Listen Now", root == ROUTE_LISTEN_NOW, "listenNow.open", focus.listenNow, focus, onClick = onListenNow)
         TvTab(stringResource(R.string.tv_nav_search), root == ROUTE_SEARCH, "search.open", focus.search, focus,
             onClick = onSearch)
         TvTab(stringResource(if (browse) SharedR.string.library_my_library_title else R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library, focus,

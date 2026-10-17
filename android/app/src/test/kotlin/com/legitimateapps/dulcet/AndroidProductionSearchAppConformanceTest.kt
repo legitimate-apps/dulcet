@@ -27,6 +27,7 @@ class AndroidProductionSearchAppConformanceTest {
 
     @Test fun conf41ProductionQueryMergesAndRoutesOpaqueId() {
         val app = RuntimeEnvironment.getApplication()
+        compose.onNodeWithTag("search.open").performClick()
         compose.onNodeWithTag("search.query").performTextInput("D")
         assertSingleCharacterLocalRows()
         compose.onNodeWithTag("search.query").performTextInput("ulcet")

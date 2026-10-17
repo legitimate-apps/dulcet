@@ -281,7 +281,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     @Test fun albumsAndArtistsOpenFromTheRemoteAndBackReturnsFocusToWhatOpenedThem() {
         environment.proxy.unpark()
         // The app opens on the library: the first card takes focus when the rows arrive.
-        await("the library at launch") { exists("library.surface") }
+        await("Listen Now at launch") { exists("listenNow.surface") }
+        show("library.open")
+        await("Library") { exists("library.surface") }
         await("the first home row's first card to take focus") { focused("library.home.0.item.0") }
 
         press("library.view.albums")
@@ -317,7 +319,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         show("search.open")
         await("search") { exists("search.query") && !exists("library.surface") }
         back()
-        await("Back from search to the library") { exists("library.surface") && !exists("search.query") }
+        await("Back from search to Listen Now") { exists("listenNow.surface") && !exists("search.query") }
         println("TV NAVIGATION OBSERVED albums=$album artist=$ARTIST artist-album=$second")
     }
 
@@ -522,6 +524,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         val sibling = server.createPlaylist(siblingName, songs.take(1))
         assertEquals(name, server.playlists()[id], "setup: the playlist is on the server")
 
+        await("Listen Now at launch") { exists("listenNow.surface") }
+        show("library.open")
+        await("Library") { exists("library.surface") }
         await("the launch library's default card") { focused("library.home.0.item.0") }
         // The late launch default can scroll sections out after an earlier exists() check.
         // Settle that real focus, then reach Playlists with the remote before selecting it.
@@ -598,6 +603,11 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         server.createPlaylist(ownName, songs.take(1))
 
         if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+        await("Library and its initial card focus before opening Playlists") {
+            exists("library.surface") && focused("library.home.0.item.0")
+        }
+        // The first data publication moves focus and can scroll the lazy section row away.
+        // Settle it before revealHomeSections reaches Playlists with the remote.
         press("library.view.playlists")
         for (name in listOf(othersName, ownName)) {
             await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }

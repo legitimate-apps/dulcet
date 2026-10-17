@@ -83,6 +83,9 @@ class TvPlaylistCreateInDoubtSessionTest {
         val restoration = StateRestorationTester(compose)
         restoration.setContent { MaterialTheme { TvLibraryEntry(account, playback = playback) { _, _ -> } } }
         compose.waitForIdle()
+        await("the Library tab") { exists("library.open") }
+        focus("library.open")
+        keyAt("library.open", Key.DirectionCenter)
         await("the first home card to take focus") { focused("library.home.0.item.0") }
         keyAt("library.home.0.item.0", Key.DirectionCenter)
         await("the album's first track") { exists("album.track.0") }

@@ -67,6 +67,13 @@ class TvMyLibraryTest {
         val myLibrary = MyLibrarySession(source).also { myLibrarySessions += it }
         compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = null, myLibrary = myLibrary) { _, _ -> } } }
         compose.waitForIdle()
+        // These tests exercise Library; enter it from the new Listen Now landing tab by remote.
+        await("Listen Now") { exists("listenNow.surface") }
+        val tabs=listOf("listenNow.open","search.open","library.open","browse.open","tv.account.open")
+        repeat(6) { if(tabs.none(::focused)) key(Key.DirectionUp) }
+        repeat(8) { if(!focused("listenNow.open")) key(Key.DirectionLeft) }
+        assertFocused("listenNow.open")
+        key(Key.DirectionRight); key(Key.DirectionRight); key(Key.DirectionCenter)
     }
 
     // ---- The split -----------------------------------------------------------------------------------
@@ -81,8 +88,8 @@ class TvMyLibraryTest {
         // UP from the card crosses to the bar; where it lands on the bar is geometric, so walk
         // along the bar to Browse from whichever tab the remote first rests on.
         var ups = 0
-        while (!focused("library.open") && !focused("search.open") && !focused("browse.open") && ups < 4) { key(Key.DirectionUp); ups += 1 }
-        assertTrue(focused("library.open") || focused("search.open") || focused("browse.open"),
+        while (!focused("listenNow.open") && !focused("library.open") && !focused("search.open") && !focused("browse.open") && ups < 4) { key(Key.DirectionUp); ups += 1 }
+        assertTrue(focused("listenNow.open") || focused("library.open") || focused("search.open") || focused("browse.open"),
             "UP from the card reaches the bar; focused=${focusedTags()}")
         var rights = 0
         while (!focused("browse.open") && rights < 6) { key(Key.DirectionRight); rights += 1 }

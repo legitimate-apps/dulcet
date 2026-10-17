@@ -220,8 +220,10 @@ class AndroidEmulatorAccountConnectProofTest {
         endProcessConnection()
         val triedBefore = relay.acceptedConnections.get()
         launch().use { scenario ->
-            awaitNode("the saved library") { exists("library.open") }
+            awaitNode("the saved Home") { exists("listenNow.surface") }
             check(!exists("account.submit")) { "A saved account must not be asked for again" }
+            awaitNode("automatic reconnect starts without a touch", 60_000) { relay.acceptedConnections.get() > triedBefore }
+            touch("library.open", scenario)
             awaitNode("automatic reconnect in place", 60_000) {
                 relay.acceptedConnections.get() > triedBefore && !saysOffline() && exists("library.home.0.item.0")
             }

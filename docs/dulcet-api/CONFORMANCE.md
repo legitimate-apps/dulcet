@@ -327,3 +327,13 @@ the suite version it passed. Checks for v1 behaviour are never loosened.
 
 Dulcet Server's own CI runs the suite on every change to `:server`, on `ubuntu-latest`, against a
 disposable instance.
+
+## Home profile
+
+Optional `dulcet.home` v1, `--profile Core,Home`. `DA-HOME-1` requires advertisement,
+reads `/recommendations/home?limit=2`, validates the OpenAPI response, checks shelf and item
+uniqueness, follows each returned resource as the same user, and checks invalid-limit and
+unauthenticated responses. The seeded catalog must yield at least one item, so empty output
+cannot pass as a visibility proof. `HOME_DUPLICATE_ITEM` is its negative control. Ranking is
+implementation-defined; the reference server separately tests imported annotations, per-user
+isolation, favourites and rediscovery. This profile does not claim a recommendation-quality score.

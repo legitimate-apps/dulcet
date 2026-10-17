@@ -68,7 +68,7 @@ class AndroidTvMyLibraryProofTest {
             ActivityScenario.launch<TvSearchActivity>(launch).use activity@{
                 if (!expectSplit) {
                     step(shots, "library-nosplit") {
-                        awaitFocused("library.home.0.item.0") && shots.settle(2_000) &&
+                        select("library.open") && awaitFocused("library.home.0.item.0") && shots.settle(2_000) &&
                             noTag("browse.open", 5_000)
                     }
                     check(noTag("browse.open", 1)) { "A server without dulcetLibrary must not split the bar" }
@@ -81,7 +81,7 @@ class AndroidTvMyLibraryProofTest {
                     return@activity
                 }
                 step(shots, "mylibrary") {
-                    awaitTag("browse.open") && awaitTag("mylibrary.view.albums") && shots.settle(2_000)
+                    select("library.open") && awaitTag("browse.open") && awaitTag("mylibrary.view.albums") && shots.settle(2_000)
                 }
                 // Browse is the catalog; its Albums view's first card opens an album.
                 step(shots, "browse") {

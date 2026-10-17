@@ -57,6 +57,9 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val ids = call.params("id").filter(String::isNotEmpty).ifEmpty { throw SubsonicError.missing("id") }
             val times = call.params("time").map { it.toLongOrNull() }
             val submission = call.bool("submission", true)
+            val playlistContext = call.param("dulcetContextId")?.takeIf {
+                call.param("dulcetContextType") == "playlist" && it.isNotEmpty()
+            }
             val now = System.currentTimeMillis()
             val client = call.param("c") ?: ""
             db.write {
@@ -73,6 +76,21 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
                                 "UPDATE annotation SET play_count = play_count + 1, played = MAX(COALESCE(played, 0), ?) WHERE user_id = ? AND item_type = ? AND item_id = ?",
                                 at, call.user.id, type, itemId,
                             )
+                        }
+                        // Optional dulcetHome context accompanies an actual submitted play. A
+                        // deleted/private playlist or an unrelated queued song drops only this
+                        // context, preserving ordinary REST scrobble delivery and its response.
+                        val playlist = playlistContext?.let { context ->
+                            string("""SELECT p.id FROM playlist p JOIN playlist_track pt ON pt.playlist_id=p.id
+                                WHERE p.id=? AND pt.track_id=? AND (p.owner_id=? OR p.public=1) LIMIT 1""",
+                                context, id, call.user.id)
+                        }
+                        if (playlist != null) {
+                            ensureAnnotation(call.user.id, "playlist", playlist)
+                            // MAX makes ranking stable on durable retries, without claiming a
+                            // playlist play count or changing track scrobble deduplication.
+                            execute("UPDATE annotation SET played=MAX(COALESCE(played,0),?) WHERE user_id=? AND item_type='playlist' AND item_id=?",
+                                at, call.user.id, playlist)
                         }
                     } else {
                         execute(
@@ -229,7 +247,7 @@ data class PlaylistRow(
     val created: Long, val changed: Long, val songCount: Int, val duration: Double,
 )
 
-private fun Db.Session.playlistRows(where: String, vararg args: Any?): List<PlaylistRow> = query(
+internal fun Db.Session.playlistRows(where: String, vararg args: Any?): List<PlaylistRow> = query(
     """SELECT p.*, u.name AS owner_name,
          (SELECT COUNT(*) FROM playlist_track pt JOIN track t ON t.id = pt.track_id WHERE pt.playlist_id = p.id) AS song_count,
          (SELECT COALESCE(SUM(t.duration), 0) FROM playlist_track pt JOIN track t ON t.id = pt.track_id WHERE pt.playlist_id = p.id) AS total_duration
@@ -242,7 +260,7 @@ private fun Db.Session.playlistRows(where: String, vararg args: Any?): List<Play
     )
 }
 
-private fun playlistNode(row: PlaylistRow, viewerId: String, ctx: ServerContext): Node = Node("playlist").apply {
+internal fun playlistNode(row: PlaylistRow, viewerId: String, ctx: ServerContext): Node = Node("playlist").apply {
     this["id"] = row.id
     this["name"] = row.name
     row.comment?.takeIf(String::isNotEmpty)?.let { this["comment"] = it }

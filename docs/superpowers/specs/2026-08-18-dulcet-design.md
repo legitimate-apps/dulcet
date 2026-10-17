@@ -7852,6 +7852,19 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-16 — Listen Now home and optional recommendations contract.**
+Dulcet API v1 adds `dulcet.home` version 1 and `GET /recommendations/home` (§30,
+`docs/dulcet-api/openapi.yaml`); the Home conformance profile covers its bounded, per-user shelves.
+Dulcet Server computes them from live and imported annotations (§29.4). The same picks are
+available to current OpenSubsonic-authenticated apps through advertised `dulcetHome` version 1,
+`getDulcetHome(shelf,size)`. Submitted REST scrobbles may carry the actual playlist source via
+`dulcetContextType=playlist` and `dulcetContextId` when that extension is advertised; visible
+member plays update only the playlist's last-played timestamp. Core `ListenNowShelf` queries use the persistent reader seen-cache,
+including cached first paint, freshness, account binding and failure retention. Plain servers use
+only recent/frequent/newest/random album lists and starred content; unsupported personal shelves
+are empty and hidden. Listen Now is a first destination beside Library and Browse. Track shelves
+play through the existing queue-entry surface. Reading a home never records a play.
+
 **2026-10-16 — Apple engine overlaps the preloaded boundary.**
 `DulcetAVPlayerEngine` accepts `setCrossfade` only for its current attempt and a finite,
 nonnegative duration. The value replaces the previous one and lapses at an attempt change.
@@ -13687,6 +13700,33 @@ them.
   plus Browse. Browse is the whole catalog, which every server already offers. My Library is
   served by the extension where a server advertises it.
 
+### 29.4.1 Listen Now
+
+Recent playlist picks use only playlist contexts recorded in that user's play history, with playlist visibility and catalog permissions applied. The app's Continue Listening action resumes the existing queue and its position. Plain REST has no playlist play history; it does not fabricate one.
+
+`HomeRecommendations` computes bounded, explainable shelves from the authenticated user's
+annotations. Imported song-only play counts and last-played times contribute to album shelves;
+`MAX(album plays, sum of song plays)` avoids counting each scrobble twice. Rediscover requires
+a favourite, rating >=4 or at least three plays and no play in 30 days. Daily and station shelves
+have no candidates until that user has an affinity signal. Personal track shelves omit one- and
+two-star songs; explicit song ratings take precedence over album/artist ratings, with zero
+meaning unrated. Recent/frequent album shelves continue to report actual history. Every candidate is filtered through
+catalog access before selection; no other user's annotations participate.
+
+`dulcet.home` v1 advertises the Dulcet API endpoint. Current `/rest` clients negotiate
+`dulcetHome` v1 before calling `getDulcetHome` with a shelf id and `size` (1–50, default 20).
+Its `dulcetHome` response contains normal `album`, `playlist` and `song` arrays. Both contracts use the same
+selection function. Unknown shelf ids fail with 70. Reading recommendations changes no user data.
+The core's public shelf ids are available to shells and future system surfaces.
+
+The same extension accepts optional `dulcetContextType=playlist` and `dulcetContextId` on
+`scrobble` submissions. Clients attach only the actual playlist queue source, after negotiating
+`dulcetHome` v1. For a visible playlist containing the submitted song, the server stores
+`MAX(previous played, submitted timestamp)` in the user's playlist annotation; no playlist play
+count is manufactured. Invalid, private, deleted and non-member contexts are ignored without
+rejecting the ordinary song scrobble. Playlist reads and now-playing reports do not create
+history. API playlist contexts and these REST annotations merge into one deduplicated shelf.
+
 ### 29.5 Lyrics
 
 Lyrics are looked up in this order:
@@ -13882,6 +13922,12 @@ the 2026-10-12 §28 entry.
   wins; remote commands are relayed over `/events`; an offline device reconnects with its base
   revision and the server's queue wins unless the person chooses "Continue here".
 - My Library carries the `dulcetLibrary` semantics, plus removal records in the feed.
+- Optional `dulcet.home` v1 exposes `GET /recommendations/home?limit=20` only after capability
+  negotiation. It requires `catalog:read` and `user:read`, returns ordered shelves of visible
+  resources with explanations, bounds each shelf to 1–50 items, and supports private ETag
+  revalidation. Picks use the authenticated user's history, stars and ratings (§29.4.1); reads
+  do not record plays or change My Library. The optional Home conformance profile is `DA-HOME-1`
+  (`docs/dulcet-api/CONFORMANCE.md`).
 - Plays carry a client-generated id recorded once, so retries never double-count.
 - Server-Sent Events with a schema per event type, Standard Webhooks signing with SSRF rules, and
   an MCP endpoint (`docs/dulcet-api/mcp-tools.json`) whose write tools require `user:write`, whose
