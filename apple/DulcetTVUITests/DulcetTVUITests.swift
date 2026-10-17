@@ -439,7 +439,8 @@ final class DulcetTVUITests: XCTestCase {
     /// the transport reaches the heart; Select fills it at once and the star reaches the server
     /// for that track, and Select again takes it off, so the server is left as it was found.
     /// Right moves across the five stars beside it; Select on one rates the track that many stars
-    /// on the server and Select again on it removes the rating. Right past the fifth reaches Lyrics; Select shows the track's synced English layer and a line lights as
+    /// on the server and Select again on it removes the rating. Right past the fifth and Sleep
+    /// Timer reaches Lyrics; Select shows the track's synced English layer and a line lights as
     /// media time moves, with focus kept on the toggle so the same press hides them again.
     @MainActor
     func testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote() throws {
@@ -519,17 +520,24 @@ final class DulcetTVUITests: XCTestCase {
 
         let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+        let sleepTimer = app.buttons["dulcet.now-playing.sleep-timer"].firstMatch
+        // A tvOS Picker gives its inner element focus; the button wrapping Sleep Timer can
+        // report false while that child is focused. It is part of the same footer row.
+        let timerHasFocus = {
+            sleepTimer.exists && (sleepTimer.hasFocus || sleepTimer.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists)
+        }
         let stars = (1...5).map { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch }
         XCTAssertTrue(heart.waitForExistence(timeout: 10), "Now Playing must offer the heart: " + app.debugDescription)
         XCTAssertTrue(stars.allSatisfy(\.exists), "Now Playing must offer five stars beside the heart: " + app.debugDescription)
         // Lyrics first, while the 29-second track is still early: the heart's and stars' server
         // round trips can outlast it, and an ended track lights no line. Lyrics sit after the
-        // stars, beside the heart's group: Down from the transport to that row, then Right across
+        // stars and Sleep Timer, beside the heart's group: Down from the transport to that row, then Right across
         // it, bounded and re-checked after every press.
         XCTAssertTrue(lyrics.exists, "Now Playing must offer lyrics: " + app.debugDescription)
         var lyricsPresses = 0
         while !lyrics.hasFocus, lyricsPresses < 12 {
-            let inRow = (heart.exists && heart.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
+            let inRow = (heart.exists && heart.hasFocus) || stars.contains { $0.exists && $0.hasFocus } || timerHasFocus()
             XCUIRemote.shared.press(inRow ? .right : .down)
             lyricsPresses += 1
         }
@@ -556,12 +564,21 @@ final class DulcetTVUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "The same press must hide the lyrics")
 
-        // The heart: Left from Lyrics across the stars, or Down first if focus left the row. Bounded and re-checked after every press, so a heart
+        // The moving cursor above has proved playback. Pause before the server round trips:
+        // AutoPlay now continues this one-track search when it ends, and rating another song
+        // would no longer test the heart and stars for the track named by this proof.
+        let pause = app.buttons["pause.fill"].firstMatch
+        XCTAssertTrue(focusByRemote(pause, in: app, bound: 8), "The remote must reach Pause")
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.buttons["play.fill"].firstMatch.waitForExistence(timeout: 5), "Pause must take effect")
+        XCTAssertEqual(title.label, track, "The proof must pause its named track before rating it")
+
+        // The heart: Left from Lyrics across Sleep Timer and the stars, or Down first if focus left the row. Bounded and re-checked after every press, so a heart
         // the remote cannot reach fails here, with the presses it took in the pass line when it
         // does not.
         var heartPresses: [String] = []
         while !heart.hasFocus, heartPresses.count < 12 {
-            let besideHeart = (lyrics.exists && lyrics.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
+            let besideHeart = (lyrics.exists && lyrics.hasFocus) || stars.contains { $0.exists && $0.hasFocus } || timerHasFocus()
             let direction: XCUIRemote.Button = besideHeart ? .left : .down
             XCUIRemote.shared.press(direction)
             heartPresses.append(direction == .left ? "left" : "down")

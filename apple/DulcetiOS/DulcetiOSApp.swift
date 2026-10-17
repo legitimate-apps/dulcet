@@ -2,11 +2,21 @@ import DulcetKit
 import Foundation
 import SwiftUI
 import UIKit
+import CarPlay
 
 /// Gives Command-F to the app's Search shortcut. UIKit's standard menu claims Command-F for
 /// Find, which Dulcet does not offer, and that claim wins over a shortcut declared in SwiftUI --
 /// so pressing it did nothing at all. Removing the unused Find menu leaves the key to Search.
 final class DulcetiOSAppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+        if connectingSceneSession.role == .carTemplateApplication {
+            configuration.sceneClass = CPTemplateApplicationScene.self
+            configuration.delegateClass = DulcetCarPlaySceneDelegate.self
+        }
+        return configuration
+    }
+
     override func buildMenu(with builder: any UIMenuBuilder) {
         super.buildMenu(with: builder)
         guard builder.system == .main else { return }

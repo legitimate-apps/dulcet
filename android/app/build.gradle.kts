@@ -59,6 +59,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.media3.session)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

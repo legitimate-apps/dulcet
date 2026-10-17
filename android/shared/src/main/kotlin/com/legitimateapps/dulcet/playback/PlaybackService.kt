@@ -12,7 +12,10 @@ import android.os.IBinder
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
@@ -27,14 +30,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** One owner for playback across both native shells, activity recreation and backgrounding. */
-class PlaybackService : MediaSessionService() {
+class PlaybackService : MediaLibraryService() {
     var playback: AndroidPlaybackController? = null
         private set
-    private var session: MediaSession? = null
+    private var session: MediaLibrarySession? = null
     var unavailableReason: String = "Connect an account before playing."
         private set
     inner class LocalBinder : Binder() { val service: PlaybackService get() = this@PlaybackService }
@@ -79,6 +85,7 @@ class PlaybackService : MediaSessionService() {
 
     /** The account [playback] was built for; its credentials are the controller's for its life. */
     private var playbackAccountId: String? = null
+    private var widgetJob: Job? = null
 
     /**
      * The controller for the account saved NOW, created once one exists. The service may have been
@@ -129,15 +136,25 @@ class PlaybackService : MediaSessionService() {
         networkCost?.let(controller::setNetworkCostClass)
         playback = controller
         playbackAccountId = account.id
-        val builder = MediaSession.Builder(this, controller.sessionPlayer)
-            .setCallback(object : MediaSession.Callback {
-                override fun onConnectAsync(session: MediaSession, controller: MediaSession.ControllerInfo):
-                    ListenableFuture<MediaSession.ConnectionResult> = Futures.immediateFuture(
-                    if (controller.packageName == packageName || controller.isTrusted)
-                        MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
-                            .setAvailablePlayerCommands(session.player.availableCommands).build()
-                    else MediaSession.ConnectionResult.reject())
-            })
+        widgetJob?.cancel()
+        widgetJob = serviceScope.launch {
+            controller.state.map { Triple(it.title, it.artist ?: it.album ?: "", it.playWhenReady) }
+                .distinctUntilChanged().collect { (title, subtitle, playing) ->
+                    PlaybackWidgetState.publish(this@PlaybackService, title, subtitle, playing)
+                }
+        }
+        val sessionPlayer = object : ForwardingPlayer(controller.sessionPlayer) {
+            override fun getAvailableCommands(): Player.Commands = super.getAvailableCommands().buildUpon()
+                .add(Player.COMMAND_SET_MEDIA_ITEM).add(Player.COMMAND_CHANGE_MEDIA_ITEMS).build()
+            override fun isCommandAvailable(command: Int) = availableCommands.contains(command)
+            // External selections are resolved by SystemMediaLibrary, then enter core playQueue.
+            override fun setMediaItems(items: MutableList<MediaItem>, resetPosition: Boolean) = Unit
+            override fun setMediaItems(items: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long) = Unit
+            override fun setMediaItems(items: MutableList<MediaItem>) = Unit
+            override fun clearMediaItems() = Unit
+        }
+        val builder = MediaLibrarySession.Builder(this, sessionPlayer,
+            SystemMediaLibrary(this, serviceScope) { ensurePlayback() })
         // Tapping the notification or lock-screen card opens this app's own Now Playing.
         val show = PlaybackIntents.showNowPlaying(this)
         if (packageManager.resolveActivity(show, 0) != null)
@@ -155,6 +172,8 @@ class PlaybackService : MediaSessionService() {
      */
     fun releasePlayback() {
         val controller = playback ?: return
+        widgetJob?.cancel(); widgetJob = null
+        PlaybackWidgetState.publish(this, "Dulcet", "Open your music library", false)
         controller.stop()
         session?.let { removeSession(it); it.release() }
         controller.close()
@@ -166,13 +185,14 @@ class PlaybackService : MediaSessionService() {
     override fun onBind(intent: Intent?): IBinder? =
         if (intent?.action == LOCAL_BIND) LocalBinder() else super.onBind(intent)
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
         ensurePlayback()
         return session
     }
 
     override fun onDestroy() {
         serviceScope.cancel()
+        PlaybackWidgetState.publish(this, "Dulcet", "Open your music library", false)
         if (networkCallbackRegistered) {
             networkCallbackRegistered = false
             runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(networkCallback) }

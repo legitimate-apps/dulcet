@@ -53,9 +53,17 @@ struct AVPlayerCrossfadeTests {
         let faded = try #require(engine.crossfadeStateForTesting())
         #expect(abs(faded.incomingVolume + faded.outgoingVolume - 0.4) < 0.02)
         #expect(faded.incomingVolume > 0 && faded.outgoingVolume > 0)
-        _ = await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0))
+        #expect(await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0)) ==
+            .completed(commandID: .init("sleep-silence"), result: .withoutData))
+        // Read the actual AVPlayers until both report silence, within the still-live tail.
+        // This keeps the exact zero-gain check and records whether either player failed it.
+        try await waitUntil("master silence did not reach both real players", engine: engine, timeout: 1) {
+            guard let state = engine.crossfadeStateForTesting() else { return false }
+            return state.incomingVolume == 0 && state.outgoingVolume == 0
+        }
         let silent = try #require(engine.crossfadeStateForTesting())
-        #expect(silent.incomingVolume == 0 && silent.outgoingVolume == 0)
+        #expect(silent.incomingVolume == 0)
+        #expect(silent.outgoingVolume == 0)
         let boundary = fixture.events.snapshot
         let endIndex = try #require(boundary.firstIndex {
             if case let .endedNaturally(id, _) = $0 { id == fixture.first.attemptID } else { false }
@@ -141,6 +149,12 @@ struct AVPlayerCrossfadeTests {
             engine.execute(.release(commandID: .init("cleanup"))) { _ in }
             try? FileManager.default.removeItem(at: fixture.localURL)
         }
+        // Keep the six-second fixture before its boundary while AVFoundation finishes both
+        // seeks. A loaded host can otherwise naturally advance during the forward seek, before
+        // the back command is submitted. AVFoundation can defer loading the queued item while
+        // paused; readiness here belongs to the item being sought, before playback resumes.
+        #expect(await execute(engine, .pause(commandID: .init("pause-for-seeks"))) ==
+            .completed(commandID: .init("pause-for-seeks"), result: .withoutData))
         try await waitUntil("current item was not ready for seeking", engine: engine, timeout: 30) {
             fixture.events.snapshot.contains {
                 if case let .ready(id, _, seekability) = $0 {
@@ -153,6 +167,8 @@ struct AVPlayerCrossfadeTests {
         #expect(await execute(engine, .seek(commandID: .init("back"), position: 0)) ==
             .completed(commandID: .init("back"), result: .withoutData))
         #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
+        #expect(await execute(engine, .play(commandID: .init("play-after-seeks"))) ==
+            .accepted(commandID: .init("play-after-seeks")))
         try await waitUntil("backward seek lost the armed boundary", engine: engine, timeout: 30) {
             engine.crossfadeStateForTesting()?.incomingRate ?? 0 > 0
         }

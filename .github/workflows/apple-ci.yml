@@ -151,7 +151,10 @@ jobs:
       - name: Require direct custom foreground modifiers to use the contrast registry
         run: python3 tools/verify_contrast_foreground_policy.py
       - name: Test native macOS presentation and registered-pair contrast ratios
-        timeout-minutes: 4
+        # Run 39054152378 passed all 355 tests (110.482s of test execution), but the
+        # compile + test + result-bundle step reached its 4m cap before JUnit conversion.
+        # Six minutes projects 1.5x that observed lower bound; keep the serial real-player proof.
+        timeout-minutes: 6
         run: |
           set -o pipefail
           cd apple/DulcetKit

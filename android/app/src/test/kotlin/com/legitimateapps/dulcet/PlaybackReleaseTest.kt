@@ -140,7 +140,7 @@ class PlaybackAccountChangeTest {
             assertNotSame(first, second, "Account B must not be handed account A's controller")
             assertTrue(first.isClosed(), "Account A's controller must be closed")
             assertEquals(1, service.sessions.size)
-            assertSame(second.sessionPlayer, service.sessions.single().player)
+            assertSame(second.sessionPlayer, (service.sessions.single().player as ForwardingPlayer).wrappedPlayer)
 
             SwitchableAccountStore.current = null
             assertNull(service.ensurePlayback(), "With no account saved there is no controller")

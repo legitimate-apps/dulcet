@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="16dp" android:background="#242126">
+    <TextView android:id="@+id/widget_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Dulcet" android:textColor="#FFFFFF" android:textSize="18sp" android:maxLines="2" />
+    <TextView android:id="@+id/widget_subtitle" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Open your music library" android:textColor="#DDD8DF" android:textSize="14sp" android:maxLines="1" />
+    <Button android:id="@+id/widget_toggle" android:layout_width="wrap_content" android:layout_height="48dp"
+        android:text="Play / Pause" android:contentDescription="Play or pause Dulcet" />
+</LinearLayout>
