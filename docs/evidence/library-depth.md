@@ -2,7 +2,8 @@
 
 ## Implementation and evidence status
 
-The library-depth feature rows in `FEATURES.yml` remain **partial** on every platform.
+The library-depth feature rows in `FEATURES.yml` remain **partial**, except Downloaded
+on Apple TV, which is **n/a** under the existing tvOS download policy.
 Source implementation and shared-core tests do not establish that a native screen works.
 No new platform runtime result or required-CI execution is claimed by this document yet.
 The existing Library, My Library and Search rows retain their earlier evidence and statuses.
@@ -38,6 +39,12 @@ requiring a server request. It excludes tracks that are merely cached or streama
 Removing a local download removes it from the view. Downloaded filters for albums and
 artists use the known relationships of completed tracks; they do not require a previously
 opened album detail. This does not mean every song in a matching album is downloaded.
+
+Apple TV has no durable user-managed media download contract in v1. Its production
+reader does not read downloads, and the new Downloaded link and filter are hidden there.
+The shared TV proof requires the positive pinned-item control, then checks that Downloaded
+is absent; it does not claim downloaded-media reachability or playback. Android TV
+supports Downloaded and retains its separate completed-download proof.
 
 The shared Apple proof below currently checks that the destination is reachable; it does
 not download a track or establish offline playback. The Android phone proof
@@ -105,7 +112,8 @@ conversion. These are execution requirements, not observed results.
 | Apple TV | `apple-conformance-core` | `DulcetMyLibraryTVUITests` | Pin/destinations method only | 4 |
 
 - `testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable` pins an album,
-  relaunches, checks the pinned metadata and opens Downloaded and Songs before unpinning.
+  relaunches, checks the pinned metadata and opens Songs before unpinning. On iPhone,
+  iPad and Mac it also opens Downloaded; Apple TV instead checks that Downloaded is absent.
 - `testLibrarySearchGroupsAndRecentQuerySurviveRelaunch` checks the three group controls,
   expands Artists, submits a query, relaunches and replays the saved query.
 
@@ -148,6 +156,17 @@ reviewer did not rerun the suites:
   directories, including the four iOS and four tvOS source files. This checks standalone
   source types with the tool's XCTest assertion shims; it does not link or execute tests.
   `tools/verify_xcodegen_regeneration --self-test` also passed.
+- After the bounded Apple source review, the focused library-depth regression run passed
+  **3 tests with zero failures in 0.058 seconds**. It includes the rapid category-change,
+  reversed-read-callback and double-pin regression. The method name was subsequently
+  corrected from `libraryDepthRapidChangesKeepConfirmedWritesAndIgnoreOlderReads` to
+  `libraryDepthRapidChangesKeepAcceptedWritesAndIgnoreOlderReads`; that rename changes no
+  behavior. These are package tests, not native UI execution.
+
+The review's local-state finding is resolved in source and the focused regression:
+accepted category/pin writes update session state immediately, and refresh callbacks
+must match both the account generation and latest read token. The new TV discography
+also restores each grid's full-width focus section; its remote behavior remains unverified.
 
 The new iPhone UI proof attempt failed **before compilation**: Xcode could not resolve
 the selected booted simulator destination. A subsequent 20-second `simctl` device-types

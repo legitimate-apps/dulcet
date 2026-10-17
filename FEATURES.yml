@@ -2654,8 +2654,8 @@
           "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
         },
         "tvos": {
-          "status": "partial",
-          "reason": "The native Downloaded destination uses completed local download identities. Destination reachability alone does not prove completed downloads remain browsable and playable with the server unreachable. No runtime result is claimed; see docs/evidence/library-depth.md for exact proof scope and required CI identities."
+          "status": "n/a",
+          "reason": "tvOS has no durable user-managed media download contract in v1. The Downloaded link and filter are hidden; the native TV proof checks their absence after a positive pinned-item control. Android TV retains downloaded-media support."
         },
         "android": {
           "status": "partial",
