@@ -41,17 +41,17 @@ class TvListeningSessionTest {
         assertEquals(listOf<SleepTimerChoice?>(SleepTimerChoice.Minutes15), sleeps)
         // Reopen, move down to End of queue using only the remote, then cancel it.
         key("tv.listening.sleep", Key.DirectionCenter)
-        repeat(5) { compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionDown) } }
+        SleepTimerChoice.entries.take(5).forEach { key("tv.listening.sleep.${it.wireName}", Key.DirectionDown) }
         compose.onNodeWithTag("tv.listening.sleep.endOfQueue").assertIsFocused()
         key("tv.listening.sleep.endOfQueue", Key.DirectionCenter)
         key("tv.listening.sleep", Key.DirectionCenter)
-        repeat(6) { compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionDown) } }
+        SleepTimerChoice.entries.forEach { key("tv.listening.sleep.${it.wireName}", Key.DirectionDown) }
         compose.onNodeWithTag("tv.listening.sleep.cancel").assertIsFocused()
         key("tv.listening.sleep.cancel", Key.DirectionCenter)
         assertEquals(listOf(SleepTimerChoice.Minutes15, SleepTimerChoice.EndOfQueue, null), sleeps)
         focus("tv.listening.crossfade")
         key("tv.listening.crossfade", Key.DirectionCenter)
-        repeat(12) { compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionDown) } }
+        repeat(12) { key("tv.listening.crossfade.$it", Key.DirectionDown) }
         compose.onNodeWithTag("tv.listening.crossfade.12").assertIsFocused()
         key("tv.listening.crossfade.12", Key.DirectionCenter)
         assertEquals(listOf(12), fades)

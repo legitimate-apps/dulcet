@@ -2625,12 +2625,52 @@
           "reason": "The menu is in the Now Playing control row, reached by the remote; not yet driven by the remote on a simulator."
         },
         "android": {
-          "status": "planned",
-          "reason": "Android phone wiring is a separate change stacked on this one."
+          "status": "partial",
+          "reason": "Service-owned monotonic timer, timed fade, cancellation and core stop points are covered by AndroidMedia3ListeningSessionTest in :core:testAndroidHostTest. PhoneListeningSessionTest and TvListeningSessionTest cover the respective controls. Host tests cited below; see docs/evidence/player-session-android.md for runtime evidence and limits.",
+          "evidence": [
+            {
+              "observes": "Given injected players and server candidates, the service controller fades on monotonic time, cancels and stops at the selected core boundary",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/timedSleepFadesOnElapsedTimeCancelRestoresGainAndDeadlinePauses"
+            },
+            {
+              "observes": "Given injected players and server candidates, the service controller fades on monotonic time, cancels and stops at the selected core boundary",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/endOfTrackSelectsTheNextEntryPausedAndCancelAllowsItsNaturalAdvance"
+            },
+            {
+              "observes": "Given injected players and server candidates, the service controller fades on monotonic time, cancels and stops at the selected core boundary",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/endOfQueuePlaysUserEntriesThenStopsBeforeAutoplay"
+            }
+          ]
         },
         "androidtv": {
-          "status": "planned",
-          "reason": "Android TV wiring is a separate change stacked on this one."
+          "status": "partial",
+          "reason": "Service-owned monotonic timer, timed fade, cancellation and core stop points are covered by AndroidMedia3ListeningSessionTest in :core:testAndroidHostTest. PhoneListeningSessionTest and TvListeningSessionTest cover the respective controls. Host tests cited below; see docs/evidence/player-session-android.md for runtime evidence and limits. TV uses focused buttons, scrollable choice dialogs and Move Up/Down actions for the remote; no swipe gesture is required.",
+          "evidence": [
+            {
+              "observes": "Given injected players and server candidates, the service controller fades on monotonic time, cancels and stops at the selected core boundary",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/timedSleepFadesOnElapsedTimeCancelRestoresGainAndDeadlinePauses"
+            },
+            {
+              "observes": "Given injected players and server candidates, the service controller fades on monotonic time, cancels and stops at the selected core boundary",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/endOfTrackSelectsTheNextEntryPausedAndCancelAllowsItsNaturalAdvance"
+            },
+            {
+              "observes": "Given injected players and server candidates, the service controller fades on monotonic time, cancels and stops at the selected core boundary",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/endOfQueuePlaysUserEntriesThenStopsBeforeAutoplay"
+            }
+          ]
         }
       }
     },
@@ -2660,12 +2700,40 @@
           "reason": "Setting on the Connection screen; overlapping output depends on the stacked engine change."
         },
         "android": {
-          "status": "planned",
-          "reason": "Android phone wiring is a separate change stacked on this one."
+          "status": "partial",
+          "reason": "The saved Off/1-12 second setting drives a core-approved Media3 two-player overlap. AndroidMedia3EngineTest covers the natural end and single play accounting, detached tail, fade gains and unchanged zero-overlap boundary; AndroidMedia3ListeningSessionTest covers controller promotion and media-session switching. Host tests cited below; acoustic continuity has not been measured. See docs/evidence/player-session-android.md.",
+          "evidence": [
+            {
+              "observes": "Given injected players and server candidates, the service controller promotes only a core-approved overlap, cleans up its tail on failure and preserves zero album boundaries",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/controllerRegistersAndPromotesOverlapThenAnIncomingFailureReleasesTheTail"
+            },
+            {
+              "observes": "Given injected players and server candidates, the service controller promotes only a core-approved overlap, cleans up its tail on failure and preserves zero album boundaries",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/crossfadePreferencePersistsAndSameAlbumKeepsTheExistingBoundary"
+            }
+          ]
         },
         "androidtv": {
-          "status": "planned",
-          "reason": "Android TV wiring is a separate change stacked on this one."
+          "status": "partial",
+          "reason": "The saved Off/1-12 second setting drives a core-approved Media3 two-player overlap. AndroidMedia3EngineTest covers the natural end and single play accounting, detached tail, fade gains and unchanged zero-overlap boundary; AndroidMedia3ListeningSessionTest covers controller promotion and media-session switching. Host tests cited below; acoustic continuity has not been measured. See docs/evidence/player-session-android.md. TV uses focused buttons, scrollable choice dialogs and Move Up/Down actions for the remote; no swipe gesture is required.",
+          "evidence": [
+            {
+              "observes": "Given injected players and server candidates, the service controller promotes only a core-approved overlap, cleans up its tail on failure and preserves zero album boundaries",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/controllerRegistersAndPromotesOverlapThenAnIncomingFailureReleasesTheTail"
+            },
+            {
+              "observes": "Given injected players and server candidates, the service controller promotes only a core-approved overlap, cleans up its tail on failure and preserves zero album boundaries",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/crossfadePreferencePersistsAndSameAlbumKeepsTheExistingBoundary"
+            }
+          ]
         }
       }
     },
@@ -2695,12 +2763,28 @@
           "reason": "Up Next shows the AutoPlay section with its switch, reached by the remote; not yet driven on a simulator."
         },
         "android": {
-          "status": "planned",
-          "reason": "Android phone wiring is a separate change stacked on this one."
+          "status": "partial",
+          "reason": "The device switch defaults on and the service answers keyed core requests using AutoplayCandidateSource over the account library transport. AndroidMedia3ListeningSessionTest covers one answer per key, user additions before AutoPlay and removal on switch-off; PhoneListeningSessionTest and TvListeningSessionTest cover the separate section and controls. Host tests cited below; see docs/evidence/player-session-android.md.",
+          "evidence": [
+            {
+              "observes": "Given injected players and server candidates, each request is answered once, user entries stay first and switch-off removes upcoming AutoPlay",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/autoplayAnswersOnceAndUserAdditionsStayBeforeItsSectionThenOffRemovesIt"
+            }
+          ]
         },
         "androidtv": {
-          "status": "planned",
-          "reason": "Android TV wiring is a separate change stacked on this one."
+          "status": "partial",
+          "reason": "The device switch defaults on and the service answers keyed core requests using AutoplayCandidateSource over the account library transport. AndroidMedia3ListeningSessionTest covers one answer per key, user additions before AutoPlay and removal on switch-off; PhoneListeningSessionTest and TvListeningSessionTest cover the separate section and controls. Host tests cited below; see docs/evidence/player-session-android.md. TV uses focused buttons, scrollable choice dialogs and Move Up/Down actions for the remote; no swipe gesture is required.",
+          "evidence": [
+            {
+              "observes": "Given injected players and server candidates, each request is answered once, user entries stay first and switch-off removes upcoming AutoPlay",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/autoplayAnswersOnceAndUserAdditionsStayBeforeItsSectionThenOffRemovesIt"
+            }
+          ]
         }
       }
     },
@@ -2731,11 +2815,27 @@
         },
         "android": {
           "status": "partial",
-          "reason": "Queue edits are offered on the phone since 2026-09-30 and pinned by host tests (AndroidPlaybackControllerTest, PhoneQueueEditingTest), named and not cited; the confirmation is a separate change stacked on this one."
+          "reason": "Queue additions confirm only after the edit takes effect; additions to an empty player start playback without a notice. AndroidMedia3ListeningSessionTest covers controller timing; PhoneListeningSessionTest and TvListeningSessionTest cover claim-once toast feedback. Existing queue editing tests continue to cover reorder/remove. Host tests cited below; see docs/evidence/player-session-android.md.",
+          "evidence": [
+            {
+              "observes": "Given injected players and server candidates, confirmation follows the applied edit and an empty player starts without confirmation",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/confirmationsFollowAppliedEditsAndEmptyPlayerOnlyStartsPlayback"
+            }
+          ]
         },
         "androidtv": {
           "status": "partial",
-          "reason": "Queue edits are offered on the TV and pinned by TvNowPlayingControlsTest and TvQueueAdditionTest, named and not cited; the confirmation is a separate change stacked on this one."
+          "reason": "Queue additions confirm only after the edit takes effect; additions to an empty player start playback without a notice. AndroidMedia3ListeningSessionTest covers controller timing; PhoneListeningSessionTest and TvListeningSessionTest cover claim-once toast feedback. Existing queue editing tests continue to cover reorder/remove. Host tests cited below; see docs/evidence/player-session-android.md. TV uses focused buttons, scrollable choice dialogs and Move Up/Down actions for the remote; no swipe gesture is required.",
+          "evidence": [
+            {
+              "observes": "Given injected players and server candidates, confirmation follows the applied edit and an empty player starts without confirmation",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidMedia3ListeningSessionTest/confirmationsFollowAppliedEditsAndEmptyPlayerOnlyStartsPlayback"
+            }
+          ]
         }
       }
     }
