@@ -44,6 +44,7 @@ private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading, Dul
     let account: DulcetLibraryReaderAccount
     private(set) var events: [String] = []
     private(set) var windows: [RecordingWindow] = []
+    var onWindowSubscription: (@MainActor (RecordingWindow) -> Void)?
     private(set) var searches: [RecordingSearch] = []
     private(set) var favourites: [(DulcetFavouriteTarget, Bool)] = []
     private(set) var ratings: [(DulcetFavouriteTarget, Int)] = []
@@ -64,6 +65,7 @@ private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading, Dul
         events.append("subscribeWindow")
         let window = RecordingWindow(query: query, publish: onPublication)
         windows.append(window)
+        onWindowSubscription?(window)
         return window
     }
 
@@ -157,13 +159,14 @@ private final class RecordingWindow: DulcetLibraryWindowSubscribing {
     let query: DulcetLibraryQuery
     let publish: @MainActor (DulcetLibraryWindow) -> Void
     private(set) var events: [String] = []
+    var onLoadMore: (@MainActor () -> Void)?
 
     init(query: DulcetLibraryQuery, publish: @escaping @MainActor (DulcetLibraryWindow) -> Void) {
         self.query = query
         self.publish = publish
     }
 
-    func loadMore() { events.append("loadMore") }
+    func loadMore() { events.append("loadMore"); onLoadMore?() }
     func loadBefore() { events.append("loadBefore") }
     func setViewport(first: Int, last: Int) { events.append("viewport(\(first),\(last))") }
     func close() { events.append("close") }
@@ -2252,17 +2255,22 @@ func systemSurfaceContinuationLoadsPastTheFirstPageAndClosesItsWindow() async th
     session.open(account: readerAccount, mode: .connected)
     let store = DulcetPresentationStore(source: SystemActionTestSource(session))
     let actions = DulcetSystemActions(store: store)
-    let request = Task { try await actions.window(.albums(.alphabeticalByName), minimumCount: 3) }
-    await Task.yield()
-    let subscription = try #require(factory.made.first?.windows.last)
-    subscription.publish(window([item("album", "1")], coverage: "open"))
-    try await Task.sleep(for: .milliseconds(75))
-    #expect(subscription.events.contains("loadMore"))
-    #expect(subscription.events.contains("viewport(0,0)"))
-    subscription.publish(window([item("album", "1"), item("album", "2"), item("album", "3")], coverage: "open", sequence: 2))
-    let answer = try await request.value
-    #expect(answer.items.count == 3)
-    #expect(subscription.events.last == "close")
+    let reader = try #require(factory.made.first)
+    let query = DulcetLibraryQuery.albums(.alphabeticalByName)
+    reader.onWindowSubscription = { subscription in
+        guard subscription.query == query else { return }
+        // The second page exists only after production asks for it. Waiting for the request
+        // itself makes executor load irrelevant and cannot pass when continuation is missing.
+        subscription.onLoadMore = { [weak subscription] in
+            subscription?.publish(window([item("album", "1"), item("album", "2"), item("album", "3")],
+                                         coverage: "open", sequence: 2))
+        }
+        subscription.publish(window([item("album", "1")], coverage: "open"))
+    }
+    let answer = try await actions.window(query, minimumCount: 3)
+    let subscription = try #require(reader.windows.last(where: { $0.query == query }))
+    #expect(answer.items.map(\.id.rawID) == ["1", "2", "3"])
+    #expect(subscription.events == ["viewport(0,0)", "loadMore", "close"])
 }
 
 @MainActor @Test

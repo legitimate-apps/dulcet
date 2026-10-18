@@ -7859,6 +7859,14 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-17 — Make continuation regression publications follow the real request.**
+The system-surface continuation fixture publishes page two only when the production action
+calls `loadMore`, then awaits the action and requires the exact viewport/load/close event order
+and all three opaque IDs. It no longer assumes the action's 50 ms polling task resumes before
+a separate 75 ms test sleep. A hosted serial run exposed that scheduling race: page two had
+been published by the test before production requested it. Production behavior and its deadline
+are unchanged; removing continuation must leave the fixture unable to complete the action.
+
 **2026-10-17 — Make the phone album drag proof independent of fixture creation time.**
 The phone proof opens the full Albums collection and explicitly selects Title order before
 exercising the original centered drag from a native context menu onto the mini-player.
