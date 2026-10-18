@@ -7856,8 +7856,13 @@ argue against the recorded rationale — not as filling in a blank.
 The phone proof opens the full Albums collection and selects Title order, independent of
 fixture creation timestamps. Before **every attempt**, it opens the named album's native
 context menu and requires its Pin/Unpin command, hittable Add to Playlist command, and exactly
-one separate hittable system Preview. It drags that actual Preview with a second touch onto
-the mini-player, retaining the centered gesture's hold times and velocity, two-attempt bound,
+one separate hittable system Preview. Before opening each menu, it requires the real
+mini-player to be hittable and captures its visible bounded frame. Afterward it requires that
+frame to remain unchanged and both gesture centers to be inside the app. It derives coordinates
+from the actual Preview and captured bar frames: the hosted runner otherwise rejects the
+background bar during target hit-testing before sending a touch through the open menu.
+It drags that actual Preview with a second touch onto the mini-player, retaining the
+centered gesture's hold times and velocity, two-attempt bound,
 exactly-once album order, paused playback and zero remaining menus. A retry cannot bypass the
 menu condition. This automated already-open-menu interaction is distinct from an uninterrupted
 long press: the latter has a separate retained successful recording showing the native menu

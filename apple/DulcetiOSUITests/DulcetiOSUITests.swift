@@ -2369,13 +2369,55 @@ final class DulcetiOSUITests: XCTestCase {
         var menuLeftOpen = 0
         while drags < 2, after.count < before.count + count {
             let dragSource: XCUIElement
+            let targetFrame: CGRect?
             if let prepareSource {
+                // Capture a real, hittable target before the menu shields the background.
+                // XCTest can reject an element-to-element drag before sending any touch
+                // when it hit-tests the covered bar (hosted iPhone activities, 2026-10-18).
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    bar.exists && bar.isHittable
+                }, object: nil)
+                guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+                    XCTFail("The bar must be hittable before preparing each native-menu drag")
+                    return nil
+                }
+                let frame = bar.frame
+                guard !frame.isEmpty, !frame.isInfinite, !frame.isNull,
+                      app.frame.contains(frame) else {
+                    XCTFail("The prepared drag requires the bar's visible, finite frame: \(frame)")
+                    return nil
+                }
+                targetFrame = frame
                 guard let prepared = prepareSource(drags + 1) else { return nil }
                 dragSource = prepared
-            } else { dragSource = source }
+            } else {
+                targetFrame = nil
+                dragSource = source
+            }
             drags += 1
-            withoutIdleWaits(app) {
-                dragSource.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+            if let targetFrame {
+                let window = app.frame
+                let preview = dragSource.frame
+                let startPoint = CGPoint(x: preview.midX, y: preview.midY)
+                let endPoint = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
+                guard bar.exists, bar.frame == targetFrame,
+                      !preview.isEmpty, !preview.isInfinite, !preview.isNull,
+                      preview.contains(startPoint), window.contains(startPoint),
+                      targetFrame.contains(endPoint), window.contains(endPoint) else {
+                    XCTFail("Native-menu drag geometry must remain visible and stable: preview=\(preview) bar=\(bar.frame) captured=\(targetFrame) window=\(window)")
+                    return nil
+                }
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: startPoint.x - window.minX, dy: startPoint.y - window.minY))
+                let end = origin.withOffset(CGVector(dx: endPoint.x - window.minX, dy: endPoint.y - window.minY))
+                print("DULCET PREPARED DRAG attempt=\(drags) start=\(startPoint) end=\(endPoint) preview=\(preview) bar=\(targetFrame)")
+                withoutIdleWaits(app) {
+                    start.press(forDuration: 0.8, thenDragTo: end, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+                }
+            } else {
+                withoutIdleWaits(app) {
+                    dragSource.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+                }
             }
             let menu = app.buttons[menuMarker].firstMatch
             if menu.waitForExistence(timeout: 2) {

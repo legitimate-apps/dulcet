@@ -1096,6 +1096,29 @@ simulator service is restarted. Final runtime acceptance uses hosted Apple CI.
 The planner control passes 28,175 checks over 701 Apple-affecting files and the
 final diff passes whitespace checks.
 
+**Hosted prepared-menu target failure — observed.** The iPhone leg of
+[full run 39086907536](https://github.com/legitimate-apps/dulcet/actions/runs/39086907536)
+passes all seven Library cases and nine earlier exported single-case proofs with
+zero failures, errors or skips. The album proof then positively establishes its
+native menu and hittable Preview on attempt one, but XCTest rejects
+`dulcet.mini-player.open` as not hittable while resolving the second drag hit point.
+The activity trace contains no synthesized event for that drag. The retained
+recording shows the native menu still open over the app; the bar remains visible
+behind the menu's background shield. This is a target-resolution failure before
+touch delivery, not evidence that a delivered drop lost its queue payload.
+
+The prepared-menu path now waits for the real bar to be hittable before **each**
+menu, captures its visible bounded frame, positively establishes the same native
+Preview, and requires that the bar frame remain unchanged afterward. Both gesture
+centers must be inside the actual app bounds. It derives coordinates from those
+frames so XCTest can send the drag without first hit-testing the background bar
+through the open menu. The `0.8`-second hold, velocity `200`, one-second end hold,
+two-attempt limit and deferred queue read are unchanged. Callers without native-menu
+preparation retain their element-to-element gesture. Exact queue count/order,
+paused playback and zero retained menus remain required. Acceptance requires runtime
+validation of this correction, the same no-drag-source control reaching an actual
+synthesized drag, and a restored-source positive.
+
 The final-source full Apple acceptance receipt is maintained in [PR #340](https://github.com/legitimate-apps/dulcet/pull/340).
 It must show all planned platform, core, iPad and iPhone legs plus the aggregate
 GREEN before the PR is ready. The earlier rejected runs and local controls above
