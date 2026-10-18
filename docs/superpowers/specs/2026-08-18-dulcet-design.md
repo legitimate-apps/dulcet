@@ -7852,6 +7852,13 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-18 — Hold the TV footer fixture after its live lyric-line proof.**
+After positively observing the playing song's lit lyric line, the remote footer proof sends
+Play/Pause and requires both paused transport and the exact original title before its remaining
+focus walk and server writes. It keeps actual Select actions, Sleep Timer traversal, lyric
+open/hide and favorite/rating checks. The short fixture must not advance into AutoPlay while
+those checks intend to modify its original song.
+
 **2026-10-18 — Sample streaming-quality playback from one immutable UI tree.**
 The streaming-quality proof polls one whole-app snapshot, collecting its exact native progress,
 Now Playing title, failure and skip-notice selectors before evaluating them. Either negative

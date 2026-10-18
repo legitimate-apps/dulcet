@@ -553,6 +553,14 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(current.waitForExistence(timeout: 25), "A line must light as the track plays: " + app.debugDescription)
         let lit = current.exists ? current.label : "<none>"
         XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(lit)")
+        // The lit line proves real playback first. Hold this 29-second fixture with the
+        // remote's playback key while the footer walk and server writes are verified: slow
+        // accessibility reads must not let AutoPlay replace the song this proof rates.
+        XCUIRemote.shared.press(.playPause)
+        let paused = app.buttons["play.fill"].firstMatch
+        XCTAssertTrue(paused.waitForExistence(timeout: 5), "The remote must pause the fixture before the footer proof: " + app.debugDescription)
+        XCTAssertEqual(paused.label, "Play", "The transport must positively report paused playback")
+        XCTAssertEqual(title.label, track, "The same fixture must remain selected after pausing")
         let toggleKeptFocus = ContinuousClock.now.advanced(by: .seconds(3))
         while !(lyrics.exists && lyrics.hasFocus), ContinuousClock.now < toggleKeptFocus {
             Thread.sleep(forTimeInterval: 0.1)

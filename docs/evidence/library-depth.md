@@ -1160,6 +1160,24 @@ checks and quality restoration remain unchanged. Diagnostics use the last actual
 sample, and the proof records its snapshot count and accepted playback evidence.
 Runtime acceptance remains pending the final-source full run.
 
+**Hold the TV footer proof's named song after proving live lyrics — observed
+transition, inferred focus mechanism.** The core leg of full run 39092007526
+passes its earlier native/core work and two TV UI proofs, then fails the footer
+heart-focus assertion in 80.676 seconds. The named 29-second track successfully
+shows a lit English lyric line. The subsequent remote walk outlasts it: the
+failure hierarchy shows `Paging Track 125`, `Playing from AutoPlay` and focus on
+Library. The exact transition that resets focus is not captured; disruption by
+the changing song/controls is inferred.
+
+Immediately after the real lit-line proof, the footer test now sends the remote
+Play/Pause key and positively requires the paused Play transport and exact
+original song title. It then retains every actual remote focus/Select assertion,
+Sleep Timer traversal, lyric-panel open/hide check and server favorite/rating
+write. An already-advanced song fails the title assertion. This holds the song
+being rated while the footer and server checks run; it does not establish
+continuous footer focus through a natural AutoPlay transition. Runtime acceptance
+remains pending the final-source full run.
+
 The final-source full Apple acceptance receipt is maintained in [PR #340](https://github.com/legitimate-apps/dulcet/pull/340).
 It must show all planned platform, core, iPad and iPhone legs plus the aggregate
 GREEN before the PR is ready. The earlier rejected runs and local controls above
