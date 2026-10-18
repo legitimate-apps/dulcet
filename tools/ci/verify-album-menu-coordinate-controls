@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Temporary hosted causal control for the unchanged 06897b8b album-menu proof."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import time
+
+BASE = "06897b8bfaf67d27bf5c01cf1408047a77a029cb"
+METHOD = "testAnAlbumTileDraggedOntoTheBarJoinsUpNextOnIPhone"
+TEST_ID = f"DulcetiOSUITests/{METHOD}()"
+SOURCE = Path("apple/DulcetKit/Sources/DulcetKit/DulcetLibraryReadingViews.swift")
+OUT = Path(os.environ["RUNNER_TEMP"]) / "album-menu-coordinate-controls"
+OUT.mkdir()
+UDID = os.environ["IPHONE_UDID"]
+assert re.fullmatch(r"[0-9A-Fa-f-]{36}", UDID)
+DD = Path(os.environ["RUNNER_TEMP"]) / "DulcetiOSDerivedData"
+ENV = {
+    **os.environ,
+    "TEST_RUNNER_DULCET_UI_TEST_SERVER_URL": "http://127.0.0.1:4533",
+    "TEST_RUNNER_DULCET_UI_TEST_USERNAME": "dulcet-admin",
+    "TEST_RUNNER_DULCET_UI_TEST_PASSWORD": "dulcet-ci-canary-password",
+    "TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL": "http://127.0.0.1:4544",
+}
+
+
+def output(args: list[str]) -> str:
+    return subprocess.check_output(args, text=True)
+
+
+changed = set(output(["git", "diff", "--name-only", BASE, "HEAD"]).splitlines())
+assert changed == {
+    ".github/workflows/apple-ci.yml",
+    "tools/ci/verify-album-menu-coordinate-controls",
+}, changed
+subprocess.run(["git", "diff", "--exit-code", BASE, "HEAD", "--", "apple", "core"], check=True)
+original = SOURCE.read_bytes()
+assert original == subprocess.check_output(["git", "show", f"{BASE}:{SOURCE}"])
+original_hash = hashlib.sha256(original).hexdigest()
+results = []
+
+
+def run(kind: str, *, rebuild: bool) -> dict:
+    bundle = OUT / f"{kind}.xcresult"
+    command = [
+        "xcodebuild", "test" if rebuild else "test-without-building",
+        "-project", "apple/Dulcet.xcodeproj", "-scheme", "DulcetiOS",
+        "-configuration", "Debug", "-destination", f"id={UDID}",
+        "-derivedDataPath", str(DD), "-resultBundlePath", str(bundle),
+        "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
+        "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", "600",
+        "-maximum-test-execution-time-allowance", "600",
+        f"-only-testing:DulcetiOSUITests/DulcetiOSUITests/{METHOD}",
+    ]
+    started = time.monotonic()
+    print(f"COORDINATE CONTROL START kind={kind} udid={UDID}", flush=True)
+    with (OUT / f"{kind}.log").open("w") as log:
+        code = subprocess.run(command, env=ENV, stdout=log, stderr=subprocess.STDOUT).returncode
+    summary = json.loads(output([
+        "xcrun", "xcresulttool", "get", "test-results", "summary",
+        "--path", str(bundle), "--format", "json",
+    ]))
+    (OUT / f"{kind}-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    record = dict(kind=kind, exit=code, seconds=round(time.monotonic() - started, 3),
+                  passed=summary["passedTests"], failed=summary["failedTests"],
+                  skipped=summary["skippedTests"], total=summary["totalTestCount"])
+    results.append(record)
+    print("COORDINATE CONTROL RESULT " + json.dumps(record), flush=True)
+    (OUT / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+    assert summary["totalTestCount"] == 1 and summary["skippedTests"] == 0
+    if kind != "no-source":
+        assert code == 0 and summary["passedTests"] == 1 and summary["failedTests"] == 0
+        subprocess.run([
+            "python3", "tools/verify-xcode-test-execution", str(bundle),
+            "DulcetiOSUITests.DulcetiOSUITests", METHOD,
+        ], check=True)
+        subprocess.run([
+            "python3", "tools/swift-testing-junit", str(bundle),
+            str(OUT / f"{kind}-junit.xml"), "DulcetAlbumMenuCoordinateControls",
+        ], check=True)
+    else:
+        assert code != 0 and summary["failedTests"] == 1 and summary["passedTests"] == 0
+        failures = [x["failureText"] for x in summary.get("testFailures", [])]
+        assert any(any(marker in f for marker in [
+            "Playback started during the drags", "The dragged album must join Up Next once",
+            "Album order at the end of Up Next", "A drag that carries on out of the open menu",
+        ]) for f in failures), failures
+    return record
+
+
+def negative_delivery_receipt(activity: dict, log: str) -> dict:
+    final = re.findall(r"DULCET ALBUM TILE DRAG [^\n]*drags=(\d+)[^\n]*native-menu-ready=(\d+)", log)
+    assert len(final) == 1, final
+    drags, menus = map(int, final[0])
+    assert 1 <= drags <= 2 and drags == menus, final
+    expected = list(range(1, drags + 1))
+    menu_attempts = list(map(int, re.findall(r"DULCET ALBUM MENU READY attempt=(\d+)\b", log)))
+    prepared_attempts = list(map(int, re.findall(r"DULCET PREPARED DRAG attempt=(\d+)\b", log)))
+    assert menu_attempts == expected and prepared_attempts == expected, (menu_attempts, prepared_attempts, final)
+    # Each preparation belongs to its own attempt, rather than borrowing an earlier menu.
+    transitions = [(m.group(1), int(m.group(2))) for m in re.finditer(
+        r"DULCET (ALBUM MENU READY|PREPARED DRAG) attempt=(\d+)\b", log
+    )]
+    assert transitions == [(kind, attempt) for attempt in expected
+                           for kind in ("ALBUM MENU READY", "PREPARED DRAG")], transitions
+
+    activities = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            title = value.get("title", "")
+            if ("drag to" in title.lower() and "0.8 seconds" in title
+                    and "200.00" in title and "hold for 1.0 seconds" in title):
+                # Require this drag's own event attachment. Descendant/aggregate attachment
+                # counts could let two events from one drag stand in for a missing retry.
+                events = {a["uuid"]: a for a in value.get("attachments", [])
+                          if a.get("name", "").startswith("Synthesized Event")}
+                assert events and not value.get("isAssociatedWithFailure", False), value
+                activities.append(dict(title=title, start_time=value["startTime"], events=events))
+            for key, item in value.items():
+                if key != "attachments":
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(activity)
+    assert len(activities) == drags, (final, activities)
+    activities.sort(key=lambda a: a["start_time"])
+    assert len({a["start_time"] for a in activities}) == drags, activities
+    seen_events = set()
+    attempts = []
+    for attempt, gesture in zip(expected, activities):
+        event_ids = set(gesture["events"])
+        assert event_ids.isdisjoint(seen_events), (attempt, seen_events, event_ids)
+        seen_events.update(event_ids)
+        attempts.append(dict(attempt=attempt, native_menu_ready=True, prepared_drag=True,
+                             title=gesture["title"], start_time=gesture["start_time"],
+                             synthesized_events=list(gesture["events"].values())))
+    return dict(drags=drags, native_menus=menus, attempts=attempts)
+
+
+def prove_negative_delivery() -> None:
+    raw = output([
+        "xcrun", "xcresulttool", "get", "test-results", "activities",
+        "--path", str(OUT / "no-source.xcresult"), "--test-id", TEST_ID,
+    ])
+    (OUT / "no-source-activities.json").write_text(raw)
+    receipt = negative_delivery_receipt(json.loads(raw), (OUT / "no-source.log").read_text())
+    (OUT / "negative-delivery.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(f"COORDINATE NEGATIVE DELIVERED drags={receipt['drags']} "
+          f"native-menus={receipt['native_menus']} event-bearing-activities={len(receipt['attempts'])}", flush=True)
+
+
+run("positive", rebuild=False)
+needle = b"        .dulcetReaderQueueDragSource(item)\n"
+assert original.count(needle) == 2
+try:
+    SOURCE.write_bytes(original.replace(needle, b"        // Diagnostic: album tile has no queue drag source.\n", 1))
+    run("no-source", rebuild=True)
+    prove_negative_delivery()
+finally:
+    SOURCE.write_bytes(original)
+    assert SOURCE.read_bytes() == original
+    assert hashlib.sha256(SOURCE.read_bytes()).hexdigest() == original_hash
+    (OUT / "restoration.json").write_text(json.dumps(dict(
+        source=str(SOURCE), source_base=BASE, sha256=original_hash, restored=True,
+    ), indent=2) + "\n")
+subprocess.run(["git", "diff", "--exit-code", "--", "apple", "core"], check=True)
+run("restored", rebuild=True)
+assert SOURCE.read_bytes() == original
+subprocess.run(["git", "diff", "--exit-code", "--", "apple", "core"], check=True)
+print("COORDINATE CONTROLS PASS positive=1 negative=delivered-and-rejected restored=1 source-restored=true", flush=True)
