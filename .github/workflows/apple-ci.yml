@@ -128,7 +128,7 @@ jobs:
 
         PYBOOT'
       timeout-minutes: 15
-    - name: Prove positive, no-source rejection and restored positive
+    - name: Prove positive, withheld-payload rejection and restored positive
       timeout-minutes: 35
       env:
         ROOT: ${{ steps.conformance_root.outputs.path }}

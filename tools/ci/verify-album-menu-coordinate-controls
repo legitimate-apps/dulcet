@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Temporary hosted causal control for the unchanged 06897b8b album-menu proof."""
+"""Temporary withheld-payload control for the unchanged 06897b8b album-menu proof."""
 from __future__ import annotations
 
 import hashlib
@@ -72,7 +72,7 @@ def run(kind: str, *, rebuild: bool) -> dict:
     print("COORDINATE CONTROL RESULT " + json.dumps(record), flush=True)
     (OUT / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     assert summary["totalTestCount"] == 1 and summary["skippedTests"] == 0
-    if kind != "no-source":
+    if kind != "withheld-payload":
         assert code == 0 and summary["passedTests"] == 1 and summary["failedTests"] == 0
         subprocess.run([
             "python3", "tools/verify-xcode-test-execution", str(bundle),
@@ -141,37 +141,46 @@ def negative_delivery_receipt(activity: dict, log: str) -> dict:
         attempts.append(dict(attempt=attempt, native_menu_ready=True, prepared_drag=True,
                              title=gesture["title"], start_time=gesture["start_time"],
                              synthesized_events=list(gesture["events"].values())))
-    return dict(drags=drags, native_menus=menus, attempts=attempts)
+    return dict(control="withheld-payload", drags=drags, native_menus=menus, attempts=attempts)
 
 
 def prove_negative_delivery() -> None:
     raw = output([
         "xcrun", "xcresulttool", "get", "test-results", "activities",
-        "--path", str(OUT / "no-source.xcresult"), "--test-id", TEST_ID,
+        "--path", str(OUT / "withheld-payload.xcresult"), "--test-id", TEST_ID,
     ])
-    (OUT / "no-source-activities.json").write_text(raw)
-    receipt = negative_delivery_receipt(json.loads(raw), (OUT / "no-source.log").read_text())
-    (OUT / "negative-delivery.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    print(f"COORDINATE NEGATIVE DELIVERED drags={receipt['drags']} "
+    (OUT / "withheld-payload-activities.json").write_text(raw)
+    receipt = negative_delivery_receipt(json.loads(raw), (OUT / "withheld-payload.log").read_text())
+    (OUT / "withheld-payload-delivery.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(f"COORDINATE WITHHELD-PAYLOAD DELIVERED drags={receipt['drags']} "
           f"native-menus={receipt['native_menus']} event-bearing-activities={len(receipt['attempts'])}", flush=True)
 
 
 run("positive", rebuild=False)
-needle = b"        .dulcetReaderQueueDragSource(item)\n"
-assert original.count(needle) == 2
+needle = b"                store.resolveReaderAddition(of: item, completion: completion)\n"
+assert original.count(needle) == 1
 try:
-    SOURCE.write_bytes(original.replace(needle, b"        // Diagnostic: album tile has no queue drag source.\n", 1))
-    run("no-source", rebuild=True)
+    # Keep the draggable, native menu, deferred ticket and preview wiring identical.
+    # Only the deferred resolution delivers no addition when the accepted drop resolves.
+    mutated = original.replace(needle, b"                completion(nil)\n", 1)
+    assert mutated != original and mutated.count(b"        .dulcetReaderQueueDragSource(item)\n") == 2
+    SOURCE.write_bytes(mutated)
+    (OUT / "withheld-payload-mutation.json").write_text(json.dumps(dict(
+        control="withheld-payload", source=str(SOURCE), source_base=BASE,
+        original_sha256=original_hash, mutated_sha256=hashlib.sha256(mutated).hexdigest(),
+        replacements=1, native_drag_wiring_preserved=True,
+    ), indent=2) + "\n")
+    run("withheld-payload", rebuild=True)
     prove_negative_delivery()
 finally:
     SOURCE.write_bytes(original)
     assert SOURCE.read_bytes() == original
     assert hashlib.sha256(SOURCE.read_bytes()).hexdigest() == original_hash
     (OUT / "restoration.json").write_text(json.dumps(dict(
-        source=str(SOURCE), source_base=BASE, sha256=original_hash, restored=True,
+        control="withheld-payload", source=str(SOURCE), source_base=BASE, sha256=original_hash, restored=True,
     ), indent=2) + "\n")
 subprocess.run(["git", "diff", "--exit-code", "--", "apple", "core"], check=True)
 run("restored", rebuild=True)
 assert SOURCE.read_bytes() == original
 subprocess.run(["git", "diff", "--exit-code", "--", "apple", "core"], check=True)
-print("COORDINATE CONTROLS PASS positive=1 negative=delivered-and-rejected restored=1 source-restored=true", flush=True)
+print("COORDINATE CONTROLS PASS positive=1 withheld-payload=delivered-and-rejected restored=1 source-restored=true", flush=True)
