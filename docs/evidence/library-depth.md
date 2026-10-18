@@ -977,3 +977,126 @@ through a Top Song Pin control and a focused album that becomes hittable after r
 Down navigation. Independent review finds no blocker; final native runtime validation
 is still required. The seven-album fixture fits in the eager row on a wide TV, so this
 receipt alone does not establish navigation into a later lazy row.
+
+**Phone album drag — retained failure and matching-layout control.** The terminal
+phone leg of run 39071376612 passes all seven Library methods with zero failures,
+errors or skips, including offline replay after relaunch in 205.947 seconds and
+the largest-text add flow in 123.187 seconds. Its later album-tile drag fails in
+187.316 seconds: both drags leave the native context menu open and add zero of the
+three expected tracks. Playback remains paused; the ordered-track and zero-open-menu
+assertions remain intact.
+
+The xcresult's two synthesized events start at (296.5, 234.67), inside the right-hand
+Threshold Boundary tile (207, 125, 179, 219.3), and end at (147, 753), inside the mini-player.
+The compressed recording frame at 104 seconds shows the system preview over that tile
+and Play highlighted in the menu below as the touch crosses it. Production already
+uses the system context-menu preview. **HYPOTHESIS:** the straight downward gesture
+selects within the menu instead of lifting the album clear of it. The coordinates
+alone do not prove that mechanism. Lane D has independently reproduced the same
+failure and prepared a fixture matching the hosted album order for a controlled
+native gesture comparison. A passing run at a different tile position is not an
+equivalent-layout positive control.
+
+Lane D's local matching-layout control reproduces the failure: track drag passes
+in 69.909 seconds with one drag and no retained menu; album drag fails in 160.144
+seconds with two drags, two retained menus and no addition. A leading-edge gesture
+candidate passes in 85.822 seconds, and the custom-preview negative control also
+passes under that input. Both experimental changes are restored. Independent review
+notes that this negative control is already documented as intermittent, so its pass
+alone cannot reject a gesture. Acceptance still requires a positive witness that the
+native menu opened during the same uninterrupted successful drag; the separate
+long-press preflight does not establish that condition. A centered fast-velocity
+comparison also fails. A full Albums collection comparison with the original gesture
+is pending. These are lane D's reported local results; this branch has not adopted
+an input change.
+
+[Full run 39080087215](https://github.com/legitimate-apps/dulcet/actions/runs/39080087215)
+is dispatched on the current candidate to exercise the TV focus and stable iPad
+toolbar changes. It is not yet an acceptance receipt. PR #340 retains the
+current-source terminal full-conformance result; all planned legs and the
+aggregate must pass before the PR is ready.
+
+The iPhone leg of run 39080087215 is now terminal: all seven Library cases pass
+with zero failures, errors or skips, including offline replay after relaunch in
+133.815 seconds. The later unchanged album drag fails in 191.195 seconds with
+two drags, two retained menus and zero queued tracks. Its failed xcresult and
+JUnit receipts are retained. The other full-conformance legs remain pending.
+
+**Current native validation — observed.** [Normal Apple run 39079620687](https://github.com/legitimate-apps/dulcet/actions/runs/39079620687)
+is GREEN on `4e066f39`: JUnit exports record Mac 348, iPhone 330, iPad 330 and
+TV 313 native cases, three Keychain cases and one iPad layout case, all with zero
+failures, errors or skips. The startup gate positively records the same explicit
+iPhone UUID with `settled=true isolated=true app-launched=false`, followed by the
+passing native phase. This validates the corrected harness execution; the proposed
+bootstrap/observer-delay cause remains an inference from the earlier failure trace.
+
+**Current iPad validation — observed.** The iPad leg of full run 39080087215 is
+GREEN: 18 proof cases across 14 JUnit exports, zero failures, errors or skips. All
+five Library methods pass, and the streaming-quality proof passes in 115.911 seconds
+with the stable toolbar host and positive dismissal checks. This is runtime evidence
+for the corrected result; conditional-Group toolbar replacement remains the inferred
+mechanism from the retained failure hierarchy and recording.
+
+**Follow-up TV return-to-Browse trace — observed.** The core leg of full run
+39080087215 passes all five Mac Library methods and the TV artist Library proof
+(the first album becomes focused after four Down presses, starting with zero
+hittable album tiles). Its later TV offline-pin case fails only while returning
+from Songs to Browse; pin persistence, the offline Library and Songs have passed.
+The retained activity trace sends six Menu presses without waiting for their focus
+transitions. The recording shows Songs, then the Library root, then the Apple TV
+Home screen. Repeated Up presses there cannot reach Dulcet's section bar. The
+helper now waits for actual section-bar focus after each Menu, requires the app
+in the foreground and bar focus before walking horizontally, and retains exact
+target focus before Select. Runtime validation of that correction is pending.
+
+**Phone menu condition — observed local comparison.** A matching disposable
+314-track/eight-album fixture reproduces the hosted Recently Added placement.
+The full Albums collection in Title order passes the original uninterrupted
+centered gesture in 135.178 seconds: one drag, three ordered tracks, paused
+playback and no retained menu. The recording of that same successful gesture
+shows the native menu before the floating album lifts. This is a manual recording
+receipt, without a claim about millisecond timing. Frames read left to right,
+then top to bottom; the final two show the native menu and lifted album. This
+sequence belongs to that original uninterrupted positive, not the automated
+second-touch proof below.
+
+![Recorded uninterrupted phone album drag: native menu before lift](library-depth-iphone/album-drag-native-menu-sequence.jpg)
+
+The automated phone proof now covers an explicitly different interaction: it
+opens the named album's native context menu, positively requires its Pin/Unpin
+command, hittable Add to Playlist command, and exactly one separate hittable
+system Preview **before every attempt**, then drags that Preview with a second
+touch. A diagnostic using the covered original tile fails because it is not
+hittable. The actual-Preview final proof passes in 118.842 seconds with
+`native-menu-ready=1 drags=1 menu-left-open-after=0`, three tracks in exact album
+order and playback paused. Every retry must establish the native menu again.
+The original continuous gesture's recording remains separate evidence; the
+second-touch automation does not silently stand in for it. The exact new
+no-drag-source control fails in 214.496 seconds after positively observing both
+menus (`native-menu-ready=2 drags=2 menu-left-open-after=2`): playback starts and
+the final queue has one of the three expected entries in the wrong order. The
+unchanged transport, count, order and menu assertions reject those menu side
+effects. The temporary production mutation is restored byte-for-byte to HEAD;
+the restored shared-helper playlist control passes in 123.410 seconds with one
+drag, exact playlist order, paused playback and no retained menu. The restored
+album control passes in 175.712 seconds with `native-menu-ready=1 drags=1
+menu-left-open-after=0`, exactly three tracks in album order and playback paused.
+Both restored controls have zero failures, errors and skips.
+
+**Local TV launcher limitation — observed.** The final phone/menu and TV/focus
+sources compile for the actual iPhone and TV test targets. The local four-case
+TV attempt on a leased tvOS 26.5 simulator then fails before any Library case
+executes: `IDELaunchiPhoneSimulatorLauncher`, `NSMachErrorDomain -308`, server
+died while installing or launching `DulcetTVUITests-Runner`. The result bundle
+contains zero passed Library tests and a runner error, not a Library assertion.
+The disposable server, proxies, simulator, DerivedData lease and build/sim
+reservations are released. This is not counted as a runtime pass, and the
+underlying local IPC failure is not diagnosed as an app defect. No shared
+simulator service is restarted. Final runtime acceptance uses hosted Apple CI.
+The planner control passes 28,175 checks over 701 Apple-affecting files and the
+final diff passes whitespace checks.
+
+The final-source full Apple acceptance receipt is maintained in [PR #340](https://github.com/legitimate-apps/dulcet/pull/340).
+It must show all planned platform, core, iPad and iPhone legs plus the aggregate
+GREEN before the PR is ready. The earlier rejected runs and local controls above
+remain diagnosis history; they are not substituted for that full receipt.

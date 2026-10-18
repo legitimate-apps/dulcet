@@ -2342,9 +2342,10 @@ final class DulcetiOSUITests: XCTestCase {
     /// the synthesized touch). A drag that never lifted leaves the menu it opened under the touch,
     /// which `menuMarker` names; it is closed so Up Next can be read, and counted. A drag that
     /// dropped queues only after its deferred read, which took over 10 s on a loaded CI host, so
-    /// each drag gets 30 s before the next: a retry sooner queues the source twice. Under a custom
-    /// menu preview, or with no drag source at all, both drags queue nothing, so the retry cannot
-    /// hide the defect.
+    /// each drag gets 30 s before the next: a retry sooner queues the source twice. An optional
+    /// preparation must positively establish its source before every attempt. A no-drag-source
+    /// control rejects menu side effects; the historical custom-preview control is intermittent
+    /// for albums (TRAPS 49), so its result alone does not establish the menu condition.
     @MainActor
     private func dragOntoTheBar(
         _ source: XCUIElement,
@@ -2353,7 +2354,8 @@ final class DulcetiOSUITests: XCTestCase {
         adding count: Int,
         menuMarker: String,
         in app: XCUIApplication,
-        compact: Bool
+        compact: Bool,
+        prepareSource: ((Int) -> XCUIElement?)? = nil
     ) -> (after: [String], drags: Int, menuLeftOpen: Int)? {
         // Counted only while paused: a track that ends under the proof takes the head off Up
         // Next, and a drop that landed reads as one that did not.
@@ -2366,9 +2368,14 @@ final class DulcetiOSUITests: XCTestCase {
         var drags = 0
         var menuLeftOpen = 0
         while drags < 2, after.count < before.count + count {
+            let dragSource: XCUIElement
+            if let prepareSource {
+                guard let prepared = prepareSource(drags + 1) else { return nil }
+                dragSource = prepared
+            } else { dragSource = source }
             drags += 1
             withoutIdleWaits(app) {
-                source.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+                dragSource.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
             }
             let menu = app.buttons[menuMarker].firstMatch
             if menu.waitForExistence(timeout: 2) {
@@ -2450,7 +2457,7 @@ final class DulcetiOSUITests: XCTestCase {
         guard requireSimulator(compact ? .phone : .pad, "The album tile drag proof on \(compact ? "iPhone" : "iPad")"),
               let configuration = livePlaybackConfiguration(),
               let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: compact),
-              openLibraryDestinationForAlbums(in: app, compact: compact) else { return }
+              openAlphabeticalAlbumGrid(in: app, compact: compact) else { return }
         let album = "Threshold Boundary"
         let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
         let tile = { app.buttons.matching(identifier: "dulcet.library.album")
@@ -2462,26 +2469,95 @@ final class DulcetiOSUITests: XCTestCase {
         guard requireContextMenu(on: tile(), marker: "Add to Playlist\u{2026}", in: app) else { return }
 
         guard let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app) else { return }
-        guard openLibraryDestinationForAlbums(in: app, compact: compact),
+        guard openAlphabeticalAlbumGrid(in: app, compact: compact),
               tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
               let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: compact) else { return }
+        var nativeMenuReady = 0
+        let prepareSource: ((Int) -> XCUIElement?)? = compact ? { attempt in
+            guard let preview = self.nativeAlbumMenuPreview(on: tile(), album: album, attempt: attempt, in: app) else { return nil }
+            nativeMenuReady += 1
+            return preview
+        } : nil
         guard let result = dragOntoTheBar(
             tile(), bar: bar, before: before, adding: albumOrder.count, menuMarker: "Add to Playlist\u{2026}",
-            in: app, compact: compact
+            in: app, compact: compact, prepareSource: prepareSource
         ) else { return }
+        if compact {
+            XCTAssertGreaterThan(nativeMenuReady, 0, "The phone must actually reach its native album menu")
+            XCTAssertEqual(nativeMenuReady, result.drags, "Every attempt, including a retry, must start from its positively observed native menu preview")
+        }
         attachScreenshot(named: "album-tile-dragged-onto-the-bar", app: app)
         let added = Array(result.after.dropFirst(before.count))
         XCTAssertEqual(result.after.count, before.count + albumOrder.count,
                        "The dragged album must join Up Next once; before=\(before) after=\(result.after)"
                        + " drags=\(result.drags) menu-left-open-after=\(result.menuLeftOpen)")
         XCTAssertEqual(result.menuLeftOpen, 0,
-                       "A drag that carries on out of the open menu must lift: a menu left open under the touch is the custom preview's defect (TRAPS 48)")
+                       "A completed album drag must dismiss its menu; menu side effects cannot substitute for a queue drop")
         XCTAssertEqual(added.count, albumOrder.count)
         for (label, title) in zip(added, albumOrder) {
             XCTAssertTrue(label.hasPrefix(title), "Album order at the end of Up Next: \(title) expected, got \(label)")
         }
         print("DULCET ALBUM TILE DRAG before=\(before) after=\(result.after) drags=\(result.drags)"
-              + " menu-left-open-after=\(result.menuLeftOpen)")
+              + " menu-left-open-after=\(result.menuLeftOpen) native-menu-ready=\(nativeMenuReady)")
+    }
+
+    /// The phone lifts the actual system Preview with a second touch after its native menu
+    /// opens. This positively covers an already-open menu; the uninterrupted long-press path
+    /// has a separate retained recording. The covered library button is not a hit target.
+    @MainActor
+    private func nativeAlbumMenuPreview(on tile: XCUIElement, album: String, attempt: Int, in app: XCUIApplication) -> XCUIElement? {
+        guard tile.waitForExistence(timeout: 5), tile.isHittable else {
+            XCTFail("The named album must be hittable before opening its menu")
+            return nil
+        }
+        withoutIdleWaits(app) { tile.press(forDuration: 1.2) }
+        let marker = app.buttons["Add to Playlist\u{2026}"].firstMatch
+        let albumPin = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Pin \(album)", "Unpin \(album)")).firstMatch
+        let previews = app.otherElements.matching(NSPredicate(format: "label == %@", "Preview"))
+        let preview = previews.element(boundBy: 0)
+        guard marker.waitForExistence(timeout: 5), marker.isHittable,
+              albumPin.exists, albumPin.isHittable,
+              preview.waitForExistence(timeout: 5), previews.count == 1, preview.isHittable,
+              !marker.frame.intersects(preview.frame) else {
+            XCTFail("The named album's native menu and separate hittable Preview must be open before every drag: " + app.debugDescription)
+            return nil
+        }
+        print("DULCET ALBUM MENU READY attempt=\(attempt) album=\(album) preview=\(preview.frame) marker=\(marker.frame)")
+        return preview
+    }
+
+    /// Use the phone's full Albums collection in Title order rather than depending on fixture
+    /// creation timestamps in Recently Added. Retain the centered gesture and menu preflight;
+    /// a no-drag-source control must fail its queue-order and paused-playback assertions.
+    @MainActor
+    private func openAlphabeticalAlbumGrid(in app: XCUIApplication, compact: Bool) -> Bool {
+        guard openLibraryDestinationForAlbums(in: app, compact: compact) else { return false }
+        guard compact else { return true }
+        if compact {
+            let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
+            for _ in 0..<8 {
+                if albums.exists, albums.isHittable { break }
+                app.swipeDown()
+            }
+            guard albums.exists, albums.isHittable else {
+                XCTFail("The Library must offer its Albums collection: " + app.debugDescription)
+                return false
+            }
+            albums.tap()
+        }
+        let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
+        guard sort.waitForExistence(timeout: 10) else {
+            XCTFail("The Albums collection must expose its sort control")
+            return false
+        }
+        sort.tap()
+        let title = app.buttons["Title"].firstMatch
+        guard title.waitForExistence(timeout: 5) else {
+            XCTFail("The Albums sort menu must offer Title")
+            return false
+        }
+        title.tap()
+        return true
     }
 
     /// Each playlist edit the app offers, made where a person makes it, and read back from the

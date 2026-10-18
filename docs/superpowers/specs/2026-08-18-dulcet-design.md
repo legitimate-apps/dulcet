@@ -7852,6 +7852,20 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-17 — Positively observe the phone album menu before its queue drag.**
+The phone proof opens the full Albums collection and selects Title order, independent of
+fixture creation timestamps. Before **every attempt**, it opens the named album's native
+context menu and requires its Pin/Unpin command, hittable Add to Playlist command, and exactly
+one separate hittable system Preview. It drags that actual Preview with a second touch onto
+the mini-player, retaining the centered gesture's hold times and velocity, two-attempt bound,
+exactly-once album order, paused playback and zero remaining menus. A retry cannot bypass the
+menu condition. This automated already-open-menu interaction is distinct from an uninterrupted
+long press: the latter has a separate retained successful recording showing the native menu
+before the album lifts. The earlier Recently Added recording shows the failed touch crossing
+the native menu; interception is an inference. A temporary custom preview also passes on iOS
+26.5, so that intermittent mutation cannot establish discrimination. iPad retains its existing
+Albums setup and drag interaction.
+
 **2026-10-16 — Apple engine overlaps the preloaded boundary.**
 `DulcetAVPlayerEngine` accepts `setCrossfade` only for its current attempt and a finite,
 nonnegative duration. The value replaces the previous one and lapses at an attempt change.

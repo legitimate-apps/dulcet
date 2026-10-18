@@ -485,18 +485,43 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let control = destination(section)
         XCTAssertTrue(control.waitForExistence(timeout: 30), "Missing destination \(section)")
 #if os(tvOS)
-        // Menu returns to the section bar from roots; from a pushed page it pops first.
+        // Menu pops a pushed page, then returns focus to the section bar. That focus
+        // transition is asynchronous: the retained Songs -> Browse failure sent another
+        // Menu before observing it and eventually left the app for the TV Home screen.
         let remote = XCUIRemote.shared
-        for _ in 0..<6 {
-            if app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.tab.' AND hasFocus == true")).firstMatch.exists { break }
+        let focusedTab = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'dulcet.tab.' AND hasFocus == true"
+        )).firstMatch
+        var menuPresses = 0
+        while !focusedTab.exists && menuPresses < 6 {
+            guard app.state == .runningForeground else {
+                XCTFail("Menu navigation left the app before reaching the section bar")
+                return
+            }
             remote.press(.menu)
+            menuPresses += 1
+            // Observe the result of this press before deciding whether a page still needs
+            // popping. A successful return must prove actual bar focus, not exhaust retries.
+            if focusedTab.waitForExistence(timeout: 3) { break }
         }
+        guard focusedTab.exists else {
+            XCTFail("Menu did not return focus to the section bar for \(section): \(app.debugDescription)")
+            return
+        }
+        print("MY LIBRARY TV section-bar-focused target=\(section) menu-presses=\(menuPresses)")
         let order = ["library", "browse", "search", "nowPlaying", "settings"]
-        for _ in 0..<12 {
-            if control.hasFocus { remote.press(.select); return }
-            if let current = order.firstIndex(where: { app.buttons["dulcet.tab.\($0)"].firstMatch.hasFocus }), let target = order.firstIndex(of: section) {
-                remote.press(target > current ? .right : .left)
-            } else { remote.press(.up) }
+        for _ in 0..<order.count {
+            if control.hasFocus {
+                XCTAssertTrue(control.hasFocus, "The requested section must actually have remote focus")
+                remote.press(.select)
+                return
+            }
+            guard let current = order.firstIndex(where: { app.buttons["dulcet.tab.\($0)"].firstMatch.hasFocus }),
+                  let target = order.firstIndex(of: section) else {
+                XCTFail("Section-bar focus disappeared while reaching \(section)")
+                return
+            }
+            remote.press(target > current ? .right : .left)
         }
         XCTFail("Remote could not reach \(section)")
 #else
