@@ -682,3 +682,642 @@ The guard rejects an absent, failed or skipped method, as the earlier independen
 missing-method controls demonstrated. This passing required consumption fulfills
 the two recorded Android Downloaded promotion conditions. Only those two cells are
 now shipped; the remaining 33 new cells stay partial, and Apple TV Downloaded stays n/a.
+
+## Apple conformance repair after #336 (2026-10-17)
+
+The [original full Apple run at `128b9d39`](https://github.com/legitimate-apps/dulcet/actions/runs/39002314622)
+already contains the three reported Library failures, before the listening-session merges.
+Its Mac Library bundle ran five tests with two failures; its iPhone Library bundle ran
+seven tests with one failure. The failure diagnostics were exported and examined before
+changing the tests.
+
+- **OBSERVED — iPhone offline replay:** the failure hierarchy has Library selected and
+  Recently Added at y900.3, below the 874-point viewport and the tab bar at y791. The lazy
+  album grid has no instantiated album tile. The test already scrolled before its first
+  offline assertion, but omitted that action after relaunch. The correction requires the
+  section control to exist, the tile to be initially absent, at least one touch scroll,
+  and a hittable tile. It retains the direct-server negative membership checks both before
+  and after relaunch, and the eventual positive server membership after reconnect. The
+  fixture must also acknowledge each requested online/offline transition. A missing lazy
+  accessibility element alone did not establish loss of the durable pending add. In the
+  diagnostic run, this method passes in 132.609 seconds and logs
+  `MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=1`. All seven iPhone Library
+  methods pass the named terminal-result guard.
+- **OBSERVED — Mac pin lookup:** the original failure hierarchy contains the identified
+  `dulcet.library.pinned.title` StaticText with label `Pinned`, plus the pinned album. In
+  the [diagnostic run at `24b656e3`](https://github.com/legitimate-apps/dulcet/actions/runs/39044137148),
+  the same live typed query reports `firstMatch=false`, `indexed=true`, `count=1`. The pin
+  method then passes, including the exact heading text, persisted album and offline
+  destinations. This establishes a false negative in the first-match lookup; it does not
+  establish an internal XCTest implementation cause. The final lookup uses the same type
+  and identifier with `element(boundBy: 0)`. The diagnostic enumeration before the assertion
+  is removed so the final validation exercises that lookup without warming its query.
+- **OBSERVED — Mac grouped count:** both recordings show Artists, `1 result` and one
+  artist row. The diagnostic reports `exists=true`, an empty `label`, and `value=1 result`.
+  Mac must assert the native StaticText value. The correction waits for that exact value;
+  iOS retains the exact label check. The initial diagnostic revision also exposed an error
+  in a new, stronger row assertion: querying TableRow returns zero because SwiftUI's native
+  `SwiftUIOutlineTableView` has `AXOutline` role, as the same run's native accessibility
+  probe records. The corrected assertion scopes the results outline by its identified
+  rendered result and waits for exactly one OutlineRow, excluding the sidebar outline.
+
+The old `7b` search crash report records missing `DulcetPresentationStore` environment
+resolution through native table hosts. Production commit `eb112755` already fixes that
+on main by supplying the root store to the cell and context-menu hosts. This repair
+preserves it. In the diagnostic platform job, both argument cases of
+`MacGroupedSearchHostingTests.readerResultsRenderThroughTheRootAndNativeTable` pass;
+the Library search recordings reach the Artists table without a crash.
+
+Local `tools/typecheck-xcuitest-sources` passes all five covered UI-test directories for
+the corrected queries. The check's negative controls passed; its actual type-check caught
+an introduced invalid row API, corrected before the replacement dispatch. A type-check is compile evidence,
+not UI execution evidence.
+
+The iPhone job subsequently reaches a latent lyrics-test assumption. Its search hierarchy
+contains exactly one result, `Ogg Probe`, while Now Playing has already advanced into
+`Paging Track 008` and later another paging track. **OBSERVED:** one own search result no
+longer guarantees that the one-second fixture remains current. **ASSUMED from the
+production default and queue continuation path:** enabled AutoPlay is the source of that
+continuation; the old test never controlled or read the setting. The test correction
+chooses AutoPlay off through the actual Up Next switch, reads it back, verifies that choice
+again after the plain phase's relaunch, and restores the previous choice through the UI.
+Setup pauses and resumes the synced fixture with positive transport-state checks. Every
+existing lyrics-line, empty-state, failed-read receipt and retry assertion remains, with an
+additional exact `Ogg Probe` title assertion after its plain lyrics are shown. The production
+AutoPlay default remains on. The controlled local iPhone and iPad results below verify
+this setup through every lyrics state.
+
+The [next full diagnostic at `d3dc1bfa`](https://github.com/legitimate-apps/dulcet/actions/runs/39053289757)
+proves the three Library corrections through the complete methods: **Mac 5 tests / zero
+failures (232.835 seconds), iPad 5 / zero (448.213 seconds), iPhone 7 / zero (636.998
+seconds)**. Mac logs `MY LIBRARY PIN heading=Pinned` without diagnostic enumeration and
+`MY LIBRARY SEARCH selected=Artists count=1 result rows=1 role=outline`; Search also
+completes the recent-query relaunch checks. iPhone again logs the required real scroll.
+The full dispatch remains **red** because later checks expose the following separate
+interactions; those passing Library suites are not an all-green handoff.
+
+- **OBSERVED — lyrics setup on both iPhone and iPad:** the new setup correctly fails its
+  exact off-state assertion: the switch remains `1`. The iPhone synthesized event taps
+  `(201, 380.7)`, the center of its 370-point label-and-gap accessibility row. The recording
+  places the actual native switch at the trailing edge, leaving the tap in blank space.
+  The helper now targets the switch thumb, 24 points inside the trailing edge, and keeps
+  the exact off, persisted-off and prior-setting restoration requirements. A further local
+  failure caught the new setup inspecting Up Next before activating anything in the fresh
+  plain phase: the hierarchy has a connected account and no Now Playing bar. Activate Ogg
+  first, capture the existing preference before any possible change, and still require it
+  was already off. Both complete local device methods now pass, as recorded below. No
+  production setter or queue-restoration defect is established by these setup failures.
+- **OBSERVED — TV remote footer navigation:** the failed hierarchy places focus on a
+  nested `Other` inside Sleep Timer, between the fifth star and Lyrics. The Menu's Button
+  itself reports no focus. The test recognizes only the heart and stars as footer controls,
+  so it repeatedly presses Down from Sleep Timer. The corrected bounded path recognizes
+  that focused descendant, moves Right to Lyrics and Left back to the heart, and requires
+  positive proof that the main test traversed Sleep Timer. The shared lyrics helper uses
+  the same focus recognition. All original remote-select, lit-line, favorite and rating
+  assertions remain. The focused leased local method passes in 38.907 seconds and logs
+  `sleep-timer-traversed=true`, five presses to Lyrics, a lit English line and seven Left
+  presses back to the heart. Its xcresult has one passed test, zero failures and zero skips.
+- **OBSERVED — native playback check:** the platform leg separately fails
+  `transportChangesDisposeTheOutgoingTail(action: "replace")` because its initial wait
+  observes no overlap in 30.013 seconds, then the required snapshot is nil. The engine queue
+  responds in 0.002 seconds. This evidence was passed to the playback owner; no underlying
+  playback cause is inferred from the responsive queue alone. This branch incorporates
+  their correction lineage through `d323bebe` from #341: verified AVPlayer gain writes,
+  paused seek setup, transport commands within the observed overlap and retaining the first
+  successful wait observation, with diagnostics on failure. The owner's
+  [complete platform run](https://github.com/legitimate-apps/dulcet/actions/runs/39059014904)
+  passes at that revision, including native Mac, iPhone and TV. A authored no independent
+  playback-engine correction.
+
+Local source type-checking passes all five UI-test directories after the final plain-phase
+order correction. The complete local lyrics methods run against owned disposable Navidrome
+and its real lyrics fault proxy, using fresh leased simulators and explicit
+`-destination "id=<leased UDID>"`, with parallel testing disabled:
+
+| Local proof | Destination | Terminal result |
+| --- | --- | --- |
+| `testTheLyricsPanelShowsEveryStateOnIPhone` | iPhone 17 Pro, `230CDFB4-CFDB-42C6-9DFB-5C4B462192DB` | 1 passed / 0 failed / 0 skipped, 216.887 s |
+| `testTheLyricsPanelShowsEveryStateOnIPadOS` | iPad Pro 13-inch (M5), `A61B1383-5470-439D-A362-D5F285BEB66B` | 1 passed / 0 failed / 0 skipped, 237.715 s |
+| `testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote` | Apple TV 4K (3rd generation), tvOS 26.5, `5AEA7B30-CD53-4670-AFCA-60857D30AA4A` | 1 passed / 0 failed / 0 skipped, 38.907 s |
+
+Each iOS lyrics method logs the actual setting chain `previous=1 value=0`, relaunch
+`previous=0 value=0`, then cleanup `previous=0 value=1`. Both show a lit synced English
+line, two plain lines with exact Ogg title, the no-lyrics state, **one observed failed
+lyrics read and one new read after Try Again**. The iPad also passes the side-by-side
+panel placement checks. These are complete terminal Passed results after the cleanup
+assertion, not just the earlier proof marker. All three result bundles have zero skips.
+The owned fixtures, simulators, DerivedData and capacity leases are released afterwards.
+
+The attempted local Mac UI worker obtained build capacity but refused to reuse another
+lane's disposable server on port 4533, then released its resources before launching a
+fixture or app. This repair therefore uses hosted `apple-ci` for actual Mac UI execution.
+Its `tools/ci/run-my-library-proofs macos` uses the `DulcetMac` scheme with ad-hoc signing
+and cleared `CODE_SIGN_ENTITLEMENTS`; that path passes all five Library methods in the
+full diagnostic above. There is no new local pre-main Sandbox/XPC diagnosis or local Mac
+UI pass to claim.
+
+The combined full-conformance gate for these repaired sources is
+[run 39062783989 at `1ca0a17e`](https://github.com/legitimate-apps/dulcet/actions/runs/39062783989).
+The handoff requires successful platform, core, iPad and iPhone legs and the aggregate;
+the local focused passes do not replace that gate. The current terminal full-run receipt
+is maintained in [repair PR #340](https://github.com/legitimate-apps/dulcet/pull/340). No feature cell is promoted by this
+test repair.
+
+
+A later [required platform run at the documentation head](https://github.com/legitimate-apps/dulcet/actions/runs/39065179071)
+exposes a separate CI phase-budget failure. **OBSERVED:** its native Mac xcresult is
+Passed, with **348 passed / zero failed / zero skipped**; the exported JUnit also has
+348 tests, zero failures, errors or skips. The test log reports all 15 suites passing
+in 100.247 seconds, `TEST SUCCEEDED` at 20:23:07.651 UTC and the JUnit written at
+20:23:10.897. The four-minute step is canceled at 20:23:10.923, immediately after
+that export. Compilation and testing were charged to one step; no test assertion
+failed. The correction separates `build-for-testing` from `test-without-building`,
+each with a four-minute bound and the same DerivedData, scheme, serial execution and
+JUnit export. The test-execution allowance and job bound remain unchanged.
+Local CI policy validation passes across 13 workflows, and the planner control passes
+28,135 checks over 700 Apple-affecting files. Runtime validation must still require
+actual executed native test counts in the subsequent full gate, recorded in PR #340.
+
+The combined dispatch above subsequently fails two other checks, so it is **not** an
+all-green gate. Its iPhone My Library xcresult executes all seven methods: six pass,
+including offline replay (158.649 seconds), sort/artist depth (88.928), pin/relaunch
+(86.926) and grouped Search/recent queries (67.951). The standalone largest-text Add
+capture fails while finding its album. **OBSERVED:** six touch swipes end at the
+Browse scroll bar's 73% position; the lazy grid contains other albums but not Threshold
+Boundary. The recording shows the introduction and destination rows consuming several
+screens before the catalog. Unlike the passing three-variant tour, this standalone
+method did not first reveal a catalog tile. It now uses the same two-stage navigation
+and proves that the catalog begins offscreen, an actual touch scroll occurs and a
+catalog tile becomes hittable before looking for the named album. The existing eight
+plus six gesture bounds and all Add-action visibility assertions are retained. All
+five UI-test source directories type-check after this correction. Its runtime requirement
+is a terminal Passed result in the full gate recorded in PR #340.
+
+The platform failure is a separate **native iPhone** crossfade integration assertion:
+`crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds` sees no overlap in
+30.038 seconds. Captured events include readiness at six seconds and buffering ended,
+but no playback-progress or preload-advance event; the engine queue responds in
+0.009 seconds. Nearby decoder/overload messages do not establish the underlying cause.
+The complete log and result bundle were retained and the playback owner received the
+evidence for diagnosis. No passing retry or responsive-queue measurement is treated
+as proof of a playback correction.
+
+The same dispatch completes the **whole iPad conformance leg successfully**. Its Library
+suite executes five methods with zero failures in 335.194 seconds, with the execution
+guard confirming all five terminal Passed results. The complete lyrics method also passes
+its guard after the real `1→0`, relaunch `0→0`, cleanup `0→1` sequence and observed failed
+read/retry counts of one each. The hosted Mac Library suite likewise executes five
+methods with zero failures in 225.926 seconds; cold Pinned, Artists `1 result` plus one
+Outline row, recent query and relaunch controls all pass. These passing sub-suites do not
+turn the red combined dispatch into a green gate.
+
+**OBSERVED — the final core failure is the older TV artist navigation proof.** Its
+recording shows Top Songs above a Discography heading clipped at the viewport's bottom.
+The test waits at the header for seven lazy album tiles, sees zero and never attempts to
+move down to them. The corrected proof reaches the discography by real remote Down
+presses before counting it, retains the six-press bound and logs the initial count and
+actual presses. If the grid starts unrealized, it requires an actual press and focused
+album before the seven-album check. Its ordering oracle also changes from raw `getArtist`
+response order to the current newest-first contract: it positively requires this
+disposable fixture's single release year, no month/day precision, only the Albums group
+and this artist's own album IDs before checking the title tie-break. It still walks to
+a uniquely named non-first album and checks both Back destinations and focus restoration.
+The earlier TV footer method passes in this dispatch with `sleep-timer-traversed=true`;
+the later plain/none/failure lyrics proof is not reached by this failed core leg.
+
+The newer required platform run at `f2248960` passes both native Mac build/execution
+phases and native iPhone testing with identical application and native-test sources to
+the failed combined dispatch. The crossfade startup cause above therefore remains an
+explicitly unestablished follow-up; a subsequent pass alone is not called a correction.
+
+The revised TV fixture preconditions are also checked through the real OpenSubsonic API
+on an owned, finite loopback Navidrome copy (port 14533, terminated afterwards): seven
+albums, all year 2026, only the Albums group and no finer original-release date. The
+raw server order differs from the required title tie-break: the latter begins Unknown
+Album, Double Lines, the two Dulcet Conformance releases, Long Titles, Paging Atlas and
+Threshold Boundary. This is a backend precondition receipt, not a TV UI pass. Final
+source type-checking passes all five covered UI-test directories with both navigation
+corrections in place.
+
+**Native iPhone follow-up — observed bootstrap window loss.** The normal
+[PR run 39071372229](https://github.com/legitimate-apps/dulcet/actions/runs/39071372229)
+at `b4374580` executes 330 native iPhone tests: 329 pass, one fails, zero skip.
+Its first crossfade proof reports its first media position as **8.039928334 seconds
+on a six-second item**, then a normal advance; the two-second overlap is never
+observed. The recorded Ready event follows the outgoing end. The queue probe responds
+in 0.006 seconds after the failed 30-second wait, which cannot establish its
+responsiveness during the earlier media window. The xcresult and event sequence were
+examined before changing the harness.
+
+The retained host-pressure samples show **load1 155–195 on three CPUs**, with swap
+growing from 178.56 to 467.25 MB during that failure. The earlier no-progress failure
+in run 39062783989 likewise runs at load1 107–182. **OBSERVED:** the platform leg
+leaves the iPhone's first boot inside `xcodebuild test`, while the conformance legs
+already boot and settle before their timed proofs. **INFERENCE:** the bootstrap burst
+delays decoder/observer delivery past the short overlap window. The same-source full
+run 39071376612 passes native iPhone testing; that pass alone is not a correction.
+
+The platform correction performs the existing bounded simulator isolation, first boot
+and settling before the native test phase, without launching Dulcet. It positively
+requires `settled=true` and `isolated=true` for the same valid UUID, then passes that
+exact destination to native, Keychain, full-display and first-run-title tests. The
+native tests, six-second clip, real two-second overlap assertions and existing test
+budgets remain unchanged. `tools/test-platform-iphone-startup` executes the actual
+workflow acknowledgment parser: its positive case passes, while unsettled,
+non-isolated, stale-phase, mismatched-device, duplicate, missing and malformed
+acknowledgments are rejected. It also checks all four test invocations use the verified
+destination. The next full gate must show the actual positive startup marker and all
+planned legs passing; its terminal receipt is maintained in PR #340.
+
+
+**iPad streaming cleanup — actual short-track toolbar replacement.** Full run
+39071376612 reaches the streaming-quality proof after its Library suite passes all
+five methods and the complete lyrics-states method passes in 276.760 seconds.
+The streaming proof fails when tapping Close Now Playing to restore Original quality.
+Its xcresult hierarchy and compressed recording show the full player visibly in
+Preparing playback, with the close chevron at the top leading edge. Three tap attempts
+cannot compute a hit point. Between those snapshots the toolbar button receives new
+accessibility identities while the short tracks advance with AutoPlay enabled.
+
+The player attached its toolbar to a `Group` containing the changing failed, playing,
+preparing and unavailable branches. **INFERENCE:** distributing the toolbar across
+those branches makes the control disappear during the synthesized tap. The correction
+attaches it to a stable `ZStack` around those branches. The streaming proof retains
+AutoPlay, the original short tracks and every server-side 96 kbps/source-bitrate check.
+It now also requires a hittable close control and positively observes dismissal before
+restoring both quality choices through the real pickers. Its advancement alternative
+reads one immutable nonempty title snapshot, so a removed title cannot masquerade as
+movement past the probe. UI-test source type-checking passes all five directories;
+runtime acceptance still requires the final full gate linked from PR #340.
+
+A bounded independent review finds no production blocker in the stable-toolbar,
+immutable-title or positive-dismissal changes. It identifies a gap in the startup
+control: the native and Keychain invocations share one step, so a once-per-step
+substring check can miss one wrong destination. The corrected control parses each
+of the four actual `xcodebuild` invocations, requires their acknowledged destination,
+and rejects wrong-device, generic and missing destinations independently for each
+invocation (12 mutations), alongside the eight startup acknowledgment controls.
+
+
+**TV artist follow-up — observed focus dead end, not an insufficient wait.**
+Run39071376612 fails the artist path after six real Down presses. Its hierarchy and
+recording show focus moving from the header through the trailing Top Song Pin controls,
+then staying on Pin UI Playback Canary through repeated Down presses. Discography's
+lazy grid is 0×0 with no realized albums below the viewport. The earlier bounded remote
+navigation exposed a product problem: a focus section cannot offer an album target
+when every album is unrealized.
+
+On TV the corrected discography realizes its first row eagerly, with a full-width
+focus section; later rows remain lazy with the same fixed columns, tile width and
+spacing. The eager cost is one viewport row per nonempty release group. Touch and Mac
+retain their adaptive lazy grid. The six-Down test bound, seven albums, independently
+established date/title order, nonfirst album activation and both Back destinations
+remain. Positive controls now require zero initially hittable albums, actual traversal
+through a Top Song Pin control and a focused album that becomes hittable after real
+Down navigation. Independent review finds no blocker; final native runtime validation
+is still required. The seven-album fixture fits in the eager row on a wide TV, so this
+receipt alone does not establish navigation into a later lazy row.
+
+**Phone album drag — retained failure and matching-layout control.** The terminal
+phone leg of run 39071376612 passes all seven Library methods with zero failures,
+errors or skips, including offline replay after relaunch in 205.947 seconds and
+the largest-text add flow in 123.187 seconds. Its later album-tile drag fails in
+187.316 seconds: both drags leave the native context menu open and add zero of the
+three expected tracks. Playback remains paused; the ordered-track and zero-open-menu
+assertions remain intact.
+
+The xcresult's two synthesized events start at (296.5, 234.67), inside the right-hand
+Threshold Boundary tile (207, 125, 179, 219.3), and end at (147, 753), inside the mini-player.
+The compressed recording frame at 104 seconds shows the system preview over that tile
+and Play highlighted in the menu below as the touch crosses it. Production already
+uses the system context-menu preview. **HYPOTHESIS:** the straight downward gesture
+selects within the menu instead of lifting the album clear of it. The coordinates
+alone do not prove that mechanism. Lane D has independently reproduced the same
+failure and prepared a fixture matching the hosted album order for a controlled
+native gesture comparison. A passing run at a different tile position is not an
+equivalent-layout positive control.
+
+Lane D's local matching-layout control reproduces the failure: track drag passes
+in 69.909 seconds with one drag and no retained menu; album drag fails in 160.144
+seconds with two drags, two retained menus and no addition. A leading-edge gesture
+candidate passes in 85.822 seconds, and the custom-preview negative control also
+passes under that input. Both experimental changes are restored. Independent review
+notes that this negative control is already documented as intermittent, so its pass
+alone cannot reject a gesture. Acceptance still requires a positive witness that the
+native menu opened during the same uninterrupted successful drag; the separate
+long-press preflight does not establish that condition. A centered fast-velocity
+comparison also fails. A full Albums collection comparison with the original gesture
+is pending. These are lane D's reported local results; this branch has not adopted
+an input change.
+
+[Full run 39080087215](https://github.com/legitimate-apps/dulcet/actions/runs/39080087215)
+is dispatched on the current candidate to exercise the TV focus and stable iPad
+toolbar changes. It is not yet an acceptance receipt. PR #340 retains the
+current-source terminal full-conformance result; all planned legs and the
+aggregate must pass before the PR is ready.
+
+The iPhone leg of run 39080087215 is now terminal: all seven Library cases pass
+with zero failures, errors or skips, including offline replay after relaunch in
+133.815 seconds. The later unchanged album drag fails in 191.195 seconds with
+two drags, two retained menus and zero queued tracks. Its failed xcresult and
+JUnit receipts are retained. The other full-conformance legs remain pending.
+
+**Current native validation — observed.** [Normal Apple run 39079620687](https://github.com/legitimate-apps/dulcet/actions/runs/39079620687)
+is GREEN on `4e066f39`: JUnit exports record Mac 348, iPhone 330, iPad 330 and
+TV 313 native cases, three Keychain cases and one iPad layout case, all with zero
+failures, errors or skips. The startup gate positively records the same explicit
+iPhone UUID with `settled=true isolated=true app-launched=false`, followed by the
+passing native phase. This validates the corrected harness execution; the proposed
+bootstrap/observer-delay cause remains an inference from the earlier failure trace.
+
+**Current iPad validation — observed.** The iPad leg of full run 39080087215 is
+GREEN: 18 proof cases across 14 JUnit exports, zero failures, errors or skips. All
+five Library methods pass, and the streaming-quality proof passes in 115.911 seconds
+with the stable toolbar host and positive dismissal checks. This is runtime evidence
+for the corrected result; conditional-Group toolbar replacement remains the inferred
+mechanism from the retained failure hierarchy and recording.
+
+**Follow-up TV return-to-Browse trace — observed.** The core leg of full run
+39080087215 passes all five Mac Library methods and the TV artist Library proof
+(the first album becomes focused after four Down presses, starting with zero
+hittable album tiles). Its later TV offline-pin case fails only while returning
+from Songs to Browse; pin persistence, the offline Library and Songs have passed.
+The retained activity trace sends six Menu presses without waiting for their focus
+transitions. The recording shows Songs, then the Library root, then the Apple TV
+Home screen. Repeated Up presses there cannot reach Dulcet's section bar. The
+helper now waits for actual section-bar focus after each Menu, requires the app
+in the foreground and bar focus before walking horizontally, and retains exact
+target focus before Select. Runtime validation of that correction is pending.
+
+**Phone menu condition — observed local comparison.** A matching disposable
+314-track/eight-album fixture reproduces the hosted Recently Added placement.
+The full Albums collection in Title order passes the original uninterrupted
+centered gesture in 135.178 seconds: one drag, three ordered tracks, paused
+playback and no retained menu. The recording of that same successful gesture
+shows the native menu before the floating album lifts. This is a manual recording
+receipt, without a claim about millisecond timing. Frames read left to right,
+then top to bottom; the final two show the native menu and lifted album. This
+sequence belongs to that original uninterrupted positive, not the automated
+second-touch proof below.
+
+![Recorded uninterrupted phone album drag: native menu before lift](library-depth-iphone/album-drag-native-menu-sequence.jpg)
+
+The automated phone proof now covers an explicitly different interaction: it
+opens the named album's native context menu, positively requires its Pin/Unpin
+command, hittable Add to Playlist command, and exactly one separate hittable
+system Preview **before every attempt**, then drags that Preview with a second
+touch. A diagnostic using the covered original tile fails because it is not
+hittable. The actual-Preview final proof passes in 118.842 seconds with
+`native-menu-ready=1 drags=1 menu-left-open-after=0`, three tracks in exact album
+order and playback paused. Every retry must establish the native menu again.
+The original continuous gesture's recording remains separate evidence; the
+second-touch automation does not silently stand in for it. The exact new
+no-drag-source control fails in 214.496 seconds after positively observing both
+menus (`native-menu-ready=2 drags=2 menu-left-open-after=2`): playback starts and
+the final queue has one of the three expected entries in the wrong order. The
+unchanged transport, count, order and menu assertions reject those menu side
+effects. The temporary production mutation is restored byte-for-byte to HEAD;
+the restored shared-helper playlist control passes in 123.410 seconds with one
+drag, exact playlist order, paused playback and no retained menu. The restored
+album control passes in 175.712 seconds with `native-menu-ready=1 drags=1
+menu-left-open-after=0`, exactly three tracks in album order and playback paused.
+Both restored controls have zero failures, errors and skips.
+
+**Local TV launcher limitation — observed.** The final phone/menu and TV/focus
+sources compile for the actual iPhone and TV test targets. The local four-case
+TV attempt on a leased tvOS 26.5 simulator then fails before any Library case
+executes: `IDELaunchiPhoneSimulatorLauncher`, `NSMachErrorDomain -308`, server
+died while installing or launching `DulcetTVUITests-Runner`. The result bundle
+contains zero passed Library tests and a runner error, not a Library assertion.
+The disposable server, proxies, simulator, DerivedData lease and build/sim
+reservations are released. This is not counted as a runtime pass, and the
+underlying local IPC failure is not diagnosed as an app defect. No shared
+simulator service is restarted. Final runtime acceptance uses hosted Apple CI.
+The planner control passes 28,175 checks over 701 Apple-affecting files and the
+final diff passes whitespace checks.
+
+**Hosted prepared-menu target failure — observed.** The iPhone leg of
+[full run 39086907536](https://github.com/legitimate-apps/dulcet/actions/runs/39086907536)
+passes all seven Library cases and nine earlier exported single-case proofs with
+zero failures, errors or skips. The album proof then positively establishes its
+native menu and hittable Preview on attempt one, but XCTest rejects
+`dulcet.mini-player.open` as not hittable while resolving the second drag hit point.
+The activity trace contains no synthesized event for that drag. The retained
+recording shows the native menu still open over the app; the bar remains visible
+behind the menu's background shield. This is a target-resolution failure before
+touch delivery, not evidence that a delivered drop lost its queue payload.
+
+The prepared-menu path now waits for the real bar to be hittable before **each**
+menu, captures its visible bounded frame, positively establishes the same native
+Preview, and requires that the bar frame remain unchanged afterward. Both gesture
+centers must be inside the actual app bounds. It derives coordinates from those
+frames so XCTest can send the drag without first hit-testing the background bar
+through the open menu. The `0.8`-second hold, velocity `200`, one-second end hold,
+two-attempt limit and deferred queue read are unchanged. Callers without native-menu
+preparation retain their element-to-element gesture. Exact queue count/order,
+paused playback and zero retained menus remain required. Full run
+[39098039571](https://github.com/legitimate-apps/dulcet/actions/runs/39098039571)
+again passes this album proof with one native menu, one delivered drag, exact
+three-track order, paused playback and no remaining menu. A separate revised
+negative control has not completed: an earlier variant failed before touch delivery,
+a later invocation failed in checkout, and its replacement was canceled while
+queued. Those controls provide no causal acceptance evidence.
+
+**Default-on AutoPlay moves the skip history below the fold — observed.** In
+[full run 39092007526](https://github.com/legitimate-apps/dulcet/actions/runs/39092007526),
+the revised phone album proof passes in 123.225 seconds with one positively observed
+native menu, one delivered drag, all three album tracks in order, paused playback
+and no remaining menu. The later automatic-skip proof fails because it never
+scrolls Up Next before looking for Previously Played. Its failure hierarchy shows
+the actual queue collection at 0% with two pages, AutoPlay value `1` and five
+recommendation rows; the lazy list has not materialized the history disclosure.
+The skip notice, following-track playback and server counts still succeed:
+Unplayable Probe stays `0`, while Playable After Skip advances `0 → 1`.
+
+The skip proof now scrolls the actual queue, within six swipes per target, and
+requires a hittable Previously Played disclosure. It proves history starts
+collapsed, expands it, and requires the real first track row to be hittable
+before checking its unchanged track-title identity and unmarked presentation.
+It records AutoPlay's observed value, recommendation count, initial reachability
+and actual swipe counts. It leaves AutoPlay on and preserves the notice,
+transport and positive/negative server-play-count checks. Full run39098039571 validates this history correction with AutoPlay `1`, five
+recommendations, one disclosure swipe and one row swipe. Its phone leg later
+fails the separate largest-text catalog prerequisite described below; this is
+not a green full-run receipt.
+
+**Sample the playing UI atomically under AutoPlay — observed failure, inferred
+lookup mechanism.** The same full run's iPad leg passes the Library, playlist,
+account, download and four-state lyrics proofs, then fails its final streaming-
+quality proof in 176.585 seconds. The playback poll spends its window retrying
+separate progress and title snapshot lookups; none returns advancement evidence.
+The later diagnostic reads `Paging Track 243`. The retained recording during the
+failed poll shows the actual player displaying `Paging Track 077`, AutoPlay on
+and recommendations. The server logs both probe streams at the required 96 kbps.
+This establishes UI advancement and a failed observation; replacing rapidly
+changing elements during individual snapshot resolution is the inferred mechanism.
+
+The quality proof now obtains one immutable whole-app snapshot per poll, using
+the existing notice-proof traversal pattern. It collects the first matching
+native progress/title elements and both failure/skip checks from the entire tree,
+rejects negatives before accepting parsed elapsed time or a nonempty advanced
+title, and preserves slider precedence. Missing or failed snapshots prove
+nothing. The original 20-second window, AutoPlay setting, server bitrate/source
+checks and quality restoration remain unchanged. Diagnostics use the last actual
+sample, and the proof records its snapshot count and accepted playback evidence.
+Full run39098039571 validates the quality correction: the iPad leg is GREEN,
+with18 actual cases in14 JUnit exports and zero failures, errors or skips. The
+quality case passes in152.658 seconds and records two immutable samples, accepting
+the actual advanced title `Étude 東京`. All other full-run legs still need their
+final-source acceptance.
+
+**Hold the TV footer proof's named song after proving live lyrics — observed
+transition, inferred focus mechanism.** The core leg of full run 39092007526
+passes its earlier native/core work and two TV UI proofs, then fails the footer
+heart-focus assertion in 80.676 seconds. The named 29-second track successfully
+shows a lit English lyric line. The subsequent remote walk outlasts it: the
+failure hierarchy shows `Paging Track 125`, `Playing from AutoPlay` and focus on
+Library. The exact transition that resets focus is not captured; disruption by
+the changing song/controls is inferred.
+
+Immediately after the real lit-line proof, the footer test now sends the remote
+Play/Pause key and positively requires the paused Play transport and exact
+original song title. It then retains every actual remote focus/Select assertion,
+Sleep Timer traversal, lyric-panel open/hide check and server favorite/rating
+write. An already-advanced song fails the title assertion. This holds the song
+being rated while the footer and server checks run; it does not establish
+continuous footer focus through a natural AutoPlay transition. Full run 39098039571 validates this footer correction: the case passes in
+51.418 seconds, records a real lit English line and positively records
+`sleep-timer-traversed=true`. The same core leg passes all five Mac Library and
+all four TV Library cases before a later, separate static-lyrics failure.
+The final-source full-run receipt is maintained in PR #340.
+
+**Reach the cold largest-text Library catalog before waiting for a lazy tile —
+observed.** Full run 39098039571 passes all seven phone Library cases, the album,
+track, playlist and search drag proofs, and the repaired skipped-track history
+proof. The latter records AutoPlay `1`, five recommendations, initially
+unreachable history, one disclosure swipe and one row swipe. The next short-title
+largest-text skip-notice test fails in 54.859 seconds before starting playback:
+its helper waits 30 seconds for an album tile without scrolling. The failed
+xcresult's hierarchy has a 402 × 874 viewport, the Library tab selected, Recently
+Added at y=1513.7, an empty lazy grid and a 13-page scrollbar at 0%. The expanded
+Library controls and explanation place the catalog below the fold; this failure
+establishes no defect in the notice's navigation clearance.
+
+The helper now reaches the stable Recently Added heading with room below it for
+the lazy grid, retains the original 30-second wait for an actual loaded album,
+and requires a hittable tile. The heading and first-tile phases share six actual
+swipes; the existing named-album phase remains separately bounded. Both
+largest-text notice cases positively require an initially unreachable catalog
+and at least one real catalog swipe, while retaining their track-row scrolling,
+full-width header actions, notice, transport and navigation checks. Independent
+source review found the data-readiness wait and default helper behavior retained.
+Two earlier bounded local attempts obtained no build reservation and performed
+no build or simulator test; neither is a pass. A subsequent owned focused run on
+iPhone 17 Pro, iOS 26.5, explicit destination
+`6E5A3B7A-545F-4778-9DD4-D31EEC7570A9`, passes both actual notice methods:
+long-title 55.024 seconds and short-title 52.088 seconds. Each records
+`catalog-initially-reachable=false catalog-swipes=4 row-swipes=1`; the actual
+export includes these and the track-drag case below, three tests with zero
+failures, errors or skips. The full acceptance receipt remains required in PR #340.
+
+**Hold the selected TV static-lyrics fixture before remote navigation — observed
+lost fixture, inferred transition mechanism.** Full run 39098039571 completes
+59 actual UI cases across 52 JUnit exports with no failure, error or skip, then
+fails `testLyricsPlainNoneAndAFailedReadAreDrivenByRemote` in 32.330 seconds.
+The selected Ogg Probe title is read at 18.78 seconds; footer navigation starts
+at 19.10 seconds. Sleep Timer exists at 29.47 seconds, but its separate focus
+lookup fails after the control disappears. Both failure hierarchies show
+`Couldn’t play “Paging Track 154”`, Library focused and no footer. The generator
+makes the original Ogg fixture one second long. The proof has lost its intended
+song; the precise transition and the later track's playback-error cause are not
+captured. No playback-engine correction is claimed for that later error.
+
+The core Apple leg now explicitly requests a holdable plain-lyrics corpus
+variant. It retains the same 314 tracks, Ogg container, title and two exact plain
+sidecar lines; ffprobe verifies its 90-second duration and the manifest records
+that observation and the opt-in. The default corpus, including the separate
+phone/iPad leg, keeps the one-second Ogg format canary. The TV test positively
+requires the longer duration from the disposable server. In each static plain,
+none and failed-read state, it acknowledges the actual Pause transport, sends
+one real remote Play/Pause key, then requires Play and the exact originally
+selected title before navigating the footer. Missing controls still fail. The
+plain-line focus walk, no-current-line check, exact empty state, no-spinner
+check, actual failed read, remote Try Again and positive post-disarm server read
+all remain. The separate synced footer test still proves a live lit line.
+
+Local generator controls produce both actual variants with 314 media files and
+exact sidecars: ffprobe reports 1.006 seconds for default and 90.007 seconds for
+the holdable Ogg. Corpus rejection/provenance controls pass; all five UI source
+directories type-check. Independent source review found no blocker. Full run [39109276056](https://github.com/legitimate-apps/dulcet/actions/runs/39109276056)
+subsequently validates this correction: the core leg passes 63 actual UI cases
+across 56 exports with no failure, error or skip, including this static-lyrics
+case in 107.242 seconds. It also passes all five Mac and four TV Library cases.
+The separate iPad leg passes 18 actual cases across 14 exports. These are
+receipts for that source revision; final-source acceptance remains required in PR #340.
+
+**Hold the track-drag canary before reading its queue — observed moving fixture.**
+Full run 39109276056 fails
+`testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone` in 207.966 seconds,
+before any drag. Its activity trace taps the 31-second UI Playback Canary at
+158.256 seconds and Up Next at 192.974 seconds. The failure hierarchies show the
+same app process, Preparing playback, Loading in the bar and no queue footer;
+the toggle disappears during its tap. The exact transition trigger is not
+captured, so attributing it specifically to AutoPlay remains an inference.
+
+The test now requires the original canary title and an actual Pause control,
+taps Pause, then requires Play and the same canary before taking two agreeing
+Up Next baseline reads. The real native-menu precondition, uninterrupted
+long-press drag, two-attempt bound and exact one-entry queue increment remain.
+The final assertions also require the original canary and paused transport.
+AutoPlay remains enabled; the baseline counts the actual ordinary queue rows,
+whose identifiers distinguish them from recommendation rows.
+The same focused leased iPhone run above passes this complete case in 75.902
+seconds. Its two baseline reads are both empty; after one drag it reads exactly
+`Thirty One Seconds, Dulcet Fixtures`, with zero menus left open, and passes
+the final paused/original-title assertions. The actual three-case export has no
+failures, errors or skips. The disposable server is stopped and every owned
+build, simulator and DerivedData lease is released. This focused pass does not
+replace full-source acceptance in PR #340.
+
+**Prepare the real overlap before testing crossfade transport disposal — observed
+missing prerequisite, exact timing mechanism inferred.** On the same source,
+normal PR run 39109246321 fails the replacement argument and full run
+39109276056 fails the pause argument in
+`transportChangesDisposeTheOutgoingTail`. Both exhaust the existing 30-second
+wait for a real overlap with incoming gain above 0.05 before issuing the
+transport command. The engine queue remains responsive. The normal run records
+an early outgoing handoff at 4.381 seconds, so “overlap never began” would
+overstate what the trace proves. The full run records the outgoing six-second
+file ending naturally before the incoming file advances. Accepted preload did
+not prove that both actual items were ready within that short playback window;
+the precise readiness, buffering and callback scheduling contribution remains
+unproven. Neither failure reaches the disposal assertion.
+
+Only the five transport-disposal arguments now opt into a 12-second local WAV
+fixture. With crossfade disarmed, real playback must prepare both actual items
+while the original remains current. The fixture then requires an acknowledged
+pause and zero rate, performs a real completed seek to six seconds, and requires
+both items ready, the original current, zero rate and the actual position within
+0.05 seconds. It then arms the same two-second crossfade and resumes. The staged
+window still starts six seconds before the original ends. The incoming gain
+prerequisite, atomic command during overlap and all outgoing-tail disposal
+assertions remain. Default six-second fixtures, including the no-byte-range
+no-reopen proof, do not take this warm/seek path. Bounded sample diagnostics
+retain actual overlap rates and gains; no observation timeout is extended.
+
+Local controls establish that waiting while paused, even after successful
+current-item preroll, leaves the second real item unknown (`[1, 0]`); those
+failed candidates were removed. A filter that selected zero tests is retained
+as compile-only evidence and supplies no runtime pass. The final fixture runs
+on an explicitly leased iPad Pro 13-inch (M5), iOS 26.5, destination
+`58BA1CFE-6449-442D-8A84-F9480032A9A3`. Its actual Swift Testing export contains
+six test methods, zero failures, errors or skips, and the suite takes 72.556
+seconds. All five transport arguments record two ready items, paused staging at
+six seconds, and an actual command during qualifying overlap. Independent source
+review found no blocker. These focused native checks do not replace the final
+full Apple run.
+
+The final-source full Apple acceptance receipt is maintained in [PR #340](https://github.com/legitimate-apps/dulcet/pull/340).
+It must show all planned platform, core, iPad and iPhone legs plus the aggregate
+GREEN before the PR is ready. The earlier rejected runs and local controls above
+remain diagnosis history; they are not substituted for that full receipt.
