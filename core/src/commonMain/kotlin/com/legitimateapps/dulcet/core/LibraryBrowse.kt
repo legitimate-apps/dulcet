@@ -1011,4 +1011,3 @@ private fun JsonObject.readerCredits(role: CreditRole): List<CacheCredit> =
 
 private fun JsonObject.long(name: String): Long? =
     (get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
-
