@@ -1363,6 +1363,20 @@ final class DulcetiOSUITests: XCTestCase {
         let noticeGone = notice.waitForNonExistence(timeout: 10)
         XCTAssertTrue(noticeGone, "The notice must go away by itself")
 
+        // Prove the successor crossed its play-count threshold before pausing it. History
+        // is positional: letting this short fixture end while inspecting a lazy list would
+        // put the successor, rather than the skipped entry, at history row zero.
+        let playableAfter = awaitServerPlayCount(
+            title: "Playable After Skip", configuration: configuration,
+            expected: playableBefore + 1, timeout: 60
+        )
+        XCTAssertEqual(playableAfter, playableBefore + 1,
+                       "Control: the track that played must be counted once, or the read sees no plays")
+        XCTAssertTrue(waitForLabelContaining("Playable After Skip", of: bar, timeout: 5))
+        playPause.tap()
+        let successorPaused = waitForLabel("Play", of: playPause, timeout: 5)
+        XCTAssertTrue(successorPaused, "Pause the counted successor before inspecting positional history")
+
         // Previously Played lists the skipped track like any other entry the queue passed, unmarked.
         bar.tap()
         let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
@@ -1371,6 +1385,7 @@ final class DulcetiOSUITests: XCTestCase {
         let upNextToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
         var historyRow = "<none>"
         var historyScrolls = 0
+        var historyRowScrolls = 0
         if upNextToggle.waitForExistence(timeout: 5) {
             upNextToggle.tap()
             let historyToggle = app.descendants(matching: .any)["dulcet.history.toggle"].firstMatch
@@ -1387,6 +1402,13 @@ final class DulcetiOSUITests: XCTestCase {
             if historyToggle.exists && historyToggle.isHittable {
                 historyToggle.tap()
                 let row = app.buttons["dulcet.history.row.0"].firstMatch
+                // The disclosure can be the last visible row. Reveal its lazy content too,
+                // using the remainder of the same twelve-scroll navigation budget.
+                while historyScrolls < 12 && !(row.exists && row.isHittable) {
+                    queue.swipeUp()
+                    historyScrolls += 1
+                    historyRowScrolls += 1
+                }
                 historyRow = row.waitForExistence(timeout: 5) ? row.label : "<none>"
             }
         }
@@ -1394,20 +1416,14 @@ final class DulcetiOSUITests: XCTestCase {
                       "The skipped track must be listed, unmarked, under Previously Played; row=\(historyRow)")
         attachScreenshot(named: "skipped-track-history", app: app)
 
-        // The server: the next track's play is counted once it passes its threshold -- so the read
-        // can see a play -- and the skipped track's never is.
-        let playableAfter = awaitServerPlayCount(
-            title: "Playable After Skip", configuration: configuration,
-            expected: playableBefore + 1, timeout: 60
-        )
+        // The counted successor stays paused; the skipped track must never count as played.
         let unplayableAfter = serverPlayCount(title: "Unplayable Probe", configuration: configuration)
-        XCTAssertEqual(playableAfter, playableBefore + 1,
-                       "Control: the track that played must be counted once, or the read sees no plays")
         XCTAssertEqual(unplayableAfter, 0, "The skipped track must never be counted as played")
         print("DULCET AUTO SKIP OBSERVED notice=\(noticeLabel.debugDescription) markers=\(noticeMarkers)"
             + " placement=\(placement) bar=\(bar.label.debugDescription) playing=\(playing)"
             + " no-failure-line=\(noFailureLine) notice-gone=\(noticeGone) history-row-0=\(historyRow.debugDescription)"
             + " history-scrolls=\(historyScrolls)"
+            + " history-row-scrolls=\(historyRowScrolls) successor-paused=\(successorPaused)"
             + " unplayable-plays=\(unplayableBefore)->\(String(describing: unplayableAfter))"
             + " playable-plays=\(playableBefore)->\(String(describing: playableAfter))")
     }
