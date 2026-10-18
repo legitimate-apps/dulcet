@@ -1119,6 +1119,26 @@ paused playback and zero retained menus remain required. Acceptance requires run
 validation of this correction, the same no-drag-source control reaching an actual
 synthesized drag, and a restored-source positive.
 
+**Default-on AutoPlay moves the skip history below the fold — observed.** In
+[full run 39092007526](https://github.com/legitimate-apps/dulcet/actions/runs/39092007526),
+the revised phone album proof passes in 123.225 seconds with one positively observed
+native menu, one delivered drag, all three album tracks in order, paused playback
+and no remaining menu. The later automatic-skip proof fails because it never
+scrolls Up Next before looking for Previously Played. Its failure hierarchy shows
+the actual queue collection at 0% with two pages, AutoPlay value `1` and five
+recommendation rows; the lazy list has not materialized the history disclosure.
+The skip notice, following-track playback and server counts still succeed:
+Unplayable Probe stays `0`, while Playable After Skip advances `0 → 1`.
+
+The skip proof now scrolls the actual queue, within six swipes per target, and
+requires a hittable Previously Played disclosure. It proves history starts
+collapsed, expands it, and requires the real first track row to be hittable
+before checking its unchanged track-title identity and unmarked presentation.
+It records AutoPlay's observed value, recommendation count, initial reachability
+and actual swipe counts. It leaves AutoPlay on and preserves the notice,
+transport and positive/negative server-play-count checks. Runtime acceptance of
+this further correction remains pending the final-source full run.
+
 The final-source full Apple acceptance receipt is maintained in [PR #340](https://github.com/legitimate-apps/dulcet/pull/340).
 It must show all planned platform, core, iPad and iPhone legs plus the aggregate
 GREEN before the PR is ready. The earlier rejected runs and local controls above

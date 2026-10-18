@@ -7852,6 +7852,14 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-18 — Reach skipped-track history through the default-on AutoPlay queue.**
+Previously Played follows AutoPlay recommendations in the queue's lazy list. The automatic-skip
+proof scrolls that actual list within a bounded search, requires a hittable history disclosure,
+proves it starts collapsed, expands it and requires the real first track row before asserting
+its unchanged skipped-track identity and unmarked presentation. It records the observed
+AutoPlay value, initial reachability and swipe counts, without disabling AutoPlay. The skip
+notice, following-track playback and both server-play-count checks remain required.
+
 **2026-10-17 — Positively observe the phone album menu before its queue drag.**
 The phone proof opens the full Albums collection and selects Title order, independent of
 fixture creation timestamps. Before **every attempt**, it opens the named album's native

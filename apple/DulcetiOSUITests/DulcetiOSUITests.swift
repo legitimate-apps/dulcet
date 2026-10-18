@@ -1369,16 +1369,50 @@ final class DulcetiOSUITests: XCTestCase {
         let titled = title.waitForExistence(timeout: 10) && waitForLabel("Playable After Skip", of: title, timeout: 10)
         XCTAssertTrue(titled, "The player must show the track that plays; title=\(title.label)")
         let upNextToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
-        var historyRow = "<none>"
-        if upNextToggle.waitForExistence(timeout: 5) {
-            upNextToggle.tap()
-            let historyToggle = app.descendants(matching: .any)["dulcet.history.toggle"].firstMatch
-            if historyToggle.waitForExistence(timeout: 5) {
-                historyToggle.tap()
-                let row = app.buttons["dulcet.history.row.0"].firstMatch
-                historyRow = row.waitForExistence(timeout: 5) ? row.label : "<none>"
-            }
+        guard upNextToggle.waitForExistence(timeout: 5), upNextToggle.isHittable else {
+            XCTFail("The playing track must offer Up Next: " + app.debugDescription)
+            return
         }
+        upNextToggle.tap()
+        let queue = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
+        guard queue.waitForExistence(timeout: 10) else {
+            XCTFail("Up Next must expose its actual queue list: " + app.debugDescription)
+            return
+        }
+        // AutoPlay is on by default. Its recommendations precede Previously Played, so the
+        // lazy list may not materialize history until the person scrolls the queue itself.
+        let autoplay = app.switches["dulcet.upNext.autoplay.toggle"].firstMatch
+        let autoplayValue = autoplay.exists ? String(describing: autoplay.value ?? "<none>") : "<absent>"
+        let visibleRecommendations = queue.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "dulcet.upNext.autoplay.row."
+        )).count
+        let historyToggle = queue.descendants(matching: .any)["dulcet.history.toggle"].firstMatch
+        let initiallyReachable = historyToggle.exists && historyToggle.isHittable
+        var historySwipes = 0
+        while !(historyToggle.exists && historyToggle.isHittable), historySwipes < 6 {
+            queue.swipeUp()
+            historySwipes += 1
+        }
+        guard historyToggle.exists && historyToggle.isHittable else {
+            XCTFail("Scrolling Up Next must reveal a hittable Previously Played disclosure: " + app.debugDescription)
+            return
+        }
+        let row = queue.buttons["dulcet.history.row.0"].firstMatch
+        XCTAssertFalse(row.exists, "Previously Played must start collapsed")
+        historyToggle.tap()
+        var rowSwipes = 0
+        while !(row.exists && row.isHittable), rowSwipes < 6 {
+            queue.swipeUp()
+            rowSwipes += 1
+        }
+        guard row.exists && row.isHittable else {
+            XCTFail("Expanding Previously Played must reveal its actual first track: " + app.debugDescription)
+            return
+        }
+        let historyRow = row.label
+        print("DULCET SKIP HISTORY REVEAL autoplay=\(autoplayValue) visible-recommendations=\(visibleRecommendations)"
+            + " initially-reachable=\(initiallyReachable) disclosure-swipes=\(historySwipes) row-swipes=\(rowSwipes)"
+            + " disclosure-hittable=\(historyToggle.isHittable) row-hittable=\(row.isHittable)")
         XCTAssertTrue(historyRow.hasPrefix("Unplayable Probe") && !historyRow.localizedCaseInsensitiveContains("skip"),
                       "The skipped track must be listed, unmarked, under Previously Played; row=\(historyRow)")
         attachScreenshot(named: "skipped-track-history", app: app)
