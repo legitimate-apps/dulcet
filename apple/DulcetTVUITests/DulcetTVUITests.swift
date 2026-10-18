@@ -567,9 +567,7 @@ final class DulcetTVUITests: XCTestCase {
         // The moving cursor above has proved playback. Pause before the server round trips:
         // AutoPlay now continues this one-track search when it ends, and rating another song
         // would no longer test the heart and stars for the track named by this proof.
-        let pause = app.buttons["pause.fill"].firstMatch
-        XCTAssertTrue(focusByRemote(pause, in: app, bound: 8), "The remote must reach Pause")
-        XCUIRemote.shared.press(.select)
+        XCUIRemote.shared.press(.playPause)
         XCTAssertTrue(app.buttons["play.fill"].firstMatch.waitForExistence(timeout: 5), "Pause must take effect")
         XCTAssertEqual(title.label, track, "The proof must pause its named track before rating it")
 
