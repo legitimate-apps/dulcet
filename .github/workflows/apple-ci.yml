@@ -18,6 +18,11 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         fetch-depth: 2
+    - name: Fetch the immutable control source baseline
+      run: |
+        git fetch --no-tags --depth=1 origin 06897b8bfaf67d27bf5c01cf1408047a77a029cb
+        test "$(git rev-parse FETCH_HEAD)" = 06897b8bfaf67d27bf5c01cf1408047a77a029cb
+        git cat-file -e 06897b8bfaf67d27bf5c01cf1408047a77a029cb^{commit}
     - name: Read toolchain pins
       id: pins
       run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
