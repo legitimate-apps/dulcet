@@ -7852,6 +7852,28 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-18 — Establish real readiness before crossfade transport-disposal proofs.**
+Only the five transport arguments warm both actual queued items through real
+playback of a 12-second local WAV while crossfade is disarmed. They require the
+original still current, acknowledged pause and zero rate, a completed real seek
+to six seconds and renewed readiness, identity and position checks before arming
+the existing two-second overlap. Incoming gain above 0.05, atomic transport during
+overlap and outgoing-tail disposal remain mandatory. Default six-second fixtures
+and the no-byte-range no-reopen proof retain their original path. An accepted
+preload alone is not a readiness receipt; bounded real-sample diagnostics preserve
+rates and gains when the overlap prerequisite fails. Runtime evidence is recorded
+in `docs/evidence/library-depth.md`.
+
+**2026-10-18 — Hold the named canary throughout the iPhone track-drag proof.**
+Before reading Up Next, the proof requires the selected canary and actual Pause,
+sends a real tap, then requires Play and the original title. Two agreeing queue
+reads establish the ordinary queue baseline while AutoPlay remains enabled. The native
+menu precondition, uninterrupted long-press drag and exact one-entry increment
+remain. The original canary and paused transport must still hold afterward.
+A queue footer disappearing during an unpaused fixture's transition fails setup;
+it does not establish a failed drag. Runtime acceptance is recorded in
+`docs/evidence/library-depth.md`.
+
 **2026-10-18 — Hold named TV static-lyrics fixtures before walking the footer.**
 The core Apple corpus explicitly opts into a 90-second plain Ogg variant, recording
 its ffprobe-verified duration while retaining 314 media files and the exact plain

@@ -1211,9 +1211,14 @@ largest-text notice cases positively require an initially unreachable catalog
 and at least one real catalog swipe, while retaining their track-row scrolling,
 full-width header actions, notice, transport and navigation checks. Independent
 source review found the data-readiness wait and default helper behavior retained.
-Two bounded local focused attempts obtained no build reservation and performed
-no build or simulator test; neither is a pass. The final-source runtime acceptance
-receipt is maintained in PR #340.
+Two earlier bounded local attempts obtained no build reservation and performed
+no build or simulator test; neither is a pass. A subsequent owned focused run on
+iPhone 17 Pro, iOS 26.5, explicit destination
+`6E5A3B7A-545F-4778-9DD4-D31EEC7570A9`, passes both actual notice methods:
+long-title 55.024 seconds and short-title 52.088 seconds. Each records
+`catalog-initially-reachable=false catalog-swipes=4 row-swipes=1`; the actual
+export includes these and the track-drag case below, three tests with zero
+failures, errors or skips. The full acceptance receipt remains required in PR #340.
 
 **Hold the selected TV static-lyrics fixture before remote navigation — observed
 lost fixture, inferred transition mechanism.** Full run 39098039571 completes
@@ -1243,9 +1248,74 @@ all remain. The separate synced footer test still proves a live lit line.
 Local generator controls produce both actual variants with 314 media files and
 exact sidecars: ffprobe reports 1.006 seconds for default and 90.007 seconds for
 the holdable Ogg. Corpus rejection/provenance controls pass; all five UI source
-directories type-check. Independent source review found no blocker. These are
-fixture and compilation checks, not a TV runtime pass; final-source runtime
-acceptance is maintained in PR #340.
+directories type-check. Independent source review found no blocker. Full run [39109276056](https://github.com/legitimate-apps/dulcet/actions/runs/39109276056)
+subsequently validates this correction: the core leg passes 63 actual UI cases
+across 56 exports with no failure, error or skip, including this static-lyrics
+case in 107.242 seconds. It also passes all five Mac and four TV Library cases.
+The separate iPad leg passes 18 actual cases across 14 exports. These are
+receipts for that source revision; final-source acceptance remains required in PR #340.
+
+**Hold the track-drag canary before reading its queue — observed moving fixture.**
+Full run 39109276056 fails
+`testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone` in 207.966 seconds,
+before any drag. Its activity trace taps the 31-second UI Playback Canary at
+158.256 seconds and Up Next at 192.974 seconds. The failure hierarchies show the
+same app process, Preparing playback, Loading in the bar and no queue footer;
+the toggle disappears during its tap. The exact transition trigger is not
+captured, so attributing it specifically to AutoPlay remains an inference.
+
+The test now requires the original canary title and an actual Pause control,
+taps Pause, then requires Play and the same canary before taking two agreeing
+Up Next baseline reads. The real native-menu precondition, uninterrupted
+long-press drag, two-attempt bound and exact one-entry queue increment remain.
+The final assertions also require the original canary and paused transport.
+AutoPlay remains enabled; the baseline counts the actual ordinary queue rows,
+whose identifiers distinguish them from recommendation rows.
+The same focused leased iPhone run above passes this complete case in 75.902
+seconds. Its two baseline reads are both empty; after one drag it reads exactly
+`Thirty One Seconds, Dulcet Fixtures`, with zero menus left open, and passes
+the final paused/original-title assertions. The actual three-case export has no
+failures, errors or skips. The disposable server is stopped and every owned
+build, simulator and DerivedData lease is released. This focused pass does not
+replace full-source acceptance in PR #340.
+
+**Prepare the real overlap before testing crossfade transport disposal — observed
+missing prerequisite, exact timing mechanism inferred.** On the same source,
+normal PR run 39109246321 fails the replacement argument and full run
+39109276056 fails the pause argument in
+`transportChangesDisposeTheOutgoingTail`. Both exhaust the existing 30-second
+wait for a real overlap with incoming gain above 0.05 before issuing the
+transport command. The engine queue remains responsive. The normal run records
+an early outgoing handoff at 4.381 seconds, so “overlap never began” would
+overstate what the trace proves. The full run records the outgoing six-second
+file ending naturally before the incoming file advances. Accepted preload did
+not prove that both actual items were ready within that short playback window;
+the precise readiness, buffering and callback scheduling contribution remains
+unproven. Neither failure reaches the disposal assertion.
+
+Only the five transport-disposal arguments now opt into a 12-second local WAV
+fixture. With crossfade disarmed, real playback must prepare both actual items
+while the original remains current. The fixture then requires an acknowledged
+pause and zero rate, performs a real completed seek to six seconds, and requires
+both items ready, the original current, zero rate and the actual position within
+0.05 seconds. It then arms the same two-second crossfade and resumes. The staged
+window still starts six seconds before the original ends. The incoming gain
+prerequisite, atomic command during overlap and all outgoing-tail disposal
+assertions remain. Default six-second fixtures, including the no-byte-range
+no-reopen proof, do not take this warm/seek path. Bounded sample diagnostics
+retain actual overlap rates and gains; no observation timeout is extended.
+
+Local controls establish that waiting while paused, even after successful
+current-item preroll, leaves the second real item unknown (`[1, 0]`); those
+failed candidates were removed. A filter that selected zero tests is retained
+as compile-only evidence and supplies no runtime pass. The final fixture runs
+on an explicitly leased iPad Pro 13-inch (M5), iOS 26.5, destination
+`58BA1CFE-6449-442D-8A84-F9480032A9A3`. Its actual Swift Testing export contains
+six test methods, zero failures, errors or skips, and the suite takes 72.556
+seconds. All five transport arguments record two ready items, paused staging at
+six seconds, and an actual command during qualifying overlap. Independent source
+review found no blocker. These focused native checks do not replace the final
+full Apple run.
 
 The final-source full Apple acceptance receipt is maintained in [PR #340](https://github.com/legitimate-apps/dulcet/pull/340).
 It must show all planned platform, core, iPad and iPhone legs plus the aggregate

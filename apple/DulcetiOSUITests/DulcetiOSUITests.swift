@@ -2113,8 +2113,10 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // Something plays, so the bar is there to drop onto; the canary is the album's last track,
-        // so nothing follows it yet.
+        // Hold the album's last track before inspecting the queue. On a loaded host the first
+        // Up Next read happened over 34 seconds after this 31-second fixture was tapped; playback
+        // was preparing another song and the footer disappeared under the toggle's tap.
+        // AutoPlay may append recommendations, so count what the drag adds to the actual queue.
         let canary = track("UI Playback Canary")
         guard canary.waitForExistence(timeout: 10), scrollIntoView(canary, in: app) else {
             XCTFail("The album must list UI Playback Canary: " + app.debugDescription)
@@ -2126,7 +2128,19 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("Playing a track must show the now-playing bar: " + app.debugDescription)
             return
         }
-        guard let before = upNextLabels(openingFrom: bar, in: app) else { return }
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        guard waitForLabelContaining("UI Playback Canary", of: bar, timeout: 10),
+              waitForLabel("Pause", of: playPause, timeout: 10) else {
+            XCTFail("The named canary must be playing before it is paused: " + app.debugDescription)
+            return
+        }
+        playPause.tap()
+        guard waitForLabel("Play", of: playPause, timeout: 10),
+              bar.label.contains("UI Playback Canary") else {
+            XCTFail("Pause must hold the original canary before reading Up Next: " + app.debugDescription)
+            return
+        }
+        guard let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: true) else { return }
         let queuedBefore = before.filter { $0.hasPrefix("Thirty One Seconds") }.count
 
         // A second drag only if the first queued nothing: on one local run of ten the lifted
@@ -2161,6 +2175,9 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertEqual(after.filter { $0.hasPrefix("Thirty One Seconds") }.count, queuedBefore + 1,
                        "The dragged track must join Up Next once; before=\(before) after=\(after) drags=\(attempts)"
                        + " menu-left-open-after=\(menuLeftOpen)")
+        XCTAssertEqual(playPause.label, "Play", "The queue proof must keep playback paused")
+        XCTAssertTrue(bar.label.contains("UI Playback Canary"),
+                      "The drag must append to the held canary's queue; bar=\(bar.label)")
         print("DULCET DRAG FROM MENU before=\(before) after=\(after) drags=\(attempts) menu-left-open-after=\(menuLeftOpen)")
     }
 
