@@ -7859,6 +7859,17 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-17 — Make the phone album drag proof independent of fixture creation time.**
+The phone proof opens the full Albums collection and explicitly selects Title order before
+exercising the original centered drag from a native context menu onto the mini-player.
+It still requires one ordered album addition, paused playback and no menu left open, with the
+same hold times, velocity, retry limit and queue assertions. Recently Added placed the fixture
+near the top in hosted runs; its native menu intercepted that path even with the system preview.
+The alphabetical setup passes with the real drag source and fails when that source is removed.
+A temporary custom-preview control also passes on iOS 26.5 in this setup, so this is evidence for
+album drag delivery and rejection of menu side effects, not a claim that every custom-preview
+regression is detected on that runtime. iPad retains its existing Albums setup.
+
 **2026-10-17 — Reach artist discography with the television remote.**
 On tvOS, an artist's discography creates the album controls for the reader's currently loaded
 items in an eager grid. Top Songs can place that entire grid below the viewport; with a lazy

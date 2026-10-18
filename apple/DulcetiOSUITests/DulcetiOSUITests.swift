@@ -2450,7 +2450,7 @@ final class DulcetiOSUITests: XCTestCase {
         guard requireSimulator(compact ? .phone : .pad, "The album tile drag proof on \(compact ? "iPhone" : "iPad")"),
               let configuration = livePlaybackConfiguration(),
               let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: compact),
-              openLibraryDestinationForAlbums(in: app, compact: compact) else { return }
+              openAlphabeticalAlbumGrid(in: app, compact: compact) else { return }
         let album = "Threshold Boundary"
         let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
         let tile = { app.buttons.matching(identifier: "dulcet.library.album")
@@ -2462,7 +2462,7 @@ final class DulcetiOSUITests: XCTestCase {
         guard requireContextMenu(on: tile(), marker: "Add to Playlist\u{2026}", in: app) else { return }
 
         guard let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app) else { return }
-        guard openLibraryDestinationForAlbums(in: app, compact: compact),
+        guard openAlphabeticalAlbumGrid(in: app, compact: compact),
               tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
               let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: compact) else { return }
         guard let result = dragOntoTheBar(
@@ -2475,13 +2475,47 @@ final class DulcetiOSUITests: XCTestCase {
                        "The dragged album must join Up Next once; before=\(before) after=\(result.after)"
                        + " drags=\(result.drags) menu-left-open-after=\(result.menuLeftOpen)")
         XCTAssertEqual(result.menuLeftOpen, 0,
-                       "A drag that carries on out of the open menu must lift: a menu left open under the touch is the custom preview's defect (TRAPS 48)")
+                       "A completed album drag must dismiss its menu; menu side effects cannot substitute for a queue drop")
         XCTAssertEqual(added.count, albumOrder.count)
         for (label, title) in zip(added, albumOrder) {
             XCTAssertTrue(label.hasPrefix(title), "Album order at the end of Up Next: \(title) expected, got \(label)")
         }
         print("DULCET ALBUM TILE DRAG before=\(before) after=\(result.after) drags=\(result.drags)"
               + " menu-left-open-after=\(result.menuLeftOpen)")
+    }
+
+    /// Use the phone's full Albums collection in Title order rather than depending on fixture
+    /// creation timestamps in Recently Added. Retain the centered gesture and menu preflight;
+    /// a no-drag-source control must fail its queue-order and paused-playback assertions.
+    @MainActor
+    private func openAlphabeticalAlbumGrid(in app: XCUIApplication, compact: Bool) -> Bool {
+        guard openLibraryDestinationForAlbums(in: app, compact: compact) else { return false }
+        guard compact else { return true }
+        if compact {
+            let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
+            for _ in 0..<8 {
+                if albums.exists, albums.isHittable { break }
+                app.swipeDown()
+            }
+            guard albums.exists, albums.isHittable else {
+                XCTFail("The Library must offer its Albums collection: " + app.debugDescription)
+                return false
+            }
+            albums.tap()
+        }
+        let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
+        guard sort.waitForExistence(timeout: 10) else {
+            XCTFail("The Albums collection must expose its sort control")
+            return false
+        }
+        sort.tap()
+        let title = app.buttons["Title"].firstMatch
+        guard title.waitForExistence(timeout: 5) else {
+            XCTFail("The Albums sort menu must offer Title")
+            return false
+        }
+        title.tap()
+        return true
     }
 
     /// Each playlist edit the app offers, made where a person makes it, and read back from the
