@@ -3725,40 +3725,64 @@ final class DulcetiOSUITests: XCTestCase {
         // moving or the queue moving past the probe -- with no failure and no skip notice seen at
         // any poll, since a track that cannot play is skipped with a notice (section 12.12). Now
         // Playing's progress is a slider, or a progress bar where the stream cannot seek.
-        let sliderProgress = app.sliders["Now Playing"].firstMatch
-        let barProgress = app.progressIndicators["Now Playing"].firstMatch
-        let title = app.staticTexts.matching(identifier: "dulcet.now-playing.title").firstMatch
-        let failure = app.descendants(matching: .any).matching(identifier: "dulcet.now-playing.failure").firstMatch
-        let skipNotice = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Skipped.")).firstMatch
         var started: String?
         var failed: String?
         var lastValue = "none"
+        var lastTitle = "none"
+        var sampledSnapshots = 0
         let playDeadline = Date().addingTimeInterval(20)
         repeat {
-            if failure.exists { failed = "failure shown: \(failure.label)"; break }
-            if skipNotice.exists { failed = "skip notice: \(skipNotice.label)"; break }
-            // One snapshot each, whose failure is thrown rather than recorded: the progress view
-            // can be redrawn between an `exists` check and a `value` read. That failed this proof
-            // with "Failed to get matching snapshot" (CI run 37142156762, iPhone).
-            let progress = (try? sliderProgress.snapshot()) ?? (try? barProgress.snapshot())
-            if let value = progress?.value as? String {
-                lastValue = value
-                if let sample = playbackProgressSample(from: value), sample.elapsed > 0 {
-                    started = "media-time \(value)"
-                    break
+            // Resolve the stable app once, then inspect one immutable tree. AutoPlay's short
+            // tracks can replace an element while XCTest resolves its individual snapshot.
+            // Missing/failed snapshots prove nothing and cannot count as playback evidence.
+            if let root = try? app.snapshot() {
+                sampledSnapshots += 1
+                var sliderProgress: XCUIElementSnapshot?
+                var barProgress: XCUIElementSnapshot?
+                var title: XCUIElementSnapshot?
+                var failure: XCUIElementSnapshot?
+                var skipNotice: XCUIElementSnapshot?
+                var pending: [XCUIElementSnapshot] = [root]
+                while let element = pending.popLast() {
+                    if sliderProgress == nil, element.elementType == .slider, element.label == "Now Playing" {
+                        sliderProgress = element
+                    }
+                    if barProgress == nil, element.elementType == .progressIndicator, element.label == "Now Playing" {
+                        barProgress = element
+                    }
+                    if title == nil, element.elementType == .staticText, element.identifier == "dulcet.now-playing.title" {
+                        title = element
+                    }
+                    if failure == nil, element.identifier == "dulcet.now-playing.failure" { failure = element }
+                    if skipNotice == nil, element.elementType == .staticText, element.label.contains("Skipped.") {
+                        skipNotice = element
+                    }
+                    pending.append(contentsOf: element.children.reversed())
                 }
-            }
-            // Read one immutable snapshot. AutoPlay can replace the title between separate
-            // exists/label reads; an empty label from a removed title proves no advancement.
-            if let shownTitle = try? title.snapshot().label,
-               !shownTitle.isEmpty, shownTitle != track {
-                started = "moved-past-probe to \(shownTitle)"
+                // Inspect the entire tree before accepting advancement: a title from a queue
+                // that skipped a failed track must not bypass either negative check.
+                if let failure { failed = "failure shown: \(failure.label)"; break }
+                if let skipNotice { failed = "skip notice: \(skipNotice.label)"; break }
+                if let value = (sliderProgress ?? barProgress)?.value as? String {
+                    lastValue = value
+                    if let sample = playbackProgressSample(from: value), sample.elapsed > 0 {
+                        started = "media-time \(value)"
+                    }
+                }
+                if let title {
+                    lastTitle = title.label
+                    if started == nil, !lastTitle.isEmpty, lastTitle != track {
+                        started = "moved-past-probe to \(lastTitle)"
+                    }
+                }
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < playDeadline && started == nil
         XCTAssertNil(failed, "The capped play must not fail: \(failed ?? "")")
         XCTAssertNotNil(started, "The capped play must start: Now Playing's media time must move, or the queue"
-            + " move past the probe; last progress \(lastValue), title \(title.exists ? title.label : "none")")
+            + " move past the probe; last progress \(lastValue), title \(lastTitle), snapshots \(sampledSnapshots)")
+        print("DULCET QUALITY PLAYBACK SAMPLE snapshots=\(sampledSnapshots) title=\(lastTitle.debugDescription)"
+            + " progress=\(lastValue.debugDescription) started=\(String(describing: started))")
 
         var lines: [[String: String]] = []
         let deadline = Date().addingTimeInterval(30)

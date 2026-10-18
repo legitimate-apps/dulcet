@@ -1139,6 +1139,27 @@ and actual swipe counts. It leaves AutoPlay on and preserves the notice,
 transport and positive/negative server-play-count checks. Runtime acceptance of
 this further correction remains pending the final-source full run.
 
+**Sample the playing UI atomically under AutoPlay — observed failure, inferred
+lookup mechanism.** The same full run's iPad leg passes the Library, playlist,
+account, download and four-state lyrics proofs, then fails its final streaming-
+quality proof in 176.585 seconds. The playback poll spends its window retrying
+separate progress and title snapshot lookups; none returns advancement evidence.
+The later diagnostic reads `Paging Track 243`. The retained recording during the
+failed poll shows the actual player displaying `Paging Track 077`, AutoPlay on
+and recommendations. The server logs both probe streams at the required 96 kbps.
+This establishes UI advancement and a failed observation; replacing rapidly
+changing elements during individual snapshot resolution is the inferred mechanism.
+
+The quality proof now obtains one immutable whole-app snapshot per poll, using
+the existing notice-proof traversal pattern. It collects the first matching
+native progress/title elements and both failure/skip checks from the entire tree,
+rejects negatives before accepting parsed elapsed time or a nonempty advanced
+title, and preserves slider precedence. Missing or failed snapshots prove
+nothing. The original 20-second window, AutoPlay setting, server bitrate/source
+checks and quality restoration remain unchanged. Diagnostics use the last actual
+sample, and the proof records its snapshot count and accepted playback evidence.
+Runtime acceptance remains pending the final-source full run.
+
 The final-source full Apple acceptance receipt is maintained in [PR #340](https://github.com/legitimate-apps/dulcet/pull/340).
 It must show all planned platform, core, iPad and iPhone legs plus the aggregate
 GREEN before the PR is ready. The earlier rejected runs and local controls above

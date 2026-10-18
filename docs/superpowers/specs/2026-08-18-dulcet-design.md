@@ -7852,6 +7852,15 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-18 — Sample streaming-quality playback from one immutable UI tree.**
+The streaming-quality proof polls one whole-app snapshot, collecting its exact native progress,
+Now Playing title, failure and skip-notice selectors before evaluating them. Either negative
+rejects the sample before positive playback evidence; a missing or failed snapshot proves
+nothing. Parsed elapsed time greater than zero or a nonempty advanced title remains required
+within the unchanged 20-second window. AutoPlay, source/cap server checks and both quality
+restorations remain unchanged; diagnostics report the last captured sample rather than a later
+live element read.
+
 **2026-10-18 — Reach skipped-track history through the default-on AutoPlay queue.**
 Previously Played follows AutoPlay recommendations in the queue's lazy list. The automatic-skip
 proof scrolls that actual list within a bounded search, requires a hittable history disclosure,
