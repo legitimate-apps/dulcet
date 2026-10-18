@@ -912,10 +912,16 @@ final class DulcetTVUITests: XCTestCase {
         let proxied = (url: proxyURL, username: server.username, password: server.password)
         XCTAssertEqual(readServerSong("Thirty One Seconds", album: album, server: proxied)?["id"] as? String, failingID,
             "The lyrics fault proxy must front the disposable server")
+        var repeatCleanup: (app: XCUIApplication, value: String)?
+        defer {
+            if let cleanup = repeatCleanup {
+                _ = try? setLyricsProofRepeat(cleanup.value, in: cleanup.app)
+            }
+        }
 
         // Plain: the lines take focus one after another.
         let plainApp = try launchAndConnect(serverURL: server.url, server: server)
-        try playFromSearch(plainApp, query: "Ogg Probe", track: "Ogg Probe")
+        repeatCleanup = (plainApp, try playRetainedLyricsTrack(plainApp, query: "Ogg Probe", track: "Ogg Probe"))
         let plainPanel = try showLyricsByRemote(plainApp)
         let lines = plainApp.descendants(matching: .any).matching(identifier: "dulcet.lyrics.line")
         let first = lines.matching(NSPredicate(format: "label == %@", plainLines[0])).firstMatch
@@ -946,10 +952,12 @@ final class DulcetTVUITests: XCTestCase {
         XCUIRemote.shared.press(.down)
         XCTAssertTrue(awaitFocus(on: second), "Down must move focus to the next plain line: " + plainApp.debugDescription)
         XCTAssertTrue(plainPanel.exists)
+        _ = try setLyricsProofRepeat(try XCTUnwrap(repeatCleanup).value, in: plainApp)
+        repeatCleanup = nil
 
         // None: said, and no spinner.
         let noneApp = try launchAndConnect(serverURL: server.url, server: server)
-        try playFromSearch(noneApp, query: "UI Playback Canary", track: "UI Playback Canary")
+        repeatCleanup = (noneApp, try playRetainedLyricsTrack(noneApp, query: "UI Playback Canary", track: "UI Playback Canary"))
         _ = try showLyricsByRemote(noneApp)
         let noLyrics = noneApp.staticTexts["dulcet.lyrics.none"].firstMatch
         XCTAssertTrue(noLyrics.waitForExistence(timeout: 20), "A track with no lyrics must say so: " + noneApp.debugDescription)
@@ -958,13 +966,15 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertEqual(noneShown, "No lyrics for this song.")
         XCTAssertFalse(noneApp.activityIndicators["Loading lyrics"].firstMatch.exists,
             "A track the server has no lyrics for must never show a spinner")
+        _ = try setLyricsProofRepeat(try XCTUnwrap(repeatCleanup).value, in: noneApp)
+        repeatCleanup = nil
 
         // A failed read, then Try Again by remote.
         XCTAssertNotNil(proxyControl("POST", "/__dulcet/lyrics-failure?song=\(failingID)&state=on", proxyURL: proxyURL),
             "The proxy must arm the failure")
         defer { _ = proxyControl("POST", "/__dulcet/lyrics-failure?song=\(failingID)&state=off", proxyURL: proxyURL) }
         let failedApp = try launchAndConnect(serverURL: proxyURL, server: server)
-        try playFromSearch(failedApp, query: "Thirty One", track: "Thirty One Seconds")
+        repeatCleanup = (failedApp, try playRetainedLyricsTrack(failedApp, query: "Thirty One", track: "Thirty One Seconds"))
         _ = try showLyricsByRemote(failedApp)
         let unavailable = failedApp.staticTexts["dulcet.lyrics.unavailable"].firstMatch
         let retry = failedApp.buttons["dulcet.lyrics.retry"].firstMatch
@@ -2469,8 +2479,12 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(lyrics.waitForExistence(timeout: 10), "Now Playing must offer lyrics: " + app.debugDescription)
         var presses = 0
         while !lyrics.hasFocus, presses < 12 {
+            let timer = app.buttons["dulcet.now-playing.sleep-timer"].firstMatch
+            let timerHasFocus = timer.exists && (timer.hasFocus || timer.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists)
             let inFooter = app.buttons["dulcet.now-playing.favorite"].firstMatch.hasFocus
                 || (1...5).contains { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch.hasFocus }
+                || timerHasFocus
             XCUIRemote.shared.press(inFooter ? .right : .down)
             presses += 1
         }
@@ -2484,6 +2498,50 @@ final class DulcetTVUITests: XCTestCase {
         while !lyrics.hasFocus, ContinuousClock.now < kept { Thread.sleep(forTimeInterval: 0.1) }
         XCTAssertTrue(lyrics.hasFocus, "Showing lyrics must leave focus on the toggle: " + app.debugDescription)
         return panel
+    }
+
+    /// Keep the short lyrics fixtures on their named song while remote navigation runs. A real
+    /// Repeat One selection prevents AutoPlay taking the one-second probe elsewhere before it
+    /// can be paused. The caller restores the previous mode through the same control.
+    @MainActor
+    private func playRetainedLyricsTrack(_ app: XCUIApplication, query: String, track: String) throws -> String {
+        try playFromSearch(app, query: "Twenty Nine", track: "Twenty Nine Seconds")
+        XCUIRemote.shared.press(.playPause)
+        XCTAssertTrue(app.buttons["play.fill"].firstMatch.waitForExistence(timeout: 5), "The lyrics setup must pause")
+        let original = try setLyricsProofRepeat("Repeat One", in: app)
+        try playFromSearch(app, query: query, track: track)
+        XCUIRemote.shared.press(.playPause)
+        XCTAssertTrue(app.buttons["play.fill"].firstMatch.waitForExistence(timeout: 5), "The named lyrics fixture must pause")
+        XCTAssertEqual(app.staticTexts["dulcet.now-playing.title"].firstMatch.label, track,
+                       "The lyrics proof must retain its named fixture")
+        XCTAssertTrue(selectSection(app, "nowPlaying"), "The paused lyrics fixture must enter Now Playing through its section")
+        return original
+    }
+
+    @MainActor
+    private func setLyricsProofRepeat(_ value: String, in app: XCUIApplication) throws -> String {
+        let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+        if panel.exists {
+            // Plain lines sit above the transport, so Left from a line need not find a control.
+            // Leave through the section bar, then return to the player's default panel.
+            XCTAssertTrue(selectSection(app, "library"), "The lyrics cleanup must leave through the section bar")
+            XCTAssertTrue(selectSection(app, "nowPlaying"), "The lyrics cleanup must return to Now Playing")
+            XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "Returning must close the previous lyrics panel")
+        }
+        let control = app.buttons["Repeat Mode"].firstMatch
+        XCTAssertTrue(control.waitForExistence(timeout: 10))
+        let original = try XCTUnwrap(control.value as? String)
+        XCTAssertTrue(["Off", "Repeat All", "Repeat One"].contains(original))
+        XCTAssertTrue(focusByRemote(control, in: app), "Repeat Mode must take remote focus: " + app.debugDescription)
+        for _ in 0..<3 where control.value as? String != value {
+            let before = control.value as? String
+            XCUIRemote.shared.press(.select)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while control.value as? String == before, ContinuousClock.now < deadline { Thread.sleep(forTimeInterval: 0.1) }
+        }
+        XCTAssertEqual(control.value as? String, value, "The real repeat control must apply the lyrics precondition")
+        print("DULCET TV LYRICS REPEAT original=\(original) selected=\(value)")
+        return original
     }
 
     /// On Connection, moves remote focus to one Streaming Quality row and along it to `quality`,
