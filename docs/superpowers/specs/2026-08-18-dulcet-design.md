@@ -7938,6 +7938,12 @@ the native menu; interception is an inference. A temporary custom preview also p
 26.5, so that intermittent mutation cannot establish discrimination. iPad retains its existing
 Albums setup and drag interaction.
 
+**2026-10-16 — Dulcet Server recommends songs from its local library.**
+`getSimilarSongs` and `getSimilarSongs2` accept a visible song, album or artist id and return
+local artist and genre neighbours instead of always returning an empty container (§29.1).
+They require no external similarity service. Source permissions constrain both seed metadata
+and returned songs; unknown or invisible seeds return error 70.
+
 **2026-10-16 — Apple engine overlaps the preloaded boundary.**
 `DulcetAVPlayerEngine` accepts `setCrossfade` only for its current attempt and a finite,
 nonnegative duration. The value replaces the previous one and lapses at an attempt change.
@@ -13690,6 +13696,15 @@ them.
   - Legacy `stream` and `getCoverArt` errors are envelopes.
   - `getTranscodeStream` errors are bare HTTP: 404 `Not Found` or 400 `Bad Request`, in plain text.
   - `getOpenSubsonicExtensions` needs no authentication.
+- `getSimilarSongs` / `getSimilarSongs2` accept a song, album or artist id and alternate songs
+  by the seed's performing/album artists with songs by other artists sharing its genres. Song
+  and album seeds draw artist neighbours from other albums and exclude the seed tracks; an
+  artist seed can return its own songs. Candidates vary between calls, contain no duplicates,
+  and use only the caller's visible tracks for both seed metadata and results. `count` defaults
+  to 50 and clamps to 0–500. Unknown/invisible ids return error 70; a visible seed with no
+  neighbours succeeds with an empty container. JSON and XML retain `similarSongs` /
+  `similarSongs2` with normal `song` children. **OBSERVED:** `SimilarSongsTest` exercises the
+  REST handlers with scanned disposable fixtures.
 - Advertised extensions: `formPost` 1, `songLyrics` 1 and 2, `transcodeOffset` 1, `transcoding` 1
   and `dulcetLibrary` 1.
 - Authentication accepts token plus salt and plain or `enc:` passwords. Passwords are kept with

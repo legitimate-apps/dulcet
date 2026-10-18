@@ -183,8 +183,8 @@ fun browseHandlers(ctx: ServerContext): Map<String, Handler> {
             )
             ok { child("topSongs") { songs.forEach { add(it) } } }
         },
-        "getSimilarSongs2" to { call -> call.required("id"); ok { child("similarSongs2") } },
-        "getSimilarSongs" to { call -> call.required("id"); ok { child("similarSongs") } },
+        "getSimilarSongs2" to { call -> similarSongs(ctx, call, "similarSongs2") },
+        "getSimilarSongs" to { call -> similarSongs(ctx, call, "similarSongs") },
         "getBookmarks" to { _ -> ok { child("bookmarks") } },
         "getInternetRadioStations" to { _ -> ok { child("internetRadioStations") } },
         "getPodcasts" to { _ -> ok { child("podcasts") } },
