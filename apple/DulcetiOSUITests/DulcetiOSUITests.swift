@@ -1617,6 +1617,16 @@ final class DulcetiOSUITests: XCTestCase {
               openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
             return nil
         }
+        // Open the Albums collection before looking for a tile. At accessibility text sizes,
+        // the Library's collection controls fill the viewport before any Recently Added tile
+        // is realized. Waiting for an unseen tile cannot scroll those controls into view.
+        let albumsCollection = app.buttons["dulcet.reader.section.albums"].firstMatch
+        guard albumsCollection.waitForExistence(timeout: 15),
+              scrollIntoView(albumsCollection, in: app, probingBlockingSystemAlerts: false) else {
+            XCTFail("The Library must offer its Albums collection: " + app.debugDescription)
+            return nil
+        }
+        albumsCollection.tap()
         // The library's rows are realized as they scroll into view, and the probe albums sort
         // after the default corpus, so on a phone "Skip Probe" is below the fold and does not exist
         // until the list scrolls to it. Wait for the library to show albums at all, then scroll.
@@ -1626,7 +1636,7 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The library must list albums: " + app.debugDescription)
             return nil
         }
-        guard scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
+        guard scrollIntoView(album, in: app, probingBlockingSystemAlerts: false, maximumSwipes: 20) else {
             XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
                 + "tools/seed-skip-probe: " + app.debugDescription)
             return nil
@@ -5728,23 +5738,26 @@ final class DulcetiOSUITests: XCTestCase {
     private func scrollIntoView(
         _ element: XCUIElement,
         in app: XCUIApplication,
-        probingBlockingSystemAlerts: Bool = true
+        probingBlockingSystemAlerts: Bool = true,
+        maximumSwipes: Int = 6
     ) -> Bool {
         scrollIntoViewCountingSwipes(
             element,
             in: app,
-            probingBlockingSystemAlerts: probingBlockingSystemAlerts
+            probingBlockingSystemAlerts: probingBlockingSystemAlerts,
+            maximumSwipes: maximumSwipes
         ) != nil
     }
 
-    /// `scrollIntoView`, answering how many swipes it took (at most six), or nil when the element
+    /// `scrollIntoView`, answering how many swipes it took (at most six by default), or nil when the element
     /// never became reachable.
     @MainActor
     private func scrollIntoViewCountingSwipes(
         _ element: XCUIElement,
         in app: XCUIApplication,
         probingBlockingSystemAlerts: Bool = true,
-        alsoRevealing followingRow: XCUIElement? = nil
+        alsoRevealing followingRow: XCUIElement? = nil,
+        maximumSwipes: Int = 6
     ) -> Int? {
         let window = app.windows.firstMatch
         guard window.exists else {
@@ -5781,7 +5794,7 @@ final class DulcetiOSUITests: XCTestCase {
                 }
             }
 
-            guard swipeCount < 6 else { return nil }
+            guard swipeCount < maximumSwipes else { return nil }
 
             // This must remain a real event rather than an isHittable-gated preflight. Tap paths
             // can still invoke the interruption monitors installed as a backstop.
