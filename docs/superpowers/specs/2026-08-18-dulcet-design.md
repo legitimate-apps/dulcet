@@ -7859,6 +7859,20 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-18 — Re-measure Apple workflow envelopes from successful legs.**
+§21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) now sets the
+platform job to 105 minutes (69.833 measured in successful run 39136881185), the Darwin
+core job to 170 and its composite step to 130 (111.367 and 84.900 in the successful core
+leg of 39133541765), and each device-matrix job to 145 and its composite to 125 (95.350
+and 81.850 in the successful iPad member of 39144805540). These measurements supersede
+the older projections and caps in §21.5 rule 5. The sampled core and iPad remainder plus
+the new composite cap is 156.467 and 138.500 minutes, respectively, below its job cap.
+The old 100-minute Darwin composite expired while TV proofs were progressing on main
+(39131842852) and this branch (39144805540); a workflow timeout is not a passing proof.
+The job graph, standard `macos-26` runners, step commands, test cases, execution guards,
+readiness bounds, simulator acknowledgments and parity evidence requirements are unchanged.
+No feature status is promoted by this workflow calibration.
+
 **2026-10-18 — Carry validated conformance repairs into system surfaces.**
 The system-surfaces integration retains the published conformance and playback-owner repairs:
 actual player gains are verified after writes, the Close toolbar retains its host during

@@ -48,17 +48,15 @@ jobs:
   # implicates whichever step is active rather than a failed assertion, which is why the heavy
   # steps carry their own caps; those are unchanged by the split.
   #
-  # 80 = ceil(1.5 x 51.5 / 5) x 5. 51.5 minutes is this leg's MEASURED maximum over its green
-  # runs on the split (run 36196670168; the others took 43.9 to 49.5). It replaces the 60.2-minute
-  # projection the leg was first sized from (95). Each step cap here plus the rest of that leg, as
-  # measured, is at most 74.1 (the compact-shell step's 25 in the same run), so no healthy step can
-  # be killed by the job instead of by its own cap. Re-measure as the leg's history grows.
+  # §21.5 rule 5, remeasured 2026-10-18: 105 = ceil(1.5 x 69.833 / 5) x 5.
+  # Run 39136881185's successful platform leg replaces the old 51.5-minute maximum.
+  # This job envelope changes no individual step, simulator acknowledgment or assertion bound.
   apple-platform:
     name: apple-platform
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.platform == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 80
+    timeout-minutes: 105
     # The required job downloads this leg's artifacts by the attempt that PRODUCED them. See there.
     outputs:
       attempt: ${{ github.run_attempt }}
@@ -778,21 +776,18 @@ jobs:
   # iPhone proofs ending in the skip probe, which must come after everything that counts the
   # corpus, and the iPhone streaming-quality cap.
   #
-  # 140 is set by the composite's cap (below). 120 was ceil(1.5 x 77 / 5) x 5: 77 minutes was this
-  # job's MEASURED maximum over its first four green runs (70, 70, 77 and 69 minutes: 37125098942,
-  # 37133427531 and 37138000923 on the split's branch, 37142156762 on #217). Those runs paid the devices' first boots inside the composite. They are now
-  # paid in their own step, which moves them rather than adding to them. The job cap must stay above
-  # the composite's own 100-minute cap plus the rest of the job, 100 + 20.5 + 11.1 for first boots +
-  # 4 when an ffmpeg cache miss (estimated at 8) replaces the old closure install's 4.0 = 135.6, or a
-  # slow-but-healthy composite would be killed by the job and reported against whichever step was
-  # active. 105 was a projection from run 37105472578 before any of these ran; 120 held the
-  # composite's earlier 75-minute cap, raised for the Apple TV reader phases.
+  # §21.5 rule 5, remeasured 2026-10-18 from successful leg 39133541765:
+  # 170 = ceil(1.5 x 111.367 / 5) x 5. The composite took 84.900 minutes, so its
+  # 130-minute envelope plus this run's remaining 26.467 fits within the job envelope.
+  # The former 100-minute step limit expired during progressing TV proofs in both
+  # main's 39131842852 and this branch's 39144805540; these are workflow envelopes,
+  # not changes to the test cases' own readiness, observation or execution bounds.
   apple-conformance-core:
     name: apple-conformance-core
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 140
+    timeout-minutes: 170
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -1023,13 +1018,9 @@ jobs:
           python3 tools/ci/isolate-simulator --phase first-boot-tvos --keep-name "Apple TV 4K (3rd generation)"
           python3 tools/ci/isolate-simulator --phase first-boot-done --none
       - name: Assert Darwin conformance preconditions
-        # 100 = ceil(1.5 x 66.6 / 5) x 5, rule 5's leg formula applied to this step. 66.6 minutes is
-        # this composite's MEASURED maximum over its last three green runs (56.8, 46.5 and 45.1
-        # minutes: 37572667317, 37566029043, 37527778416) plus 9.8 for the Apple TV reader phases
-        # added since, PROJECTED from their slowest local passes: the core reader tests' tvOS link
-        # and run 2.4, the three counted app-host proofs 4.2 and the saved-account UI proof 3.2.
-        # The earlier 75 was projected from run 37105472578 (47.4) before this job had run.
-        timeout-minutes: 100
+        # §21.5 rule 5: 130 = ceil(1.5 x 84.900 / 5) x 5, measured in the
+        # successful Darwin leg of 39133541765. Replaces the old 66.6 projection.
+        timeout-minutes: 130
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -2005,25 +1996,17 @@ jobs:
   # iPhone and iPadOS builds its `test-without-building` proofs reuse, the corpus and the
   # configuration -- and then runs the iPadOS and iPhone proof chain against its own server.
   #
-  # 110 = ceil(1.5 x 72.3 / 5) x 5. 72.3 minutes is a PROJECTION from run 37105472578: the
-  # composite's 59.6 (see its cap) plus 12.7 for the setup, where the closure install took 4.0, the
-  # iPhone and iPadOS builds 3.1 and 1.7, and the iOS-simulator framework link is ASSUMED at 2.5. The
-  # job cap stays above the composite's 90 plus the rest of the job: 12.7 of setup, 6.3 for the
-  # devices' first boots, and 4 more when an ffmpeg cache miss (estimated at 8) replaces the old
-  # closure install's 4.0 -- 90 + 12.7 + 6.3 + 4 = 113.0, under 115.
-  # One leg per device, in parallel, each against its own disposable server. As one job the iPad
-  # proofs and then the iPhone proofs ran in a single 90-minute step that took 74 to 82 minutes
-  # when green (runs 37375260936, 37379563022, 37388349181, 37388698250) and was cancelled at 90 on
-  # main in run 37483187883, during its last proof. Every new device proof lengthened it. The legs
-  # share no server state: the iPhone playback proof records its canary baseline rather than
-  # assuming the iPad's plays. The job id stays, so `needs` and the artifact names keep it; the
-  # check runs are named apple-conformance-ipad and apple-conformance-iphone.
+  # §21.5 rule 5, measured after the device split: 145 = ceil(1.5 x 95.350 / 5) x 5.
+  # Run 39144805540's successful iPad member took 95.350 minutes, including its
+  # 81.850-minute composite. The new 125-minute composite envelope plus the measured
+  # remaining 13.500 fits within 145. Both matrix members retain the same tests,
+  # disposable server ownership and individual proof bounds; no extra runner is added.
   apple-conformance-ipad-iphone:
     name: apple-conformance-${{ matrix.device }}
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 115
+    timeout-minutes: 145
     strategy:
       fail-fast: false
       matrix:
@@ -2195,16 +2178,9 @@ jobs:
             python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 17 Pro" --settle
           fi
       - name: Assert this leg's conformance proofs
-        # 90 = ceil(1.5 x 59.6 / 5) x 5, rule 5's leg formula applied to this step. 59.6 minutes is
-        # what these phases took inside the single composite of run 37105472578 -- the canary and
-        # iPadOS proofs 27.8, the iPhone proofs from the playlist proof on 27.8, the server start and
-        # preconditions 0.6. The iPad's and the iPhone's FIRST boots are paid in the step above, so
-        # these phases pay re-boots as they did there (61 and 58 s). Run 37125098942, which paid
-        # both first boots inside this step, finished the iPad proofs and the iPhone search in 43 m.
-        # Since the device split each member runs one half of that chain, so 90 is now headroom, not
-        # a fit: the whole chain took 74 to 82 of it when green, and ran out on main in run
-        # 37483187883. Re-derive the cap from the members' own times once they are measured.
-        timeout-minutes: 90
+        # §21.5 rule 5: 125 = ceil(1.5 x 81.850 / 5) x 5, measured in
+        # 39144805540's successful iPad member. Replaces the pre-split projection.
+        timeout-minutes: 125
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
