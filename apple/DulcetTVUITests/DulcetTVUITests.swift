@@ -898,7 +898,10 @@ final class DulcetTVUITests: XCTestCase {
             "DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL must name the lyrics fault proxy")
         XCTAssertTrue(Self.isLoopbackURL(proxyURL), "The lyrics fault proxy must be a loopback host")
         let album = "Threshold Boundary"
-        let plainID = try XCTUnwrap(readServerSong("Ogg Probe", album: "Dulcet Conformance", server: server)?["id"] as? String)
+        let plainSong = try XCTUnwrap(readServerSong("Ogg Probe", album: "Dulcet Conformance", server: server))
+        let plainID = try XCTUnwrap(plainSong["id"] as? String)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(plainSong["duration"] as? Int), 90,
+            "This remote proof requires the holdable plain-lyrics corpus variant, not the one-second format canary")
         let noneID = try XCTUnwrap(readServerSong("UI Playback Canary", album: album, server: server)?["id"] as? String)
         let failingID = try XCTUnwrap(readServerSong("Thirty One Seconds", album: album, server: server)?["id"] as? String)
         let plainLayers = try XCTUnwrap(readServerLyrics(songID: plainID, server: server))
@@ -916,7 +919,7 @@ final class DulcetTVUITests: XCTestCase {
 
         // Plain: the lines take focus one after another.
         let plainApp = try launchAndConnect(serverURL: server.url, server: server)
-        try playFromSearch(plainApp, query: "Ogg Probe", track: "Ogg Probe")
+        try playFromSearch(plainApp, query: "Ogg Probe", track: "Ogg Probe", holdSelectedTrack: true)
         let plainPanel = try showLyricsByRemote(plainApp)
         let lines = plainApp.descendants(matching: .any).matching(identifier: "dulcet.lyrics.line")
         let first = lines.matching(NSPredicate(format: "label == %@", plainLines[0])).firstMatch
@@ -950,7 +953,7 @@ final class DulcetTVUITests: XCTestCase {
 
         // None: said, and no spinner.
         let noneApp = try launchAndConnect(serverURL: server.url, server: server)
-        try playFromSearch(noneApp, query: "UI Playback Canary", track: "UI Playback Canary")
+        try playFromSearch(noneApp, query: "UI Playback Canary", track: "UI Playback Canary", holdSelectedTrack: true)
         _ = try showLyricsByRemote(noneApp)
         let noLyrics = noneApp.staticTexts["dulcet.lyrics.none"].firstMatch
         XCTAssertTrue(noLyrics.waitForExistence(timeout: 20), "A track with no lyrics must say so: " + noneApp.debugDescription)
@@ -965,7 +968,7 @@ final class DulcetTVUITests: XCTestCase {
             "The proxy must arm the failure")
         defer { _ = proxyControl("POST", "/__dulcet/lyrics-failure?song=\(failingID)&state=off", proxyURL: proxyURL) }
         let failedApp = try launchAndConnect(serverURL: proxyURL, server: server)
-        try playFromSearch(failedApp, query: "Thirty One", track: "Thirty One Seconds")
+        try playFromSearch(failedApp, query: "Thirty One", track: "Thirty One Seconds", holdSelectedTrack: true)
         _ = try showLyricsByRemote(failedApp)
         let unavailable = failedApp.staticTexts["dulcet.lyrics.unavailable"].firstMatch
         let retry = failedApp.buttons["dulcet.lyrics.retry"].firstMatch
@@ -2430,7 +2433,9 @@ final class DulcetTVUITests: XCTestCase {
     /// Reaches a track by remote -- Search through the section bar, the query typed, the
     /// track's row focused and pressed -- and waits for Now Playing to show it.
     @MainActor
-    private func playFromSearch(_ app: XCUIApplication, query: String, track: String) throws {
+    private func playFromSearch(
+        _ app: XCUIApplication, query: String, track: String, holdSelectedTrack: Bool = false
+    ) throws {
         typeSearchQuery(app, query: query)
         let rowPrefix = "\(track), "
         var trackRow: XCUIElement?
@@ -2447,9 +2452,24 @@ final class DulcetTVUITests: XCTestCase {
         }
         XCTAssertTrue(row.exists && row.hasFocus, "The track's row must take remote focus: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
+        if holdSelectedTrack {
+            // These three states inspect static lyrics and retry, not media-time progression.
+            // Acknowledge actual playback before the real remote key, then prove the pause
+            // belongs to the exact selected song. AutoPlay replacements must fail this setup.
+            let playing = app.buttons["pause.fill"].firstMatch
+            XCTAssertTrue(playing.waitForExistence(timeout: 15), "The selected fixture must start playing")
+            XCTAssertEqual(playing.label, "Pause")
+            XCUIRemote.shared.press(.playPause)
+            let paused = app.buttons["play.fill"].firstMatch
+            XCTAssertTrue(paused.waitForExistence(timeout: 5), "The remote must pause the static lyrics fixture")
+            XCTAssertEqual(paused.label, "Play")
+        }
         let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 15), "Activating the row must present Now Playing")
         XCTAssertTrue(waitForLabel(track, of: title, timeout: 15), "Now Playing must show \(track); title=\(title.label)")
+        if holdSelectedTrack {
+            print("DULCET TV STATIC LYRICS HOLD title=\(title.label.debugDescription) paused=true")
+        }
     }
 
     /// Search through the section bar, the query typed by remote and handed over with Done, then

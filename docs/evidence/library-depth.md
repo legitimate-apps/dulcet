@@ -1185,8 +1185,11 @@ original song title. It then retains every actual remote focus/Select assertion,
 Sleep Timer traversal, lyric-panel open/hide check and server favorite/rating
 write. An already-advanced song fails the title assertion. This holds the song
 being rated while the footer and server checks run; it does not establish
-continuous footer focus through a natural AutoPlay transition. Runtime acceptance
-remains pending the final-source full run.
+continuous footer focus through a natural AutoPlay transition. Full run 39098039571 validates this footer correction: the case passes in
+51.418 seconds, records a real lit English line and positively records
+`sleep-timer-traversed=true`. The same core leg passes all five Mac Library and
+all four TV Library cases before a later, separate static-lyrics failure.
+The final-source full-run receipt is maintained in PR #340.
 
 **Reach the cold largest-text Library catalog before waiting for a lazy tile —
 observed.** Full run 39098039571 passes all seven phone Library cases, the album,
@@ -1208,8 +1211,41 @@ largest-text notice cases positively require an initially unreachable catalog
 and at least one real catalog swipe, while retaining their track-row scrolling,
 full-width header actions, notice, transport and navigation checks. Independent
 source review found the data-readiness wait and default helper behavior retained.
-Runtime acceptance remains pending. Two bounded local focused attempts obtained
-no build reservation and performed no build or simulator test; neither is a pass.
+Two bounded local focused attempts obtained no build reservation and performed
+no build or simulator test; neither is a pass. The final-source runtime acceptance
+receipt is maintained in PR #340.
+
+**Hold the selected TV static-lyrics fixture before remote navigation — observed
+lost fixture, inferred transition mechanism.** Full run 39098039571 completes
+59 actual UI cases across 52 JUnit exports with no failure, error or skip, then
+fails `testLyricsPlainNoneAndAFailedReadAreDrivenByRemote` in 32.330 seconds.
+The selected Ogg Probe title is read at 18.78 seconds; footer navigation starts
+at 19.10 seconds. Sleep Timer exists at 29.47 seconds, but its separate focus
+lookup fails after the control disappears. Both failure hierarchies show
+`Couldn’t play “Paging Track 154”`, Library focused and no footer. The generator
+makes the original Ogg fixture one second long. The proof has lost its intended
+song; the precise transition and the later track's playback-error cause are not
+captured. No playback-engine correction is claimed for that later error.
+
+The core Apple leg now explicitly requests a holdable plain-lyrics corpus
+variant. It retains the same 314 tracks, Ogg container, title and two exact plain
+sidecar lines; ffprobe verifies its 90-second duration and the manifest records
+that observation and the opt-in. The default corpus, including the separate
+phone/iPad leg, keeps the one-second Ogg format canary. The TV test positively
+requires the longer duration from the disposable server. In each static plain,
+none and failed-read state, it acknowledges the actual Pause transport, sends
+one real remote Play/Pause key, then requires Play and the exact originally
+selected title before navigating the footer. Missing controls still fail. The
+plain-line focus walk, no-current-line check, exact empty state, no-spinner
+check, actual failed read, remote Try Again and positive post-disarm server read
+all remain. The separate synced footer test still proves a live lit line.
+
+Local generator controls produce both actual variants with 314 media files and
+exact sidecars: ffprobe reports 1.006 seconds for default and 90.007 seconds for
+the holdable Ogg. Corpus rejection/provenance controls pass; all five UI source
+directories type-check. Independent source review found no blocker. These are
+fixture and compilation checks, not a TV runtime pass; final-source runtime
+acceptance is maintained in PR #340.
 
 The final-source full Apple acceptance receipt is maintained in [PR #340](https://github.com/legitimate-apps/dulcet/pull/340).
 It must show all planned platform, core, iPad and iPhone legs plus the aggregate

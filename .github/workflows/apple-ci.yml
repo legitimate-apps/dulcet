@@ -990,6 +990,7 @@ jobs:
           --output "$ROOT/music"
           --runtime native
           --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          --holdable-plain-lyrics
       - name: Render Darwin Navidrome configuration
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}

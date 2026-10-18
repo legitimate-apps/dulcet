@@ -7852,6 +7852,17 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-18 — Hold named TV static-lyrics fixtures before walking the footer.**
+The core Apple corpus explicitly opts into a 90-second plain Ogg variant, recording
+its ffprobe-verified duration while retaining 314 media files and the exact plain
+sidecar. The default corpus and separate phone/iPad leg retain the one-second
+format canary. The TV static-state proof requires the long duration through the
+server, acknowledges Pause, sends the real remote playback key and requires Play
+plus the exact selected title before footer navigation. Plain-line focus, empty
+state, actual failed read and positive remote retry checks remain; the separate
+synced footer proof continues to require a live lit line. Losing the named song
+fails setup; a disappeared footer is not treated as successful navigation.
+
 **2026-10-18 — Reveal the largest-text Library catalog before its lazy tiles.**
 The phone skip-notice helper reaches the stable Recently Added heading with space
 for its grid before waiting up to 30 seconds for the first actual album tile.
