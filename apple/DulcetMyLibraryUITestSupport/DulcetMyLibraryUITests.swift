@@ -96,9 +96,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         app.terminate()
         try launch(connect: false)
         try select("library")
-        // The Library destination rows and offline notice precede its lazy album grid.
-        // A cold launch starts at the top: reveal the grid before testing durable membership.
-        revealPhoneAlbumTile(albumTile(album.title))
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            // Offline status and the category rows put Recently Added below the compact
+            // viewport. Prove the regression condition before driving the real scroll.
+            XCTAssertTrue(app.buttons["dulcet.myLibrary.section.recent"].waitForExistence(timeout: 20))
+            XCTAssertFalse(albumTile(album.title).exists,
+                           "The compact offline root must begin with its lazy album grid below the viewport")
+            let scrolls = revealPhoneAlbumTile(albumTile(album.title))
+            XCTAssertGreaterThan(scrolls, 0, "The offline relaunch proof must actually reveal the lazy grid")
+            XCTAssertTrue(albumTile(album.title).isHittable)
+            print("MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=\(scrolls)")
+        }
+#endif
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline relaunch paints the durable pending add before reconnect")
         let pendingAfterRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingAfterRelaunch)
@@ -106,6 +116,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(false)
         try launch()
         try select("library")
+        revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
@@ -128,7 +139,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(true)
         try launch(connect: false)
         try select("library")
-        awaitStaticText("dulcet.library.pinned.title", content: "Pinned")
+#if os(macOS)
+        // On the hosted Mac, this exact query reports firstMatch=false but count=1 and
+        // indexed.exists=true. Avoid the firstMatch shortcut without changing the target.
+        let pinnedHeading = app.staticTexts
+            .matching(identifier: "dulcet.library.pinned.title").element(boundBy: 0)
+#else
+        let pinnedHeading = app.staticTexts["dulcet.library.pinned.title"].firstMatch
+#endif
+        XCTAssertTrue(pinnedHeading.waitForExistence(timeout: 20))
+        XCTAssertEqual(pinnedHeading.label, "Pinned", "The actual pinned section heading must be present")
+        print("MY LIBRARY PIN heading=\(pinnedHeading.label)")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Pinned metadata must survive an offline relaunch")
         try capture("Library-Depth-Pinned-Offline")
         let downloaded = app.buttons["dulcet.library.downloaded"].firstMatch
@@ -246,7 +267,32 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(songs.waitForExistence(timeout: 30))
         activate(artists)
         XCTAssertTrue(app.buttons["dulcet.search.group.all"].firstMatch.waitForExistence(timeout: 10))
-        awaitStaticText("dulcet.search.resultCount", content: "1 result")
+        let resultCount = app.staticTexts["dulcet.search.resultCount"].firstMatch
+        XCTAssertTrue(resultCount.waitForExistence(timeout: 10))
+#if os(macOS)
+        let countText = NSPredicate(format: "value == %@", "1 result")
+#else
+        let countText = NSPredicate(format: "label == %@", "1 result")
+#endif
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: countText, object: resultCount)], timeout: 20), .completed,
+                       "The selected Artists group counts its own results")
+#if os(macOS)
+        XCTAssertEqual(resultCount.value as? String, "1 result")
+        // SwiftUI's native Table is a SwiftUIOutlineTableView with AXOutline role.
+        // Scope it by the rendered result so the sidebar's outline cannot satisfy this proof.
+        let artistResults = app.outlines.containing(.staticText, identifier: "dulcet.search.result.0")
+            .element(boundBy: 0)
+        XCTAssertTrue(artistResults.waitForExistence(timeout: 20), "The selected group must render its real result cell")
+        let oneArtistRow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            artistResults.outlineRows.count == 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [oneArtistRow], timeout: 20), .completed,
+                       "Artists See All must contain only the fixture artist")
+        XCTAssertEqual(artistResults.outlineRows.count, 1)
+        print("MY LIBRARY SEARCH selected=Artists count=\(resultCount.value ?? "nil") rows=\(artistResults.outlineRows.count) role=outline")
+#else
+        XCTAssertEqual(resultCount.label, "1 result")
+#endif
         try capture("Library-Depth-Search-Groups")
         activate(field)
         field.typeText("\n")
@@ -306,6 +352,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try removeAlbum(album.id)
         try launch(variant: "largest-text")
         try select("browse")
+        // At accessibility text sizes, Browse's introduction and destination rows take
+        // several screens before its lazy album grid. Reach the catalog first, as the
+        // light/dark/largest-text tour above does, then look for the fixture album.
+        let catalogAlbum = app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertFalse(catalogAlbum.exists && catalogAlbum.isHittable,
+            "The cold largest-text Browse must exercise scrolling to its catalog")
+        let catalogScrolls = revealPhoneAlbumTile(catalogAlbum)
+        XCTAssertGreaterThan(catalogScrolls, 0, "The catalog must be reached by a real touch scroll")
+        XCTAssertTrue(catalogAlbum.exists && catalogAlbum.isHittable,
+            "The catalog must be visible before searching its albums: " + app.debugDescription)
+        print("MY LIBRARY LARGEST TEXT catalog-scrolls=\(catalogScrolls) catalog-visible=true")
         try openAlbum(album.title)
         let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
@@ -380,9 +437,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #elseif os(iOS)
         if connect {
             let connected = server == navidrome
-                ? app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
-                : awaitDestination("browse")
-            if !connected {
+                ? app.buttons["dulcet.library.album"].firstMatch
+                : destination("browse")
+            if !connected.waitForExistence(timeout: 30) {
                 let welcome = app.buttons["Connect a Server"]
                 if welcome.exists { welcome.tap() }
                 let copy = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ")
@@ -418,26 +475,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // Construct the identified query even before the account publishes its sidebar.
             // Choosing a label-based Cell fallback before it exists leaves the wait on cells
             // with no label; SwiftUI exposes the destination label on their StaticText child.
-            let identifier = "dulcet.sidebar.\(section)"
-            // Filter in the query instead of enumerating a potentially large Songs tree.
-            // Bound elements can go stale while an offline list refreshes after reconnecting.
-            return app.staticTexts.matching(NSPredicate(format: "identifier == %@", identifier)).firstMatch
+            return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
         }
         let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
 #endif
     }
-    @MainActor private func awaitDestination(_ section: String) -> Bool {
-        // Re-resolve after publication: the initial iPad name-index query can miss a visible
-        // sidebar Text even while the same snapshot contains the visible Browse label.
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            self.destination(section).exists
-        }, object: nil)
-        return XCTWaiter.wait(for: [ready], timeout: 30) == .completed
-    }
     @MainActor private func select(_ section: String) throws {
-        XCTAssertTrue(awaitDestination(section), "Missing destination \(section)")
         let control = destination(section)
+        XCTAssertTrue(control.waitForExistence(timeout: 30), "Missing destination \(section)")
 #if os(tvOS)
         // Menu pops a pushed page, then returns focus to the section bar. That focus
         // transition is asynchronous: the retained Songs -> Browse failure sent another
@@ -498,15 +544,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func albumTile(_ title: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier == 'dulcet.library.album' AND label BEGINSWITH %@", title)).firstMatch
     }
-    @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) {
+    @discardableResult
+    @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) -> Int {
 #if os(iOS)
-        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return 0 }
         // Library's destination rows and Browse's largest-text introduction precede a lazy
         // album grid. Reach that grid with touch scrolling before asserting its publication.
-        for _ in 0..<20 {
-            if tile.exists && tile.isHittable { return }
+        for scrolls in 0..<8 {
+            if tile.exists && tile.isHittable { return scrolls }
             app.scrollViews.firstMatch.swipeUp()
         }
+        return 8
+#else
+        return 0
 #endif
     }
     @MainActor private func openAlbum(_ title: String) throws {
@@ -522,15 +572,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(albumPage.waitForExistence(timeout: 30), "The album page must load before scrolling")
 #endif
 #if !os(tvOS)
-#if os(iOS)
-        // At the largest accessibility size each album is a tall single-column card.
-        // Six swipes reached only the third fixture album in the recorded failure.
-        let maximumScrolls = UIDevice.current.userInterfaceIdiom == .phone ? 20 : 6
-#else
-        let maximumScrolls = 6
-#endif
-        for _ in 0..<maximumScrolls {
-            if albumTileCanBeActivated(tile) { break }
+        for _ in 0..<6 {
+            if tile.exists && tile.isHittable { break }
 #if os(macOS)
             albumPage.scroll(byDeltaX: 0, deltaY: -450)
 #else
@@ -538,26 +581,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
         }
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
-        XCTAssertTrue(albumTileCanBeActivated(tile), "The album centre must be visible before activation: " + tile.debugDescription)
+        XCTAssertTrue(tile.isHittable, "The album must be visible before activation")
 #else
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
 #endif
         activate(tile)
-#if os(iOS)
-        awaitStaticText("dulcet.album.title", content: title)
-#endif
-    }
-    @MainActor private func albumTileCanBeActivated(_ tile: XCUIElement) -> Bool {
-        guard tile.exists && tile.isHittable else { return false }
-#if os(iOS)
-        // At large text, a sliver of a tall card can be hittable with its tap centre below
-        // the iPad window. Scroll until that centre clears the navigation and bottom edges.
-        let frame = tile.frame
-        return app.windows.firstMatch.frame.insetBy(dx: 16, dy: 100)
-            .contains(CGPoint(x: frame.midX, y: frame.midY))
-#else
-        return true
-#endif
     }
     @MainActor private func activate(_ element: XCUIElement) {
 #if os(tvOS)
@@ -609,27 +637,6 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTFail("Remote could not focus " + target.debugDescription)
     }
 #endif
-    /// macOS exposes some SwiftUI Text in AXValue rather than AXLabel. Resolve the exact
-    /// identifier from bound elements: the macOS firstMatch name-index query can miss a Text
-    /// that the same failure's accessibility hierarchy and recording show on screen.
-    @MainActor private func staticTextContent(_ identifier: String) -> String? {
-#if os(macOS)
-        guard let element = app.staticTexts.allElementsBoundByIndex.first(where: { $0.identifier == identifier }) else { return nil }
-#else
-        let element = app.staticTexts[identifier].firstMatch
-        guard element.exists else { return nil }
-#endif
-        return element.label.isEmpty ? element.value as? String : element.label
-    }
-
-    @MainActor private func awaitStaticText(_ identifier: String, content: String) {
-        let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            self.staticTextContent(identifier) == content
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [expected], timeout: 20), .completed,
-                       "Expected visible text \(content) at \(identifier); found \(staticTextContent(identifier) ?? "<absent>")")
-    }
-
     @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String) {
         let expected = NSPredicate(format: "label == %@", label)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)], timeout: 20), .completed)
@@ -700,7 +707,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return try XCTUnwrap(result.load()).get()
     }
     private func setOffline(_ offline: Bool) throws {
-        _ = try fetch(URL(string: base + "/fixture/network?offline=\(offline ? "1" : "0")")!)
+        let response = try fetch(URL(string: base + "/fixture/network?offline=\(offline ? "1" : "0")")!)
+        XCTAssertEqual(String(data: response, encoding: .utf8), offline ? "offline" : "online",
+                       "The disposable route must acknowledge the requested network condition")
     }
 }
 

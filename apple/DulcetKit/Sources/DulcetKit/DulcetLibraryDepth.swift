@@ -304,28 +304,28 @@ struct DulcetArtistDiscography: View {
 
     var body: some View {
         let tileWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : (width < 500 ? 150 : 180)
-#if os(tvOS)
-        let columns = DulcetResponsiveGridLayout.columnCount(
-            availableWidth: width - 2 * DulcetLibraryMetrics.horizontalInset(forWidth: width),
-            minimumItemWidth: tileWidth,
-            spacing: DulcetSpacing.sm
-        )
-#endif
         ForEach(groups, id: \.self) { group in
             let albums = items.filter { ($0.discographyGroup ?? "albums") == group }
             if !albums.isEmpty {
                 Text(title(group)).font(.headline).accessibilityAddTraits(.isHeader)
 #if os(tvOS)
-                // Top Songs can put this entire grid below the viewport. A lazy grid then has
-                // no album controls for the remote's focus engine to discover and scroll to.
-                // Materialize the reader's currently loaded albums on TV, preserving their
-                // row order and the full-width focus section that bridges trailing controls.
-                Grid(alignment: .topLeading, horizontalSpacing: DulcetSpacing.sm, verticalSpacing: DulcetSpacing.sm) {
-                    ForEach(Array(stride(from: 0, to: albums.count, by: columns)), id: \.self) { start in
-                        GridRow(alignment: .top) {
-                            ForEach(albums[start..<min(start + columns, albums.count)]) { item in
-                                DulcetReaderTile(item: item, width: tileWidth,
-                                                 subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown)
+                // Focus cannot scroll to an entirely unrealized grid below Top Songs. Keep its
+                // first row concrete so Down from the trailing Pin/Favorite column has a target;
+                // subsequent rows can still be realized as that row scrolls into the viewport.
+                let available = width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2
+                let columns = max(1, Int((available + DulcetSpacing.sm) / (tileWidth + DulcetSpacing.sm)))
+                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                    HStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                        ForEach(albums.prefix(columns)) { item in
+                            albumTile(item, width: tileWidth)
+                        }
+                    }
+                    if albums.count > columns {
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: DulcetSpacing.sm,
+                                                                     alignment: .topLeading), count: columns),
+                                  alignment: .leading, spacing: DulcetSpacing.md) {
+                            ForEach(albums.dropFirst(columns)) { item in
+                                albumTile(item, width: tileWidth)
                             }
                         }
                     }
@@ -335,13 +335,17 @@ struct DulcetArtistDiscography: View {
 #else
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
                     ForEach(albums) { item in
-                        DulcetReaderTile(item: item, width: tileWidth,
-                                         subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown)
+                        albumTile(item, width: tileWidth)
                     }
                 }
 #endif
             }
         }
+    }
+
+    private func albumTile(_ item: DulcetReaderItem, width: CGFloat) -> some View {
+        DulcetReaderTile(item: item, width: width,
+                         subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown)
     }
 }
 #endif

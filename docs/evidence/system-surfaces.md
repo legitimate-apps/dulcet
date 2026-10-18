@@ -74,7 +74,7 @@ A compatible classic Simulator toolchain, or the separately provisioned physical
 needed for that remaining proof. The ordinary iOS simulator’s successful installation does not
 establish an entitlement exception for physical devices.
 
-## Verification record
+## Verification record (2026-10-16 baseline)
 
 - OBSERVED: final Swift system-surface regressions passed 6/6, including cold background reconnect,
   short-name recent replay and continuation past the first page. A serial full package run passed
@@ -188,3 +188,33 @@ Pinned heading and selected Artists count. Later inherited proof failures were s
 
 These changes adjust proof navigation/setup and do not change production behavior. The final
 hosted runtime results remain necessary to verify them.
+
+
+## 2026-10-18 integration with published Apple conformance repairs
+
+The merge carries main's `02a158f6` repairs without replacing system-surface ownership. Its
+verified gain writes, stable Now Playing Close host, positive catalog/history/native-menu
+controls, television first-row realization and named-fixture preparation supersede the earlier
+integration setup variants recorded above. The original dated results remain historical;
+stronger OS-host verification is still bounded by the surface table.
+
+- OBSERVED: the merged full Swift package passes **356/356**, zero skips/failures/errors,
+  in **102.769 seconds** of test execution. Its timeline contains 356 starts and 356 completions,
+  with at most one logical test active. All **68 LibraryReader tests** pass, including background
+  reconnect, opaque recent-song replay, continuation and both pinned projection/replay cases.
+- OBSERVED: `DulcetSystemSurfacesUITests/testHomeWidgetRendersAndItsIntentResumesPlayback`
+  passes against the merged app on iOS 26.5: **one case, 56.369 seconds**, zero issues.
+  The real Home widget renders the named song and delivers Resume through its App Intent to
+  advancing playback in the existing player.
+- OBSERVED: the account-state helper distinguishes a zero-height/offscreen retained accessibility
+  keyboard from a visible one. Twenty-one extracted credential/dismissal controls pass; replaying
+  `819b3a2a` rejects its captured offscreen Hide tap. The complete real account-state flow passes
+  on iPad (**238.418 seconds**) and iPhone (**256.441 seconds**), one case each with zero issues.
+  That helper and its controls are unchanged by the subsequent main merge.
+- OBSERVED: XcodeGen **2.46.0** regeneration produces no project difference; the regeneration
+  self-test, parity (27 feature rows), CI policy, OS-floor configuration and release policy pass.
+  Hosted final-source results are reported on [PR #333](https://github.com/legitimate-apps/dulcet/pull/333).
+
+No system-surfaces FEATURES cell is promoted by these integration results. Named Siri, additional
+widget hosts/accessories/ControlWidget, CarPlay template-host delivery and external Android Auto
+or Assistant delivery retain their previously stated limits.

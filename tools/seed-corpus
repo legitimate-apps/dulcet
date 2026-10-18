@@ -268,6 +268,10 @@ def main() -> None:
     parser.add_argument("--runtime", choices=("native", "docker"), required=True)
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--image")
+    parser.add_argument(
+        "--holdable-plain-lyrics", action="store_true",
+        help="Give the Ogg plain-lyrics fixture 90 seconds for remote pause setup; default remains one second",
+    )
     args = parser.parse_args()
 
     root = Path(args.output).resolve()
@@ -282,7 +286,8 @@ def main() -> None:
     m4a_probe = root / "Formats" / "02 - M4A Probe.m4a"
     encode(tools, health_probe, duration=2.0, frequency=440, title="Dulcet Health Probe", track="1")
     encode(tools, unicode_probe, duration=1.0, frequency=494, title="Étude 東京", track="1")
-    encode(tools, ogg_probe, duration=1.0, frequency=523, title="Ogg Probe", track="1")
+    plain_lyrics_duration = 90.0 if args.holdable_plain_lyrics else 1.0
+    encode(tools, ogg_probe, duration=plain_lyrics_duration, frequency=523, title="Ogg Probe", track="1")
     encode(tools, m4a_probe, duration=1.0, frequency=587, title="M4A Probe", track="2")
 
     multi_disc_paths: list[tuple[Path, int, int]] = []
@@ -405,8 +410,8 @@ def main() -> None:
         expected_tags={"title": "Étude 東京"},
         duration=1.0,
     )
-    _, _, ogg_format = assert_media(
-        tools, ogg_probe, expected_tags={"title": "Ogg Probe"}, duration=1.0
+    _, observed_plain_duration, ogg_format = assert_media(
+        tools, ogg_probe, expected_tags={"title": "Ogg Probe"}, duration=plain_lyrics_duration
     )
     _, _, m4a_format = assert_media(
         tools, m4a_probe, expected_tags={"title": "M4A Probe"}, duration=1.0
@@ -569,6 +574,11 @@ def main() -> None:
             },
         },
         "lyrics": {
+            "plain_fixture": {
+                "title": "Ogg Probe",
+                "duration_seconds": round(observed_plain_duration, 3),
+                "holdable": args.holdable_plain_lyrics,
+            },
             "sidecars": lyrics_sidecars,
             "embedded": [
                 {"media": boundary_29.name, "languages": ["deu", "eng", "por"], "synced": ["deu", "eng"]},
