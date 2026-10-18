@@ -1370,10 +1370,21 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(titled, "The player must show the track that plays; title=\(title.label)")
         let upNextToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
         var historyRow = "<none>"
+        var historyScrolls = 0
         if upNextToggle.waitForExistence(timeout: 5) {
             upNextToggle.tap()
             let historyToggle = app.descendants(matching: .any)["dulcet.history.toggle"].firstMatch
-            if historyToggle.waitForExistence(timeout: 5) {
+            // AutoPlay suggestions precede history in the lazy Up Next list. Reach history
+            // through that list instead of assuming its disclosure is already instantiated.
+            let queue = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
+            if queue.waitForExistence(timeout: 10) {
+                for _ in 0..<12 {
+                    if historyToggle.exists && historyToggle.isHittable { break }
+                    queue.swipeUp()
+                    historyScrolls += 1
+                }
+            }
+            if historyToggle.exists && historyToggle.isHittable {
                 historyToggle.tap()
                 let row = app.buttons["dulcet.history.row.0"].firstMatch
                 historyRow = row.waitForExistence(timeout: 5) ? row.label : "<none>"
@@ -1396,6 +1407,7 @@ final class DulcetiOSUITests: XCTestCase {
         print("DULCET AUTO SKIP OBSERVED notice=\(noticeLabel.debugDescription) markers=\(noticeMarkers)"
             + " placement=\(placement) bar=\(bar.label.debugDescription) playing=\(playing)"
             + " no-failure-line=\(noFailureLine) notice-gone=\(noticeGone) history-row-0=\(historyRow.debugDescription)"
+            + " history-scrolls=\(historyScrolls)"
             + " unplayable-plays=\(unplayableBefore)->\(String(describing: unplayableAfter))"
             + " playable-plays=\(playableBefore)->\(String(describing: playableAfter))")
     }
