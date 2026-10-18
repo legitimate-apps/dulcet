@@ -8,7 +8,8 @@ and immutable reads keep a value and its placeholder from the same snapshot; thi
 tap on text wider than the field lands short of the end, as iPhone CI showed. --source-ref
 replays an earlier helper to prove that the controls reject incorrect cursor handling and stale focus.
 The dismissal controls also replay captured iPad keyboard geometry, including a retained
-zero-height AX container, while requiring a visible stuck keyboard to fail.
+zero-height AX container and disappearance between live queries, while requiring a visible
+stuck keyboard or unavailable snapshot to fail.
 """
 import argparse
 from pathlib import Path
@@ -210,13 +211,33 @@ import CoreGraphics
 }
 @MainActor var recordedFailures: [String] = []
 @MainActor func XCTFail(_ message: String) { recordedFailures.append(message) }
-@MainActor final class XCUIElement {
-    var exists = true
+enum ElementType { case application, window, keyboard }
+struct XCUIElementSnapshot {
     var frame: CGRect
+    var elementType: ElementType
+    var children: [XCUIElementSnapshot] = []
+}
+@MainActor final class XCUIElement {
+    var storedExists = true
+    var disappearBeforeFrame = false
+    var removeOnDismiss = false
+    var exists: Bool {
+        let result = storedExists
+        if disappearBeforeFrame { storedExists = false }
+        return result
+    }
+    var snapshotFrame: CGRect
+    var frame: CGRect {
+        get {
+            precondition(storedExists, "The captured keyboard disappeared between exists and the live frame read")
+            return snapshotFrame
+        }
+        set { snapshotFrame = newValue }
+    }
     var taps = 0
     var closeOnTap = 1
     var keyboard: XCUIElement?
-    init(_ frame: CGRect) { self.frame = frame }
+    init(_ frame: CGRect) { self.snapshotFrame = frame }
     struct Query {
         var firstMatch: XCUIElement
         subscript(_ label: String) -> Query { self }
@@ -230,12 +251,16 @@ import CoreGraphics
     }
     func tap() {
         guard let keyboard else { preconditionFailure("Only the keyboard dismissal control should be tapped") }
-        precondition(frame.intersects(CGRect(x: 0, y: 0, width: 1032, height: 1376)),
+        precondition(snapshotFrame.intersects(CGRect(x: 0, y: 0, width: 1032, height: 1376)),
                      "The captured stale Hide button is below the window and must never be tapped")
         keyboard.taps += 1
         if keyboard.taps == keyboard.closeOnTap {
             // UIKit has dismissed the visible keyboard; accessibility retains its container.
-            keyboard.frame = CGRect(x: 0, y: 1376, width: 1032, height: 0)
+            if keyboard.removeOnDismiss {
+                keyboard.disappearBeforeFrame = true
+            } else {
+                keyboard.frame = CGRect(x: 0, y: 1376, width: 1032, height: 0)
+            }
         }
     }
     @MainActor struct Coordinate {
@@ -247,12 +272,25 @@ import CoreGraphics
 @MainActor final class XCUIApplication {
     var keyboard: XCUIElement
     let window = XCUIElement(CGRect(x: 0, y: 0, width: 1032, height: 1376))
+    var snapshotFailures = 0
+    enum SnapshotFailure: Error { case unavailable }
+    func snapshot() throws -> XCUIElementSnapshot {
+        if snapshotFailures > 0 { snapshotFailures -= 1; throw SnapshotFailure.unavailable }
+        // A new root snapshot observes removal atomically; it never resolves a stale keyboard.
+        if keyboard.disappearBeforeFrame { keyboard.storedExists = false }
+        let children = keyboard.storedExists
+            ? [XCUIElementSnapshot(frame: keyboard.snapshotFrame, elementType: .keyboard)] : []
+        // Application containers need not have geometry; the real window supplies it.
+        return XCUIElementSnapshot(frame: .zero, elementType: .application,
+                                  children: [XCUIElementSnapshot(frame: window.snapshotFrame,
+                                                               elementType: .window, children: children)])
+    }
     init(frame: CGRect, closeOnTap: Int = 1, exists: Bool = true, hideAvailable: Bool = true) {
         keyboard = XCUIElement(frame)
-        keyboard.exists = exists
+        keyboard.storedExists = exists
         keyboard.closeOnTap = closeOnTap
         let hide = XCUIElement(CGRect(x: 881, y: frame.minY + 262, width: 151.5, height: 68))
-        hide.exists = hideAvailable
+        hide.storedExists = hideAvailable
         hide.keyboard = keyboard
         keyboard.hide = hide
     }
@@ -286,6 +324,22 @@ keyboard_controls = r'''
             if !expectedResult {
                 precondition(KeyboardClock.now.timeIntervalSince1970 >= 30, "A stuck visible keyboard must retain the full retry budget")
             }
+            print("\(name): PASS")
+        }
+        for (name, removeOnDismiss, snapshotFailures, expectedResult, expectedTaps) in [
+            ("captured-disappearance-after-dismissal", true, 0, true, 1),
+            ("transient-root-snapshot-failure", false, 1, true, 1),
+            ("unavailable-root-snapshot-is-not-dismissal", false, 10000, false, 0)
+        ] {
+            recordedFailures = []
+            KeyboardClock.now = Date(timeIntervalSince1970: 0)
+            let app = XCUIApplication(frame: CGRect(x: 0, y: 1031, width: 1032, height: 345))
+            app.keyboard.removeOnDismiss = removeOnDismiss
+            app.snapshotFailures = snapshotFailures
+            precondition(proof.dismissKeyboardIfPresent(in: app) == expectedResult, name)
+            precondition(app.keyboard.taps == expectedTaps, name)
+            precondition(recordedFailures.count == (expectedResult ? 0 : 1), name)
+            if !expectedResult { precondition(KeyboardClock.now.timeIntervalSince1970 >= 30) }
             print("\(name): PASS")
         }
     }
