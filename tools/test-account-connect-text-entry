@@ -7,6 +7,8 @@ ordinary-Delete input protocol; throwing snapshots model a transient query failu
 and immutable reads keep a value and its placeholder from the same snapshot; this does not diagnose UIKit animation-idle failures. A trailing-edge
 tap on text wider than the field lands short of the end, as iPhone CI showed. --source-ref
 replays an earlier helper to prove that the controls reject incorrect cursor handling and stale focus.
+The dismissal controls also replay captured iPad keyboard geometry, including a retained
+zero-height AX container, while requiring a visible stuck keyboard to fail.
 """
 import argparse
 from pathlib import Path
@@ -189,5 +191,109 @@ with tempfile.TemporaryDirectory(prefix="dulcet-account-text-entry-") as directo
     swift = Path(directory) / "control.swift"
     binary = Path(directory) / "control"
     swift.write_text(collaborators + "    @MainActor\n" + method + controls)
+    subprocess.run(["swiftc", "-parse-as-library", str(swift), "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)
+
+# Execute the real dismissal helper against the captured iPad AX geometry and opposing
+# visible-keyboard states. An artificial clock makes the unchanged retry budget immediate.
+start = source.index("    private func dismissKeyboardIfPresent(")
+end = source.index("\n    }", start) + len("\n    }")
+keyboard_method = source[start:end].replace("private func", "func", 1)
+keyboard_method = keyboard_method.replace("Date()", "KeyboardClock.now")
+keyboard_method = keyboard_method.replace("Thread.sleep(forTimeInterval:", "KeyboardClock.advance(by:")
+keyboard_collaborators = r'''
+import Foundation
+import CoreGraphics
+@MainActor enum KeyboardClock {
+    static var now = Date(timeIntervalSince1970: 0)
+    static func advance(by seconds: Double) { now = now.addingTimeInterval(seconds) }
+}
+@MainActor var recordedFailures: [String] = []
+@MainActor func XCTFail(_ message: String) { recordedFailures.append(message) }
+@MainActor final class XCUIElement {
+    var exists = true
+    var frame: CGRect
+    var taps = 0
+    var closeOnTap = 1
+    var keyboard: XCUIElement?
+    init(_ frame: CGRect) { self.frame = frame }
+    struct Query {
+        var firstMatch: XCUIElement
+        subscript(_ label: String) -> Query { self }
+    }
+    var buttons: Query { Query(firstMatch: hide!) }
+    var hide: XCUIElement?
+    func waitForExistence(timeout: Double) -> Bool { exists }
+    func waitForNonExistence(timeout: Double) -> Bool {
+        KeyboardClock.advance(by: timeout)
+        return !exists
+    }
+    func tap() {
+        guard let keyboard else { preconditionFailure("Only the keyboard dismissal control should be tapped") }
+        precondition(frame.intersects(CGRect(x: 0, y: 0, width: 1032, height: 1376)),
+                     "The captured stale Hide button is below the window and must never be tapped")
+        keyboard.taps += 1
+        if keyboard.taps == keyboard.closeOnTap {
+            // UIKit has dismissed the visible keyboard; accessibility retains its container.
+            keyboard.frame = CGRect(x: 0, y: 1376, width: 1032, height: 0)
+        }
+    }
+    @MainActor struct Coordinate {
+        var element: XCUIElement
+        func tap() { element.hide!.tap() }
+    }
+    func coordinate(withNormalizedOffset: CGVector) -> Coordinate { Coordinate(element: self) }
+}
+@MainActor final class XCUIApplication {
+    var keyboard: XCUIElement
+    let window = XCUIElement(CGRect(x: 0, y: 0, width: 1032, height: 1376))
+    init(frame: CGRect, closeOnTap: Int = 1, exists: Bool = true, hideAvailable: Bool = true) {
+        keyboard = XCUIElement(frame)
+        keyboard.exists = exists
+        keyboard.closeOnTap = closeOnTap
+        let hide = XCUIElement(CGRect(x: 881, y: frame.minY + 262, width: 151.5, height: 68))
+        hide.exists = hideAvailable
+        hide.keyboard = keyboard
+        keyboard.hide = hide
+    }
+    var keyboards: XCUIElement.Query { .init(firstMatch: keyboard) }
+    var windows: XCUIElement.Query { .init(firstMatch: window) }
+    var debugDescription: String { "keyboard dismissal collaborator" }
+}
+@MainActor final class KeyboardProof {
+'''
+keyboard_controls = r'''
+}
+@main @MainActor struct KeyboardControls {
+    static func main() {
+        let proof = KeyboardProof()
+        for (name, frame, closes, exists, hideAvailable, expectedResult, expectedTaps) in [
+            ("captured-zero-height-stale-AX", CGRect(x: 0, y: 1376, width: 1032, height: 0), 1, true, true, true, 0),
+            ("offscreen-container", CGRect(x: 0, y: 1376, width: 1032, height: 345), 1, true, true, true, 0),
+            ("visible-dismissal-retains-AX", CGRect(x: 0, y: 1031, width: 1032, height: 345), 1, true, true, true, 1),
+            ("floating-visible-keyboard", CGRect(x: 400, y: 600, width: 400, height: 345), 1, true, true, true, 1),
+            ("first-dismissal-tap-dropped", CGRect(x: 0, y: 1031, width: 1032, height: 345), 2, true, true, true, 2),
+            ("coordinate-dismissal", CGRect(x: 0, y: 1031, width: 1032, height: 345), 1, true, false, true, 1),
+            ("visible-stuck-keyboard", CGRect(x: 0, y: 1031, width: 1032, height: 345), 0, true, true, false, 3),
+            ("absent-keyboard", CGRect.zero, 1, false, false, true, 0)
+        ] {
+            recordedFailures = []
+            KeyboardClock.now = Date(timeIntervalSince1970: 0)
+            let app = XCUIApplication(frame: frame, closeOnTap: closes, exists: exists, hideAvailable: hideAvailable)
+            precondition(proof.dismissKeyboardIfPresent(in: app) == expectedResult, name)
+            precondition(app.keyboard.taps == expectedTaps, name)
+            precondition(recordedFailures.count == (expectedResult ? 0 : 1), name)
+            if !expectedResult {
+                precondition(KeyboardClock.now.timeIntervalSince1970 >= 30, "A stuck visible keyboard must retain the full retry budget")
+            }
+            print("\(name): PASS")
+        }
+    }
+}
+'''
+with tempfile.TemporaryDirectory(prefix="dulcet-account-keyboard-") as directory:
+    swift = Path(directory) / "control.swift"
+    binary = Path(directory) / "control"
+    swift.write_text(keyboard_collaborators + "    @MainActor\n" + keyboard_method + keyboard_controls)
     subprocess.run(["swiftc", "-parse-as-library", str(swift), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

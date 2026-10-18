@@ -1098,17 +1098,29 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     @MainActor
     private func dismissKeyboardIfPresent(in app: XCUIApplication) -> Bool {
         let keyboard = app.keyboards.firstMatch
-        // A Hide tap on a loaded host can land while the keyboard is still settling; try again
-        // before calling the keyboard stuck.
+        // iPad can retain an AX keyboard and its offscreen Hide button after dismissal.
+        // Its container then has zero height at the window's bottom edge. Hardware focus
+        // and stale descendants do not mean that a software keyboard covers the app.
+        func isShown() -> Bool {
+            guard keyboard.exists else { return false }
+            let frame = keyboard.frame
+            return !frame.isEmpty && !frame.intersection(app.windows.firstMatch.frame).isEmpty
+        }
+        // A Hide tap can land while the keyboard is settling; retain the bounded retries
+        // and fail if a visible keyboard still covers the window after all three attempts.
         for attempt in 1...3 {
-            guard keyboard.exists else { return true }
+            guard isShown() else { return true }
             let hide = keyboard.buttons["Hide keyboard"].firstMatch
             if hide.waitForExistence(timeout: 2) {
                 hide.tap()
             } else {
                 keyboard.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.95)).tap()
             }
-            if keyboard.waitForNonExistence(timeout: 10) { return true }
+            let deadline = Date().addingTimeInterval(10)
+            repeat {
+                if !isShown() { return true }
+                Thread.sleep(forTimeInterval: 0.1)
+            } while Date() < deadline
             print("DULCET ACCOUNT STATES keyboard-still-shown attempt=\(attempt)")
         }
         XCTFail("The software keyboard must dismiss before the account controls are driven: " + app.debugDescription)
