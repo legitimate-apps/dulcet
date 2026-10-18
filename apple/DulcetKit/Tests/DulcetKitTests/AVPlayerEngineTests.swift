@@ -55,13 +55,18 @@ struct AVPlayerCrossfadeTests {
         #expect(faded.incomingVolume > 0 && faded.outgoingVolume > 0)
         #expect(await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0)) ==
             .completed(commandID: .init("sleep-silence"), result: .withoutData))
-        // Read the actual AVPlayers until both report silence, within the still-live tail.
-        // This keeps the exact zero-gain check and records whether either player failed it.
-        try await waitUntil("master silence did not reach both real players", engine: engine, timeout: 1) {
-            guard let state = engine.crossfadeStateForTesting() else { return false }
-            return state.incomingVolume == 0 && state.outgoingVolume == 0
+        // Assert the same real-player snapshot that satisfied the silence condition. Taking a
+        // second snapshot after the wait can observe a different AVFoundation volume update.
+        // Both players must still report exactly zero within the live tail and the same one-second bound.
+        let silenceDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        var silenceSnapshot = engine.crossfadeStateForTesting()
+        while let snapshot = silenceSnapshot,
+              snapshot.incomingVolume != 0 || snapshot.outgoingVolume != 0,
+              ContinuousClock.now < silenceDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+            silenceSnapshot = engine.crossfadeStateForTesting()
         }
-        let silent = try #require(engine.crossfadeStateForTesting())
+        let silent = try #require(silenceSnapshot, "The tail must remain live for the zero-gain observation")
         #expect(silent.incomingVolume == 0)
         #expect(silent.outgoingVolume == 0)
         let boundary = fixture.events.snapshot
