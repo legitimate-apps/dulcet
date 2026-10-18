@@ -1115,9 +1115,13 @@ frames so XCTest can send the drag without first hit-testing the background bar
 through the open menu. The `0.8`-second hold, velocity `200`, one-second end hold,
 two-attempt limit and deferred queue read are unchanged. Callers without native-menu
 preparation retain their element-to-element gesture. Exact queue count/order,
-paused playback and zero retained menus remain required. Acceptance requires runtime
-validation of this correction, the same no-drag-source control reaching an actual
-synthesized drag, and a restored-source positive.
+paused playback and zero retained menus remain required. Full run
+[39098039571](https://github.com/legitimate-apps/dulcet/actions/runs/39098039571)
+again passes this album proof with one native menu, one delivered drag, exact
+three-track order, paused playback and no remaining menu. A separate revised
+negative control has not completed: an earlier variant failed before touch delivery,
+a later invocation failed in checkout, and its replacement was canceled while
+queued. Those controls provide no causal acceptance evidence.
 
 **Default-on AutoPlay moves the skip history below the fold — observed.** In
 [full run 39092007526](https://github.com/legitimate-apps/dulcet/actions/runs/39092007526),
@@ -1136,8 +1140,10 @@ collapsed, expands it, and requires the real first track row to be hittable
 before checking its unchanged track-title identity and unmarked presentation.
 It records AutoPlay's observed value, recommendation count, initial reachability
 and actual swipe counts. It leaves AutoPlay on and preserves the notice,
-transport and positive/negative server-play-count checks. Runtime acceptance of
-this further correction remains pending the final-source full run.
+transport and positive/negative server-play-count checks. Full run39098039571 validates this history correction with AutoPlay `1`, five
+recommendations, one disclosure swipe and one row swipe. Its phone leg later
+fails the separate largest-text catalog prerequisite described below; this is
+not a green full-run receipt.
 
 **Sample the playing UI atomically under AutoPlay — observed failure, inferred
 lookup mechanism.** The same full run's iPad leg passes the Library, playlist,
@@ -1158,7 +1164,11 @@ title, and preserves slider precedence. Missing or failed snapshots prove
 nothing. The original 20-second window, AutoPlay setting, server bitrate/source
 checks and quality restoration remain unchanged. Diagnostics use the last actual
 sample, and the proof records its snapshot count and accepted playback evidence.
-Runtime acceptance remains pending the final-source full run.
+Full run39098039571 validates the quality correction: the iPad leg is GREEN,
+with18 actual cases in14 JUnit exports and zero failures, errors or skips. The
+quality case passes in152.658 seconds and records two immutable samples, accepting
+the actual advanced title `Étude 東京`. All other full-run legs still need their
+final-source acceptance.
 
 **Hold the TV footer proof's named song after proving live lyrics — observed
 transition, inferred focus mechanism.** The core leg of full run 39092007526
@@ -1177,6 +1187,29 @@ write. An already-advanced song fails the title assertion. This holds the song
 being rated while the footer and server checks run; it does not establish
 continuous footer focus through a natural AutoPlay transition. Runtime acceptance
 remains pending the final-source full run.
+
+**Reach the cold largest-text Library catalog before waiting for a lazy tile —
+observed.** Full run 39098039571 passes all seven phone Library cases, the album,
+track, playlist and search drag proofs, and the repaired skipped-track history
+proof. The latter records AutoPlay `1`, five recommendations, initially
+unreachable history, one disclosure swipe and one row swipe. The next short-title
+largest-text skip-notice test fails in 54.859 seconds before starting playback:
+its helper waits 30 seconds for an album tile without scrolling. The failed
+xcresult's hierarchy has a 402 × 874 viewport, the Library tab selected, Recently
+Added at y=1513.7, an empty lazy grid and a 13-page scrollbar at 0%. The expanded
+Library controls and explanation place the catalog below the fold; this failure
+establishes no defect in the notice's navigation clearance.
+
+The helper now reaches the stable Recently Added heading with room below it for
+the lazy grid, retains the original 30-second wait for an actual loaded album,
+and requires a hittable tile. The heading and first-tile phases share six actual
+swipes; the existing named-album phase remains separately bounded. Both
+largest-text notice cases positively require an initially unreachable catalog
+and at least one real catalog swipe, while retaining their track-row scrolling,
+full-width header actions, notice, transport and navigation checks. Independent
+source review found the data-readiness wait and default helper behavior retained.
+Runtime acceptance remains pending. Two bounded local focused attempts obtained
+no build reservation and performed no build or simulator test; neither is a pass.
 
 The final-source full Apple acceptance receipt is maintained in [PR #340](https://github.com/legitimate-apps/dulcet/pull/340).
 It must show all planned platform, core, iPad and iPhone legs plus the aggregate

@@ -7852,6 +7852,16 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-18 — Reveal the largest-text Library catalog before its lazy tiles.**
+The phone skip-notice helper reaches the stable Recently Added heading with space
+for its grid before waiting up to 30 seconds for the first actual album tile.
+Heading and first-tile reachability share six touch swipes; the named fixture album
+retains its existing bounded search. Both largest-text cases require initial
+catalog unreachability and positive actual scrolling, then preserve all notice,
+header, transport and navigation assertions. This handles the expanded Library
+controls without treating unloaded data as proof of a scroll failure. Runtime
+acceptance is recorded in `docs/evidence/library-depth.md`.
+
 **2026-10-18 — Hold the TV footer fixture after its live lyric-line proof.**
 After positively observing the playing song's lit lyric line, the remote footer proof sends
 Play/Pause and requires both paused transport and the exact original title before its remaining

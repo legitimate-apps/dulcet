@@ -1492,7 +1492,12 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func assertAlbumHeaderReadsAtTheLargestTextSize(_ run: SkipProbeRun) {
         let frames = run.headerActions.map { "\($0)" }.joined(separator: " ")
-        print("DULCET SKIP PROBE AX5 HEADER row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
+        print("DULCET SKIP PROBE AX5 HEADER catalog-initially-reachable=\(run.catalogInitiallyReachable)"
+            + " catalog-swipes=\(run.catalogSwipes) row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
+        XCTAssertFalse(run.catalogInitiallyReachable,
+                       "The cold largest-text Library must exercise reaching its below-fold catalog")
+        XCTAssertGreaterThan(run.catalogSwipes, 0,
+                             "The catalog must be reached by actual touch scrolling")
         XCTAssertGreaterThanOrEqual(run.rowSwipes, 1,
                                     "At this size the first track must start below the fold; header=\(frames)")
         for frame in run.headerActions {
@@ -1509,6 +1514,8 @@ final class DulcetiOSUITests: XCTestCase {
         /// What the notice and the bars were at the instant it was seen, from one snapshot.
         let sighting: NoticeSighting
         let markersBefore: [String]
+        let catalogInitiallyReachable: Bool
+        let catalogSwipes: Int
         /// How many swipes brought the unplayable track into reach: zero when it was on screen.
         let rowSwipes: Int
         /// The album header's Play and Shuffle frames, read when the page opened.
@@ -1623,15 +1630,36 @@ final class DulcetiOSUITests: XCTestCase {
               openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
             return nil
         }
-        // The library's rows are realized as they scroll into view, and the probe albums sort
-        // after the default corpus, so on a phone "Skip Probe" is below the fold and does not exist
-        // until the list scrolls to it. Wait for the library to show albums at all, then scroll.
+        // Library's category rows and Shuffle All explanation can fill several screens at
+        // accessibility sizes. Reach its lazy catalog before searching for the probe album;
+        // waiting for an unrealized tile cannot reveal it. Both scroll phases stay bounded.
         let albums = app.buttons.matching(identifier: "dulcet.library.album")
         let album = albums.matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
-        guard albums.firstMatch.waitForExistence(timeout: 30) else {
-            XCTFail("The library must list albums: " + app.debugDescription)
+        let firstAlbum = albums.firstMatch
+        let catalogInitiallyReachable = firstAlbum.exists && firstAlbum.isHittable
+        let catalogHeading = app.otherElements["dulcet.reader.home.recentlyAdded"]
+            .staticTexts["Recently Added"].firstMatch
+        guard catalogHeading.waitForExistence(timeout: 30),
+              let headingSwipes = scrollIntoViewCountingSwipes(
+                catalogHeading, in: app, probingBlockingSystemAlerts: false,
+                minimumSpaceBelow: app.windows.firstMatch.frame.height / 2
+              ) else {
+            XCTFail("Touch scrolling must reveal Recently Added with room for its lazy grid: " + app.debugDescription)
             return nil
         }
+        // Revealing a stable heading is independent of the catalog request completing. Retain
+        // the data-readiness wait after the grid has room to realize its first actual tile.
+        guard firstAlbum.waitForExistence(timeout: 30),
+              let tileSwipes = scrollIntoViewCountingSwipes(
+            firstAlbum, in: app, probingBlockingSystemAlerts: false,
+            maximumSwipes: 6 - headingSwipes
+        ), firstAlbum.exists, firstAlbum.isHittable else {
+            XCTFail("Touch scrolling must reveal the Library's actual album catalog: " + app.debugDescription)
+            return nil
+        }
+        let catalogSwipes = headingSwipes + tileSwipes
+        print("DULCET SKIP PROBE CATALOG initially-reachable=\(catalogInitiallyReachable)"
+            + " swipes=\(catalogSwipes) tile-hittable=\(firstAlbum.isHittable)")
         guard scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
             XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
                 + "tools/seed-skip-probe: " + app.debugDescription)
@@ -1669,6 +1697,8 @@ final class DulcetiOSUITests: XCTestCase {
             notice: notice,
             sighting: sighting,
             markersBefore: markersBefore,
+            catalogInitiallyReachable: catalogInitiallyReachable,
+            catalogSwipes: catalogSwipes,
             rowSwipes: rowSwipes,
             headerActions: headerActions
         )
@@ -5896,14 +5926,16 @@ final class DulcetiOSUITests: XCTestCase {
         ) != nil
     }
 
-    /// `scrollIntoView`, answering how many swipes it took (at most six), or nil when the element
-    /// never became reachable.
+    /// `scrollIntoView`, answering how many swipes it took (six by default), or nil when the element
+    /// never became reachable. Catalog headings can reserve space for their lazy content below.
     @MainActor
     private func scrollIntoViewCountingSwipes(
         _ element: XCUIElement,
         in app: XCUIApplication,
         probingBlockingSystemAlerts: Bool = true,
-        alsoRevealing followingRow: XCUIElement? = nil
+        alsoRevealing followingRow: XCUIElement? = nil,
+        minimumSpaceBelow: CGFloat = 0,
+        maximumSwipes: Int = 6
     ) -> Int? {
         let window = app.windows.firstMatch
         guard window.exists else {
@@ -5929,24 +5961,36 @@ final class DulcetiOSUITests: XCTestCase {
             }
 
             var targetIsAboveWindow = false
+            var needsSpaceBelowVisibleTarget = false
             if element.exists {
                 let frame = element.frame
                 let midpoint = CGPoint(x: frame.midX, y: frame.midY)
                 targetIsAboveWindow = !frame.isEmpty && !frame.isInfinite && midpoint.y < window.frame.minY
+                needsSpaceBelowVisibleTarget = minimumSpaceBelow > 0 &&
+                    !frame.isEmpty && !frame.isInfinite && window.frame.contains(midpoint) &&
+                    window.frame.maxY - frame.maxY < minimumSpaceBelow
                 if !frame.isEmpty && !frame.isInfinite &&
                     window.frame.contains(midpoint) && element.isHittable &&
-                    (followingRow?.exists ?? true) {
+                    (followingRow?.exists ?? true) &&
+                    (minimumSpaceBelow <= 0 || window.frame.maxY - frame.maxY >= minimumSpaceBelow) {
                     return swipeCount
                 }
             }
 
-            guard swipeCount < 6 else { return nil }
+            guard swipeCount < maximumSwipes else { return nil }
 
             // This must remain a real event rather than an isHittable-gated preflight. Tap paths
             // can still invoke the interruption monitors installed as a backstop.
             // A restored scroll position can place an existing destination above the window.
             // Keep the same swipe budget and reachability checks while scrolling toward it.
-            if targetIsAboveWindow { app.swipeDown() }
+            if needsSpaceBelowVisibleTarget {
+                // Once the heading is visible, a full swipe can overshoot the smaller placement
+                // band that leaves room for the grid. This real adjustment uses the same budget.
+                window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                    .press(forDuration: 0.05, thenDragTo:
+                        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            }
+            else if targetIsAboveWindow { app.swipeDown() }
             else { app.swipeUp() }
             swipeCount += 1
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
