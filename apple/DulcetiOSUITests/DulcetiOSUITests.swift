@@ -2122,33 +2122,32 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // Hold the album's last track before inspecting the queue. On a loaded host the first
-        // Up Next read happened over 34 seconds after this 31-second fixture was tapped; playback
-        // was preparing another song and the footer disappeared under the toggle's tap.
-        // AutoPlay may append recommendations, so count what the drag adds to the actual queue.
+        // The 31-second canary ended before the Pause touch in run 39301701884:
+        // track touch at 141 s, Pause touch at 177 s. Restore its saved queue paused instead.
+        // This proof needs a held queue, not a timed Play/Pause race on a busy UI runner.
         let canary = track("UI Playback Canary")
         guard canary.waitForExistence(timeout: 10), scrollIntoView(canary, in: app) else {
             XCTFail("The album must list UI Playback Canary: " + app.debugDescription)
             return
         }
         canary.tap()
+        app.terminate()
+        app.launch()
+        guard awaitLiveAccountConnection(in: app, compact: true) else {
+            XCTFail("The restored queue's account must reconnect before reading its album")
+            return
+        }
+        // Reading the album supplies the catalog needed to resolve the persisted selection.
+        guard openLibraryAlbum("Threshold Boundary", in: app, compact: true),
+              dragged.waitForExistence(timeout: 15), scrollIntoView(dragged, in: app) else { return }
         let bar = app.buttons["dulcet.mini-player.open"].firstMatch
-        guard bar.waitForExistence(timeout: 15) else {
-            XCTFail("Playing a track must show the now-playing bar: " + app.debugDescription)
-            return
-        }
         let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
-        guard waitForLabelContaining("UI Playback Canary", of: bar, timeout: 10),
-              waitForLabel("Pause", of: playPause, timeout: 10) else {
-            XCTFail("The named canary must be playing before it is paused: " + app.debugDescription)
+        guard waitForLabelContaining("UI Playback Canary", of: bar, timeout: 15),
+              waitForLabel("Play", of: playPause, timeout: 10) else {
+            XCTFail("The saved queue must restore the original canary paused before reading Up Next: " + app.debugDescription)
             return
         }
-        playPause.tap()
-        guard waitForLabel("Play", of: playPause, timeout: 10),
-              bar.label.contains("UI Playback Canary") else {
-            XCTFail("Pause must hold the original canary before reading Up Next: " + app.debugDescription)
-            return
-        }
+        print("DULCET DRAG QUEUE PRECONDITION restored-canary=true paused=true")
         guard let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: true) else { return }
         let queuedBefore = before.filter { $0.hasPrefix("Thirty One Seconds") }.count
 

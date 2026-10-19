@@ -1988,7 +1988,9 @@ Listing route and interruption events is not a policy. The normative policy:
   created, before the first play. The session is activated on the first `prepare` of a session and
   deactivated on `stop` or after a grace period with no queue. AirPlay is permitted. On
   `InterruptionBegan` playback pauses; on `InterruptionEnded` it resumes **only** if the system
-  indicates resumption is appropriate. An interruption whose reason is that the system **suspended
+  indicates resumption is appropriate and no newer Pause, Stop, noisy-route pause or terminal
+  playback failure revoked the earlier playing intent. A later explicit Play still starts playback.
+  An interruption whose reason is that the system **suspended
   the app** (iOS) is not a call or Siri taking audio and is ignored. iOS, iPadOS and tvOS declare the
   `audio` background mode; without it the system suspends playback at screen lock.
 - **Android:** `AudioAttributes` usage `MEDIA` / content type `MUSIC`, with
