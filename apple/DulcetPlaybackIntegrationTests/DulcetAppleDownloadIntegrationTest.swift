@@ -502,7 +502,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         let plan = try await resolveStreamingPlan(wire: wire, context: context, track: track)
         let resource = try XCTUnwrap(plan.resource as? any DulcetPlaybackResourceLoading)
         let head = await load(resource: resource, range: .init(start: 0, endInclusive: 4_095))
-        guard case let .loaded(_, headerInfo) = head else { XCTFail("stream header did not validate"); return }
+        guard case let .loaded(_, headerInfo) = head else { XCTFail("stream header did not validate: \(head), track=\(track.title), container=\(String(describing: track.sourceContainer))"); return }
         // AVFoundation commonly reads the metadata tail before returning to the audio body.
         // Exercise that real request ordering, followed by overlapping sequential reads.
         let tail = await load(resource: resource, range: .init(start: max(0, headerInfo.contentLength - 4_096),
@@ -957,14 +957,19 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         resource: any DulcetPlaybackResourceLoading,
         range: DulcetPlaybackByteRange
     ) async -> DulcetPlaybackResourceLoadOutcome {
-        await withCheckedContinuation { continuation in
-            _ = resource.load(DulcetPlaybackResourceLoadRequest(
+        // The caller owns an asynchronous load, just as the production AV resource loader does.
+        // Its callbacks weakly reference the operation so dropping it means cancellation.
+        var operation: (any DulcetPlaybackResourceLoadOperation)?
+        let outcome: DulcetPlaybackResourceLoadOutcome = await withCheckedContinuation { continuation in
+            operation = resource.load(DulcetPlaybackResourceLoadRequest(
                 range: range,
                 requiresAudioSignature: range.start == 0
             )) { outcome in
                 continuation.resume(returning: outcome)
             }
         }
+        withExtendedLifetime(operation) { }
+        return outcome
     }
 
     private func waitUntil(
