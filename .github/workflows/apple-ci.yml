@@ -598,7 +598,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit/TEST-DulcetKeychainIOSTests.xml" \
             DulcetKeychainIOSTests
       - name: Build DulcetTV and test DulcetKit plus stored Keychain attributes on tvOS
-        timeout-minutes: 18
+        # Passing runs take 14.2–16.6 minutes; the 18-minute cap expired in
+        # runs 39131842852 and 39160676413. Preserve the individual test bounds.
+        timeout-minutes: 30
         run: |
           set -o pipefail
           xcodebuild test \
