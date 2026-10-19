@@ -6005,14 +6005,12 @@ final class DulcetiOSUITests: XCTestCase {
             }
 
             var targetIsAboveWindow = false
-            var needsSpaceBelowVisibleTarget = false
+            var targetFrame: CGRect?
             if element.exists {
                 let frame = element.frame
+                if !frame.isEmpty && !frame.isInfinite { targetFrame = frame }
                 let midpoint = CGPoint(x: frame.midX, y: frame.midY)
                 targetIsAboveWindow = !frame.isEmpty && !frame.isInfinite && midpoint.y < window.frame.minY
-                needsSpaceBelowVisibleTarget = minimumSpaceBelow > 0 &&
-                    !frame.isEmpty && !frame.isInfinite && window.frame.contains(midpoint) &&
-                    window.frame.maxY - frame.maxY < minimumSpaceBelow
                 if !frame.isEmpty && !frame.isInfinite &&
                     window.frame.contains(midpoint) && element.isHittable &&
                     (followingRow?.exists ?? true) &&
@@ -6027,12 +6025,32 @@ final class DulcetiOSUITests: XCTestCase {
             // can still invoke the interruption monitors installed as a backstop.
             // A restored scroll position can place an existing destination above the window.
             // Keep the same swipe budget and reachability checks while scrolling toward it.
-            if needsSpaceBelowVisibleTarget {
-                // Once the heading is visible, a full swipe can overshoot the smaller placement
-                // band that leaves room for the grid. This real adjustment uses the same budget.
-                window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-                    .press(forDuration: 0.05, thenDragTo:
-                        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            if minimumSpaceBelow > 0, let targetFrame {
+                // A fixed quarter-window drag still flung the AX5 heading past the navigation
+                // bar; the next full reverse swipe overshot its placement band again. Move by
+                // its measured remaining distance and hold before lifting to avoid that fling.
+                let windowFrame = window.frame
+                let navigation = app.navigationBars.firstMatch
+                let tabs = app.tabBars.firstMatch
+                let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+                var top = windowFrame.minY
+                var bottom = windowFrame.maxY
+                if navigation.exists, !navigation.frame.isEmpty { top = max(top, navigation.frame.maxY) }
+                for overlay in [tabs, bar] where overlay.exists && !overlay.frame.isEmpty {
+                    bottom = min(bottom, overlay.frame.minY)
+                }
+                let movement = targetFrame.minY - (top + 16)
+                let distance = min(max(abs(movement), 30), max(30, (bottom - top) * 0.6))
+                let fromY = movement >= 0 ? bottom - 20 : top + 20
+                let toY = fromY + (movement >= 0 ? -distance : distance)
+                print("DULCET CATALOG PLACEMENT heading-y=\(targetFrame.minY) target-y=\(top + 16)"
+                    + " drag=\(toY - fromY) swipe=\(swipeCount + 1)/\(maximumSwipes)")
+                window.coordinate(withNormalizedOffset: CGVector(dx: 0.5,
+                    dy: (fromY - windowFrame.minY) / windowFrame.height))
+                    .press(forDuration: 0.1, thenDragTo:
+                        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5,
+                            dy: (toY - windowFrame.minY) / windowFrame.height)),
+                        withVelocity: .slow, thenHoldForDuration: 0.3)
             }
             else if targetIsAboveWindow { app.swipeDown() }
             else { app.swipeUp() }
