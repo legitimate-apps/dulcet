@@ -156,7 +156,9 @@ final class DulcetLibrarySyncAppTests: XCTestCase {
 
         let unreachableURL = try XCTUnwrap(URL(string: "http://127.0.0.1:1"))
         let unreachableConfiguration = URLSessionConfiguration.ephemeral
-        unreachableConfiguration.timeoutIntervalForRequest = 0.5
+        // URLSession startup can exceed 0.5s on a first-boot CI simulator. The control must
+        // still observe an actual connection refusal; a request timeout is not accepted.
+        unreachableConfiguration.timeoutIntervalForRequest = 5
         let unreachableSession = URLSession(configuration: unreachableConfiguration)
         do {
             _ = try await unreachableSession.data(from: unreachableURL)

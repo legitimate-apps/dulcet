@@ -5,12 +5,14 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <application>
-        <!-- Not exported: the notification, lock screen and media buttons reach playback through
-             the in-process platform session. Exporting would also expose the local binding. -->
+        <!-- Media3 authenticates remote controllers before exposing library or player commands.
+             The local Binder has no IPC transactions; only in-process shells can use its Kotlin API. -->
         <service android:name="com.legitimateapps.dulcet.playback.PlaybackService"
-            android:exported="false" android:foregroundServiceType="mediaPlayback">
+            android:exported="true" android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="androidx.media3.session.MediaLibraryService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
     </application>
