@@ -120,3 +120,17 @@ assert "timeout-minutes: 6" in boot
 assert "steps.ipados_layout_destination.outputs.udid" in boot
 assert "resolve-ipad-destination" not in boot
 print("PLATFORM IPAD ORDER CONTROL PASS verified shutdown precedes unchanged six-minute boot")
+
+# Service-count stability is a prerequisite in a device member, not a best-effort sleep.
+for did_settle in [True, False]:
+    calls = []
+    def fake_simctl(*arguments, **kwargs):
+        calls.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+    arguments = [TOOL, '--phase', 'my-library-ipad', '--keep', 'IPAD', '--settle', '--require-settle', '--require-isolation']
+    shut = {'runtime': [{'udid': 'IPAD', 'state': 'Shutdown'}]}
+    running = {'runtime': [{'udid': 'IPAD', 'state': 'Booted'}]}
+    with patch.object(sys, 'argv', arguments), patch.object(tool, 'devices', side_effect=[shut, running]), patch.object(tool, 'simctl', side_effect=fake_simctl), patch.object(tool, 'settle', return_value=did_settle), patch.dict(tool.os.environ, {}, clear=True), redirect_stdout(StringIO()):
+        assert tool.main() == (0 if did_settle else 1)
+    assert ('bootstatus', 'IPAD', '-b') in calls
+    print(f'SETTLE ACK CONTROL PASS observed={did_settle} accepted={did_settle}')

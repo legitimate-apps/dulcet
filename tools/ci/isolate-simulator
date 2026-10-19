@@ -92,9 +92,8 @@ def running_services(udid: str):
     return sum(1 for line in listing.stdout.splitlines()[1:] if line.split("\t", 1)[0].isdigit())
 
 
-def settle(phase: str, udid: str) -> None:
-    """Waits for the post-boot burst to end. Reported, never raised: an unsettled device only
-    restores the behaviour before this wait existed."""
+def settle(phase: str, udid: str) -> bool:
+    """Report whether running-service counts stabilized. The caller may require that witness."""
     started = time.monotonic()
     counts = []
     while True:
@@ -106,6 +105,7 @@ def settle(phase: str, udid: str) -> None:
     print(f"SIMULATOR SETTLE phase={phase} udid={udid} running={shown} "
           f"settled={'true' if settled(counts) else 'false'} "
           f"seconds={time.monotonic() - started:.1f}", flush=True)
+    return settled(counts)
 
 
 def booted(all_devices: dict) -> list[str]:
@@ -125,7 +125,11 @@ def main() -> int:
                         help="fail unless the final booted device list matches the requested state")
     parser.add_argument("--settle", action="store_true",
                         help="after booting the kept device, wait for its services to hold steady")
+    parser.add_argument("--require-settle", action="store_true",
+                        help="fail if the requested service-count settle condition was not observed")
     args = parser.parse_args()
+    if args.require_settle and not args.settle:
+        parser.error("--require-settle needs --settle")
     if args.settle and args.none:
         parser.error("--settle needs a device to keep")
 
@@ -154,7 +158,9 @@ def main() -> int:
                   f"bootstatus_exit={status.returncode}: {status.stderr.strip()[-300:]}")
             return 1
         if args.settle:
-            settle(args.phase, keep)
+            did_settle = settle(args.phase, keep)
+            if args.require_settle and not did_settle:
+                return 1
     after = booted(devices(None))
     expected = [keep] if keep else []
     print(f"SIMULATOR ISOLATION phase={args.phase} keep={keep or 'none'} shut_down={len(to_shut)} "
