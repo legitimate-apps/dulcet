@@ -6707,7 +6707,7 @@ concurrency:
 with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 from
  2026-09-06, then per leg since the split — 80 `apple-platform`, 120 `apple-conformance-core`, 115
 `apple-conformance-ipad-iphone` per member, 5 for the aggregator — with per-step caps on the heavy steps; see
-§21.5**), 5 `parity-gate`, 60
+§21.5**), 10 `parity-gate` (remeasured 2026-10-19; §28), 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
 framework builds, macOS test, four Xcode shell builds, OS-floor assertions, both negative-control
@@ -7903,6 +7903,14 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-19 — Give completed parity checks enough time to finish cleanup.**
+Both attempts of Actions run `39300490385` passed every test step, then the five-minute
+job deadline cancelled final cleanup at 5m03s and 5m01s. The release-policy controls took
+132 seconds in the second attempt, versus 99 seconds in green run `39296960604`; this is
+observed runtime variation, with no failed assertion. The parity job cap is now 10 minutes,
+the next five-minute boundary above 1.5 times the observed duration. Its checks, individual
+step limits, runner class and concurrency cancellation are unchanged.
 
 **2026-10-19 — Retain My Library automatically and cache the actual playback response.**
 §14.5.1 defines independent explicit/automatic ownership, recently-added scheduling, conservative
