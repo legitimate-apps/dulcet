@@ -638,7 +638,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
 #endif
         activate(tile)
-        let header = app.staticTexts["dulcet.album.title"].firstMatch
+        // Resolve the indexed result, as for the iPad sidebar. On the Mac the firstMatch wait
+        // reported absent for 15 s while the failure hierarchy held this exact titled StaticText.
+        let header = app.staticTexts.matching(identifier: "dulcet.album.title").element(boundBy: 0)
         XCTAssertTrue(header.waitForExistence(timeout: 15), "The activated tile must open its album page")
         XCTAssertEqual(header.label, title, "The album page must name the activated tile")
     }
