@@ -23,6 +23,7 @@ public class AndroidMyLibrary(private val reader: AndroidLibraryReader) {
         reader.onReader {
             val session = reader.composed()?.session ?: return@onReader
             registrations += registration
+            reader.myLibraries += this
             if (listeningTo !== session) {
                 listeningTo = session
                 session.myLibrary.addChangeListener { if (listeningTo === session) publishAll(session) }
@@ -59,6 +60,7 @@ public class AndroidMyLibrary(private val reader: AndroidLibraryReader) {
 
     internal fun unregister(registration: AndroidMyLibraryRegistration) {
         registrations -= registration
+        if (registrations.isEmpty()) reader.myLibraries -= this
     }
 
     /** Reader thread. */
@@ -67,13 +69,18 @@ public class AndroidMyLibrary(private val reader: AndroidLibraryReader) {
         if (registration in registrations) publish(session, registration)
     }
 
+    internal fun republishAll() { reader.composed()?.session?.let(::publishAll) }
+
     private fun publishAll(session: LibraryReaderSession) {
         registrations.toList().forEach { publish(session, it) }
     }
 
     private fun publish(session: LibraryReaderSession, registration: AndroidMyLibraryRegistration) {
         val publication = try {
-            session.myLibrary.snapshot(registration.sort.toCore()).toAndroid()
+            session.myLibrary.snapshot(registration.sort.toCore()).toAndroid { rawId ->
+                session.reader.trackPlayability(rawId,
+                    session.reader.downloads.localTrackRawIds(session.reader.cache.serverId)).toAndroid()
+            }
         } catch (_: Throwable) {
             return
         }
@@ -166,6 +173,7 @@ public data class AndroidMyLibrarySong(
     val durationMilliseconds: Long?,
     val artworkKey: String?,
     val pending: Boolean,
+    val playability: AndroidLibraryPlayability = AndroidLibraryPlayability.Streamable,
 )
 
 /** One state of My Library. Lists hold items whose details the device has; [membership] covers every item. */
@@ -209,7 +217,9 @@ private fun MyLibrarySyncState.toAndroid(): AndroidMyLibrarySyncState = when (th
     MyLibrarySyncState.Failed -> AndroidMyLibrarySyncState.Failed
 }
 
-internal fun MyLibrarySnapshot.toAndroid(): AndroidMyLibraryPublication {
+internal fun MyLibrarySnapshot.toAndroid(
+    playability: (String) -> AndroidLibraryPlayability = { AndroidLibraryPlayability.Streamable },
+): AndroidMyLibraryPublication {
     val offered = availability != MyLibraryAvailability.Unavailable
     return AndroidMyLibraryPublication(
         availability = availability.toAndroid(),
@@ -229,7 +239,7 @@ internal fun MyLibrarySnapshot.toAndroid(): AndroidMyLibraryPublication {
         songs = if (!offered) emptyList() else songs.map { song ->
             AndroidMyLibrarySong(
                 song.record.rawId, song.record.title, song.record.albumRawId, song.record.albumTitle,
-                song.record.credits.firstOrNull()?.name, song.record.durationMilliseconds, song.record.artworkKey, song.pending,
+                song.record.credits.firstOrNull()?.name, song.record.durationMilliseconds, song.record.artworkKey, song.pending, playability(song.record.rawId),
             )
         },
         snapshot = this,

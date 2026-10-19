@@ -146,9 +146,14 @@ public class AndroidLibraryReader internal constructor(
     private var reportedForeground = initiallyForeground
 
     // What the platform last reported, applied again to a session built after a failed setup.
+    @Volatile internal var serverAvailableForPlayback = true
+        private set
+    @Volatile internal var automaticDownloadsMayStart = false
+        private set
     private var reportedReachable: Boolean? = null
     private var reportedConstrained = false
 
+    internal val myLibraries = mutableSetOf<AndroidMyLibrary>()
     private val windows = mutableListOf<AndroidLibraryWindow>()
     private val searches = mutableListOf<AndroidLibrarySearch>()
     private val outcomeListeners = mutableListOf<AndroidLibraryOutcomeRegistration>()
@@ -209,14 +214,28 @@ public class AndroidLibraryReader internal constructor(
             compose(readerScope, reportedForeground).also { made ->
                 built = made
                 made.session.reader.reconnectObserver = { outcome ->
+                    serverAvailableForPlayback = when (outcome) {
+                        is ReaderConnectionOutcome.Read -> true
+                        is ReaderConnectionOutcome.Failed -> if (outcome.error == DomainError.Transport.Unreachable) false else serverAvailableForPlayback
+                        else -> serverAvailableForPlayback
+                    }
+                    automaticDownloadsMayStart = outcome is ReaderConnectionOutcome.Read
+                    account?.providerInstanceId?.let { AndroidPlaybackController.notifyServerAvailable(it, serverAvailableForPlayback) }
+                    if (automaticDownloadsMayStart) account?.providerInstanceId?.let(AndroidDownloadController::notifyMyLibraryChanged)
+                    myLibraries.toList().forEach { it.republishAll() }
                     val connection = made.session.connection(outcome, discardedAcknowledged.get())
                     reconnectListeners.toList().forEach { listener -> onMain { listener.get()?.invoke(connection) } }
                 }
                 made.session.favourites.addOutcomeListener(::fanOutOutcome)
                 made.session.favourites.addChangeListener(::fanOutFavouriteChange)
                 made.session.playlists.addOutcomeListener(::fanOutPlaylistOutcome)
+                made.session.myLibrary.addChangeListener {
+                    account?.providerInstanceId?.let(AndroidDownloadController::notifyMyLibraryChanged)
+                }
                 made.session.reader.setNetworkConstrained(reportedConstrained)
                 reportedReachable?.let(made.session::setOnline)
+                // A saved account starts contact-closed while automatic reconnect runs. Until
+                // its real outcome arrives, that is not evidence that the server is unreachable.
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -568,12 +587,16 @@ public class AndroidLibraryReader internal constructor(
      * offline at once — no request is issued offline. Reachable while offline REQUESTS a reconnect;
      * the reader is back online only once that reconnect has read the epoch.
      */
-    public fun setOnline(reachable: Boolean) {
+    public fun setOnline(reachable: Boolean, serverUnavailable: Boolean = true) {
         // A platform report never retries a failed setup (it arrives often); a later call's will,
         // and applies what was reported.
         onReader {
             reportedReachable = reachable
+            if (!reachable) automaticDownloadsMayStart = false
+            if (!reachable && serverUnavailable) serverAvailableForPlayback = false
+            if (!reachable && serverUnavailable) account?.providerInstanceId?.let { AndroidPlaybackController.notifyServerAvailable(it, false) }
             composition?.session?.setOnline(reachable)
+            myLibraries.toList().forEach { it.republishAll() }
         }
     }
 
@@ -598,7 +621,10 @@ public class AndroidLibraryReader internal constructor(
      */
     public fun downloadsChanged(rawIds: Set<String>) {
         if (rawIds.isEmpty()) return
-        onReader { composition?.session?.reader?.republishPendingChanges(rawIds) }
+        onReader {
+            composition?.session?.reader?.republishPendingChanges(rawIds)
+            myLibraries.toList().forEach { it.republishAll() }
+        }
     }
 
     /** A metered connection: no speculative reads (§16.13). */

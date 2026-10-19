@@ -57,6 +57,7 @@ public data class AlbumDownloads(
 /** The words for one track's download, or null when it has none. */
 public fun Resources.downloadLine(status: AndroidDownloadStatus?): String? = when {
     status == null -> null
+    status.cached && status.playsOffline -> getString(R.string.offline_cached)
     status.playsOffline -> getString(R.string.download_downloaded)
     status.needsAttention -> getString(R.string.download_needs_attention)
     status.state == AndroidDownloadState.Downloading -> status.totalBytes?.takeIf { it > 0 }

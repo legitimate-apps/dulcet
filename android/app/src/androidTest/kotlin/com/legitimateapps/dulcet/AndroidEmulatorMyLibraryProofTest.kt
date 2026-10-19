@@ -30,6 +30,13 @@ import org.junit.runner.RunWith
 class AndroidEmulatorMyLibraryProofTest {
     @get:Rule val compose = createEmptyComposeRule()
 
+    @Test fun automaticLibraryRetentionAndSameResponseCachePlayOffline() {
+        // This proof requires the extension server; the ordinary Navidrome matrix still
+        // exercises catalog fallback through myLibrarySplit below.
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("dulcetExpectSplit") == "true")
+        AndroidEmulatorOfflineLibraryProofTest().runOfflineProof(compose)
+    }
+
     @Test fun myLibrarySplit() {
         val probe = DisposableServerProbe.fromInstrumentation()
         // Ordinary emulator CI targets Navidrome. Dulcet Server runs opt into its extension contract.

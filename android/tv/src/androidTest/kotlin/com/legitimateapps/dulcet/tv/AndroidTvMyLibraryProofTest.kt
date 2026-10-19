@@ -32,6 +32,13 @@ import org.junit.runner.RunWith
 class AndroidTvMyLibraryProofTest {
     @get:Rule val compose = createEmptyComposeRule()
 
+    @Test fun automaticLibraryRetentionAndSameResponseCachePlayOffline() {
+        // This proof requires the extension server; the ordinary Navidrome matrix still
+        // exercises catalog fallback through myLibrarySplit below.
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("dulcetExpectSplit") == "true")
+        AndroidTvOfflineLibraryProofTest().runOfflineProof(compose)
+    }
+
     @Test fun myLibrarySplit() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         check(context.packageManager.hasSystemFeature("android.software.leanback")) { "The TV proof needs a TV device" }

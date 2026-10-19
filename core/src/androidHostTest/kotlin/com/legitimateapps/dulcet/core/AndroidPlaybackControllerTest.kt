@@ -598,6 +598,29 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun offlineShuffleSkipsUnavailableFirstInputBeforeMetadataAndExplicitUnavailablePreservesQueue() {
+        val songReads = mutableListOf<String>()
+        val file = java.io.File.createTempFile("dulcet-offline", ".wav")
+        try {
+            Fixture(loadSong = { id -> songReads += id; song(id) }, localPlans = { rawId ->
+                if (rawId != "down") null else LocalPlaybackPlan(DownloadId("download:down"),
+                    DownloadIdentity(OWNER, "down", DownloadIdentity.ORIGINAL_PROFILE), AudioContainer.Wav, 44, file.path)
+            }).use { f ->
+                f.controller.setNetworkAvailable(false)
+                f.controller.playQueue(album("net", "down"), 0, AndroidQueueSource.Library, "My Library", shuffle = true)
+                assertEquals(listOf("down"), f.preparedLocal.map { it.itemId.rawId })
+                assertTrue(songReads.isEmpty(), "offline shuffle cannot resolve its unavailable first input")
+                assertEquals(listOf("down"), f.controller.state.value.queue.map { it.track.rawId })
+                val before = f.controller.state.value
+                f.controller.playQueue(album("net"), 0, AndroidQueueSource.Library, "My Library")
+                assertEquals(before.queue, f.controller.state.value.queue, "refusing a stale offline selection preserves the old playable queue")
+                assertEquals(before.playbackSessionId, f.controller.state.value.playbackSessionId)
+                assertEquals(before.playWhenReady, f.controller.state.value.playWhenReady)
+                assertTrue(songReads.isEmpty())
+            }
+        } finally { file.delete() }
+    }
+
     /**
      * Spec §16.13: a restored queue's downloaded entry is named from what its download kept. Offline,
      * the song's own read fails; it is never asked for the downloaded entry, which still has its title,

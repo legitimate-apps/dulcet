@@ -69,6 +69,7 @@ internal fun AccountDialog(actions: AccountActions, onDismiss: () -> Unit) {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(stringResource(R.string.account_signout_account_body, actions.serverName, actions.username))
                 StreamingQualitySection()
+                OfflineStorageSection()
             }
         },
         confirmButton = {

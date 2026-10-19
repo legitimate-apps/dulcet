@@ -85,7 +85,7 @@ public class AndroidArtworkRepository internal constructor(
             val partial = File(root, file.name + PARTIAL)
             partial.writeBytes(bytes)
             if (!partial.renameTo(file)) partial.delete()
-            trim()
+            if (!AndroidDownloadController.trimArtwork(account.providerInstanceId, root)) trim()
         } catch (_: Exception) {
             // A cache that cannot be written only costs a later refetch.
         }
@@ -118,6 +118,25 @@ public class AndroidArtworkRepository internal constructor(
     }
 
     internal companion object {
+        private val trimLocks = ConcurrentHashMap<String, Any>()
+
+        /** Filesystem executor only: the common policy chooses the target and pinned keys. */
+        internal fun trimForPolicy(root: File, reservationBytes: Long,
+            plan: (Long, Long, Long) -> ArtworkCacheBudgetPlan) = synchronized(trimLocks.getOrPut(root.path) { Any() }) {
+            val protected = plan(0, 0, reservationBytes).protectedArtworkKeys
+                .mapTo(mutableSetOf()) { digest(it + "\u0000" + ArtworkSizeBucket.Px256.pixels) + ".image" }
+            val files = root.listFiles { file -> file.isFile }.orEmpty()
+            val pinned = files.filter { it.name in protected }.sumOf(File::length)
+            var evictable = files.filterNot { it.name in protected }.sumOf(File::length)
+            val target = plan(evictable, pinned, reservationBytes).targetEvictableBytes
+            for (file in files.filterNot { it.name in protected }.sortedBy(File::lastModified)) {
+                if (evictable <= target) break
+                val size = file.length()
+                if (file.delete()) evictable -= size
+            }
+            plan(evictable, pinned, 0)
+        }
+
         const val DEFAULT_BUDGET_BYTES: Long = 64L * 1024 * 1024
         private const val PARTIAL = ".partial"
 

@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -41,6 +42,7 @@ public data class AndroidDownloadStatus(
     val totalBytes: Long? = null,
     val retryNotBeforeWallClock: Long? = null,
     val needsAttention: Boolean = false,
+    val cached: Boolean = false,
 ) {
     val playsOffline: Boolean get() = state == AndroidDownloadState.Downloaded || state == AndroidDownloadState.Stale
 }
@@ -126,6 +128,7 @@ public class AndroidDownloadController internal constructor(
     private val onDownloadedChanged: (Set<String>) -> Unit,
     /** The file system the download directory lives on; a test substitutes one that faults. */
     fileSystem: okio.FileSystem = okio.FileSystem.SYSTEM,
+    private var artworkRoot: File? = null,
 ) : AutoCloseable {
     public constructor(context: Context, account: PlaybackEndpointAccount, tasks: AndroidDownloadTasks) : this(
         account = account,
@@ -136,6 +139,7 @@ public class AndroidDownloadController internal constructor(
         diskBudgetBytes = { used -> productionDiskBudget(AndroidAccountData.downloadRootFor(context.applicationContext), used) },
         openTransfer = null,
         onDownloadedChanged = { rawIds -> AndroidLibraryReader.notifyDownloadsChanged(rawIds) },
+        artworkRoot = AndroidAccountData.artworkRootFor(context.applicationContext, account.providerInstanceId),
     )
 
     public val providerInstanceId: String get() = account.providerInstanceId
@@ -150,6 +154,13 @@ public class AndroidDownloadController internal constructor(
         store.database,
         DownloadFileStore(downloadRoot.path, fileSystem),
     )
+    private val offline = OfflineLibraryPolicy(store.database, engine)
+    private val mutableOfflineSettings = MutableStateFlow(OfflineLibrarySettings(false, 1024L * 1024 * 1024))
+    private val mutableOfflineStats = MutableStateFlow(OfflineLibraryStats(0, 0, 0, 0))
+    public val offlineSettings: StateFlow<OfflineLibrarySettings> = mutableOfflineSettings
+    public val offlineStats: StateFlow<OfflineLibraryStats> = mutableOfflineStats
+    @Volatile private var protectedRawIds = emptySet<String>()
+    private val expansionRunning = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile private var wire: PlaybackWireClient? = PlaybackWireClient(account)
     @Volatile private var requests: AuthenticatedEndpointClient? = AuthenticatedEndpointClient(
         AuthenticatedEndpointCredentials(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp),
@@ -174,6 +185,7 @@ public class AndroidDownloadController internal constructor(
     public val statuses: StateFlow<Map<String, AndroidDownloadStatus>> = mutableStatuses
 
     init {
+        instances += this
         scope.launch {
             val outcome = try {
                 val outstanding = tasks.outstanding()
@@ -203,6 +215,7 @@ public class AndroidDownloadController internal constructor(
             }
             reconciled.complete(outcome)
             if (outcome) {
+                reconcileMyLibrary()
                 publish()
                 scheduleNext()
             }
@@ -232,7 +245,6 @@ public class AndroidDownloadController internal constructor(
             for (item in items) {
                 val identity = identity(item.rawId)
                 val existing = engine.record(identity)
-                if (existing != null && existing.state != DownloadState.Interrupted) continue
                 store.database.transaction {
                     engine.enqueue(DownloadRequest(
                         identity = identity,
@@ -264,9 +276,7 @@ public class AndroidDownloadController internal constructor(
         if (rawIds.isEmpty() || !awaitReconciled()) return
         val removed = withContext(database) {
             rawIds.mapNotNull { rawId ->
-                engine.remove(identity(rawId))?.also {
-                    store.database.seenCacheQueries.deletePin(account.providerInstanceId, "track", rawId, "download")
-                }
+                engine.releaseExplicitDownload(identity(rawId))
             }
         }
         removed.forEach { row ->
@@ -400,7 +410,7 @@ public class AndroidDownloadController internal constructor(
     public suspend fun localPlan(rawId: String): LocalPlaybackPlan? {
         if (!awaitReconciled()) return null
         return withContext(database) {
-            (engine.offlinePlaybackPlan(identity(rawId)) as? OfflinePlaybackPlanResult.Available)?.plan
+            (offline.offlinePlaybackPlan(account.providerInstanceId, rawId, wall()) as? OfflinePlaybackPlanResult.Available)?.plan
         }
     }
 
@@ -412,7 +422,7 @@ public class AndroidDownloadController internal constructor(
     public suspend fun localTrack(rawId: String): AndroidTrack? {
         if (!awaitReconciled()) return null
         return withContext(database) {
-            if (closed || engine.record(identity(rawId)) == null) return@withContext null
+            if (closed || engine.records(account.providerInstanceId).none { it.identity.rawId == rawId }) return@withContext null
             val record = cache().track(rawId)?.record?.takeIf { it.title.isNotBlank() } ?: return@withContext null
             AndroidTrack(account.providerInstanceId, rawId, record.title, record.credits.firstOrNull()?.name,
                 record.albumTitle, record.durationMilliseconds, record.artworkKey)
@@ -432,10 +442,11 @@ public class AndroidDownloadController internal constructor(
     override fun close() {
         if (closed) return
         closed = true
+        instances -= this
         scope.cancel()
         closeNetworkAccess()
         // The store is released on the database thread, after anything already queued there.
-        CoroutineScope(database).launch { store.close() }
+        CoroutineScope(database).launch { offline.close(); store.close() }
     }
 
     /** Database thread only. The reader binds the same account's identity, so this never purges. */
@@ -574,7 +585,11 @@ public class AndroidDownloadController internal constructor(
         } catch (_: Exception) {
             return
         }
-        mutableStatuses.value = rows.associate { row ->
+        withContext(database) {
+            mutableOfflineSettings.value = offline.settings(account.providerInstanceId)
+            mutableOfflineStats.value = offline.stats(account.providerInstanceId)
+        }
+        mutableStatuses.value = rows.sortedBy { it.identity.transcodeProfile == DownloadIdentity.ORIGINAL_PROFILE }.associate { row ->
             val transfer = progress[row.identity.rawId]
             row.identity.rawId to AndroidDownloadStatus(
                 rawId = row.identity.rawId,
@@ -589,12 +604,147 @@ public class AndroidDownloadController internal constructor(
                 totalBytes = if (row.state == DownloadState.Downloading) transfer?.second else row.exactByteLength,
                 retryNotBeforeWallClock = row.retryNotBeforeWallClock,
                 needsAttention = row.retryNotBeforeWallClock == Long.MAX_VALUE,
+                cached = row.identity.transcodeProfile.startsWith("stream:"),
             )
+        }
+    }
+
+    /** Reuses the durable download policy and worker queue; membership expansion is common policy. */
+    public suspend fun reconcileMyLibrary(allowExpansion: Boolean = true) {
+        if (closed || !awaitReconciled()) return
+        val result = withContext(database) {
+            offline.reconcileFromSeenCache(account.providerInstanceId, CREDENTIAL_GENERATION, wall(),
+                allowNewDownloads = AndroidLibraryReader.currentFor(account.providerInstanceId)?.automaticDownloadsMayStart == true).also { changes ->
+                changes.queued.forEach { cache().pin(CacheItemKind.Track, it.identity.rawId, CachePinReason.Download) }
+            }
+        }
+        result.removed.forEach { tasks.cancel(it.downloadId.value) }
+        publish()
+        if (result.removed.isNotEmpty()) onDownloadedChanged(result.removed.mapTo(mutableSetOf()) { it.identity.rawId })
+        scheduleNext()
+        if (allowExpansion && mutableOfflineSettings.value.automaticDownloadsEnabled && expansionRunning.compareAndSet(false, true)) {
+            scope.launch {
+                try { expandAutomaticDetails() } finally { expansionRunning.set(false) }
+            }
+        }
+    }
+
+    private suspend fun expandAutomaticDetails() {
+        val reader = AndroidLibraryReader.currentFor(account.providerInstanceId) ?: return
+        val done = CompletableDeferred<Unit>()
+        reader.operation(completion = { done.complete(Unit) }, failed = { Unit }) { session ->
+            if (session.reader.online) {
+                // The reader owns credentials, online checks, issue order and writes, as for a visible screen.
+                if (withContext(database) { offline.needsAutomaticPlaylistIndex(account.providerInstanceId) })
+                    session.reader.rereadList(LibraryQuery.Playlists)
+                val albums = withContext(database) { offline.missingAutomaticDownloadAlbumIds(account.providerInstanceId) }
+                for (album in albums) session.reader.readAlbumDetail(album)
+                val playlists = withContext(database) { offline.missingAutomaticDownloadPlaylistIds(account.providerInstanceId) }
+                for (playlist in playlists) session.reader.readPlaylistDetail(playlist, session.reader.sessionEpoch)
+                val tracks = withContext(database) { offline.missingAutomaticDownloadTrackIds(account.providerInstanceId) }
+                for (track in tracks) ensureTrackMetadata(track)
+            }
+        }
+        done.await()
+        reconcileMyLibrary(allowExpansion = false)
+    }
+
+    public suspend fun setAutomaticDownloadsEnabled(enabled: Boolean) {
+        if (!awaitReconciled() || closed) return
+        val result = withContext(database) {
+            offline.setAutomaticDownloadsEnabled(account.providerInstanceId, enabled)
+        }
+        result.removed.forEach { tasks.cancel(it.downloadId.value) }
+        if (enabled) reconcileMyLibrary() else {
+            publish()
+            onDownloadedChanged(result.removed.mapTo(mutableSetOf()) { it.identity.rawId })
+        }
+    }
+
+    public suspend fun setCacheBudgetBytes(bytes: Long) {
+        if (!awaitReconciled() || closed) return
+        val removed = withContext(database) {
+            trimArtworkBeforeWrite(budgetBytesOverride = bytes)
+            offline.setCacheBudgetBytes(account.providerInstanceId, bytes)
+        }
+        publish()
+        onDownloadedChanged(removed.mapTo(mutableSetOf()) { it.identity.rawId })
+    }
+
+    public suspend fun clearStreamCache() {
+        if (!awaitReconciled() || closed) return
+        val removed = withContext(database) {
+            trimArtworkBeforeWrite(clear = true)
+            offline.clearCache(account.providerInstanceId)
+        }
+        publish()
+        onDownloadedChanged(removed.mapTo(mutableSetOf()) { it.identity.rawId })
+    }
+
+    /** Protect current and next prepared files from cache eviction or Clear Cache. */
+    public fun setProtectedRawIds(rawIds: Set<String>) {
+        if (closed || rawIds == protectedRawIds) return
+        val released = protectedRawIds - rawIds
+        runBlocking(database) {
+            protectedRawIds = rawIds.toSet()
+            offline.setProtectedIdentities(engine.records(account.providerInstanceId)
+                .filter { it.identity.rawId in protectedRawIds }.mapTo(mutableSetOf()) { it.identity })
+        }
+        if (released.isNotEmpty()) scope.launch { reconcileMyLibrary(allowExpansion = false) }
+    }
+
+    public fun beginStreamCacheWrite(
+        plan: RemotePlaybackWirePlan, status: Int, contentType: String?, exactLength: Long?, position: Long,
+    ): AndroidStreamCacheWrite? {
+        if (closed || plan.itemId.providerInstanceId != account.providerInstanceId ||
+            plan.resolutionRequest.legacyTimeOffset?.isPositive() == true) return null
+        return runBlocking(database) {
+            if (!awaitReconciled()) return@runBlocking null
+            trimArtworkBeforeWrite(exactLength ?: 0)
+            val request = DownloadRequest(
+                DownloadIdentity(account.providerInstanceId, plan.itemId.rawId, "stream:${plan.expectedContainer}"),
+                plan.expectedContainer, exactLength?.let(PlaybackContentLength::Exact),
+                DownloadServerSnapshot(cache().track(plan.itemId.rawId)?.record?.durationMilliseconds, null), CREDENTIAL_GENERATION, wall(),
+            )
+            val previouslyPlayable = engine.records(account.providerInstanceId).mapTo(mutableSetOf()) { it.identity.rawId }
+            val write = offline.beginCacheWrite(request, status, position, plan.acceptedContainers()) ?: return@runBlocking null
+            cache().pin(CacheItemKind.Track, plan.itemId.rawId, CachePinReason.Download)
+            scope.launch { ensureTrackMetadata(plan.itemId.rawId) }
+            if (plan.itemId.rawId in protectedRawIds) offline.setProtectedIdentities(engine.records(account.providerInstanceId)
+                .filter { it.identity.rawId in protectedRawIds }.mapTo(mutableSetOf()) { it.identity })
+            object : AndroidStreamCacheWrite {
+                private var writtenOffset = position
+                override fun append(bytes: ByteArray, offset: Int, length: Int) = appendAt(bytes, offset, length, writtenOffset)
+                override fun appendAt(bytes: ByteArray, offset: Int, length: Int, resourceOffset: Long) = runBlocking(database) {
+                    if (exactLength == null) trimArtworkBeforeWrite(length.toLong())
+                    check(!closed && offline.appendCacheWrite(write.writeId, bytes.copyOfRange(offset, offset + length), resourceOffset))
+                    writtenOffset = resourceOffset + length
+                }
+                override fun isComplete() = runBlocking(database) { !closed && offline.isCacheWriteComplete(write.writeId) }
+                override fun finish() {
+                    runBlocking(database) {
+                        offline.finishCacheWrite(write.writeId, DownloadResponseMetadata(contentType,
+                            exactLength?.let(PlaybackContentLength::Exact)), wall())
+                    }
+                    scope.launch { publish(); onDownloadedChanged(previouslyPlayable + plan.itemId.rawId) }
+                }
+                override fun abort() {
+                    runBlocking(database) { offline.abortCacheWrite(write.writeId) }
+                    scope.launch { publish(); onDownloadedChanged(previouslyPlayable + plan.itemId.rawId) }
+                }
+            }
         }
     }
 
     private fun identity(rawId: String) =
         DownloadIdentity(account.providerInstanceId, rawId, DownloadIdentity.ORIGINAL_PROFILE)
+
+    private fun trimArtworkBeforeWrite(reservationBytes: Long = 0, budgetBytesOverride: Long? = null, clear: Boolean = false) {
+        artworkRoot?.let { root -> AndroidArtworkRepository.trimForPolicy(root, reservationBytes) { evictable, pinned, reservation ->
+            if (clear) offline.planClearCache(account.providerInstanceId, evictable, pinned)
+            else offline.planArtworkCache(account.providerInstanceId, evictable, pinned, reservation, budgetBytesOverride)
+        } }
+    }
 
     private sealed interface Schedule {
         data class Start(val downloadId: String) : Schedule
@@ -602,6 +752,23 @@ public class AndroidDownloadController internal constructor(
     }
 
     internal companion object {
+        private val instances = java.util.concurrent.CopyOnWriteArraySet<AndroidDownloadController>()
+        internal fun trimArtwork(serverId: String, root: File): Boolean {
+            val controller = instances.firstOrNull { it.providerInstanceId == serverId && !it.closed } ?: return false
+            runBlocking(controller.database) {
+                if (controller.awaitReconciled()) {
+                    controller.artworkRoot = root
+                    controller.trimArtworkBeforeWrite()
+                }
+            }
+            controller.scope.launch { controller.publish() }
+            return true
+        }
+        internal fun notifyMyLibraryChanged(serverId: String) {
+            instances.filter { it.providerInstanceId == serverId && !it.closed }.forEach { controller ->
+                controller.scope.launch { controller.reconcileMyLibrary() }
+            }
+        }
         const val CREDENTIAL_GENERATION = 1L
         const val UNKNOWN_LENGTH_RESERVATION_BYTES = 512L * 1024 * 1024
         const val DISK_BUDGET_CEILING_BYTES = 10L * 1024 * 1024 * 1024

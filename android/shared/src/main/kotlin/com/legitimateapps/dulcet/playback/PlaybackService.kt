@@ -34,6 +34,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /** One owner for playback across both native shells, activity recreation and backgrounding. */
@@ -50,12 +51,21 @@ class PlaybackService : MediaLibraryService() {
 
     /** The default network's cost as last reported; null until the OS has reported one. */
     private var networkCost: NetworkCostClass? = null
+    private var networkAvailable = true
 
     /**
      * Follows the default network's cost into the controller (spec §12.5). Only capabilities are
      * read: a default network's arrival always reports them, and a change of metering does too.
      */
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            networkAvailable = true
+            playback?.setNetworkAvailable(true)
+        }
+        override fun onLost(network: Network) {
+            networkAvailable = getSystemService(ConnectivityManager::class.java)?.activeNetwork != null
+            playback?.setNetworkAvailable(networkAvailable)
+        }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
             val cost = capabilities.costClass()
             networkCost = cost
@@ -71,6 +81,7 @@ class PlaybackService : MediaLibraryService() {
         val connectivity = getSystemService(ConnectivityManager::class.java)
         // Read now, not only when the callback first reports: the callback is posted to the main
         // looper, so without this the first song resolves before any network is classified.
+        networkAvailable = connectivity?.activeNetwork != null
         networkCost = runCatching {
             connectivity?.let { it.getNetworkCapabilities(it.activeNetwork)?.costClass() }
         }.getOrNull()
@@ -122,17 +133,25 @@ class PlaybackService : MediaLibraryService() {
             object : AndroidLocalPlaybackSource {
                 // Called from the player's main-thread callbacks: opening the controller reads the
                 // Keystore-backed account record and the database, so none of it runs on main.
-                private fun downloads() =
-                    AndroidDownloads.controller(service)?.takeIf { it.providerInstanceId == account.id }
+                @Volatile private var protectedItems = emptySet<String>()
+                @Volatile private var heldDownloads: com.legitimateapps.dulcet.core.AndroidDownloadController? = null
+                private fun downloads() = heldDownloads?.takeUnless { it.isClosed }
+                    ?: AndroidDownloads.controller(service)?.takeIf { it.providerInstanceId == account.id }?.also { heldDownloads = it; it.setProtectedRawIds(protectedItems) }
                 override suspend fun localPlan(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localPlan(rawId) }
                 // A downloaded song's title, artist and album, kept with its download (§16.13).
                 override suspend fun localTrack(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localTrack(rawId) }
+                override fun setProtectedRawIds(rawIds: Set<String>) { protectedItems = rawIds.toSet(); heldDownloads?.setProtectedRawIds(rawIds) }
+                override fun isLocallyPlayable(rawId: String) = runBlocking(Dispatchers.IO) { downloads()?.localPlan(rawId) != null }
+                override fun beginStreamCacheWrite(plan: com.legitimateapps.dulcet.core.RemotePlaybackWirePlan,
+                    status: Int, contentType: String?, exactLength: Long?, position: Long) =
+                    downloads()?.beginStreamCacheWrite(plan, status, contentType, exactLength, position)
             },
             // Restored playback waits for the foreground host to begin automatic reconnect:
             // the queue restores paused, downloads play, and plays wait in the outbox till then.
             SavedAccountConnection.contact(account.id))
         // The quality for the next item: the person's choice for the network last reported.
         controller.setStreamingQuality(StreamingQualitySettings.get(this).preference.value)
+        controller.setNetworkAvailable(networkAvailable)
         networkCost?.let(controller::setNetworkCostClass)
         playback = controller
         playbackAccountId = account.id

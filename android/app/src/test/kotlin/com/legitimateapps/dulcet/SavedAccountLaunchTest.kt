@@ -70,6 +70,25 @@ class SavedAccountLaunchTest {
         }
     }
 
+    @Test fun anObservedUnreachableReconnectTakesAnAlreadyOnlineSessionOfflineWithoutAnOsNetworkLoss() {
+        val library = LoopbackLibraryServer()
+        try {
+            val id = "provider:observed-server-loss"
+            val session = open(SearchAccount(id, library.url, "u", "p", true), restoredAccount = true)
+            val albums = session.openAlbums()
+            session.start()
+            settle("initial online session") { session.connection.value is LibraryConnectionState.Online && albums.state.value?.items?.isNotEmpty() == true }
+            library.close()
+            // The OS network stays connected. This is the production reader-owned outcome path.
+            val done = java.util.concurrent.CountDownLatch(1)
+            checkNotNull(AndroidLibraryReader.currentFor(id)).reconnect { done.countDown() }
+            settle("reader reconnect outcome") { done.count == 0L }
+            settle("observed server loss reflected by the already-online host") { session.connection.value is LibraryConnectionState.Offline }
+            assertIs<LibraryConnectionState.Offline>(session.connection.value)
+            assertTrue(albums.state.value?.items?.isNotEmpty() == true, "device-held albums remain visible")
+        } finally { library.close() }
+    }
+
     @Test fun tryAgainJoinsTheAutomaticReconnectInFlight() {
         server.hold = true
         val session = open(account("provider:retry"), restoredAccount = true)

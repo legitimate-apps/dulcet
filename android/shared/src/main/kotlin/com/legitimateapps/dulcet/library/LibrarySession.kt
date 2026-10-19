@@ -292,7 +292,7 @@ public class LibrarySession internal constructor(
     init {
         // Before any window opens: a fresh reader is online, and a window would read the server.
         if (awaitingReconnect) {
-            tell(false)
+            tell(false, serverUnavailable = false)
             setConnection(LibraryConnectionState.Saved)
             savedAccountId?.let(SavedAccountConnection::waitFor)
         }
@@ -301,7 +301,7 @@ public class LibrarySession internal constructor(
     private val reconnectRegistration = reader.observeReconnect { outcome ->
         // Explicit reconnect callers already observe their own answers. Reader-owned retries must
         // also update a cold player with no library windows, while respecting the latest network hint.
-        if (!closed && started && connectionState.value.readerOffline() && !awaitingReconnect &&
+        if (!closed && started && (connectionState.value.readerOffline() || outcome.error.meansUnreachable()) && !awaitingReconnect &&
             lastReport != false && networkAvailable()) reconnected(outcome, reachabilityGeneration)
     }
 
@@ -782,9 +782,9 @@ public class LibrarySession internal constructor(
      * was told (§16.14) and never changes it itself; it retries a reconnect that failed transiently
      * only while that says reachable and the app is in the foreground.
      */
-    private fun tell(reachable: Boolean) {
+    private fun tell(reachable: Boolean, serverUnavailable: Boolean = true) {
         observationState.update { it.copy(reachabilityReports = it.reachabilityReports + reachable) }
-        reader.setOnline(reachable)
+        reader.setOnline(reachable, serverUnavailable)
     }
 
     /** Bumped by every [reconnect] call; only the latest call's outcome is acted on. */

@@ -94,6 +94,16 @@ public fun interface AndroidLocalPlaybackSource {
      * the device alone: a restored or offline entry that is downloaded is named with no request.
      */
     public suspend fun localTrack(rawId: String): AndroidTrack? = null
+
+    /** Current local playability, without networking or disk IO, for shared queue policy. */
+    public fun isLocallyPlayable(rawId: String): Boolean = kotlinx.coroutines.runBlocking(Dispatchers.IO) { localPlan(rawId) != null }
+
+    public fun setProtectedRawIds(rawIds: Set<String>) {}
+
+    /** A best-effort tee of the engine's actual response; a cache failure never fails playback. */
+    public fun beginStreamCacheWrite(
+        plan: RemotePlaybackWirePlan, status: Int, contentType: String?, exactLength: Long?, position: Long,
+    ): AndroidStreamCacheWrite? = null
 }
 
 /**
@@ -198,8 +208,14 @@ public class AndroidPlaybackController internal constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val store = boundaries?.store ?: DulcetDriverFactory(context.applicationContext).openDulcetDatabase()
     private val resumes = PersistentResumePositionStore(store.database)
+    @Volatile private var serverAvailable = AndroidLibraryReader.currentFor(account.providerInstanceId)?.serverAvailableForPlayback ?: true
+    private var networkAvailable = true
     private val queue = PlaybackQueueController(PersistentQueueStore(store.database), resumes,
-        PlaybackIdentitySource { "$it:${UUID.randomUUID()}" })
+        PlaybackIdentitySource { "$it:${UUID.randomUUID()}" }, canPlayItem = { item ->
+            val remote = networkAvailable && (serverAvailable || localPlans == null)
+            val local = !remote && localPlans?.isLocallyPlayable(item.rawId) == true
+            remote || local
+        })
     private val wire = PlaybackWireClient(account)
     /** The person's streaming quality and the network the service last reported (spec §12.5). */
     private val streamingQuality = StreamingQualityPolicy()
@@ -293,7 +309,13 @@ public class AndroidPlaybackController internal constructor(
             discardOverlap(attempt)
         })
 
+    private val streamResources = mutableMapOf<AttemptId, AndroidCachingPlaybackResource>()
+    private val preparedRawIds = mutableMapOf<AttemptId, String>()
+
     private fun preparePlaybackSource(plan: PlaybackPlan, player: Player) {
+        preparedRawIds[checkNotNull(plan.androidAttemptId)] = checkNotNull(plan.androidItemId).rawId
+        localPlans?.setProtectedRawIds(setOfNotNull(activePlan?.androidItemId?.rawId,
+            preloadAttempt?.let(preparedRawIds::get), plan.androidItemId?.rawId))
         val attemptConsumed = AtomicLong()
         if (player === engine.player) consumed = attemptConsumed else preloadConsumed = attemptConsumed
         val count: (Long) -> Unit = { bytes -> attemptConsumed.addAndGet(bytes) }
@@ -306,7 +328,9 @@ public class AndroidPlaybackController internal constructor(
                 )).createMediaSource(item))
             is RemotePlaybackWirePlan -> if (boundaries?.prepareSource != null) boundaries.prepareSource.invoke(plan)
                 else (player as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(
-                    AndroidPlaybackDataSourceFactory(plan, AndroidHttpPlaybackResource(account, plan, requests), count),
+                    AndroidPlaybackDataSourceFactory(plan, AndroidCachingPlaybackResource(
+                        AndroidHttpPlaybackResource(account, plan, requests), plan, localPlans,
+                    ).also { streamResources.put(plan.attemptId, it)?.close() }, count),
                 ).createMediaSource(item))
             else -> error("unsupported plan")
         }
@@ -356,6 +380,7 @@ public class AndroidPlaybackController internal constructor(
 
     init {
         check(Looper.myLooper() == Looper.getMainLooper())
+        instances += this
         if (ownsActiveQueue() || queue.activeServerId() == null) {
             queue.setAutoplay(preferences.getBoolean("autoplay", true))
             queue.setCrossfade(crossfadeSeconds.seconds)
@@ -365,6 +390,12 @@ public class AndroidPlaybackController internal constructor(
             if (event is PlaybackEngineEvent.PlaybackProgressBegan) progressedAttempt = event.attemptId
             if (event is PlaybackEngineEvent.FailedBeforeStart) failure = event.error
             if (event is PlaybackEngineEvent.FailedAfterPartial) failure = event.error
+            val failedAttempt = when (event) {
+                is PlaybackEngineEvent.FailedBeforeStart -> event.attemptId.takeIf { event.error == DomainError.Transport.Unreachable }
+                is PlaybackEngineEvent.FailedAfterPartial -> event.attemptId.takeIf { event.error == DomainError.Transport.Unreachable }
+                else -> null
+            }
+            if (failedAttempt != null && failedAttempt == queue.snapshot().currentSession?.currentAttempt?.attemptId) serverAvailable = false
             if (event is PlaybackEngineEvent.EndedNaturally && !engine.isAdvancingOverlap)
                 preloadAttempt?.let(::discardOverlap)
             val transition = queue.recordPlaybackEvent(event)
@@ -475,6 +506,9 @@ public class AndroidPlaybackController internal constructor(
     public val nextStreamingQuality: StreamingQuality get() = streamingQuality.currentQuality
 
     /** What the current network costs, as the service reads it from the OS. */
+    /** Platform reachability for the shared queue's offline continuation policy. */
+    public fun setNetworkAvailable(available: Boolean) { networkAvailable = available }
+
     public fun setNetworkCostClass(network: NetworkCostClass) {
         streamingQuality.setNetwork(network)
     }
@@ -509,6 +543,7 @@ public class AndroidPlaybackController internal constructor(
             failure = DomainError.Auth.Forbidden; publish(); return
         }
         requestGeneration++
+        val previousWantsPlay = wantsPlay
         wantsPlay = true
         val generation = requestGeneration
         // Additions held for a queue this one supersedes would have been replaced by it.
@@ -534,7 +569,14 @@ public class AndroidPlaybackController internal constructor(
                     }
                     return@launch
                 }
-                val song = if (downloaded) null else loadSong(chosen.rawId)
+                val knownOffline = !networkAvailable || (!serverAvailable && localPlans != null)
+                if (!downloaded && knownOffline && !shuffle) {
+                    if (generation == requestGeneration) {
+                        wantsPlay = previousWantsPlay; failure = DomainError.Transport.Unreachable; publish()
+                    }
+                    return@launch
+                }
+                val song = if (downloaded || knownOffline) null else loadSong(chosen.rawId)
                 if (generation != requestGeneration) return@launch
                 queueConfirmation = null
                 command(PlaybackCommand.Stop(id()))
@@ -558,7 +600,10 @@ public class AndroidPlaybackController internal constructor(
                 captureEdit(queue.setAutoplay(preferences.getBoolean("autoplay", true)))
                 captureEdit(queue.setCrossfade(crossfadeSeconds.seconds))
                 applyHeldAdditions()
-                val directive = transition.startDirective!!
+                val directive = transition.startDirective ?: run {
+                    wantsPlay = false; failure = DomainError.Transport.Unreachable; publish()
+                    return@launch
+                }
                 // Guard: a held addition never starts anything (see applyHeldAdditions). Were one ever
                 // to, the core's choice is already starting, and starting this entry too would cancel it.
                 if (queue.snapshot().currentSession?.playbackSessionId == directive.playbackSessionId) {
@@ -580,6 +625,9 @@ public class AndroidPlaybackController internal constructor(
 
     public fun play() {
         if (!live()) return
+        // Play after an unreachable failure is the person's Try Again. Continuation still
+        // observes the last server result; an explicit retry may discover it has returned.
+        if (networkAvailable && failure == DomainError.Transport.Unreachable) serverAvailable = true
         if (activePlan == null) {
             if (resolution?.isActive == true || startJob?.isActive == true) {
                 wantsPlay = true; recordPlayRequested(); return
@@ -1204,6 +1252,7 @@ public class AndroidPlaybackController internal constructor(
         failure = error
         if (generation == requestGeneration && !closed &&
             queue.snapshot().currentSession?.currentAttempt?.attemptId == directive.attemptId) {
+            if (error == DomainError.Transport.Unreachable) serverAvailable = false
             val transition = queue.recordPlaybackEvent(PlaybackEngineEvent.FailedBeforeStart(directive.attemptId, error))
             capture(transition.effects)
             noteSkippedAfterFailure(transition)
@@ -1268,6 +1317,13 @@ public class AndroidPlaybackController internal constructor(
     private fun publish() {
         val snapshot = queue.snapshot()
         val session = snapshot.currentSession
+        val retainedAttempts = setOfNotNull(activePlan?.androidAttemptId, preloadAttempt)
+        streamResources.keys.filterNot { it in retainedAttempts }.forEach { streamResources.remove(it)?.close() }
+        preparedRawIds.keys.retainAll(retainedAttempts)
+        localPlans?.setProtectedRawIds(buildSet {
+            activePlan?.androidItemId?.rawId?.let(::add)
+            preloadAttempt?.let(preparedRawIds::get)?.let(::add)
+        })
         val current = session?.let { metadata[it.itemId] }
         val entries = snapshot.entries.map { entry ->
             AndroidQueueEntry(entry.queueEntryId.value, metadata[entry.itemId]
@@ -1325,6 +1381,8 @@ public class AndroidPlaybackController internal constructor(
     }
 
     private fun discardOverlap(attempt: AttemptId) {
+        streamResources.remove(attempt)?.close()
+        preparedRawIds.remove(attempt)
         if (preloadAttempt == attempt) {
             preloadJob?.cancel(); preloadJob = null; preloadAttempt = null; preloadConsumed = null
         }
@@ -1388,6 +1446,8 @@ public class AndroidPlaybackController internal constructor(
         checkMain()
         command(PlaybackCommand.Release(id()))
         closed = true
+        instances -= this
+        localPlans?.setProtectedRawIds(emptySet())
         // The notice names a track of this account's queue, which goes with the controller: a
         // surface still holding this state must not show it for whatever comes next.
         skipNotice = null
@@ -1399,6 +1459,13 @@ public class AndroidPlaybackController internal constructor(
         deliveries.close(); scope.cancel()
         if (autoplayTransportOpened) autoplayTransport.close()
         sender.close(); requests.close(); wire.close(); store.close()
+    }
+
+    internal companion object {
+        private val instances = java.util.concurrent.CopyOnWriteArraySet<AndroidPlaybackController>()
+        internal fun notifyServerAvailable(serverId: String, available: Boolean) {
+            instances.filter { it.account.providerInstanceId == serverId }.forEach { it.serverAvailable = available }
+        }
     }
 
     private fun checkMain() { check(Looper.myLooper() == Looper.getMainLooper()); check(!closed) }

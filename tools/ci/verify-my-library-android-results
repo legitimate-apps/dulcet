@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Require one passing, non-skipped split testcase after the second instrumentation invocation."""
+"""Require both passing, non-skipped My Library proofs after the fixture invocation."""
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
 
 root, expected = sys.argv[1:]
 cases = [case for path in Path(root).rglob('*.xml') for case in ET.parse(path).getroot().iter('testcase')]
-assert len(cases) == 1, f'Expected exactly one split testcase, observed {len(cases)}'
-case = cases[0]
-assert (case.get('classname'), case.get('name')) == (expected, 'myLibrarySplit'), ET.tostring(case)
-assert not any(case.find(terminal) is not None for terminal in ['failure', 'error', 'skipped']), ET.tostring(case)
-print(f'MY LIBRARY ANDROID executed=1 passed=1 skipped=0 test={expected}/myLibrarySplit split=true')
+expected_names = {'myLibrarySplit', 'automaticLibraryRetentionAndSameResponseCachePlayOffline'}
+assert len(cases) == len(expected_names), f'Expected exactly two My Library testcases, observed {len(cases)}'
+assert {(case.get('classname'), case.get('name')) for case in cases} == {
+    (expected, name) for name in expected_names
+}, [ET.tostring(case) for case in cases]
+for case in cases:
+    assert not any(case.find(terminal) is not None for terminal in ['failure', 'error', 'skipped']), ET.tostring(case)
+print(f'MY LIBRARY ANDROID executed=2 passed=2 skipped=0 class={expected} split=true offline=true')
