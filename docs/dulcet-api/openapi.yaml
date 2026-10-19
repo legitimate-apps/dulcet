@@ -131,6 +131,49 @@ paths:
         default:
           $ref: '#/components/responses/Default'
 
+  /recommendations/home:
+    get:
+      tags: [Catalog]
+      operationId: getHomeRecommendations
+      summary: Read this user's Listen Now shelves
+      description: |
+        Optional dulcet.home version 1 capability. Clients request this only when advertised.
+        Returns bounded shelves computed on the server from the authenticated user's plays,
+        favourites and ratings, including imported history. Empty shelves may be omitted or hidden.
+        Shelf ids are stable opaque strings; titles and reasons are display text. Ranking and shelf
+        names are implementation choices. Items must be visible to this user. A random catalog
+        selection must be described as exploration, never as evidence of a personal preference.
+        Track shelves are playable mixes in the returned order; they do not create saved playlists.
+        This is a bounded home snapshot, not a paginated catalog collection. Revalidate with ETag.
+      security:
+        - oauth2: [catalog:read, user:read]
+        - personalToken: []
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum items per shelf, from 1 to 50.
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+      responses:
+        '200':
+          description: This user's home shelves.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeRecommendations'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        default:
+          $ref: '#/components/responses/Default'
+
   /capabilities:
     get:
       tags: [Discovery]
@@ -161,6 +204,7 @@ paths:
                   version: 0.2.0
                   instanceId: srv_9f2c41d0
                 capabilities:
+                  dulcet.home: {versions: [1]}
                   dulcet.sync: {versions: [1]}
                   dulcet.events: {versions: [1]}
                   dulcet.webhooks: {versions: [1]}
@@ -5310,6 +5354,33 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Artist'
+
+    HomeRecommendations:
+      type: object
+      required: [shelves]
+      properties:
+        shelves:
+          type: array
+          maxItems: 50
+          description: Independent shelves, in presentation order. Each id occurs once.
+          items:
+            $ref: '#/components/schemas/HomeShelf'
+    HomeShelf:
+      type: object
+      required: [id, title, reason, items]
+      properties:
+        id: {type: string, description: Stable opaque shelf identity.}
+        title: {type: string, description: Human-readable shelf heading.}
+        reason: {type: string, description: Why these items were selected.}
+        items:
+          type: array
+          maxItems: 50
+          description: Play or display in this order; no duplicate item ids within a shelf.
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/Album'
+              - $ref: '#/components/schemas/Track'
+              - $ref: '#/components/schemas/Playlist'
 
     Album:
       type: object

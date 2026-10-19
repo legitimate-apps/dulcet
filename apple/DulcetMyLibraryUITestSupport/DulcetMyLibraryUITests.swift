@@ -46,12 +46,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
         try select("browse")
 #if os(tvOS)
-        let tile = albumTile(album.title)
-        XCTAssertTrue(tile.waitForExistence(timeout: 30))
-        focus(tile)
-        XCUIRemote.shared.press(.select, forDuration: 1.5)
+        let tile = try focusBrowseShelfAlbum(album.title)
         let contextAdd = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
-        XCTAssertTrue(contextAdd.waitForExistence(timeout: 10), "Remote press and hold offers membership")
+        // As in the TV design tour, the first hold can leave the album focused without
+        // opening its native menu. Retry a longer real hold only on that same focused tile.
+        for duration in [1.5, 3.0] {
+            guard tile.exists, tile.hasFocus else { break }
+            XCUIRemote.shared.press(.select, forDuration: duration)
+            if contextAdd.waitForExistence(timeout: 4) { break }
+        }
+        XCTAssertTrue(contextAdd.waitForExistence(timeout: 10), "Remote press and hold offers membership: \(app.debugDescription)")
         activate(contextAdd)
         try select("library")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
@@ -165,7 +169,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let songs = app.buttons["dulcet.library.songs"].firstMatch
         XCTAssertTrue(songs.waitForExistence(timeout: 10))
         activate(songs)
+#if os(tvOS)
+        // The TV Picker is a native segmented control. Restrict its query rather than
+        // collecting every accessibility descendant in the cached Songs list.
+        let sort = app.segmentedControls["dulcet.library.songs.sort"].firstMatch
+        XCTAssertTrue(sort.waitForExistence(timeout: 20))
+        XCTAssertTrue(sort.buttons["Title"].exists)
+#else
         XCTAssertTrue(app.descendants(matching: .any)["dulcet.library.songs.sort"].firstMatch.waitForExistence(timeout: 20))
+#endif
         try capture("Library-Depth-Songs")
         try setOffline(false)
         try select("browse")
@@ -436,9 +448,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
                        "The Mac window must remain on screen after every launch: \(window.frame)")
 #elseif os(iOS)
         if connect {
-            let connected = server == navidrome
-                ? app.buttons["dulcet.library.album"].firstMatch
-                : destination("browse")
+            // Browse is inserted as soon as capability discovery publishes. On a cold
+            // connection its tab can precede the Home landing and catalog publication;
+            // tapping during that handoff can leave Home selected. Wait for actual reader
+            // content, as the ordinary-server path does, before choosing another destination.
+            let connected = app.buttons["dulcet.library.album"].firstMatch
             if !connected.waitForExistence(timeout: 30) {
                 let welcome = app.buttons["Connect a Server"]
                 if welcome.exists { welcome.tap() }
@@ -509,7 +523,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             return
         }
         print("MY LIBRARY TV section-bar-focused target=\(section) menu-presses=\(menuPresses)")
-        let order = ["library", "browse", "search", "nowPlaying", "settings"]
+        let order = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"]
         for _ in 0..<order.count {
             if control.hasFocus {
                 XCTAssertTrue(control.hasFocus, "The requested section must actually have remote focus")
@@ -523,9 +537,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
             }
             remote.press(target > current ? .right : .left)
         }
-        XCTFail("Remote could not reach \(section)")
+        XCTFail("Remote could not reach \(section): \(app.debugDescription)")
 #else
         activate(control)
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
+                           "The tab tap must select \(section): \(app.debugDescription)")
+        }
+#endif
 #if os(macOS)
         // A macOS List does not write its selection binding when its selected row is clicked
         // again. Return through the visible navigation controls, just as Menu pops on tvOS,
@@ -559,13 +580,29 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return 0
 #endif
     }
-    @MainActor private func openAlbum(_ title: String) throws {
-#if !os(tvOS)
-        let all = app.buttons["dulcet.reader.home.recentlyAdded.all"]
-        if all.exists { activate(all) }
+    @MainActor private func openAlbumList() throws {
+#if os(tvOS)
+        // Browse's section bar keeps TV navigation visible and is reachable by the remote.
+        let albumListLink = "dulcet.reader.section.albums"
+#elseif os(iOS)
+        // Compact Browse has section links and a vertical Recently Added grid; it has no
+        // Recently Added See All. Regular-width Browse uses horizontal shelves instead.
+        let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
+            ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
+#else
+        let albumListLink = "dulcet.reader.home.recentlyAdded.all"
 #endif
+        let all = app.buttons[albumListLink].firstMatch
+        // Wait for the appropriate catalog link to publish before leaving Browse.
+        XCTAssertTrue(all.waitForExistence(timeout: 30), "Browse must publish its album-list link: \(albumListLink). \(app.debugDescription)")
+        activate(all)
+    }
+    @MainActor private func openAlbum(_ title: String) throws {
+        // Horizontal Browse shelves instantiate only visible cards. Enter the full list on
+        // TV as well, so waiting for a named album does not depend on its shelf position.
+        try openAlbumList()
         let tile = albumTile(title)
-#if os(macOS)
+#if !os(tvOS)
         // The sidebar is also a scroll view. Wait for catalog publication and scroll only the
         // album page; scrolling firstMatch can hide Library before the catalog finishes loading.
         let albumPage = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
@@ -577,7 +614,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(macOS)
             albumPage.scroll(byDeltaX: 0, deltaY: -450)
 #else
-            app.scrollViews.firstMatch.swipeUp()
+            albumPage.swipeUp()
 #endif
         }
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
@@ -598,6 +635,25 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
     }
 #if os(tvOS)
+    @MainActor private func focusBrowseShelfAlbum(_ title: String) throws -> XCUIElement {
+        // The membership context-menu proof uses Browse's horizontal shelf, its original
+        // production path. Real RIGHT movement composes lazy tiles outside the viewport.
+        let shelf = app.otherElements["dulcet.reader.home.recentlyAdded"].firstMatch
+        let tiles = shelf.buttons.matching(identifier: "dulcet.library.album")
+        XCTAssertTrue(tiles.firstMatch.waitForExistence(timeout: 30), "Browse must publish its album shelf")
+        focus(tiles.firstMatch)
+        let tile = tiles.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+        for _ in 0..<20 {
+            if tile.exists {
+                focus(tile)
+                XCTAssertTrue(tile.hasFocus, "The named shelf album must hold focus before its menu")
+                return tile
+            }
+            XCUIRemote.shared.press(.right)
+        }
+        XCTFail("The remote did not reveal shelf album \(title): \(app.debugDescription)")
+        return tile
+    }
     private func isFocused(_ target: XCUIElement) -> Bool {
         if target.hasFocus { return true }
         // tvOS context-menu actions sit inside a focused cell rather than holding focus themselves.

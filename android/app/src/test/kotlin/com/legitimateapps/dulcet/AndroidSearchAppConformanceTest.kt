@@ -51,6 +51,7 @@ class AndroidSearchAppConformanceTest {
     fun conf41QueryRendersMergedRankingAndActivationRoutesToDetail() {
         val application = RuntimeEnvironment.getApplication() as AndroidSearchTestApplication
 
+        compose.onNodeWithTag("search.open").performClick()
         compose.onNodeWithTag("search.query").performTextInput("echo")
         compose.waitUntil(timeoutMillis = 5_000) { application.presenter.state.value.results.size == 3 }
 

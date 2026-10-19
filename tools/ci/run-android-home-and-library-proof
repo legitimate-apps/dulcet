@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+"""Exercise Home, then the existing Library split control in one disposable fixture lifetime."""
+from pathlib import Path
+import os
+import shutil
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+task, results, library_class = sys.argv[1:]
+home_class = 'com.legitimateapps.dulcet.emulator.ListenNowEmulatorProofTest'
+evidence = Path(os.environ['RUNNER_TEMP']) / 'listen-now-dulcet'
+evidence.mkdir()
+package = 'com.legitimateapps.dulcet.tv' if ':tv:' in task else 'com.legitimateapps.dulcet.dev'
+base = ['./gradlew', '--no-daemon', '--max-workers=2', task,
+        '-Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4783',
+        '-Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true']
+try:
+    subprocess.run(base + [f'-Pandroid.testInstrumentationRunnerArguments.class={home_class}'], check=True)
+    cases = [case for path in Path(results).rglob('TEST-*.xml')
+             for case in ET.parse(path).getroot().iter('testcase')]
+    assert len(cases) == 1, f'Expected one Home control, observed {len(cases)}'
+    case = cases[0]
+    assert (case.get('classname'), case.get('name')) == (home_class, 'homeLaunchAlbumAndCachedRelaunch')
+    assert not any(case.find(terminal) is not None for terminal in ['failure', 'error', 'skipped'])
+    print('LISTEN NOW ANDROID executed=1 passed=1 skipped=0 server=dulcet', flush=True)
+finally:
+    if Path(results).exists():
+        shutil.copytree(results, evidence / 'results', dirs_exist_ok=True)
+    subprocess.run(['adb', '-s', 'emulator-5554', 'pull',
+                    f'/data/local/tmp/dulcet-listen-now-{package}', str(evidence / 'shots')], check=True)
+    photos = list((evidence / 'shots').rglob('listen-now-*.jpg'))
+    assert len(photos) >= 3, f'Expected retained Home photographs, observed {len(photos)}'
+
+subprocess.run(base + [f'-Pandroid.testInstrumentationRunnerArguments.class={library_class}',
+                       '-Pandroid.testInstrumentationRunnerArguments.dulcetExpectSplit=true'], check=True)

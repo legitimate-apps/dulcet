@@ -694,6 +694,9 @@ internal fun AppleLibraryWindowRequest.toTarget(): AppleLibraryWindowTarget {
     fun year(value: Int): Int? = value.takeIf { it > 0 }
     val folder = musicFolderId?.takeIf { it.isNotBlank() }
     return when (kind) {
+        "listenNow" -> AppleLibraryWindowTarget.Screen(LibraryQuery.ListenNow(
+            requireNotNull(ListenNowShelf.entries.firstOrNull { it.wireName == listType }) { "unknown shelf" },
+        ))
         "albumList" -> AppleLibraryWindowTarget.Screen(
             LibraryQuery.AlbumList(type(), year(fromYear), year(toYear), genre?.takeIf { it.isNotBlank() }, folder),
         )

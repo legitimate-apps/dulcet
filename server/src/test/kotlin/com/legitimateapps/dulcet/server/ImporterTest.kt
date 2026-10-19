@@ -70,6 +70,8 @@ class ImporterTest {
             assertEquals(0, target.db.read { long("SELECT COUNT(*) FROM annotation") }, "a dry run writes nothing")
             assertEquals(1, dry.matchedByPath)
 
+            assertTrue(target.home.shelves(localUser.id, only = "recent").single().ids.isEmpty())
+            assertTrue(target.home.shelves(localUser.id, only = "dailyMix").single().ids.isEmpty())
             val report = NavidromeImporter(target).run(options)
             assertEquals(4, report.songsSeen, report.summary())
             assertEquals(1, report.matchedByPath, report.summary())
@@ -86,6 +88,13 @@ class ImporterTest {
             assertEquals("3", annotation(local.getValue("By Tags"), "play_count"))
             val localAlbum = target.db.read { string("SELECT id FROM album WHERE name = 'First'") }!!
             assertTrue(annotation(localAlbum, "starred") != null, "the album star follows the album")
+            // The real import makes Home useful before the target records a new local play.
+            val home = target.home.shelves(localUser.id).associateBy { it.id }
+            assertEquals(listOf(localAlbum), home.getValue("recent").ids)
+            assertEquals(listOf(localAlbum), home.getValue("frequent").ids)
+            assertTrue(local.getValue("By Tags") in home.getValue("dailyMix").ids)
+            assertTrue(local.getValue("By MBZ") in home.getValue("favourites").ids)
+            assertTrue(home.getValue("recentPlaylists").ids.isEmpty(), "Importing a playlist does not invent a listen")
             val entries = target.db.read {
                 query("SELECT pt.track_id FROM playlist p JOIN playlist_track pt ON pt.playlist_id = p.id WHERE p.owner_id = ? AND p.name = 'Mix' ORDER BY pt.position", localUser.id) { it.string("track_id") }
             }

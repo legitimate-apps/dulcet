@@ -190,7 +190,7 @@ public final class DulcetPresentationStore {
         if selectedDestination == .browse { selectDestination(.library) }
     }
     public var myLibraryAvailable: Bool { librarySession?.myLibrary.availability == .available }
-    public var isReaderDestination: Bool { selectedDestination == .library || selectedDestination == .browse }
+    public var isReaderDestination: Bool { selectedDestination == .listenNow || selectedDestination == .library || selectedDestination == .browse }
     public func destinations(_ base: [DulcetSidebarDestination]) -> [DulcetSidebarDestination] {
         base.flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
     }
@@ -307,7 +307,7 @@ public final class DulcetPresentationStore {
         guard !isApplyingSourceSnapshot else { return }
         let destination = destination == .browse && !myLibraryAvailable ? .library : destination
         if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
-        if destination == .library || destination == .browse {
+        if destination == .listenNow || destination == .library || destination == .browse {
             readerPath = savedReaderPaths[destination] ?? []
         }
         requestedBrowse = destination == .browse
@@ -321,7 +321,7 @@ public final class DulcetPresentationStore {
     /// tab does.
     public func navigate(to destination: DulcetSidebarDestination) {
         guard !isApplyingSourceSnapshot else { return }
-        if (destination == .library || destination == .browse), readerOwnsLibrary {
+        if (destination == .listenNow || destination == .library || destination == .browse), readerOwnsLibrary {
             // The reader's pages are the store's own; the source is told only the destination.
             if selectedDestination == destination {
                 readerPath = []
@@ -648,13 +648,14 @@ public final class DulcetPresentationStore {
 
     /// A sidebar or TV-bar section: Library, at that section's root.
     public func selectLibrarySection(_ section: DulcetLibrarySection) {
+        let destination: DulcetSidebarDestination = myLibraryAvailable ? .browse : .library
+        if selectedDestination != destination {
+            selectDestination(destination)
+        }
         librarySection = section
         readerPath = []
         readerReturn = nil
         readerArrival = nil
-        if !isReaderDestination {
-            selectDestination(.library)
-        }
     }
 
     /// Plays tracks a reader screen resolved.
@@ -741,7 +742,7 @@ public final class DulcetPresentationStore {
             // Playing -- saves and restores the reader's stacks exactly as a choice on the bar
             // does, or Library loses the page it was left on.
             if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
-            if destination == .library || destination == .browse {
+            if destination == .listenNow || destination == .library || destination == .browse {
                 readerPath = savedReaderPaths[destination] ?? []
             }
         }

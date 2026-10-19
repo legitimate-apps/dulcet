@@ -8022,6 +8022,19 @@ local artist and genre neighbours instead of always returning an empty container
 They require no external similarity service. Source permissions constrain both seed metadata
 and returned songs; unknown or invisible seeds return error 70.
 
+**2026-10-16 — Listen Now home and optional recommendations contract.**
+Dulcet API v1 adds `dulcet.home` version 1 and `GET /recommendations/home` (§30,
+`docs/dulcet-api/openapi.yaml`); the Home conformance profile covers its bounded, per-user shelves.
+Dulcet Server computes them from live and imported annotations (§29.4). The same picks are
+available to current OpenSubsonic-authenticated apps through advertised `dulcetHome` version 1,
+`getDulcetHome(shelf,size)`. Submitted REST scrobbles may carry the actual playlist source via
+`dulcetContextType=playlist` and `dulcetContextId` when that extension is advertised; visible
+member plays update only the playlist's last-played timestamp. Core `ListenNowShelf` queries use the persistent reader seen-cache,
+including cached first paint, freshness, account binding and failure retention. Plain servers use
+only recent/frequent/newest/random album lists and starred content; unsupported personal shelves
+are empty and hidden. Listen Now is a first destination beside Library and Browse. Track shelves
+play through the existing queue-entry surface. Reading a home never records a play.
+
 **2026-10-16 — Apple engine overlaps the preloaded boundary.**
 `DulcetAVPlayerEngine` accepts `setCrossfade` only for its current attempt and a finite,
 nonnegative duration. The value replaces the previous one and lapses at an attempt change.
@@ -9620,6 +9633,30 @@ as Android's Play after Stop.
   overlay and recorded value at each delivery); the core's adopt-then-republish order it relies on
   is ASSUMED from `MutationOutbox.flush` there, not measured by that test.
 
+**2026-09-30 — Android downloads (§14.5).** Android gains the download executor the policy had
+waited for: a core `AndroidDownloadController` over `DownloadPolicyEngine`, WorkManager tasks named by
+`downloadId`, per-track and per-album download and removal on the phone and TV album pages, a
+downloaded marker and progress, local-file playback through the validating data source, and removal
+of an account's tasks and files at sign-out. `DownloadPolicyEngine` gains `remove` (temporary file,
+promoted file, then row) and `records`. Three contracts changed: §14.5's Android precondition now
+names the executor that keeps it; §14.7's Android step 7 now cancels tasks (step 4) instead of
+saying there are none; and a found defect is recorded — the Android queue start read the song from
+the server before looking for a local plan, so offline a downloaded album could not start. Every
+start now asks for the local plan first. Evidence: Robolectric host tests of the controller against
+a loopback server (promotion, an HTTP 200 envelope rejected, a short or grown file refused, removal,
+relaunch reconciliation, `Retry-After`), of the WorkManager executor and sign-out, and of the phone
+and TV controls; emulator proofs of CONF-51 and CONF-52 on phone and TV are wired into the
+`android-emulator` job. Left open: title metadata offline for tracks the reader never read.
+**Fix round, same day.** Review found three defects, each corrected here. (1) Promotion, recovery
+and Apple's local-plan check read the whole file to validate it; a large FLAC exhausted the heap,
+and the `OutOfMemoryError` escaped the executor's `catch (Exception)`, leaving the row `downloading`
+for ever. Validation now reads a bounded prefix plus the on-disk length (§14.5 *Atomic promotion*),
+and the executor records any throwable but a cancellation as a failure. (2) WorkManager stops
+ordinary work after about ten minutes, and each rerun restarted from byte zero, so a long transfer
+never finished; transfers now resume by `Range` (§14.5, *The Android executor*). (3) A download sent
+`stream` with no `format`, so a server transcoding for this player made every download fail
+validation; Apple had the same gap. Both now send `format=raw`.
+
 **2026-09-29 — A lost create's offer is actionable when made; an owed list re-read survives a
 cut-off (§16.14 step 3, §18.6).** A second review of the owed list re-read (§28 revision 104 item 33)
 found it could still be lost in two reachable ways, and the offer it serves not yet actionable, each
@@ -9655,30 +9692,6 @@ OBSERVED with a failing test on the reviewed code; the tests are in `PlaylistRec
   instance: an account switch builds a new reader, so it never crosses accounts, and a relaunch loses
   it — a candidate written by the offer survives in the cache, but the list itself is not re-read
   until its screen reads.
-
-**2026-09-30 — Android downloads (§14.5).** Android gains the download executor the policy had
-waited for: a core `AndroidDownloadController` over `DownloadPolicyEngine`, WorkManager tasks named by
-`downloadId`, per-track and per-album download and removal on the phone and TV album pages, a
-downloaded marker and progress, local-file playback through the validating data source, and removal
-of an account's tasks and files at sign-out. `DownloadPolicyEngine` gains `remove` (temporary file,
-promoted file, then row) and `records`. Three contracts changed: §14.5's Android precondition now
-names the executor that keeps it; §14.7's Android step 7 now cancels tasks (step 4) instead of
-saying there are none; and a found defect is recorded — the Android queue start read the song from
-the server before looking for a local plan, so offline a downloaded album could not start. Every
-start now asks for the local plan first. Evidence: Robolectric host tests of the controller against
-a loopback server (promotion, an HTTP 200 envelope rejected, a short or grown file refused, removal,
-relaunch reconciliation, `Retry-After`), of the WorkManager executor and sign-out, and of the phone
-and TV controls; emulator proofs of CONF-51 and CONF-52 on phone and TV are wired into the
-`android-emulator` job. Left open: title metadata offline for tracks the reader never read.
-**Fix round, same day.** Review found three defects, each corrected here. (1) Promotion, recovery
-and Apple's local-plan check read the whole file to validate it; a large FLAC exhausted the heap,
-and the `OutOfMemoryError` escaped the executor's `catch (Exception)`, leaving the row `downloading`
-for ever. Validation now reads a bounded prefix plus the on-disk length (§14.5 *Atomic promotion*),
-and the executor records any throwable but a cancellation as a failure. (2) WorkManager stops
-ordinary work after about ten minutes, and each rerun restarted from byte zero, so a long transfer
-never finished; transfers now resume by `Range` (§14.5, *The Android executor*). (3) A download sent
-`stream` with no `format`, so a server transcoding for this player made every download fail
-validation; Apple had the same gap. Both now send `format=raw`.
 
 **2026-09-29 — Playlists and lyrics on Apple.** The Apple shells gain a Playlists section, a playlist
 page that plays in the playlist's own order, Add to Playlist on tracks and albums, create, rename and
@@ -13917,6 +13930,33 @@ them.
   plus Browse. Browse is the whole catalog, which every server already offers. My Library is
   served by the extension where a server advertises it.
 
+### 29.4.1 Listen Now
+
+Recent playlist picks use only playlist contexts recorded in that user's play history, with playlist visibility and catalog permissions applied. The app's Continue Listening action resumes the existing queue and its position. Plain REST has no playlist play history; it does not fabricate one.
+
+`HomeRecommendations` computes bounded, explainable shelves from the authenticated user's
+annotations. Imported song-only play counts and last-played times contribute to album shelves;
+`MAX(album plays, sum of song plays)` avoids counting each scrobble twice. Rediscover requires
+a favourite, rating >=4 or at least three plays and no play in 30 days. Daily and station shelves
+have no candidates until that user has an affinity signal. Personal track shelves omit one- and
+two-star songs; explicit song ratings take precedence over album/artist ratings, with zero
+meaning unrated. Recent/frequent album shelves continue to report actual history. Every candidate is filtered through
+catalog access before selection; no other user's annotations participate.
+
+`dulcet.home` v1 advertises the Dulcet API endpoint. Current `/rest` clients negotiate
+`dulcetHome` v1 before calling `getDulcetHome` with a shelf id and `size` (1–50, default 20).
+Its `dulcetHome` response contains normal `album`, `playlist` and `song` arrays. Both contracts use the same
+selection function. Unknown shelf ids fail with 70. Reading recommendations changes no user data.
+The core's public shelf ids are available to shells and future system surfaces.
+
+The same extension accepts optional `dulcetContextType=playlist` and `dulcetContextId` on
+`scrobble` submissions. Clients attach only the actual playlist queue source, after negotiating
+`dulcetHome` v1. For a visible playlist containing the submitted song, the server stores
+`MAX(previous played, submitted timestamp)` in the user's playlist annotation; no playlist play
+count is manufactured. Invalid, private, deleted and non-member contexts are ignored without
+rejecting the ordinary song scrobble. Playlist reads and now-playing reports do not create
+history. API playlist contexts and these REST annotations merge into one deduplicated shelf.
+
 ### 29.5 Lyrics
 
 Lyrics are looked up in this order:
@@ -14112,6 +14152,12 @@ the 2026-10-12 §28 entry.
   wins; remote commands are relayed over `/events`; an offline device reconnects with its base
   revision and the server's queue wins unless the person chooses "Continue here".
 - My Library carries the `dulcetLibrary` semantics, plus removal records in the feed.
+- Optional `dulcet.home` v1 exposes `GET /recommendations/home?limit=20` only after capability
+  negotiation. It requires `catalog:read` and `user:read`, returns ordered shelves of visible
+  resources with explanations, bounds each shelf to 1–50 items, and supports private ETag
+  revalidation. Picks use the authenticated user's history, stars and ratings (§29.4.1); reads
+  do not record plays or change My Library. The optional Home conformance profile is `DA-HOME-1`
+  (`docs/dulcet-api/CONFORMANCE.md`).
 - Plays carry a client-generated id recorded once, so retries never double-count.
 - Server-Sent Events with a schema per event type, Standard Webhooks signing with SSRF rules, and
   an MCP endpoint (`docs/dulcet-api/mcp-tools.json`) whose write tools require `user:write`, whose

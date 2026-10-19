@@ -19,6 +19,7 @@ package com.legitimateapps.dulcet.core
 
 /** Which screen to open (§16.9). */
 public sealed interface AndroidLibraryQuery {
+    public data class ListenNow(val shelf: ListenNowShelf) : AndroidLibraryQuery
     public data class AlbumList(
         val type: AndroidAlbumListType,
         val fromYear: Int? = null,
@@ -379,6 +380,7 @@ internal fun AndroidAlbumListType.toCore(): AlbumListType = when (this) {
 
 /** Throws [IllegalArgumentException] for a query that names nothing the core can open. */
 internal fun AndroidLibraryQuery.toCore(): LibraryQuery = when (this) {
+    is AndroidLibraryQuery.ListenNow -> LibraryQuery.ListenNow(shelf)
     is AndroidLibraryQuery.AlbumList -> LibraryQuery.AlbumList(
         type.toCore(),
         fromYear,

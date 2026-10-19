@@ -35,6 +35,16 @@ class AndroidTvEmulatorLibraryDepthProofTest {
                 it.setTurnScreenOn(true)
                 it.setShowWhenLocked(true)
             }
+            // Launch starts on Listen Now, including when the saved server is unreachable.
+            compose.waitUntil(30_000) { compose.onAllNodesWithTag("library.open").fetchSemanticsNodes().isNotEmpty() }
+            activate("library.open")
+            compose.waitUntil(30_000) { compose.onAllNodesWithTag("library.surface").fetchSemanticsNodes().isNotEmpty() }
+            // A cached home card can move the section rows out of the lazy viewport.
+            repeat(8) {
+                if (compose.onAllNodesWithTag("library.view.downloaded").fetchSemanticsNodes().isEmpty()) {
+                    compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) }
+                }
+            }
             activate("library.view.downloaded")
             compose.waitUntil(60_000) { compose.onAllNodesWithTag("library.downloaded.track.0").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("library.downloaded.track.0").assertTextContains(DisposableServerProbe.CANARY_TITLE)

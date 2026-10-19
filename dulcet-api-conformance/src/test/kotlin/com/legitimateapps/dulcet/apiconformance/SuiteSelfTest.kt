@@ -61,6 +61,14 @@ class SuiteSelfTest {
         }
     }
 
+    @Test fun `home profile accepts valid shelves and rejects duplicates`() {
+        val selected = setOf("DA-PRE-1", "DA-PRE-2", "DA-HOME-1")
+        val healthy = runAgainst { it.copy(only = selected) }
+        assertEquals(Outcome.PASS, healthy.outcome("DA-HOME-1"), healthy.output)
+        val broken = runAgainst(setOf(Fault.HOME_DUPLICATE_ITEM)) { it.copy(only = selected) }
+        assertEquals(Outcome.FAIL, broken.outcome("DA-HOME-1"), broken.output)
+    }
+
     @Test
     fun `a healthy server passes every check it can serve`() {
         val r = runAgainst()
@@ -95,6 +103,7 @@ class SuiteSelfTest {
 
     /** Each deliberate fault and the check(s) that must catch it. */
     private val negativeControls: Map<Fault, Set<String>> = linkedMapOf(
+        Fault.HOME_DUPLICATE_ITEM to setOf("DA-HOME-1"),
         Fault.PLAYS_DOUBLE_COUNT to setOf("DA-PLAY-1"),
         Fault.TOKEN_IN_QUERY_ACCEPTED to setOf("DA-AUTH-11"),
         Fault.ECHO_QUERY_IN_ERROR to setOf("DA-AUTH-11"),

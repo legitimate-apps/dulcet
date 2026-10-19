@@ -780,6 +780,47 @@ does not depend on a domain staying registered.
   plaintext. A server that also serves OpenSubsonic token authentication must keep a recoverable
   form for that API, and should say so to its admins.
 
+### Listen Now recommendations (optional `dulcet.home` v1)
+
+`GET /recommendations/home?limit=20` requires `catalog:read` and `user:read`. Use it only
+when `/capabilities` advertises `dulcet.home` version 1. The response has ordered `shelves`,
+each with a stable `id`, display `title`, explanatory `reason`, and ordered catalog `items`
+(albums, playlists or tracks). `limit` bounds each shelf to 1–50 items, default 20. Empty shelves may be
+hidden. Clients ignore unknown shelf ids and can still render their title and supported items.
+Track shelves are playable mixes; reading home never creates a playlist or records a play.
+
+The server computes picks per authenticated user and filters the catalog by that user's source
+access. It may use imported play counts and last-played times, favourites and ratings. Dulcet
+Server offers recent albums and playlists, heavy rotation, new additions, rediscovery after 30 days, a daily
+rotation, favourites and artist/genre stations. Ranking is an implementation choice, not a
+cross-server identity guarantee. With no preference history, personal shelves are empty and
+new additions and clearly labelled exploration remain useful. Random catalog picks are never
+presented as evidence of personal taste. Dulcet Server omits songs rated one or two stars
+from personal mixes and stations; a song rating overrides inherited album/artist ratings,
+and zero is unrated. Recent and frequent shelves still report actual listening history.
+
+Home is a bounded snapshot, not a cursor collection. Persist it per account, display cached
+content with its age, then refresh; retain it on failure. The response carries a private ETag
+and varies on Authorization. Revalidate with `If-None-Match`. A read has no playback side effect.
+The **Home** conformance profile checks advertisement, bounds, uniqueness, resource visibility
+and authentication. The reference server's ranking and imported-history tests are additional
+implementation tests, not requirements on another server's algorithm.
+
+Recently Played Playlists uses actual playlist contexts in the user’s submitted play history.
+Servers do not infer playlist listens from membership, modification dates, or album plays.
+The advertised `dulcetHome` v1 REST bridge accepts optional `dulcetContextType=playlist` and
+`dulcetContextId=<playlist id>` on **submitted** `scrobble` calls. Clients send them only when
+that extension is offered and the actual queue source is the playlist. The server records the
+latest submitted timestamp only when the song belongs to that visible playlist; missing,
+private, deleted or unrelated contexts are ignored without failing the ordinary scrobble.
+Reading a playlist and `submission=false` do not record playlist history. Retrying or submitting
+an older timestamp cannot move the playlist backwards or create a playlist play count.
+Continue Listening in the app resumes its existing queue at the current position.
+
+The [playlist play-context client integration contract](playlist-play-context.md) specifies
+the queue-entry provenance, submitted-play/outbox fields, account-scoped negotiation and
+transport handoff required for current app plays to populate Recently Played Playlists.
+
 ## 16. Capabilities and extensions
 
 `GET /capabilities` lists capabilities by name, each with the integer versions supported:

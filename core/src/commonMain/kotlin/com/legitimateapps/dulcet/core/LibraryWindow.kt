@@ -402,6 +402,7 @@ internal data class ListRequestSpec(
 ) {
     companion object {
         fun of(query: LibraryQuery): ListRequestSpec = when (query) {
+            is LibraryQuery.ListenNow -> listenNowSpec(query.shelf)
             is LibraryQuery.AlbumList -> albumList(query, homeRowSize = null)
             is LibraryQuery.Artists -> whole("getArtists", listOfNotNull(query.musicFolderId?.let { "musicFolderId" to it }).toMap()) {
                 val artists = parseReaderArtists(it)

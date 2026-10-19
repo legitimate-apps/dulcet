@@ -53,8 +53,8 @@ class AndroidTvDesignTourTest {
         val launch = Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<TvSearchActivity>(launch).use {
-            // The app opens on the library: home and library are one screen now.
-            shots.step("home") { awaitTag("search.open") && awaitTag("library.home.0.item.0") && shots.settle() }
+            // The app opens on Listen Now; Library keeps its own catalog surface.
+            shots.step("home") { awaitTag("listenNow.surface") && shots.settle() }
             shots.step("library") { select("library.open") && awaitTag("library.home.0.item.0") && shots.settle() }
             shots.step("albums") { select("library.view.albums") && awaitTag("library.albums.item.0") && shots.settle() }
             shots.step("album") { openCard("library.albums", ALBUM) && awaitTag("album.title") && shots.settle() }

@@ -89,7 +89,7 @@ final class DulcetSignedMacAccountConnectTests: XCTestCase {
             XCTAssertEqual(request.password, "dulcet-ci-canary-password")
             XCTAssertTrue(request.allowLocalHTTP)
             try assertStoredAttributes(accountID: accountID)
-            XCTAssertEqual(presentation.selectedDestination, .library)
+            XCTAssertEqual(presentation.selectedDestination, .listenNow)
             XCTAssertEqual(presentation.accountServerURL, request.serverURL)
             XCTAssertEqual(presentation.accountUsername, request.username)
             XCTAssertEqual(presentation.accountPassword, request.password)
