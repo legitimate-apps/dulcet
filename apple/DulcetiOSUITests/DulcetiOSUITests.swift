@@ -1369,16 +1369,50 @@ final class DulcetiOSUITests: XCTestCase {
         let titled = title.waitForExistence(timeout: 10) && waitForLabel("Playable After Skip", of: title, timeout: 10)
         XCTAssertTrue(titled, "The player must show the track that plays; title=\(title.label)")
         let upNextToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
-        var historyRow = "<none>"
-        if upNextToggle.waitForExistence(timeout: 5) {
-            upNextToggle.tap()
-            let historyToggle = app.descendants(matching: .any)["dulcet.history.toggle"].firstMatch
-            if historyToggle.waitForExistence(timeout: 5) {
-                historyToggle.tap()
-                let row = app.buttons["dulcet.history.row.0"].firstMatch
-                historyRow = row.waitForExistence(timeout: 5) ? row.label : "<none>"
-            }
+        guard upNextToggle.waitForExistence(timeout: 5), upNextToggle.isHittable else {
+            XCTFail("The playing track must offer Up Next: " + app.debugDescription)
+            return
         }
+        upNextToggle.tap()
+        let queue = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
+        guard queue.waitForExistence(timeout: 10) else {
+            XCTFail("Up Next must expose its actual queue list: " + app.debugDescription)
+            return
+        }
+        // AutoPlay is on by default. Its recommendations precede Previously Played, so the
+        // lazy list may not materialize history until the person scrolls the queue itself.
+        let autoplay = app.switches["dulcet.upNext.autoplay.toggle"].firstMatch
+        let autoplayValue = autoplay.exists ? String(describing: autoplay.value ?? "<none>") : "<absent>"
+        let visibleRecommendations = queue.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "dulcet.upNext.autoplay.row."
+        )).count
+        let historyToggle = queue.descendants(matching: .any)["dulcet.history.toggle"].firstMatch
+        let initiallyReachable = historyToggle.exists && historyToggle.isHittable
+        var historySwipes = 0
+        while !(historyToggle.exists && historyToggle.isHittable), historySwipes < 6 {
+            queue.swipeUp()
+            historySwipes += 1
+        }
+        guard historyToggle.exists && historyToggle.isHittable else {
+            XCTFail("Scrolling Up Next must reveal a hittable Previously Played disclosure: " + app.debugDescription)
+            return
+        }
+        let row = queue.buttons["dulcet.history.row.0"].firstMatch
+        XCTAssertFalse(row.exists, "Previously Played must start collapsed")
+        historyToggle.tap()
+        var rowSwipes = 0
+        while !(row.exists && row.isHittable), rowSwipes < 6 {
+            queue.swipeUp()
+            rowSwipes += 1
+        }
+        guard row.exists && row.isHittable else {
+            XCTFail("Expanding Previously Played must reveal its actual first track: " + app.debugDescription)
+            return
+        }
+        let historyRow = row.label
+        print("DULCET SKIP HISTORY REVEAL autoplay=\(autoplayValue) visible-recommendations=\(visibleRecommendations)"
+            + " initially-reachable=\(initiallyReachable) disclosure-swipes=\(historySwipes) row-swipes=\(rowSwipes)"
+            + " disclosure-hittable=\(historyToggle.isHittable) row-hittable=\(row.isHittable)")
         XCTAssertTrue(historyRow.hasPrefix("Unplayable Probe") && !historyRow.localizedCaseInsensitiveContains("skip"),
                       "The skipped track must be listed, unmarked, under Previously Played; row=\(historyRow)")
         attachScreenshot(named: "skipped-track-history", app: app)
@@ -1458,7 +1492,12 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func assertAlbumHeaderReadsAtTheLargestTextSize(_ run: SkipProbeRun) {
         let frames = run.headerActions.map { "\($0)" }.joined(separator: " ")
-        print("DULCET SKIP PROBE AX5 HEADER row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
+        print("DULCET SKIP PROBE AX5 HEADER catalog-initially-reachable=\(run.catalogInitiallyReachable)"
+            + " catalog-swipes=\(run.catalogSwipes) row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
+        XCTAssertFalse(run.catalogInitiallyReachable,
+                       "The cold largest-text Library must exercise reaching its below-fold catalog")
+        XCTAssertGreaterThan(run.catalogSwipes, 0,
+                             "The catalog must be reached by actual touch scrolling")
         XCTAssertGreaterThanOrEqual(run.rowSwipes, 1,
                                     "At this size the first track must start below the fold; header=\(frames)")
         for frame in run.headerActions {
@@ -1475,6 +1514,8 @@ final class DulcetiOSUITests: XCTestCase {
         /// What the notice and the bars were at the instant it was seen, from one snapshot.
         let sighting: NoticeSighting
         let markersBefore: [String]
+        let catalogInitiallyReachable: Bool
+        let catalogSwipes: Int
         /// How many swipes brought the unplayable track into reach: zero when it was on screen.
         let rowSwipes: Int
         /// The album header's Play and Shuffle frames, read when the page opened.
@@ -1589,15 +1630,36 @@ final class DulcetiOSUITests: XCTestCase {
               openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
             return nil
         }
-        // The library's rows are realized as they scroll into view, and the probe albums sort
-        // after the default corpus, so on a phone "Skip Probe" is below the fold and does not exist
-        // until the list scrolls to it. Wait for the library to show albums at all, then scroll.
+        // Library's category rows and Shuffle All explanation can fill several screens at
+        // accessibility sizes. Reach its lazy catalog before searching for the probe album;
+        // waiting for an unrealized tile cannot reveal it. Both scroll phases stay bounded.
         let albums = app.buttons.matching(identifier: "dulcet.library.album")
         let album = albums.matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
-        guard albums.firstMatch.waitForExistence(timeout: 30) else {
-            XCTFail("The library must list albums: " + app.debugDescription)
+        let firstAlbum = albums.firstMatch
+        let catalogInitiallyReachable = firstAlbum.exists && firstAlbum.isHittable
+        let catalogHeading = app.otherElements["dulcet.reader.home.recentlyAdded"]
+            .staticTexts["Recently Added"].firstMatch
+        guard catalogHeading.waitForExistence(timeout: 30),
+              let headingSwipes = scrollIntoViewCountingSwipes(
+                catalogHeading, in: app, probingBlockingSystemAlerts: false,
+                minimumSpaceBelow: app.windows.firstMatch.frame.height / 2
+              ) else {
+            XCTFail("Touch scrolling must reveal Recently Added with room for its lazy grid: " + app.debugDescription)
             return nil
         }
+        // Revealing a stable heading is independent of the catalog request completing. Retain
+        // the data-readiness wait after the grid has room to realize its first actual tile.
+        guard firstAlbum.waitForExistence(timeout: 30),
+              let tileSwipes = scrollIntoViewCountingSwipes(
+            firstAlbum, in: app, probingBlockingSystemAlerts: false,
+            maximumSwipes: 6 - headingSwipes
+        ), firstAlbum.exists, firstAlbum.isHittable else {
+            XCTFail("Touch scrolling must reveal the Library's actual album catalog: " + app.debugDescription)
+            return nil
+        }
+        let catalogSwipes = headingSwipes + tileSwipes
+        print("DULCET SKIP PROBE CATALOG initially-reachable=\(catalogInitiallyReachable)"
+            + " swipes=\(catalogSwipes) tile-hittable=\(firstAlbum.isHittable)")
         guard scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
             XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
                 + "tools/seed-skip-probe: " + app.debugDescription)
@@ -1635,6 +1697,8 @@ final class DulcetiOSUITests: XCTestCase {
             notice: notice,
             sighting: sighting,
             markersBefore: markersBefore,
+            catalogInitiallyReachable: catalogInitiallyReachable,
+            catalogSwipes: catalogSwipes,
             rowSwipes: rowSwipes,
             headerActions: headerActions
         )
@@ -2049,8 +2113,10 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // Something plays, so the bar is there to drop onto; the canary is the album's last track,
-        // so nothing follows it yet.
+        // Hold the album's last track before inspecting the queue. On a loaded host the first
+        // Up Next read happened over 34 seconds after this 31-second fixture was tapped; playback
+        // was preparing another song and the footer disappeared under the toggle's tap.
+        // AutoPlay may append recommendations, so count what the drag adds to the actual queue.
         let canary = track("UI Playback Canary")
         guard canary.waitForExistence(timeout: 10), scrollIntoView(canary, in: app) else {
             XCTFail("The album must list UI Playback Canary: " + app.debugDescription)
@@ -2062,7 +2128,19 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("Playing a track must show the now-playing bar: " + app.debugDescription)
             return
         }
-        guard let before = upNextLabels(openingFrom: bar, in: app) else { return }
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        guard waitForLabelContaining("UI Playback Canary", of: bar, timeout: 10),
+              waitForLabel("Pause", of: playPause, timeout: 10) else {
+            XCTFail("The named canary must be playing before it is paused: " + app.debugDescription)
+            return
+        }
+        playPause.tap()
+        guard waitForLabel("Play", of: playPause, timeout: 10),
+              bar.label.contains("UI Playback Canary") else {
+            XCTFail("Pause must hold the original canary before reading Up Next: " + app.debugDescription)
+            return
+        }
+        guard let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: true) else { return }
         let queuedBefore = before.filter { $0.hasPrefix("Thirty One Seconds") }.count
 
         // A second drag only if the first queued nothing: on one local run of ten the lifted
@@ -2097,6 +2175,9 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertEqual(after.filter { $0.hasPrefix("Thirty One Seconds") }.count, queuedBefore + 1,
                        "The dragged track must join Up Next once; before=\(before) after=\(after) drags=\(attempts)"
                        + " menu-left-open-after=\(menuLeftOpen)")
+        XCTAssertEqual(playPause.label, "Play", "The queue proof must keep playback paused")
+        XCTAssertTrue(bar.label.contains("UI Playback Canary"),
+                      "The drag must append to the held canary's queue; bar=\(bar.label)")
         print("DULCET DRAG FROM MENU before=\(before) after=\(after) drags=\(attempts) menu-left-open-after=\(menuLeftOpen)")
     }
 
@@ -2345,9 +2426,10 @@ final class DulcetiOSUITests: XCTestCase {
     /// the synthesized touch). A drag that never lifted leaves the menu it opened under the touch,
     /// which `menuMarker` names; it is closed so Up Next can be read, and counted. A drag that
     /// dropped queues only after its deferred read, which took over 10 s on a loaded CI host, so
-    /// each drag gets 30 s before the next: a retry sooner queues the source twice. Under a custom
-    /// menu preview, or with no drag source at all, both drags queue nothing, so the retry cannot
-    /// hide the defect.
+    /// each drag gets 30 s before the next: a retry sooner queues the source twice. An optional
+    /// preparation must positively establish its source before every attempt. A no-drag-source
+    /// control rejects menu side effects; the historical custom-preview control is intermittent
+    /// for albums (TRAPS 49), so its result alone does not establish the menu condition.
     @MainActor
     private func dragOntoTheBar(
         _ source: XCUIElement,
@@ -2356,7 +2438,8 @@ final class DulcetiOSUITests: XCTestCase {
         adding count: Int,
         menuMarker: String,
         in app: XCUIApplication,
-        compact: Bool
+        compact: Bool,
+        prepareSource: ((Int) -> XCUIElement?)? = nil
     ) -> (after: [String], drags: Int, menuLeftOpen: Int)? {
         // Counted only while paused: a track that ends under the proof takes the head off Up
         // Next, and a drop that landed reads as one that did not.
@@ -2369,9 +2452,56 @@ final class DulcetiOSUITests: XCTestCase {
         var drags = 0
         var menuLeftOpen = 0
         while drags < 2, after.count < before.count + count {
+            let dragSource: XCUIElement
+            let targetFrame: CGRect?
+            if let prepareSource {
+                // Capture a real, hittable target before the menu shields the background.
+                // XCTest can reject an element-to-element drag before sending any touch
+                // when it hit-tests the covered bar (hosted iPhone activities, 2026-10-18).
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    bar.exists && bar.isHittable
+                }, object: nil)
+                guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+                    XCTFail("The bar must be hittable before preparing each native-menu drag")
+                    return nil
+                }
+                let frame = bar.frame
+                guard !frame.isEmpty, !frame.isInfinite, !frame.isNull,
+                      app.frame.contains(frame) else {
+                    XCTFail("The prepared drag requires the bar's visible, finite frame: \(frame)")
+                    return nil
+                }
+                targetFrame = frame
+                guard let prepared = prepareSource(drags + 1) else { return nil }
+                dragSource = prepared
+            } else {
+                targetFrame = nil
+                dragSource = source
+            }
             drags += 1
-            withoutIdleWaits(app) {
-                source.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+            if let targetFrame {
+                let window = app.frame
+                let preview = dragSource.frame
+                let startPoint = CGPoint(x: preview.midX, y: preview.midY)
+                let endPoint = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
+                guard bar.exists, bar.frame == targetFrame,
+                      !preview.isEmpty, !preview.isInfinite, !preview.isNull,
+                      preview.contains(startPoint), window.contains(startPoint),
+                      targetFrame.contains(endPoint), window.contains(endPoint) else {
+                    XCTFail("Native-menu drag geometry must remain visible and stable: preview=\(preview) bar=\(bar.frame) captured=\(targetFrame) window=\(window)")
+                    return nil
+                }
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: startPoint.x - window.minX, dy: startPoint.y - window.minY))
+                let end = origin.withOffset(CGVector(dx: endPoint.x - window.minX, dy: endPoint.y - window.minY))
+                print("DULCET PREPARED DRAG attempt=\(drags) start=\(startPoint) end=\(endPoint) preview=\(preview) bar=\(targetFrame)")
+                withoutIdleWaits(app) {
+                    start.press(forDuration: 0.8, thenDragTo: end, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+                }
+            } else {
+                withoutIdleWaits(app) {
+                    dragSource.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+                }
             }
             let menu = app.buttons[menuMarker].firstMatch
             if menu.waitForExistence(timeout: 2) {
@@ -2453,7 +2583,7 @@ final class DulcetiOSUITests: XCTestCase {
         guard requireSimulator(compact ? .phone : .pad, "The album tile drag proof on \(compact ? "iPhone" : "iPad")"),
               let configuration = livePlaybackConfiguration(),
               let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: compact),
-              openLibraryDestinationForAlbums(in: app, compact: compact) else { return }
+              openAlphabeticalAlbumGrid(in: app, compact: compact) else { return }
         let album = "Threshold Boundary"
         let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
         let tile = { app.buttons.matching(identifier: "dulcet.library.album")
@@ -2465,26 +2595,95 @@ final class DulcetiOSUITests: XCTestCase {
         guard requireContextMenu(on: tile(), marker: "Add to Playlist\u{2026}", in: app) else { return }
 
         guard let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app) else { return }
-        guard openLibraryDestinationForAlbums(in: app, compact: compact),
+        guard openAlphabeticalAlbumGrid(in: app, compact: compact),
               tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
               let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: compact) else { return }
+        var nativeMenuReady = 0
+        let prepareSource: ((Int) -> XCUIElement?)? = compact ? { attempt in
+            guard let preview = self.nativeAlbumMenuPreview(on: tile(), album: album, attempt: attempt, in: app) else { return nil }
+            nativeMenuReady += 1
+            return preview
+        } : nil
         guard let result = dragOntoTheBar(
             tile(), bar: bar, before: before, adding: albumOrder.count, menuMarker: "Add to Playlist\u{2026}",
-            in: app, compact: compact
+            in: app, compact: compact, prepareSource: prepareSource
         ) else { return }
+        if compact {
+            XCTAssertGreaterThan(nativeMenuReady, 0, "The phone must actually reach its native album menu")
+            XCTAssertEqual(nativeMenuReady, result.drags, "Every attempt, including a retry, must start from its positively observed native menu preview")
+        }
         attachScreenshot(named: "album-tile-dragged-onto-the-bar", app: app)
         let added = Array(result.after.dropFirst(before.count))
         XCTAssertEqual(result.after.count, before.count + albumOrder.count,
                        "The dragged album must join Up Next once; before=\(before) after=\(result.after)"
                        + " drags=\(result.drags) menu-left-open-after=\(result.menuLeftOpen)")
         XCTAssertEqual(result.menuLeftOpen, 0,
-                       "A drag that carries on out of the open menu must lift: a menu left open under the touch is the custom preview's defect (TRAPS 48)")
+                       "A completed album drag must dismiss its menu; menu side effects cannot substitute for a queue drop")
         XCTAssertEqual(added.count, albumOrder.count)
         for (label, title) in zip(added, albumOrder) {
             XCTAssertTrue(label.hasPrefix(title), "Album order at the end of Up Next: \(title) expected, got \(label)")
         }
         print("DULCET ALBUM TILE DRAG before=\(before) after=\(result.after) drags=\(result.drags)"
-              + " menu-left-open-after=\(result.menuLeftOpen)")
+              + " menu-left-open-after=\(result.menuLeftOpen) native-menu-ready=\(nativeMenuReady)")
+    }
+
+    /// The phone lifts the actual system Preview with a second touch after its native menu
+    /// opens. This positively covers an already-open menu; the uninterrupted long-press path
+    /// has a separate retained recording. The covered library button is not a hit target.
+    @MainActor
+    private func nativeAlbumMenuPreview(on tile: XCUIElement, album: String, attempt: Int, in app: XCUIApplication) -> XCUIElement? {
+        guard tile.waitForExistence(timeout: 5), tile.isHittable else {
+            XCTFail("The named album must be hittable before opening its menu")
+            return nil
+        }
+        withoutIdleWaits(app) { tile.press(forDuration: 1.2) }
+        let marker = app.buttons["Add to Playlist\u{2026}"].firstMatch
+        let albumPin = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Pin \(album)", "Unpin \(album)")).firstMatch
+        let previews = app.otherElements.matching(NSPredicate(format: "label == %@", "Preview"))
+        let preview = previews.element(boundBy: 0)
+        guard marker.waitForExistence(timeout: 5), marker.isHittable,
+              albumPin.exists, albumPin.isHittable,
+              preview.waitForExistence(timeout: 5), previews.count == 1, preview.isHittable,
+              !marker.frame.intersects(preview.frame) else {
+            XCTFail("The named album's native menu and separate hittable Preview must be open before every drag: " + app.debugDescription)
+            return nil
+        }
+        print("DULCET ALBUM MENU READY attempt=\(attempt) album=\(album) preview=\(preview.frame) marker=\(marker.frame)")
+        return preview
+    }
+
+    /// Use the phone's full Albums collection in Title order rather than depending on fixture
+    /// creation timestamps in Recently Added. Retain the centered gesture and menu preflight;
+    /// a no-drag-source control must fail its queue-order and paused-playback assertions.
+    @MainActor
+    private func openAlphabeticalAlbumGrid(in app: XCUIApplication, compact: Bool) -> Bool {
+        guard openLibraryDestinationForAlbums(in: app, compact: compact) else { return false }
+        guard compact else { return true }
+        if compact {
+            let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
+            for _ in 0..<8 {
+                if albums.exists, albums.isHittable { break }
+                app.swipeDown()
+            }
+            guard albums.exists, albums.isHittable else {
+                XCTFail("The Library must offer its Albums collection: " + app.debugDescription)
+                return false
+            }
+            albums.tap()
+        }
+        let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
+        guard sort.waitForExistence(timeout: 10) else {
+            XCTFail("The Albums collection must expose its sort control")
+            return false
+        }
+        sort.tap()
+        let title = app.buttons["Title"].firstMatch
+        guard title.waitForExistence(timeout: 5) else {
+            XCTFail("The Albums sort menu must offer Title")
+            return false
+        }
+        title.tap()
+        return true
     }
 
     /// Each playlist edit the app offers, made where a person makes it, and read back from the
@@ -3357,11 +3556,40 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        var originalAutoplay: Bool?
+        defer {
+            if let originalAutoplay {
+                XCTAssertTrue(chooseAutoplayForLyrics(originalAutoplay, in: XCUIApplication()),
+                              "Restore the person's AutoPlay choice after the lyrics proof")
+            }
+        }
+
         // 1. Synced: a line lights as media time moves.
         guard let syncedApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
                                               compact: expectedCompact),
               openLibraryAlbum(album, in: syncedApp, compact: expectedCompact) else { return }
         guard tapAlbumPlay(in: syncedApp) else { return }
+        // These states include a one-second track and a deliberately slow failed read. Choose
+        // an ending queue explicitly: one search result no longer implies that with AutoPlay on.
+        // Pause during setup so navigating Up Next cannot consume the 29-second synced fixture.
+        let syncedTransport = syncedApp.buttons["dulcet.mini-player.play-pause"].firstMatch
+        guard syncedTransport.waitForExistence(timeout: 10),
+              waitForLabel("Pause", of: syncedTransport, timeout: 15) else {
+            XCTFail("The synced fixture must actually start before its setup pause")
+            return
+        }
+        syncedTransport.tap()
+        guard waitForLabel("Play", of: syncedTransport, timeout: 10) else {
+            XCTFail("The setup pause must reach playback before navigating Up Next")
+            return
+        }
+        guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
+              chooseAutoplayForLyrics(false, in: syncedApp, capturePrevious: { originalAutoplay = $0 }) else { return }
+        syncedTransport.tap()
+        guard waitForLabel("Pause", of: syncedTransport, timeout: 10) else {
+            XCTFail("The synced fixture must resume after the paused AutoPlay setup")
+            return
+        }
         guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
               let syncedPanel = openLyricsPanel(in: syncedApp) else { return }
         let current = syncedApp.staticTexts["dulcet.lyrics.line.current"].firstMatch
@@ -3400,9 +3628,14 @@ final class DulcetiOSUITests: XCTestCase {
         guard let plainApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
                                              compact: expectedCompact),
               playFromSearch("Ogg Probe", in: plainApp, compact: expectedCompact) else { return }
-        // A one-second track, played from a search that matches it alone, so it is the whole
-        // queue: the finished queue keeps it as Now Playing's track (spec §14.3). Played from its
-        // album it would advance to the next track and show that track's lyrics instead.
+        // A fresh phase has no Now Playing bar yet: activate its fixture before opening Up Next.
+        // Read the existing choice before any change, so a lost preference still fails here.
+        var persistedAutoplay: Bool?
+        guard chooseAutoplayForLyrics(false, in: plainApp, capturePrevious: { persistedAutoplay = $0 }) else { return }
+        XCTAssertEqual(persistedAutoplay, false, "The plain phase must inherit the explicitly disabled AutoPlay choice")
+        guard persistedAutoplay == false else { return }
+        // A one-second track, played from a search that matches it alone with AutoPlay proven
+        // off: the finished queue keeps it as Now Playing's track (spec §14.3).
         guard openNowPlayingFromBar(in: plainApp, expectingTitle: "Ogg Probe"),
               openLyricsPanel(in: plainApp) != nil else { return }
         let plainLines = plainApp.staticTexts.matching(identifier: "dulcet.lyrics.line")
@@ -3412,6 +3645,9 @@ final class DulcetiOSUITests: XCTestCase {
         }
         XCTAssertFalse(plainApp.staticTexts["dulcet.lyrics.line.current"].firstMatch.exists,
             "Plain lyrics have no current line, so none may be lit")
+        let plainTitleID = expectedCompact ? "dulcet.lyrics.header.title" : "dulcet.now-playing.title"
+        XCTAssertEqual(plainApp.staticTexts[plainTitleID].firstMatch.label, "Ogg Probe",
+                       "The single-result queue must retain its track while the plain lyrics are shown")
         let plainShown = plainLines.count
         attachScreenshot(named: "lyrics-plain", app: plainApp)
 
@@ -3539,37 +3775,64 @@ final class DulcetiOSUITests: XCTestCase {
         // moving or the queue moving past the probe -- with no failure and no skip notice seen at
         // any poll, since a track that cannot play is skipped with a notice (section 12.12). Now
         // Playing's progress is a slider, or a progress bar where the stream cannot seek.
-        let sliderProgress = app.sliders["Now Playing"].firstMatch
-        let barProgress = app.progressIndicators["Now Playing"].firstMatch
-        let title = app.staticTexts.matching(identifier: "dulcet.now-playing.title").firstMatch
-        let failure = app.descendants(matching: .any).matching(identifier: "dulcet.now-playing.failure").firstMatch
-        let skipNotice = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Skipped.")).firstMatch
         var started: String?
         var failed: String?
         var lastValue = "none"
+        var lastTitle = "none"
+        var sampledSnapshots = 0
         let playDeadline = Date().addingTimeInterval(20)
         repeat {
-            if failure.exists { failed = "failure shown: \(failure.label)"; break }
-            if skipNotice.exists { failed = "skip notice: \(skipNotice.label)"; break }
-            // One snapshot each, whose failure is thrown rather than recorded: the progress view
-            // can be redrawn between an `exists` check and a `value` read. That failed this proof
-            // with "Failed to get matching snapshot" (CI run 37142156762, iPhone).
-            let progress = (try? sliderProgress.snapshot()) ?? (try? barProgress.snapshot())
-            if let value = progress?.value as? String {
-                lastValue = value
-                if let sample = playbackProgressSample(from: value), sample.elapsed > 0 {
-                    started = "media-time \(value)"
-                    break
+            // Resolve the stable app once, then inspect one immutable tree. AutoPlay's short
+            // tracks can replace an element while XCTest resolves its individual snapshot.
+            // Missing/failed snapshots prove nothing and cannot count as playback evidence.
+            if let root = try? app.snapshot() {
+                sampledSnapshots += 1
+                var sliderProgress: XCUIElementSnapshot?
+                var barProgress: XCUIElementSnapshot?
+                var title: XCUIElementSnapshot?
+                var failure: XCUIElementSnapshot?
+                var skipNotice: XCUIElementSnapshot?
+                var pending: [XCUIElementSnapshot] = [root]
+                while let element = pending.popLast() {
+                    if sliderProgress == nil, element.elementType == .slider, element.label == "Now Playing" {
+                        sliderProgress = element
+                    }
+                    if barProgress == nil, element.elementType == .progressIndicator, element.label == "Now Playing" {
+                        barProgress = element
+                    }
+                    if title == nil, element.elementType == .staticText, element.identifier == "dulcet.now-playing.title" {
+                        title = element
+                    }
+                    if failure == nil, element.identifier == "dulcet.now-playing.failure" { failure = element }
+                    if skipNotice == nil, element.elementType == .staticText, element.label.contains("Skipped.") {
+                        skipNotice = element
+                    }
+                    pending.append(contentsOf: element.children.reversed())
                 }
-            }
-            if title.exists, !title.label.isEmpty, title.label != track {
-                started = "moved-past-probe to \(title.label)"
+                // Inspect the entire tree before accepting advancement: a title from a queue
+                // that skipped a failed track must not bypass either negative check.
+                if let failure { failed = "failure shown: \(failure.label)"; break }
+                if let skipNotice { failed = "skip notice: \(skipNotice.label)"; break }
+                if let value = (sliderProgress ?? barProgress)?.value as? String {
+                    lastValue = value
+                    if let sample = playbackProgressSample(from: value), sample.elapsed > 0 {
+                        started = "media-time \(value)"
+                    }
+                }
+                if let title {
+                    lastTitle = title.label
+                    if started == nil, !lastTitle.isEmpty, lastTitle != track {
+                        started = "moved-past-probe to \(lastTitle)"
+                    }
+                }
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < playDeadline && started == nil
         XCTAssertNil(failed, "The capped play must not fail: \(failed ?? "")")
         XCTAssertNotNil(started, "The capped play must start: Now Playing's media time must move, or the queue"
-            + " move past the probe; last progress \(lastValue), title \(title.exists ? title.label : "none")")
+            + " move past the probe; last progress \(lastValue), title \(lastTitle), snapshots \(sampledSnapshots)")
+        print("DULCET QUALITY PLAYBACK SAMPLE snapshots=\(sampledSnapshots) title=\(lastTitle.debugDescription)"
+            + " progress=\(lastValue.debugDescription) started=\(String(describing: started))")
 
         var lines: [[String: String]] = []
         let deadline = Date().addingTimeInterval(30)
@@ -3587,7 +3850,16 @@ final class DulcetiOSUITests: XCTestCase {
 
         // Put both choices back, through the same screen, so later phases stream originals.
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
-        if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
+        guard close.waitForExistence(timeout: 5), close.isHittable else {
+            XCTFail("Now Playing must keep its close control reachable while the short queue advances: "
+                + app.debugDescription)
+            return
+        }
+        close.tap()
+        guard close.waitForNonExistence(timeout: 5) else {
+            XCTFail("Close Now Playing must dismiss the player before restoring streaming quality")
+            return
+        }
         guard openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: expectedCompact),
               chooseStreamingQuality("Original", row: "dulcet.streaming-quality.unmetered", in: app),
               chooseStreamingQuality("Original", row: "dulcet.streaming-quality.metered", in: app) else { return }
@@ -3715,6 +3987,72 @@ final class DulcetiOSUITests: XCTestCase {
             return false
         }
         row.tap()
+        return true
+    }
+
+    /// Chooses the production Up Next setting and reads its switch back. Lyrics states that
+    /// outlive a short track need an ending queue; the original choice is restored by the caller.
+    @MainActor
+    private func chooseAutoplayForLyrics(
+        _ enabled: Bool,
+        in app: XCUIApplication,
+        capturePrevious: ((Bool) -> Void)? = nil
+    ) -> Bool {
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        if !close.exists, !openNowPlayingFromBar(in: app, expectingTitle: nil) { return false }
+        let lyricsPanel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+        if lyricsPanel.exists {
+            let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+            guard lyrics.exists && lyrics.isHittable else {
+                XCTFail("The open lyrics panel must offer its own toggle")
+                return false
+            }
+            lyrics.tap()
+            guard lyricsPanel.waitForNonExistence(timeout: 5) else {
+                XCTFail("Hide Lyrics must reveal the queue's place beside the regular player")
+                return false
+            }
+        }
+        let queueToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+        if queueToggle.exists && queueToggle.label == "Show Up Next" { queueToggle.tap() }
+        let queue = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
+        guard queue.waitForExistence(timeout: 10) else {
+            XCTFail("Up Next must expose its actual list before choosing AutoPlay: " + app.debugDescription)
+            return false
+        }
+        let toggle = app.switches["dulcet.upNext.autoplay.toggle"].firstMatch
+        for _ in 0..<6 {
+            if toggle.exists && toggle.isHittable { break }
+            queue.swipeUp()
+        }
+        guard toggle.exists && toggle.isHittable,
+              let previous = toggle.value as? String, ["0", "1"].contains(previous) else {
+            XCTFail("Up Next must expose a readable AutoPlay switch: " + app.debugDescription)
+            return false
+        }
+        capturePrevious?(previous == "1")
+        let expected = enabled ? "1" : "0"
+        if previous != expected {
+            // The native Switch's AX frame includes its label and the gap before the thumb.
+            // A center tap landed in that gap (x=201 in a 370-point row) and left it on.
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+                .withOffset(CGVector(dx: -24, dy: 0)).tap()
+        }
+        let chosen = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: toggle)
+        guard XCTWaiter.wait(for: [chosen], timeout: 10) == .completed else {
+            XCTFail("The real AutoPlay switch must acknowledge \(expected); value=\(String(describing: toggle.value))")
+            return false
+        }
+        print("DULCET LYRICS AUTOPLAY previous=\(previous) value=\(toggle.value ?? "nil")")
+        guard close.exists && close.isHittable else {
+            XCTFail("The player must stay open while choosing AutoPlay")
+            return false
+        }
+        close.tap()
+        guard close.waitForNonExistence(timeout: 5) else {
+            XCTFail("The player must close before returning to the lyrics fixture")
+            return false
+        }
         return true
     }
 
@@ -5608,14 +5946,16 @@ final class DulcetiOSUITests: XCTestCase {
         ) != nil
     }
 
-    /// `scrollIntoView`, answering how many swipes it took (at most six), or nil when the element
-    /// never became reachable.
+    /// `scrollIntoView`, answering how many swipes it took (six by default), or nil when the element
+    /// never became reachable. Catalog headings can reserve space for their lazy content below.
     @MainActor
     private func scrollIntoViewCountingSwipes(
         _ element: XCUIElement,
         in app: XCUIApplication,
         probingBlockingSystemAlerts: Bool = true,
-        alsoRevealing followingRow: XCUIElement? = nil
+        alsoRevealing followingRow: XCUIElement? = nil,
+        minimumSpaceBelow: CGFloat = 0,
+        maximumSwipes: Int = 6
     ) -> Int? {
         let window = app.windows.firstMatch
         guard window.exists else {
@@ -5641,24 +5981,36 @@ final class DulcetiOSUITests: XCTestCase {
             }
 
             var targetIsAboveWindow = false
+            var needsSpaceBelowVisibleTarget = false
             if element.exists {
                 let frame = element.frame
                 let midpoint = CGPoint(x: frame.midX, y: frame.midY)
                 targetIsAboveWindow = !frame.isEmpty && !frame.isInfinite && midpoint.y < window.frame.minY
+                needsSpaceBelowVisibleTarget = minimumSpaceBelow > 0 &&
+                    !frame.isEmpty && !frame.isInfinite && window.frame.contains(midpoint) &&
+                    window.frame.maxY - frame.maxY < minimumSpaceBelow
                 if !frame.isEmpty && !frame.isInfinite &&
                     window.frame.contains(midpoint) && element.isHittable &&
-                    (followingRow?.exists ?? true) {
+                    (followingRow?.exists ?? true) &&
+                    (minimumSpaceBelow <= 0 || window.frame.maxY - frame.maxY >= minimumSpaceBelow) {
                     return swipeCount
                 }
             }
 
-            guard swipeCount < 6 else { return nil }
+            guard swipeCount < maximumSwipes else { return nil }
 
             // This must remain a real event rather than an isHittable-gated preflight. Tap paths
             // can still invoke the interruption monitors installed as a backstop.
             // A restored scroll position can place an existing destination above the window.
             // Keep the same swipe budget and reachability checks while scrolling toward it.
-            if targetIsAboveWindow { app.swipeDown() }
+            if needsSpaceBelowVisibleTarget {
+                // Once the heading is visible, a full swipe can overshoot the smaller placement
+                // band that leaves room for the grid. This real adjustment uses the same budget.
+                window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                    .press(forDuration: 0.05, thenDragTo:
+                        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            }
+            else if targetIsAboveWindow { app.swipeDown() }
             else { app.swipeUp() }
             swipeCount += 1
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))

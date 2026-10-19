@@ -10,7 +10,7 @@ internal fun authorizeRest(ctx: ServerContext, call: Call) {
         if(!ctx.access.canReadCatalog(call.user.id,type,id)) throw SubsonicError.notFound()
     }
     when(call.method) {
-        "getSong", "stream", "download", "getLyricsBySongId", "getSimilarSongs", "getSimilarSongs2" -> call.param("id")?.let { requireVisible("track",it) }
+        "getSong", "stream", "download", "getLyricsBySongId" -> call.param("id")?.let { requireVisible("track",it) }
         "getAlbum", "getAlbumInfo", "getAlbumInfo2" -> call.param("id")?.let { requireVisible("album",it) }
         "getArtist", "getArtistInfo", "getArtistInfo2" -> call.param("id")?.let { requireVisible("artist",it) }
         "getMusicDirectory" -> call.param("id")?.let { requireVisible(ctx.catalog.kindOf(it) ?: throw SubsonicError.notFound(),it) }

@@ -100,6 +100,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         app.terminate()
         try launch(connect: false)
         try select("library")
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            // Offline status and the category rows put Recently Added below the compact
+            // viewport. Prove the regression condition before driving the real scroll.
+            XCTAssertTrue(app.buttons["dulcet.myLibrary.section.recent"].waitForExistence(timeout: 20))
+            XCTAssertFalse(albumTile(album.title).exists,
+                           "The compact offline root must begin with its lazy album grid below the viewport")
+            let scrolls = revealPhoneAlbumTile(albumTile(album.title))
+            XCTAssertGreaterThan(scrolls, 0, "The offline relaunch proof must actually reveal the lazy grid")
+            XCTAssertTrue(albumTile(album.title).isHittable)
+            print("MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=\(scrolls)")
+        }
+#endif
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline relaunch paints the durable pending add before reconnect")
         let pendingAfterRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingAfterRelaunch)
@@ -107,6 +120,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(false)
         try launch()
         try select("library")
+        revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
@@ -129,7 +143,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(true)
         try launch(connect: false)
         try select("library")
-        XCTAssertTrue(app.staticTexts["dulcet.library.pinned.title"].firstMatch.waitForExistence(timeout: 20))
+#if os(macOS)
+        // On the hosted Mac, this exact query reports firstMatch=false but count=1 and
+        // indexed.exists=true. Avoid the firstMatch shortcut without changing the target.
+        let pinnedHeading = app.staticTexts
+            .matching(identifier: "dulcet.library.pinned.title").element(boundBy: 0)
+#else
+        let pinnedHeading = app.staticTexts["dulcet.library.pinned.title"].firstMatch
+#endif
+        XCTAssertTrue(pinnedHeading.waitForExistence(timeout: 20))
+        XCTAssertEqual(pinnedHeading.label, "Pinned", "The actual pinned section heading must be present")
+        print("MY LIBRARY PIN heading=\(pinnedHeading.label)")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Pinned metadata must survive an offline relaunch")
         try capture("Library-Depth-Pinned-Offline")
         let downloaded = app.buttons["dulcet.library.downloaded"].firstMatch
@@ -255,7 +279,32 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(songs.waitForExistence(timeout: 30))
         activate(artists)
         XCTAssertTrue(app.buttons["dulcet.search.group.all"].firstMatch.waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["dulcet.search.resultCount"].firstMatch.label, "1 result", "The selected Artists group counts its own results")
+        let resultCount = app.staticTexts["dulcet.search.resultCount"].firstMatch
+        XCTAssertTrue(resultCount.waitForExistence(timeout: 10))
+#if os(macOS)
+        let countText = NSPredicate(format: "value == %@", "1 result")
+#else
+        let countText = NSPredicate(format: "label == %@", "1 result")
+#endif
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: countText, object: resultCount)], timeout: 20), .completed,
+                       "The selected Artists group counts its own results")
+#if os(macOS)
+        XCTAssertEqual(resultCount.value as? String, "1 result")
+        // SwiftUI's native Table is a SwiftUIOutlineTableView with AXOutline role.
+        // Scope it by the rendered result so the sidebar's outline cannot satisfy this proof.
+        let artistResults = app.outlines.containing(.staticText, identifier: "dulcet.search.result.0")
+            .element(boundBy: 0)
+        XCTAssertTrue(artistResults.waitForExistence(timeout: 20), "The selected group must render its real result cell")
+        let oneArtistRow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            artistResults.outlineRows.count == 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [oneArtistRow], timeout: 20), .completed,
+                       "Artists See All must contain only the fixture artist")
+        XCTAssertEqual(artistResults.outlineRows.count, 1)
+        print("MY LIBRARY SEARCH selected=Artists count=\(resultCount.value ?? "nil") rows=\(artistResults.outlineRows.count) role=outline")
+#else
+        XCTAssertEqual(resultCount.label, "1 result")
+#endif
         try capture("Library-Depth-Search-Groups")
         activate(field)
         field.typeText("\n")
@@ -315,6 +364,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try removeAlbum(album.id)
         try launch(variant: "largest-text")
         try select("browse")
+        // At accessibility text sizes, Browse's introduction and destination rows take
+        // several screens before its lazy album grid. Reach the catalog first, as the
+        // light/dark/largest-text tour above does, then look for the fixture album.
+        let catalogAlbum = app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertFalse(catalogAlbum.exists && catalogAlbum.isHittable,
+            "The cold largest-text Browse must exercise scrolling to its catalog")
+        let catalogScrolls = revealPhoneAlbumTile(catalogAlbum)
+        XCTAssertGreaterThan(catalogScrolls, 0, "The catalog must be reached by a real touch scroll")
+        XCTAssertTrue(catalogAlbum.exists && catalogAlbum.isHittable,
+            "The catalog must be visible before searching its albums: " + app.debugDescription)
+        print("MY LIBRARY LARGEST TEXT catalog-scrolls=\(catalogScrolls) catalog-visible=true")
         try openAlbum(album.title)
         let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
@@ -439,22 +499,43 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let control = destination(section)
         XCTAssertTrue(control.waitForExistence(timeout: 30), "Missing destination \(section)")
 #if os(tvOS)
-        // Menu returns to the section bar from roots; from a pushed page it pops first.
+        // Menu pops a pushed page, then returns focus to the section bar. That focus
+        // transition is asynchronous: the retained Songs -> Browse failure sent another
+        // Menu before observing it and eventually left the app for the TV Home screen.
         let remote = XCUIRemote.shared
-        let focusedTab = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.tab.' AND hasFocus == true")).firstMatch
-        for _ in 0..<6 {
-            if focusedTab.exists { break }
+        let focusedTab = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'dulcet.tab.' AND hasFocus == true"
+        )).firstMatch
+        var menuPresses = 0
+        while !focusedTab.exists && menuPresses < 6 {
+            guard app.state == .runningForeground else {
+                XCTFail("Menu navigation left the app before reaching the section bar")
+                return
+            }
             remote.press(.menu)
-            // A pop and the subsequent transfer to the section bar are separate transitions.
-            // Observe the latter before another Menu could leave the foreground app.
-            if focusedTab.waitForExistence(timeout: 2) { break }
+            menuPresses += 1
+            // Observe the result of this press before deciding whether a page still needs
+            // popping. A successful return must prove actual bar focus, not exhaust retries.
+            if focusedTab.waitForExistence(timeout: 3) { break }
         }
+        guard focusedTab.exists else {
+            XCTFail("Menu did not return focus to the section bar for \(section): \(app.debugDescription)")
+            return
+        }
+        print("MY LIBRARY TV section-bar-focused target=\(section) menu-presses=\(menuPresses)")
         let order = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"]
-        for _ in 0..<12 {
-            if control.hasFocus { remote.press(.select); return }
-            if let current = order.firstIndex(where: { app.buttons["dulcet.tab.\($0)"].firstMatch.hasFocus }), let target = order.firstIndex(of: section) {
-                remote.press(target > current ? .right : .left)
-            } else { remote.press(.up) }
+        for _ in 0..<order.count {
+            if control.hasFocus {
+                XCTAssertTrue(control.hasFocus, "The requested section must actually have remote focus")
+                remote.press(.select)
+                return
+            }
+            guard let current = order.firstIndex(where: { app.buttons["dulcet.tab.\($0)"].firstMatch.hasFocus }),
+                  let target = order.firstIndex(of: section) else {
+                XCTFail("Section-bar focus disappeared while reaching \(section)")
+                return
+            }
+            remote.press(target > current ? .right : .left)
         }
         XCTFail("Remote could not reach \(section): \(app.debugDescription)")
 #else
@@ -484,15 +565,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func albumTile(_ title: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier == 'dulcet.library.album' AND label BEGINSWITH %@", title)).firstMatch
     }
-    @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) {
+    @discardableResult
+    @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) -> Int {
 #if os(iOS)
-        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return 0 }
         // Library's destination rows and Browse's largest-text introduction precede a lazy
         // album grid. Reach that grid with touch scrolling before asserting its publication.
-        for _ in 0..<8 {
-            if tile.exists && tile.isHittable { return }
+        for scrolls in 0..<8 {
+            if tile.exists && tile.isHittable { return scrolls }
             app.scrollViews.firstMatch.swipeUp()
         }
+        return 8
+#else
+        return 0
 #endif
     }
     @MainActor private func openAlbumList() throws {
@@ -678,7 +763,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return try XCTUnwrap(result.load()).get()
     }
     private func setOffline(_ offline: Bool) throws {
-        _ = try fetch(URL(string: base + "/fixture/network?offline=\(offline ? "1" : "0")")!)
+        let response = try fetch(URL(string: base + "/fixture/network?offline=\(offline ? "1" : "0")")!)
+        XCTAssertEqual(String(data: response, encoding: .utf8), offline ? "offline" : "online",
+                       "The disposable route must acknowledge the requested network condition")
     }
 }
 

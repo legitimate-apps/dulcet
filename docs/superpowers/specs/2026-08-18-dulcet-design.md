@@ -7852,6 +7852,98 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-18 — Establish real readiness before crossfade transport-disposal proofs.**
+Only the five transport arguments warm both actual queued items through real
+playback of a 12-second local WAV while crossfade is disarmed. They require the
+original still current, acknowledged pause and zero rate, a completed real seek
+to six seconds and renewed readiness, identity and position checks before arming
+the existing two-second overlap. Incoming gain above 0.05, atomic transport during
+overlap and outgoing-tail disposal remain mandatory. Default six-second fixtures
+and the no-byte-range no-reopen proof retain their original path. An accepted
+preload alone is not a readiness receipt; bounded real-sample diagnostics preserve
+rates and gains when the overlap prerequisite fails. Runtime evidence is recorded
+in `docs/evidence/library-depth.md`.
+
+**2026-10-18 — Hold the named canary throughout the iPhone track-drag proof.**
+Before reading Up Next, the proof requires the selected canary and actual Pause,
+sends a real tap, then requires Play and the original title. Two agreeing queue
+reads establish the ordinary queue baseline while AutoPlay remains enabled. The native
+menu precondition, uninterrupted long-press drag and exact one-entry increment
+remain. The original canary and paused transport must still hold afterward.
+A queue footer disappearing during an unpaused fixture's transition fails setup;
+it does not establish a failed drag. Runtime acceptance is recorded in
+`docs/evidence/library-depth.md`.
+
+**2026-10-18 — Hold named TV static-lyrics fixtures before walking the footer.**
+The core Apple corpus explicitly opts into a 90-second plain Ogg variant, recording
+its ffprobe-verified duration while retaining 314 media files and the exact plain
+sidecar. The default corpus and separate phone/iPad leg retain the one-second
+format canary. The TV static-state proof requires the long duration through the
+server, acknowledges Pause, sends the real remote playback key and requires Play
+plus the exact selected title before footer navigation. Plain-line focus, empty
+state, actual failed read and positive remote retry checks remain; the separate
+synced footer proof continues to require a live lit line. Losing the named song
+fails setup; a disappeared footer is not treated as successful navigation.
+
+**2026-10-18 — Reveal the largest-text Library catalog before its lazy tiles.**
+The phone skip-notice helper reaches the stable Recently Added heading with space
+for its grid before waiting up to 30 seconds for the first actual album tile.
+Heading and first-tile reachability share six touch swipes; the named fixture album
+retains its existing bounded search. Both largest-text cases require initial
+catalog unreachability and positive actual scrolling, then preserve all notice,
+header, transport and navigation assertions. This handles the expanded Library
+controls without treating unloaded data as proof of a scroll failure. Runtime
+acceptance is recorded in `docs/evidence/library-depth.md`.
+
+**2026-10-18 — Hold the TV footer fixture after its live lyric-line proof.**
+After positively observing the playing song's lit lyric line, the remote footer proof sends
+Play/Pause and requires both paused transport and the exact original title before its remaining
+focus walk and server writes. It keeps actual Select actions, Sleep Timer traversal, lyric
+open/hide and favorite/rating checks. The short fixture must not advance into AutoPlay while
+those checks intend to modify its original song.
+
+**2026-10-18 — Sample streaming-quality playback from one immutable UI tree.**
+The streaming-quality proof polls one whole-app snapshot, collecting its exact native progress,
+Now Playing title, failure and skip-notice selectors before evaluating them. Either negative
+rejects the sample before positive playback evidence; a missing or failed snapshot proves
+nothing. Parsed elapsed time greater than zero or a nonempty advanced title remains required
+within the unchanged 20-second window. AutoPlay, source/cap server checks and both quality
+restorations remain unchanged; diagnostics report the last captured sample rather than a later
+live element read.
+
+**2026-10-18 — Reach skipped-track history through the default-on AutoPlay queue.**
+Previously Played follows AutoPlay recommendations in the queue's lazy list. The automatic-skip
+proof scrolls that actual list within a bounded search, requires a hittable history disclosure,
+proves it starts collapsed, expands it and requires the real first track row before asserting
+its unchanged skipped-track identity and unmarked presentation. It records the observed
+AutoPlay value, initial reachability and swipe counts, without disabling AutoPlay. The skip
+notice, following-track playback and both server-play-count checks remain required.
+
+**2026-10-17 — Positively observe the phone album menu before its queue drag.**
+The phone proof opens the full Albums collection and selects Title order, independent of
+fixture creation timestamps. Before **every attempt**, it opens the named album's native
+context menu and requires its Pin/Unpin command, hittable Add to Playlist command, and exactly
+one separate hittable system Preview. Before opening each menu, it requires the real
+mini-player to be hittable and captures its visible bounded frame. Afterward it requires that
+frame to remain unchanged and both gesture centers to be inside the app. It derives coordinates
+from the actual Preview and captured bar frames: the hosted runner otherwise rejects the
+background bar during target hit-testing before sending a touch through the open menu.
+It drags that actual Preview with a second touch onto the mini-player, retaining the
+centered gesture's hold times and velocity, two-attempt bound,
+exactly-once album order, paused playback and zero remaining menus. A retry cannot bypass the
+menu condition. This automated already-open-menu interaction is distinct from an uninterrupted
+long press: the latter has a separate retained successful recording showing the native menu
+before the album lifts. The earlier Recently Added recording shows the failed touch crossing
+the native menu; interception is an inference. A temporary custom preview also passes on iOS
+26.5, so that intermittent mutation cannot establish discrimination. iPad retains its existing
+Albums setup and drag interaction.
+
+**2026-10-16 — Dulcet Server recommends songs from its local library.**
+`getSimilarSongs` and `getSimilarSongs2` accept a visible song, album or artist id and return
+local artist and genre neighbours instead of always returning an empty container (§29.1).
+They require no external similarity service. Source permissions constrain both seed metadata
+and returned songs; unknown or invisible seeds return error 70.
+
 **2026-10-16 — Listen Now home and optional recommendations contract.**
 Dulcet API v1 adds `dulcet.home` version 1 and `GET /recommendations/home` (§30,
 `docs/dulcet-api/openapi.yaml`); the Home conformance profile covers its bounded, per-user shelves.
@@ -13617,6 +13709,15 @@ them.
   - Legacy `stream` and `getCoverArt` errors are envelopes.
   - `getTranscodeStream` errors are bare HTTP: 404 `Not Found` or 400 `Bad Request`, in plain text.
   - `getOpenSubsonicExtensions` needs no authentication.
+- `getSimilarSongs` / `getSimilarSongs2` accept a song, album or artist id and alternate songs
+  by the seed's performing/album artists with songs by other artists sharing its genres. Song
+  and album seeds draw artist neighbours from other albums and exclude the seed tracks; an
+  artist seed can return its own songs. Candidates vary between calls, contain no duplicates,
+  and use only the caller's visible tracks for both seed metadata and results. `count` defaults
+  to 50 and clamps to 0–500. Unknown/invisible ids return error 70; a visible seed with no
+  neighbours succeeds with an empty container. JSON and XML retain `similarSongs` /
+  `similarSongs2` with normal `song` children. **OBSERVED:** `SimilarSongsTest` exercises the
+  REST handlers with scanned disposable fixtures.
 - Advertised extensions: `formPost` 1, `songLyrics` 1 and 2, `transcodeOffset` 1, `transcoding` 1
   and `dulcetLibrary` 1.
 - Authentication accepts token plus salt and plain or `enc:` passwords. Passwords are kept with
