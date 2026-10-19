@@ -28,7 +28,8 @@ Optional, and required together (a macOS App Store package must be installer-sig
   DULCET_CI_INSTALLER_P12_PASSWORD
 
 Optional (the PROD iOS profile; installed and validated like the others when supplied):
-  DULCET_IOS_APP_STORE_PROFILE_BASE64
+  DULCET_IOS_APP_STORE_PROFILE_BASE64 DULCET_DEV_IOS_WIDGETS_PROFILE_BASE64 DULCET_IOS_WIDGETS_PROFILE_BASE64 \
+  DULCET_DEV_MAC_WIDGETS_PROFILE_BASE64 DULCET_MAC_WIDGETS_PROFILE_BASE64
 
 The command receives DULCET_SIGNING_KEYCHAIN and DULCET_SIGNING_IDENTITY_SHA1, plus
 DULCET_INSTALLER_IDENTITY_SHA1 when the installer identity was supplied, and none of the secret
@@ -286,6 +287,17 @@ if [[ -n "${DULCET_IOS_APP_STORE_PROFILE_BASE64:-}" ]]; then
     com.legitimateapps.dulcet
 fi
 
+# Widgets are independent signed bundles. Optional payloads keep tvOS-only runs independent;
+# an iOS/Mac archive fails closed if its named extension profile is not installed.
+for widget_variable in DULCET_DEV_IOS_WIDGETS_PROFILE_BASE64 DULCET_IOS_WIDGETS_PROFILE_BASE64 \
+  DULCET_DEV_MAC_WIDGETS_PROFILE_BASE64 DULCET_MAC_WIDGETS_PROFILE_BASE64; do
+  if [[ -n "${!widget_variable:-}" ]]; then
+    widget_bundle=com.legitimateapps.dulcet.widgets
+    [[ "$widget_variable" == DULCET_DEV_* ]] && widget_bundle=com.legitimateapps.dulcet.dev.widgets
+    validate_and_install_profile "$widget_variable" "$widget_bundle"
+  fi
+done
+
 /usr/bin/security list-keychains -d user > "$original_keychains_path"
 while IFS= read -r existing_keychain; do
   [[ -n "$existing_keychain" ]] && original_keychains+=("$existing_keychain")
@@ -341,6 +353,7 @@ printf 'dulcet-signing: installed identity %s in temporary keychain; installer=%
 
 # The command needs the keychain, never the payloads that built it.
 unset "${REQUIRED_SECRETS[@]}" DULCET_CI_INSTALLER_P12_BASE64 DULCET_CI_INSTALLER_P12_PASSWORD \
-  DULCET_IOS_APP_STORE_PROFILE_BASE64
+  DULCET_IOS_APP_STORE_PROFILE_BASE64 DULCET_DEV_IOS_WIDGETS_PROFILE_BASE64 DULCET_IOS_WIDGETS_PROFILE_BASE64 \
+  DULCET_DEV_MAC_WIDGETS_PROFILE_BASE64 DULCET_MAC_WIDGETS_PROFILE_BASE64
 
 "$@"

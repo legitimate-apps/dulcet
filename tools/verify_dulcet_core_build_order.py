@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require every native Xcode target to link and obtain DulcetCore in order."""
+"""Require Kotlin consumers to obtain DulcetCore in order; check metadata-only widgets separately."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ KOTLIN_GRADLE_TASK = ":core:embedAndSignAppleFrameworkForXcode"
 KOTLIN_OVERRIDE_SETTING = "OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED"
 SHELL_PHASE_ISA = "PBXShellScriptBuildPhase"
 FRAMEWORK_PHASE_ISA = "PBXFrameworksBuildPhase"
+METADATA_WIDGET_TARGETS = {"DulcetIOSWidgets", "DulcetIOSWidgetsRelease", "DulcetMacWidgets", "DulcetMacWidgetsRelease"}
 INHERITED_TOKENS = {"$(inherited)", "${inherited}"}
 
 
@@ -334,6 +335,7 @@ def verify(path: Path) -> int:
                     f"{KOTLIN_OVERRIDE_SETTING}={settings[KOTLIN_OVERRIDE_SETTING]!r}"
                 )
 
+    metadata_widgets: list[str] = []
     passes: list[tuple[str, list[str], list[str]]] = []
     for target_id in sorted(target_ids, key=lambda item: target_names[item]):
         target_configurations = target_configurations_by_id[target_id]
@@ -356,6 +358,26 @@ def verify(path: Path) -> int:
             effective_flags = effective_other_ldflags(project_value, target_settings)
             if strongly_links_dulcet_core(effective_flags):
                 strong_configurations.append(configuration_name)
+
+        # These extensions consume only the credential-free Swift snapshot and App Intents.
+        # The host owns Kotlin playback. Do not make every future extension an implicit exemption.
+        if target_names[target_id] in METADATA_WIDGET_TARGETS:
+            target = objects[target_id]
+            valid = (
+                target.get("productType") == "com.apple.product-type.app-extension"
+                and not dependencies[target_id] and not aggregate_dependencies[target_id]
+                and target_id not in phase_providers
+                and all(
+                    not effective_other_ldflags(project_configurations[name].get("OTHER_LDFLAGS"), settings)
+                    and str(settings.get("APPLICATION_EXTENSION_API_ONLY")) == "YES"
+                    for name, settings in target_configurations.items()
+                )
+            )
+            if not valid:
+                failures.append(f"target={target_names[target_id]} violates metadata-only widget contract")
+            else:
+                metadata_widgets.append(target_names[target_id])
+            continue
 
         missing_configurations = [
             name for name in target_configurations if name not in strong_configurations
@@ -399,7 +421,7 @@ def verify(path: Path) -> int:
             print(f"- {failure}", file=sys.stderr)
         return 1
 
-    if len(passes) != len(target_ids):
+    if len(passes) + len(metadata_widgets) != len(target_ids):
         raise ProjectError(
             f"internal scope mismatch: checked {len(passes)} of {len(target_ids)} native targets"
         )
@@ -419,7 +441,8 @@ def verify(path: Path) -> int:
         )
     print(
         "DULCET CORE BUILD ORDER PASS "
-        f"checked_targets={len(passes)} expected_native_targets={len(target_ids)} "
+        f"checked_targets={len(passes) + len(metadata_widgets)} expected_native_targets={len(target_ids)} "
+        f"metadata_widgets={len(metadata_widgets)} "
         f"self_providers={self_providers} dependency_providers={dependency_providers}"
     )
     return 0

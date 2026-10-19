@@ -1228,9 +1228,9 @@ internal sealed interface LibraryQuery {
     data class Album(val rawId: String) : LibraryQuery
     data object Playlists : LibraryQuery
     data class Playlist(val rawId: String) : LibraryQuery
+    data object ShuffleSongs : LibraryQuery
     data object Starred : LibraryQuery
     data class Songs(val sort: String = "title", val filter: String = "") : LibraryQuery
-    data object ShuffleSongs : LibraryQuery
     data object Downloaded : LibraryQuery
     data object Pinned : LibraryQuery
     data class ArtistTopSongs(val rawId: String) : LibraryQuery

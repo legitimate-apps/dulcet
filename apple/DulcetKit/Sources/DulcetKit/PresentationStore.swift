@@ -37,6 +37,11 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case playTracks(DulcetPlaybackQueueIntent)
 }
 
+@MainActor
+public protocol DulcetExternalPlaybackPreparing: AnyObject {
+    func prepareForExternalPlayback()
+}
+
 /// The presentation boundary implemented by the deterministic fixture today and live data later.
 ///
 /// Sources accept semantic user actions and can push replacement snapshots at any time. The
@@ -458,6 +463,11 @@ public final class DulcetPresentationStore {
 
     public func selectAlbum(_ id: DulcetProviderItemID) {
         source.send(.selectAlbum(id))
+    }
+
+    /// An explicit Siri/widget/CarPlay user action may reconnect even without a foreground scene.
+    public func prepareForExternalPlayback() {
+        (source as? any DulcetExternalPlaybackPreparing)?.prepareForExternalPlayback()
     }
 
     public func playLibrary(shuffle: Bool) {

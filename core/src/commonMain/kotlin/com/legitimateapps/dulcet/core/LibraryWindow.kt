@@ -421,6 +421,10 @@ internal data class ListRequestSpec(
                     entities,
                 )
             }
+            LibraryQuery.ShuffleSongs -> whole("getRandomSongs", mapOf("size" to "500")) {
+                val tracks = parseReaderRandomSongs(it)
+                ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
+            }
             LibraryQuery.Genres -> whole("getGenres", emptyMap()) {
                 ParsedList(parseReaderGenres(it).map { g -> CacheListMember(CacheItemKind.Genre, g) }, CacheEntities())
             }
@@ -437,10 +441,6 @@ internal data class ListRequestSpec(
                     val tracks = parseReaderAllSongs(it)
                     ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
                 })
-            }
-            LibraryQuery.ShuffleSongs -> whole("getRandomSongs", mapOf("size" to "500")) {
-                val tracks = parseReaderRandomSongs(it)
-                ParsedList(tracks.map { t -> CacheListMember(CacheItemKind.Track, t.rawId) }, CacheEntities(tracks = tracks))
             }
             LibraryQuery.Downloaded, LibraryQuery.Pinned, is LibraryQuery.ArtistTopSongs,
             is LibraryQuery.Album, is LibraryQuery.Artist, is LibraryQuery.Playlist ->
