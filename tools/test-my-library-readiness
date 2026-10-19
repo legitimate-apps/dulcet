@@ -64,5 +64,17 @@ for mode in ['iphone', 'ipad']:
     assert f'-- tools/ci/run-my-library-proofs {mode}' in workflow
     script = (root / 'tools/ci/run-my-library-proofs').read_text().split(f'if [ "$mode" = {mode} ]; then', 1)[1].split('\nfi', 1)[0]
     assert script.index('isolate-simulator') < script.index('xcodebuild')
-    assert '--settle' in script.split('xcodebuild', 1)[0]
+    preparation = script.split('xcodebuild', 1)[0]
+    assert '--settle' in preparation and '--require-settle' in preparation and '--require-isolation' in preparation
 print('READINESS ORDER CONTROL PASS fixture gate before first boot and settled device before UI clocks')
+
+def empty_catalog(port, endpoint, **parameters):
+    return {'albumList2': {'album': []}} if port == 4785 else ready(port, endpoint)
+with patch.object(fixture, 'rest', side_effect=empty_catalog), redirect_stdout(StringIO()):
+    try:
+        fixture.wait_for_readiness([Child()], timeout=0)
+    except RuntimeError as error:
+        assert 'port=4785 endpoint=getAlbumList2 error=RuntimeError' in str(error)
+    else:
+        raise AssertionError('an empty fallback corpus cannot authorize UI testing')
+print('READINESS NEGATIVE CONTROL PASS empty catalog rejected')
