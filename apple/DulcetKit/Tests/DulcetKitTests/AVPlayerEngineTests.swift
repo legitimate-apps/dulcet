@@ -113,19 +113,47 @@ struct AVPlayerCrossfadeTests {
 
     @Test
     func aStreamWithoutByteRangesOverlapsWithoutReopeningTheOutgoingResource() async throws {
-        let resource = WholeRepresentationPlaybackResource(data: makePCMWave(duration: 6))
-        let fixture = try await CrossfadeFixture.start(outgoingResource: resource)
-        let engine = fixture.engine
-        defer {
-            engine.execute(.release(commandID: .init("cleanup"))) { _ in }
-            try? FileManager.default.removeItem(at: fixture.localURL)
+        // Crossfade may begin only into a ready preload. Warm the actual queued items with
+        // crossfade disarmed, then pause before its boundary. A longer outgoing representation
+        // gives preparation its own window without seeking or reopening this nonseekable stream.
+        let resource = WholeRepresentationPlaybackResource(data: makePCMWave(duration: 12))
+        let player = AVQueuePlayer()
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
+        let first = plan(resource: resource, session: "no-range-a", attempt: "no-range-a")
+        let next = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 6)),
+                        session: "no-range-b", attempt: "no-range-b")
+        try #require(await execute(engine, .prepare(commandID: .init("prepare"), plan: first)) ==
+            .accepted(commandID: .init("prepare")))
+        try #require(await execute(engine, .preloadNext(commandID: .init("preload"), plan: next)) ==
+            .accepted(commandID: .init("preload")))
+        let items = player.items()
+        try #require(items.count == 2)
+        try #require(await execute(engine, .play(commandID: .init("warm"))) ==
+            .accepted(commandID: .init("warm")))
+        let ready = { @Sendable in
+            items.allSatisfy { $0.status == .readyToPlay } && player.currentItem === items[0] &&
+                events.containsProgressBegan
         }
-        try await waitUntil("no-range stream did not start", engine: engine, timeout: 30) {
-            fixture.events.containsProgressBegan
-        }
+        try await waitUntil("no-range stream did not prepare both real items", engine: engine, timeout: 30,
+                            mediaState: {
+                                "statuses=\(items.map { $0.status.rawValue }) rate=\(player.rate) position=\(CMTimeGetSeconds(player.currentTime())) events=\(events.snapshot)"
+                            }, condition: ready)
+        try #require(await execute(engine, .pause(commandID: .init("hold-warm"))) ==
+            .completed(commandID: .init("hold-warm"), result: .withoutData))
+        try #require(ready() && player.rate == 0 && CMTimeGetSeconds(player.currentTime()) < 10,
+                     "Both actual items must be ready, with the original paused before its overlap boundary")
         let requestsBeforeBoundary = resource.requestCount
-        #expect(requestsBeforeBoundary > 0)
-        _ = try await waitForCrossfadeState("no-range stream did not overlap", engine: engine) {
+        try #require(requestsBeforeBoundary > 0)
+        print("DULCET NO-RANGE PREPARATION ready-items=2 paused=true outgoing-position=\(CMTimeGetSeconds(player.currentTime())) requests=\(requestsBeforeBoundary)")
+        try #require(await execute(engine, .setCrossfade(commandID: .init("crossfade"),
+            attemptID: first.attemptID, duration: 2)) ==
+            .completed(commandID: .init("crossfade"), result: .withoutData))
+        try #require(await execute(engine, .play(commandID: .init("play"))) ==
+            .accepted(commandID: .init("play")))
+        _ = try await waitForCrossfadeState("no-range stream did not overlap", engine: engine, events: events) {
             $0.incomingRate > 0 && $0.outgoingRate > 0 && $0.incomingVolume > 0 && $0.outgoingVolume > 0
         }
         #expect(resource.requestCount == requestsBeforeBoundary,
