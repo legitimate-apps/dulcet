@@ -23,6 +23,7 @@ class AndroidStreamingCacheTest {
     private val directory = Files.createTempDirectory("dulcet-stream-cache").toFile()
     private val databaseName = "stream-cache-${UUID.randomUUID()}.db"
     private var controller: AndroidDownloadController? = null
+    private var now = 123456L
     private fun controller(): AndroidDownloadController = controller ?: AndroidDownloadController(
         PlaybackEndpointAccount("provider:opaque", "http://127.0.0.1:9", "fixture", "fixture", true),
         { DulcetDatabaseStore.open(DulcetDriverFactory(context, databaseName).createDriver()) }, directory,
@@ -31,7 +32,7 @@ class AndroidStreamingCacheTest {
             override fun start(downloadId: String) { error("cache writes must not start download workers") }
             override fun cancel(downloadId: String) {}
             override fun wakeAt(wallClockMilliseconds: Long) {}
-        }, { 123456L }, { Long.MAX_VALUE }, null, {},
+        }, { now }, { Long.MAX_VALUE }, null, {},
     ).also { controller = it; runBlocking { assertTrue(it.awaitReconciled()) } }
 
     @After fun cleanup() {
@@ -150,6 +151,43 @@ class AndroidStreamingCacheTest {
         assertNull(cache.localPlan("song:opaque"))
         assertFalse(artworkRoot.listFiles().orEmpty().any { it.isFile }, "Clear Cache also clears evictable artwork reported in shared usage")
         Unit
+    }
+
+    @Test fun availabilityProbesPreserveLruAndIncludeEveryCompletedOrStaleRepresentation() = runBlocking {
+        val cache = controller()
+        val audio = audio()
+        val data = AndroidPlaybackDataSourceFactory(playbackPlan(), AndroidCachingPlaybackResource(
+            { _, _ -> response(audio) }, playbackPlan(), source(cache))).createDataSource()
+        data.open(spec()); drain(data); data.close()
+        // Publish deterministically after the tee's asynchronous completion notification.
+        cache.setCacheBudgetBytes(1024 * 1024)
+        val store = DulcetDatabaseStore.open(DulcetDriverFactory(context, databaseName).createDriver())
+        try {
+            val engine = DownloadPolicyEngine(store.database, DownloadFileStore(directory.path, okio.FileSystem.SYSTEM))
+            engine.reconcile(emptyList(), mapOf("provider:opaque" to 1L))
+            val stream = engine.records("provider:opaque").single()
+            fun access() = store.database.offlineLibraryQueries.selectRetention("provider:opaque", "song:opaque",
+                stream.identity.transcodeProfile).executeAsOne().last_access_wall
+            val before = access()
+            // A pending original wins the collapsed status, but must not hide the complete cache.
+            engine.enqueue(DownloadRequest(DownloadIdentity("provider:opaque", "song:opaque", "original"),
+                AudioContainer.Wav, PlaybackContentLength.Exact(audio.size.toLong()), DownloadServerSnapshot(null, null), 1, now))
+            cache.setCacheBudgetBytes(1024 * 1024)
+            assertEquals(AndroidDownloadState.Queued, cache.statuses.value["song:opaque"]?.state)
+            now += 50_000
+            repeat(1000) { assertTrue(cache.isLocallyPlayable("song:opaque")); assertFalse(cache.isLocallyPlayable("missing")) }
+            assertEquals(setOf("song:opaque"), cache.downloadedRawIds())
+            assertEquals(before, access(), "queue eligibility never touches streaming-cache LRU")
+            store.database.downloadsQueries.markDownloadStale(stream.downloadId.value)
+            cache.setCacheBudgetBytes(1024 * 1024)
+            assertTrue(cache.isLocallyPlayable("song:opaque"), "a stale representation is still locally playable")
+            assertNotNull(cache.localPlan("song:opaque"))
+            assertEquals(now, access(), "actual playback resolution still refreshes LRU")
+            engine.remove(stream.identity)
+            cache.setCacheBudgetBytes(1024 * 1024)
+            assertFalse(cache.isLocallyPlayable("song:opaque"), "publication removes availability when the last complete profile is removed")
+            assertTrue(engine.records("provider:opaque").any { it.state == DownloadState.Queued })
+        } finally { store.close() }
     }
 
     @Test fun removingExplicitOriginalPreservesTheOtherRepresentationAndItsMetadataPin() = runBlocking {

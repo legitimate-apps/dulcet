@@ -51,6 +51,13 @@ phone/TV `LibraryPlay.playTracks` filters core-published `UnavailableOffline` ro
 Shuffle constructs its queue. The device proof above observes server-cut playback in the connected
 foreground lifecycle. A fresh saved offline relaunch was not separately driven on the emulators.
 
+Android queue eligibility reads a published set of complete/stale raw IDs across every media
+representation. It performs no file validation and does not refresh cache LRU. The separate
+`AndroidStreamingCacheTest/availabilityProbesPreserveLruAndIncludeEveryCompletedOrStaleRepresentation`
+regression checks 1,000 probes without access-time changes, multiple profiles, stale availability,
+actual playback updating access time, and removal of the last completed profile. Actual plan
+resolution remains responsible for validating the selected file and recording its use.
+
 ## Platform scope
 
 Apple TV retains the existing v1 no-download contract and network playback. This change skips

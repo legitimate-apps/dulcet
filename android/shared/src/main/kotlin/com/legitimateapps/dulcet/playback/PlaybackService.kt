@@ -141,7 +141,9 @@ class PlaybackService : MediaLibraryService() {
                 // A downloaded song's title, artist and album, kept with its download (§16.13).
                 override suspend fun localTrack(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localTrack(rawId) }
                 override fun setProtectedRawIds(rawIds: Set<String>) { protectedItems = rawIds.toSet(); heldDownloads?.setProtectedRawIds(rawIds) }
-                override fun isLocallyPlayable(rawId: String) = runBlocking(Dispatchers.IO) { downloads()?.localPlan(rawId) != null }
+                override fun isLocallyPlayable(rawId: String) =
+                    (heldDownloads?.takeUnless { it.isClosed } ?: AndroidDownloads.existingController(account.id))
+                        ?.isLocallyPlayable(rawId) == true
                 override fun beginStreamCacheWrite(plan: com.legitimateapps.dulcet.core.RemotePlaybackWirePlan,
                     status: Int, contentType: String?, exactLength: Long?, position: Long) =
                     downloads()?.beginStreamCacheWrite(plan, status, contentType, exactLength, position)

@@ -31,6 +31,11 @@ import java.util.concurrent.TimeUnit
 public object AndroidDownloads {
     private var current: AndroidDownloadController? = null
 
+    /** Already-open account availability, without credentials, database work or controller creation. */
+    @Synchronized
+    public fun existingController(serverId: String): AndroidDownloadController? =
+        current?.takeIf { it.providerInstanceId == serverId && !it.isClosed }
+
     /** The controller for the saved account, or null when none is saved or its record cannot be read. */
     @JvmStatic
     public fun controller(context: Context): AndroidDownloadController? =

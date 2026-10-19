@@ -184,6 +184,11 @@ public class AndroidDownloadController internal constructor(
     /** Every download of the account, by raw id, with the transfer under way's progress. */
     public val statuses: StateFlow<Map<String, AndroidDownloadStatus>> = mutableStatuses
 
+    @Volatile private var playableRawIds: Set<String> = emptySet()
+
+    /** Availability only: queue scans never open files or refresh streaming-cache LRU. */
+    public fun isLocallyPlayable(rawId: String): Boolean = !closed && rawId in playableRawIds
+
     init {
         instances += this
         scope.launch {
@@ -431,7 +436,7 @@ public class AndroidDownloadController internal constructor(
 
     /** The raw ids whose downloads are complete and present, for the library's playability (§16.14). */
     public fun downloadedRawIds(): Set<String> =
-        statuses.value.values.filter(AndroidDownloadStatus::playsOffline).mapTo(mutableSetOf(), AndroidDownloadStatus::rawId)
+        playableRawIds
 
     /** Closes every network client, keeping the durable policy and local files usable. */
     public fun closeNetworkAccess() {
@@ -442,6 +447,7 @@ public class AndroidDownloadController internal constructor(
     override fun close() {
         if (closed) return
         closed = true
+        playableRawIds = emptySet()
         instances -= this
         scope.cancel()
         closeNetworkAccess()
@@ -589,6 +595,8 @@ public class AndroidDownloadController internal constructor(
             mutableOfflineSettings.value = offline.settings(account.providerInstanceId)
             mutableOfflineStats.value = offline.stats(account.providerInstanceId)
         }
+        playableRawIds = rows.filter { it.state == DownloadState.Complete || it.state == DownloadState.Stale }
+            .mapTo(mutableSetOf()) { it.identity.rawId }
         mutableStatuses.value = rows.sortedBy { it.identity.transcodeProfile == DownloadIdentity.ORIGINAL_PROFILE }.associate { row ->
             val transfer = progress[row.identity.rawId]
             row.identity.rawId to AndroidDownloadStatus(
