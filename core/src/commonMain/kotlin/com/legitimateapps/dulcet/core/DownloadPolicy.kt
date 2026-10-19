@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import com.legitimateapps.dulcet.database.DulcetDatabase
+import okio.buffer
 import okio.Buffer
 import okio.FileSystem
 import okio.Path
@@ -200,11 +201,17 @@ public data class DownloadRetryDecision(
 
 internal class DownloadPolicyEngine(
     private val database: DulcetDatabase,
-    private val files: DownloadFileStore,
+    internal val files: DownloadFileStore,
     private val transcodeBudget: PlaybackTranscodeBudget = PlaybackTranscodeBudget(),
 ) {
     private val store = SqlDownloadStore(database)
     private var reconciled = false
+    internal var cachePressureHandler: ((serverId: String, requiredBytes: Long) -> Unit)? = null
+    internal var cacheReconciliationHandler: (() -> Unit)? = null
+        set(value) {
+            field = value
+            if (reconciled) value?.invoke()
+        }
 
     /**
      * Relaunch reconciliation (spec §14.5): matches the platform's outstanding tasks to rows, and
@@ -265,35 +272,69 @@ internal class DownloadPolicyEngine(
 
         val deletedTemps = files.deleteUnownedTemporaryFiles(activeTaskIds + resumable)
         reconciled = true
+        cacheReconciliationHandler?.invoke()
         return DownloadReconciliationResult(cancel, interrupted, recovered, deletedTemps)
     }
 
-    fun enqueue(request: DownloadRequest): DownloadRecord {
+    fun enqueue(request: DownloadRequest): DownloadRecord = enqueueRetained(request, explicit = true)
+
+    internal fun enqueueRetained(request: DownloadRequest, explicit: Boolean): DownloadRecord {
         requireReconciled()
-        store.byIdentity(request.identity)?.let { return it }
+        store.byIdentity(request.identity)?.let {
+            pinMetadata(it.identity, request.wallClockMilliseconds)
+            if (explicit) markExplicitRetention(it)
+            return it
+        }
+        val source = database.offlineLibraryQueries.selectSourceSnapshot(request.identity.serverId,
+            request.identity.rawId).executeAsOneOrNull()
+        val knownRequest = request.copy(serverSnapshot = DownloadServerSnapshot(
+            request.serverSnapshot.durationMilliseconds ?: source?.duration_milliseconds,
+            request.serverSnapshot.sizeBytes ?: source?.size_bytes,
+        ))
         val downloadId = DownloadId("download:${secureRandomBytes(16).toLowerHex()}")
         val destination = "${downloadId.value}.${request.expectedContainer.fileExtension()}"
-        return store.insert(request, downloadId, destination)
+        return database.transactionWithResult {
+            val row = store.insert(knownRequest, downloadId, destination)
+            pinMetadata(row.identity, request.wallClockMilliseconds)
+            if (explicit) markExplicitRetention(row) else database.offlineLibraryQueries.upsertRetention(
+                row.identity.serverId, row.identity.rawId, row.identity.transcodeProfile,
+                0, 0, 0, request.wallClockMilliseconds,
+            )
+            row
+        }
     }
 
     fun schedule(context: DownloadSchedulingContext): DownloadScheduleResult {
         requireReconciled()
         val rows = store.forServer(context.serverId)
-        val eligible = rows.firstOrNull { row ->
+        val retentionByIdentity = database.offlineLibraryQueries.selectServerRetentions(context.serverId)
+            .executeAsList().associateBy { DownloadIdentity(it.server_id, it.raw_id, it.transcode_profile) }
+        val eligible = rows.sortedWith(compareBy<DownloadRecord> {
+            val retention = retentionByIdentity[it.identity]
+            if (retention == null || retention.explicit_download == 1L) 0 else 1
+        }.thenByDescending { retentionByIdentity[it.identity]?.added_rank ?: Long.MIN_VALUE }
+            .thenBy { it.enqueueSequence }).firstOrNull { row ->
+            val ownership = retentionByIdentity[row.identity]
+            (ownership == null || ownership.explicit_download == 1L || ownership.automatic_download == 1L) &&
             row.state in setOf(DownloadState.Queued, DownloadState.Interrupted) &&
                 (row.retryNotBeforeWallClock == null ||
                     row.retryNotBeforeWallClock <= context.wallClockMilliseconds)
         } ?: return DownloadScheduleResult.NothingQueued
 
-        val usedBytes = rows
+        var usedBytes = rows
             .filter { it.state == DownloadState.Complete || it.state == DownloadState.Stale }
             .sumOf(DownloadRecord::fileSizeBytes)
         val reservation = eligible.exactByteLength
             ?: eligible.serverSnapshot.sizeBytes
             ?: context.unknownLengthReservationBytes
-        val remainingBytes = (context.diskBudgetBytes - usedBytes).coerceAtLeast(0)
+        var remainingBytes = (context.diskBudgetBytes - usedBytes).coerceAtLeast(0)
         if (reservation > remainingBytes) {
-            return DownloadScheduleResult.DiskBudgetExceeded
+            cachePressureHandler?.invoke(context.serverId, reservation - remainingBytes)
+            usedBytes = store.forServer(context.serverId)
+                .filter { it.state == DownloadState.Complete || it.state == DownloadState.Stale }
+                .sumOf(DownloadRecord::fileSizeBytes)
+            remainingBytes = (context.diskBudgetBytes - usedBytes).coerceAtLeast(0)
+            if (reservation > remainingBytes) return DownloadScheduleResult.DiskBudgetExceeded
         }
         if (
             eligible.identity.isTranscoded &&
@@ -359,6 +400,7 @@ internal class DownloadPolicyEngine(
     fun promote(
         downloadId: DownloadId,
         metadata: DownloadResponseMetadata,
+        acceptedContainers: List<AudioContainer>? = null,
     ): DownloadPromotionResult {
         requireReconciled()
         val row = store.byId(downloadId) ?: return DownloadPromotionResult.UnknownDownload
@@ -377,18 +419,19 @@ internal class DownloadPolicyEngine(
         // file's on-disk length is the terminal-body boundary for a response that declared no exact
         // length. Only a bounded prefix is read: a file is never loaded whole, whatever its size
         // (spec §14.5).
-        val validation = validateDownloadFile(
-            files = files,
-            path = files.temporaryPath(row),
-            container = row.expectedContainer,
-            contentType = metadata.contentType,
-            contentLength = metadata.contentLength,
-        )
+        val validations = (acceptedContainers ?: listOf(row.expectedContainer)).distinct().map { container ->
+            container to validateDownloadFile(files, files.temporaryPath(row), container,
+                metadata.contentType, metadata.contentLength)
+        }
+        val (container, validation) = validations.firstOrNull { it.second.result is PlaybackStreamValidationResult.Audio }
+            ?: validations.firstOrNull() ?: return DownloadPromotionResult.Rejected(DomainError.Protocol.UnexpectedBinary)
         if (validation.result is PlaybackStreamValidationResult.Failure) {
             return DownloadPromotionResult.Rejected(validation.result.error)
         }
 
         // This ordering is the integrity boundary: no destination can appear before validation.
+        database.downloadsQueries.updateDownloadExpectedContainer(container.databaseValue(),
+            row.identity.serverId, row.identity.rawId, row.identity.transcodeProfile)
         files.atomicPromote(row)
         store.markComplete(downloadId, validation.fileLength)
         return DownloadPromotionResult.Promoted(requireNotNull(store.byId(downloadId)))
@@ -561,6 +604,8 @@ internal class DownloadPolicyEngine(
         }
         val queries = database.serverDataQueries
         database.transaction {
+            database.offlineLibraryQueries.deleteSettings(serverId)
+            database.offlineLibraryQueries.deleteSourceSnapshots(serverId)
             queries.deleteMutationOutboxForServer(serverId)
             queries.deleteDownloadsForServer(serverId)
             queries.deleteResumePositionsForServer(serverId)
@@ -600,6 +645,9 @@ internal class DownloadPolicyEngine(
         files.deleteTemporary(row)
         files.deleteDestination(row)
         store.delete(row.downloadId)
+        if (store.forItem(identity.serverId, identity.rawId).isEmpty()) {
+            database.seenCacheQueries.deletePin(identity.serverId, "track", identity.rawId, "download")
+        }
         return row
     }
 
@@ -608,6 +656,11 @@ internal class DownloadPolicyEngine(
         requireReconciled()
         require(serverId.isNotBlank())
         return store.forServer(serverId)
+    }
+
+    fun recordsForItem(serverId: String, rawId: String): List<DownloadRecord> {
+        requireReconciled()
+        return store.forItem(serverId, rawId)
     }
 
     fun record(downloadId: DownloadId): DownloadRecord? {
@@ -620,6 +673,26 @@ internal class DownloadPolicyEngine(
         return store.byIdentity(identity)
     }
 
+    private fun pinMetadata(identity: DownloadIdentity, wallClockMilliseconds: Long) {
+        database.transaction {
+            database.seenCacheQueries.insertIdentityOnlyTrack(identity.serverId, identity.rawId, wallClockMilliseconds)
+            database.seenCacheQueries.insertPin(identity.serverId, "track", identity.rawId, "download")
+        }
+    }
+
+    internal fun retention(identity: DownloadIdentity) = database.offlineLibraryQueries.selectRetention(
+        identity.serverId, identity.rawId, identity.transcodeProfile,
+    ).executeAsOneOrNull()
+
+    private fun markExplicitRetention(row: DownloadRecord) {
+        val old = retention(row.identity)
+        database.offlineLibraryQueries.upsertRetention(
+            row.identity.serverId, row.identity.rawId, row.identity.transcodeProfile,
+            1, old?.automatic_download ?: 0, old?.added_rank ?: 0,
+            old?.last_access_wall ?: row.updatedAtWallClock,
+        )
+    }
+
     private fun recoverDestination(row: DownloadRecord): Boolean {
         val validation = validateDownloadFile(
             files = files,
@@ -630,6 +703,7 @@ internal class DownloadPolicyEngine(
         )
         return if (validation.result is PlaybackStreamValidationResult.Audio) {
             store.markComplete(row.downloadId, validation.fileLength)
+            if (row.state == DownloadState.Stale) store.markStale(row.downloadId)
             true
         } else {
             files.deleteDestination(row)
@@ -668,6 +742,8 @@ internal class DownloadFileStore(
     fun writeTemporary(row: DownloadRecord, bytes: ByteArray) {
         fileSystem.write(temporaryPath(row)) { write(bytes) }
     }
+
+    fun openTemporarySink(row: DownloadRecord): okio.BufferedSink = fileSystem.sink(temporaryPath(row)).buffer()
 
     fun exists(path: Path): Boolean = fileSystem.exists(path)
 
@@ -781,6 +857,9 @@ private class SqlDownloadStore(private val database: DulcetDatabase) {
 
     fun forServer(serverId: String): List<DownloadRecord> =
         queries.selectDownloadsForServer(serverId, mapper = ::downloadRecord).executeAsList()
+
+    fun forItem(serverId: String, rawId: String): List<DownloadRecord> =
+        queries.selectDownloadsForItem(serverId, rawId, mapper = ::downloadRecord).executeAsList()
 
     fun all(): List<DownloadRecord> = queries.selectAllDownloads(mapper = ::downloadRecord)
         .executeAsList()

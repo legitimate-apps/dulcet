@@ -162,6 +162,8 @@ internal class PlaybackQueueController(
     private val identities: PlaybackIdentitySource,
     private val shuffleRandom: Random = Random.Default,
     private val playback: PlaybackCoreStateMachine = PlaybackCoreStateMachine(),
+    /** Dynamic account reachability/local-file eligibility; never performs a network request. */
+    private val canPlayItem: (ProviderItemId) -> Boolean = { true },
 ) {
     private data class RegisteredPreload(
         val queueEntryId: QueueEntryId,
@@ -231,13 +233,19 @@ internal class PlaybackQueueController(
     fun activeServerId(): ServerId? = queues.activeServerId()
 
     fun replaceAndStart(request: PlaybackQueueRequest): PlaybackQueueTransition {
+        val playable = request.items.filter { canPlayItem(it.itemId) }
+        if (playable.isEmpty()) return emptyTransition()
+        val selectedOriginalIndex = request.startIndex ?: 0
+        val selectedItem = request.items[selectedOriginalIndex]
+        // Selecting an unavailable row does not silently start a different song.
+        if (!request.shuffle && !canPlayItem(selectedItem.itemId)) return emptyTransition()
         skippedPastFailures.clear()
         val serverId = ServerId(request.items.first().itemId.providerInstanceId)
         val previousRepeatMode = queues.load(serverId).repeatMode
         knownDurations.clear()
         knownAlbums.clear()
         autoplayGeneration++
-        val entries = request.items.map { item ->
+        val entries = playable.map { item ->
             QueueEntry(
                 queueEntryId = nextQueueEntryId(),
                 providerItemId = item.itemId,
@@ -263,7 +271,7 @@ internal class PlaybackQueueController(
         val currentIndex = if (request.shuffle) {
             0
         } else {
-            request.startIndex ?: 0
+            request.items.take(selectedOriginalIndex).count { canPlayItem(it.itemId) }
         }
         val selected = if (request.shuffle) {
             ordered.entries[currentIndex]
@@ -285,7 +293,7 @@ internal class PlaybackQueueController(
         val serverId = ServerId(insertion.items.first().itemId.providerInstanceId)
         require(queues.activeServerId() == serverId) { "No active queue for this account" }
         skippedPastFailures.clear()
-        val entries = insertion.items.map { item ->
+        val entries = insertion.items.filter { canPlayItem(it.itemId) }.map { item ->
             QueueEntry(
                 queueEntryId = nextQueueEntryId(),
                 providerItemId = item.itemId,
@@ -363,6 +371,7 @@ internal class PlaybackQueueController(
         val present = state.entries.mapTo(mutableSetOf()) { it.providerItemId.rawId }
         val fresh = items
             .filter { it.itemId.providerInstanceId == serverId.value }
+            .filter { canPlayItem(it.itemId) }
             .filter { present.add(it.itemId.rawId) }
         if (fresh.isEmpty()) return emptyTransition()
         val entries = fresh.map { item ->
@@ -571,6 +580,7 @@ internal class PlaybackQueueController(
         val state = queues.load(serverId)
         val index = state.currentIndex ?: return emptyTransition()
         val entry = state.entries[index]
+        if (!canPlayItem(entry.providerItemId)) return emptyTransition()
         skippedPastFailures.clear()
         val session = playback.currentSession ?: return startAt(state, index)
         val failed = session.currentAttempt
@@ -716,6 +726,7 @@ internal class PlaybackQueueController(
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = queues.load(serverId)
         val entry = state.currentIndex?.let(state.entries::get) ?: return emptyTransition()
+        if (!canPlayItem(entry.providerItemId)) return emptyTransition()
         val start = newStart(entry)
         val transition = playback.startPlaying(start)
         check(transition is PlaybackTransitionResult.Applied)
@@ -831,6 +842,16 @@ internal class PlaybackQueueController(
         val state = queues.load(serverId)
         val failed = state.currentIndex?.let(state.entries::get) ?: return stop
         if (playback.currentSession?.queueEntryId != failed.queueEntryId) return stop
+        // A request can be the first observation that this account went offline while the OS
+        // still has a network. The owner updates eligibility before delivering Unreachable.
+        // Continue over local files without charging absent remote songs as corrupt tracks.
+        if (error == DomainError.Transport.Unreachable && !canPlayItem(failed.providerItemId)) {
+            val target = state.otherEntryIndex(travel) ?: return stop
+            val paused = attemptId == pausedStartAttempt
+            val continued = startAt(state, target, effects, travel = travel)
+            if (paused) pausedStartAttempt = continued.startDirective?.attemptId
+            return continued.copy(startDirective = continued.startDirective?.copy(shouldAutoPlay = !paused))
+        }
         failureChain += failed.queueEntryId
         if (owner != PlaybackFailureOwner.Track) return stop
         if (failureChain.size >= MAX_CONSECUTIVE_FAILED_ENTRIES) return stop
@@ -892,13 +913,19 @@ internal class PlaybackQueueController(
      */
     private fun QueueState.steppedIndex(direction: QueueTravel): Int? {
         val current = currentIndex ?: return null
-        val target = current + if (direction == QueueTravel.Forward) 1 else -1
-        return when {
-            target in entries.indices -> target
-            repeatMode == QueueRepeatMode.All && entries.isNotEmpty() ->
-                if (direction == QueueTravel.Forward) 0 else entries.lastIndex
-            else -> null
+        val delta = if (direction == QueueTravel.Forward) 1 else -1
+        var target = current
+        // Eligibility can change after the queue was saved (for example when going offline).
+        // Walk at most one lap so an entirely unavailable repeat-all queue always terminates.
+        repeat(entries.size) {
+            target += delta
+            if (target !in entries.indices) {
+                if (repeatMode != QueueRepeatMode.All || entries.isEmpty()) return null
+                target = if (delta > 0) 0 else entries.lastIndex
+            }
+            if (canPlayItem(entries[target].providerItemId)) return target
         }
+        return null
     }
 
     /**
@@ -926,12 +953,7 @@ internal class PlaybackQueueController(
         // A stop point owns this boundary: nothing hands over at it (§12.8).
         stopPoint?.let { if (state.stopsAfterCurrent(it)) return null }
         if (state.repeatMode == QueueRepeatMode.One) return null
-        val next = current + 1
-        return when {
-            next in state.entries.indices -> state.entries[next]
-            state.repeatMode == QueueRepeatMode.All && state.entries.isNotEmpty() -> state.entries[0]
-            else -> null
-        }
+        return state.steppedIndex(QueueTravel.Forward)?.let(state.entries::get)
     }
 
     private fun preloadWillTakeOver(): Boolean {
@@ -1009,8 +1031,8 @@ internal class PlaybackQueueController(
             stopPoint = null
             val target = when (point) {
                 PlaybackStopPoint.EndOfCurrentEntry -> state.otherEntryIndex(QueueTravel.Forward)
-                PlaybackStopPoint.EndOfQueue -> (current + 1).takeIf {
-                    it in state.entries.indices && state.repeatMode != QueueRepeatMode.One
+                PlaybackStopPoint.EndOfQueue -> state.steppedIndex(QueueTravel.Forward)?.takeIf {
+                    it > current && state.repeatMode != QueueRepeatMode.One
                 }
             }
             val stopped = if (target == null) {
@@ -1024,6 +1046,7 @@ internal class PlaybackQueueController(
         }
         if (state.repeatMode == QueueRepeatMode.One) {
             val entry = state.entries[current]
+            if (!canPlayItem(entry.providerItemId)) return finishQueue(terminalEffects)
             val start = newStart(entry)
             val transition = playback.repeatOne(start.playbackSessionId, start.attemptId)
             check(transition is PlaybackTransitionResult.Applied)
@@ -1035,12 +1058,8 @@ internal class PlaybackQueueController(
                 terminalEffects + transition.effects,
             )
         }
-        val nextIndex = current + 1
-        if (nextIndex in state.entries.indices) {
+        state.steppedIndex(QueueTravel.Forward)?.let { nextIndex ->
             return startAt(state, nextIndex, terminalEffects)
-        }
-        if (state.repeatMode == QueueRepeatMode.All && state.entries.isNotEmpty()) {
-            return startAt(state, 0, terminalEffects)
         }
         // AutoPlay was asked for more and has not answered yet: its first entry starts on arrival.
         val outstanding = takenAutoplayKey?.takeIf { it != answeredAutoplayKey }
@@ -1052,8 +1071,8 @@ internal class PlaybackQueueController(
     private fun QueueState.stopsAfterCurrent(point: PlaybackStopPoint): Boolean = when (point) {
         PlaybackStopPoint.EndOfCurrentEntry -> true
         PlaybackStopPoint.EndOfQueue -> {
-            val next = (currentIndex ?: -1) + 1
-            repeatMode == QueueRepeatMode.One || next !in entries.indices ||
+            val next = steppedIndex(QueueTravel.Forward)
+            repeatMode == QueueRepeatMode.One || next == null || next <= (currentIndex ?: -1) ||
                 entries[next].addedBy == QueueAddedBy.Autoplay
         }
     }
@@ -1097,6 +1116,7 @@ internal class PlaybackQueueController(
         resume: Boolean = false,
     ): PlaybackQueueTransition {
         val entry = state.entries[index]
+        if (!canPlayItem(entry.providerItemId)) return emptyTransition(priorEffects)
         queues.setCurrentIndex(state.serverId, index)
         val transition = beginSession(entry, replacingQueue = false, travel = travel, resume = resume)
         return transition.copy(effects = priorEffects + transition.effects)
@@ -1114,6 +1134,7 @@ internal class PlaybackQueueController(
         travel: QueueTravel = QueueTravel.Forward,
         resume: Boolean = false,
     ): PlaybackQueueTransition {
+        if (!canPlayItem(entry.providerItemId)) return emptyTransition()
         // Anything but Previous reaches the entry going forward, and so does an automatic skip
         // that did not start from a Previous (§12.12).
         this.travel = travel

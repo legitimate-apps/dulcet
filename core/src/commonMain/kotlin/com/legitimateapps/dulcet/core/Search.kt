@@ -567,7 +567,7 @@ internal class LibrarySearchSession(
         if (closed) return
         val pending = reader.overlay.pending(cache.serverId, items.mapTo(mutableSetOf()) { it.member() })
         val downloaded = if (items.any { it.type == SearchResultType.Track }) {
-            reader.downloads.downloadedTrackRawIds(cache.serverId)
+            reader.downloads.localTrackRawIds(cache.serverId)
         } else {
             emptySet()
         }

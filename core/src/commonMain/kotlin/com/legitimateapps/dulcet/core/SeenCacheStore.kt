@@ -279,6 +279,8 @@ internal data class CacheTrackRecord(
     val sourceContainer: AudioContainer? = null,
     val artworkKey: String? = null,
     val userState: CacheUserState = CacheUserState(),
+    /** Source bytes observed live; used to reconcile retained media, never a stream length. */
+    val sourceSizeBytes: Long? = null,
 )
 
 internal data class CachePlaylistRecord(
@@ -686,6 +688,14 @@ internal class BoundSeenCache internal constructor(
                 raw_id = track.rawId,
             )
         }
+        val previousSource = database.offlineLibraryQueries.selectSourceSnapshot(serverId, track.rawId).executeAsOneOrNull()
+        database.offlineLibraryQueries.upsertSourceSnapshot(serverId, track.rawId,
+            track.durationMilliseconds ?: previousSource?.duration_milliseconds,
+            track.sourceSizeBytes ?: previousSource?.size_bytes)
+        database.offlineLibraryQueries.markChangedSourceStale(serverId, track.rawId,
+            track.durationMilliseconds, track.sourceSizeBytes)
+        database.offlineLibraryQueries.adoptLiveSourceSnapshot(track.durationMilliseconds,
+            track.sourceSizeBytes, serverId, track.rawId)
         replaceCredits("track", track.rawId, track.credits)
         return true
     }
@@ -1388,7 +1398,7 @@ internal fun AudioContainer.cacheWireName(): String = when (this) {
     AudioContainer.AdtsAac -> "adts_aac"
 }
 
-private fun audioContainerFromCacheWireName(value: String): AudioContainer? =
+internal fun audioContainerFromCacheWireName(value: String): AudioContainer? =
     AudioContainer.entries.firstOrNull { it.cacheWireName() == value }
 
 /**

@@ -1002,7 +1002,7 @@ internal class LibraryReader(
 
     /** §16.11 rule 4 and §16.14 step 4: the albums that contain downloads, at concurrency 1. */
     private suspend fun recheckDownloadedAlbums() {
-        val albums = downloads.downloadedTrackRawIds(cache.serverId)
+        val albums = downloads.localTrackRawIds(cache.serverId)
             .mapNotNull { cache.track(it)?.record?.albumRawId }
             .distinct()
             .sorted()
@@ -1571,6 +1571,8 @@ internal data class PlaylistOverlayView(
 internal fun interface DownloadedTrackSource {
     fun downloadedTrackRawIds(serverId: String): Set<String>
 
+    fun localTrackRawIds(serverId: String): Set<String> = downloadedTrackRawIds(serverId)
+
     companion object {
         val None = DownloadedTrackSource { emptySet() }
 
@@ -1579,10 +1581,21 @@ internal fun interface DownloadedTrackSource {
          * available, and the file still plays). A download still queued, running, interrupted or
          * failed has no file to play.
          */
-        fun fromDownloads(database: DulcetDatabase) = DownloadedTrackSource { serverId ->
-            database.downloadsQueries.selectDownloadsForServer(serverId).executeAsList()
-                .filter { it.state == "complete" || it.state == "stale" }
-                .mapTo(mutableSetOf()) { it.raw_id }
+        fun fromDownloads(database: DulcetDatabase) = object : DownloadedTrackSource {
+            override fun localTrackRawIds(serverId: String): Set<String> =
+                database.downloadsQueries.selectDownloadsForServer(serverId).executeAsList()
+                    .filter { it.state == "complete" || it.state == "stale" }
+                    .mapTo(mutableSetOf()) { it.raw_id }
+
+            override fun downloadedTrackRawIds(serverId: String): Set<String> =
+                database.downloadsQueries.selectDownloadsForServer(serverId).executeAsList()
+                    .filter { it.state == "complete" || it.state == "stale" }
+                    .filter { row ->
+                        val ownership = database.offlineLibraryQueries.selectRetention(
+                            serverId, row.raw_id, row.transcode_profile,
+                        ).executeAsOneOrNull()
+                        ownership == null || ownership.explicit_download == 1L || ownership.automatic_download == 1L
+                    }.mapTo(mutableSetOf()) { it.raw_id }
         }
     }
 }

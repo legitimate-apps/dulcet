@@ -356,7 +356,7 @@ internal abstract class ReaderHandle(
     /** Items for rows read in one batch; per-user state is overlaid, never written back. */
     protected fun itemsOf(rows: List<CachedListRow>, dedupe: Boolean): Pair<List<LibraryItem>, List<Int>> {
         val pending = reader.overlay.pending(cache.serverId, rows.mapTo(mutableSetOf()) { CacheListMember(it.kind, it.rawId) })
-        val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
+        val downloaded = reader.downloads.localTrackRawIds(cache.serverId)
         val seen = mutableSetOf<Pair<CacheItemKind, String>>()
         val items = mutableListOf<LibraryItem>()
         val positions = mutableListOf<Int>()
@@ -1387,7 +1387,7 @@ internal class AlbumDetailWindow(
         val items: List<LibraryItem>
         val itemsUnavailable: LibraryUnavailableReason?
         if (cached.detailComplete) {
-            val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
+            val downloaded = reader.downloads.localTrackRawIds(cache.serverId)
             items = tracks.map { it.toItem(pending[CacheListMember(CacheItemKind.Track, it.rawId)], reader.trackPlayability(it.rawId, downloaded)) }
             itemsState = LibraryItemsState.Present
             itemsUnavailable = null
