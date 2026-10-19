@@ -68,36 +68,52 @@ struct DulcetOfflineLibrarySection: View {
     private var storage: DulcetOfflineLibraryStorage { store.offlineLibraryStorage ?? .init() }
     var body: some View {
         if store.offlineLibraryStorage != nil {
-            VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                Text(DulcetStrings.offlineMusic).font(.headline)
-                Toggle(DulcetStrings.offlineAutomaticDownloads, isOn: Binding(
-                    get: { storage.automaticDownloadsEnabled },
-                    set: { store.setAutomaticDownloadsEnabled($0) }
-                )).accessibilityIdentifier("dulcet.offline.automaticDownloads")
-                Text(DulcetStrings.offlineAutomaticHint)
-                    .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
-                if storage.automaticDownloadsEnabled {
-                    Text(DulcetStrings.offlineDownloadProgress(completed: storage.completedAutomaticCount, remaining: storage.queuedAutomaticCount))
-                        .font(.caption).accessibilityIdentifier("dulcet.offline.progress")
+            if inForm {
+                // A Form gives each control its own row. Wrapping them in one VStack lets
+                // automatic picker/button hit areas intercept the neighboring switch and button.
+                Section {
+                    controls
+                } header: {
+                    Text(DulcetStrings.offlineMusic)
                 }
-                LabeledContent(DulcetStrings.offlineDownloads, value: bytes(storage.downloadBytes))
-                LabeledContent(DulcetStrings.offlineStreamingCache, value: bytes(storage.cacheBytes))
-                LabeledContent(DulcetStrings.offlineArtworkCache, value: bytes(storage.artworkBytes))
-                Picker(DulcetStrings.offlineCacheSize, selection: Binding(get: { storage.cacheBudgetBytes },
-                                                        set: { store.setStreamingCacheBudgetBytes($0) })) {
-                    Text(DulcetStrings.offlineCacheOff).tag(Int64(0))
-                    Text(DulcetStrings.offlineCache256MB).tag(Int64(256 * 1_024 * 1_024))
-                    Text(DulcetStrings.offlineCache512MB).tag(Int64(512 * 1_024 * 1_024))
-                    Text(DulcetStrings.offlineCache1GB).tag(Int64(1_024 * 1_024 * 1_024))
-                    Text(DulcetStrings.offlineCache2GB).tag(Int64(2 * 1_024 * 1_024 * 1_024))
-                }.accessibilityIdentifier("dulcet.offline.cacheSize")
-                Text(DulcetStrings.offlineCacheHint)
-                    .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
-                Button(DulcetStrings.offlineClearCache) { store.clearStreamingCache() }
-                    .accessibilityIdentifier("dulcet.offline.clearCache")
+                .accessibilityElement(children: .contain)
+            } else {
+                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                    Text(DulcetStrings.offlineMusic).font(.headline)
+                    controls
+                }
+                .accessibilityElement(children: .contain)
             }
-            .accessibilityElement(children: .contain)
         }
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        Toggle(DulcetStrings.offlineAutomaticDownloads, isOn: Binding(
+            get: { storage.automaticDownloadsEnabled },
+            set: { store.setAutomaticDownloadsEnabled($0) }
+        )).accessibilityIdentifier("dulcet.offline.automaticDownloads")
+        Text(DulcetStrings.offlineAutomaticHint)
+            .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
+        if storage.automaticDownloadsEnabled {
+            Text(DulcetStrings.offlineDownloadProgress(completed: storage.completedAutomaticCount, remaining: storage.queuedAutomaticCount))
+                .font(.caption).accessibilityIdentifier("dulcet.offline.progress")
+        }
+        LabeledContent(DulcetStrings.offlineDownloads, value: bytes(storage.downloadBytes))
+        LabeledContent(DulcetStrings.offlineStreamingCache, value: bytes(storage.cacheBytes))
+        LabeledContent(DulcetStrings.offlineArtworkCache, value: bytes(storage.artworkBytes))
+        Picker(DulcetStrings.offlineCacheSize, selection: Binding(get: { storage.cacheBudgetBytes },
+                                                set: { store.setStreamingCacheBudgetBytes($0) })) {
+            Text(DulcetStrings.offlineCacheOff).tag(Int64(0))
+            Text(DulcetStrings.offlineCache256MB).tag(Int64(256 * 1_024 * 1_024))
+            Text(DulcetStrings.offlineCache512MB).tag(Int64(512 * 1_024 * 1_024))
+            Text(DulcetStrings.offlineCache1GB).tag(Int64(1_024 * 1_024 * 1_024))
+            Text(DulcetStrings.offlineCache2GB).tag(Int64(2 * 1_024 * 1_024 * 1_024))
+        }.pickerStyle(.menu).accessibilityIdentifier("dulcet.offline.cacheSize")
+        Text(DulcetStrings.offlineCacheHint)
+            .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
+        Button(DulcetStrings.offlineClearCache) { store.clearStreamingCache() }
+            .accessibilityIdentifier("dulcet.offline.clearCache")
     }
     private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
 }
