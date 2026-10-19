@@ -44,9 +44,15 @@ final class DulcetDesignTourUITests: XCTestCase {
         XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
         XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
         let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
+        let settingsForm = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
         XCTAssertTrue(automatic.waitForExistence(timeout: 20), app.debugDescription)
-        XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16))
-        if automatic.value as? String == "1" { automatic.tap() }
+        XCTAssertTrue(settingsForm.exists, app.debugDescription)
+        XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settingsForm))
+        // SwiftUI exposes a row-sized switch wrapper and its native thumb. The wrapper's
+        // centre lies in the label's empty space on iPad; actuate the actual UISwitch.
+        let automaticControl = automatic.switches.firstMatch
+        XCTAssertTrue(automaticControl.exists, automatic.debugDescription)
+        if automatic.value as? String == "1" { automaticControl.tap() }
         _ = waitFor(timeout: 5) { automatic.value as? String == "0" }
         XCTAssertEqual(automatic.value as? String, "0")
         shoot("offline-settings-automatic-off", app)
@@ -55,14 +61,14 @@ final class DulcetDesignTourUITests: XCTestCase {
         launchInInteractionScope(app)
         XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
         XCTAssertTrue(automatic.waitForExistence(timeout: 20))
-        XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16))
+        XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settingsForm))
         XCTAssertEqual(automatic.value as? String, "0", "The account setting must survive relaunch")
-        automatic.tap()
+        automaticControl.tap()
         _ = waitFor(timeout: 5) { automatic.value as? String == "1" }
         XCTAssertEqual(automatic.value as? String, "1")
         let clear = app.buttons["dulcet.offline.clearCache"].firstMatch
+        XCTAssertTrue(scrollIntoView(clear, in: app, verticalMargin: 16, scrollContainer: settingsForm))
         XCTAssertTrue(clear.waitForExistence(timeout: 10))
-        XCTAssertTrue(scrollIntoView(clear, in: app, verticalMargin: 16))
         clear.tap()
         shoot("offline-settings-controls", app)
         print("OFFLINE-SETTINGS idiom=\(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone") automatic=off-relaunch-on clear=invoked")
@@ -619,8 +625,10 @@ final class DulcetDesignTourUITests: XCTestCase {
     }
 
     @MainActor
-    private func scrollIntoView(_ element: XCUIElement, in app: XCUIApplication, verticalMargin: CGFloat = 100) -> Bool {
+    private func scrollIntoView(_ element: XCUIElement, in app: XCUIApplication,
+                                verticalMargin: CGFloat = 100, scrollContainer: XCUIElement? = nil) -> Bool {
         let window = app.windows.firstMatch
+        let scrolling = scrollContainer ?? app
         // Lazy grids can recycle a tile between `exists` and a separate frame query while a
         // swipe decelerates. A throwing snapshot gives one frame or lets the next swipe retry.
         func frame() -> CGRect? { (try? element.snapshot())?.frame }
@@ -633,8 +641,8 @@ final class DulcetDesignTourUITests: XCTestCase {
         for _ in 0..<8 {
             let current = frame()
             if visible(current) { return true }
-            if let current, current.midY < window.frame.minY + verticalMargin { app.swipeDown() }
-            else { app.swipeUp() }
+            if let current, current.midY < window.frame.minY + verticalMargin { scrolling.swipeDown() }
+            else { scrolling.swipeUp() }
             _ = settle(app, seconds: 0.6)
         }
         return visible(frame())

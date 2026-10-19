@@ -112,7 +112,11 @@ struct DulcetOfflineLibrarySection: View {
         }.pickerStyle(.menu).accessibilityIdentifier("dulcet.offline.cacheSize")
         Text(DulcetStrings.offlineCacheHint)
             .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
-        Button(DulcetStrings.offlineClearCache) { store.clearStreamingCache() }
+        Button { store.clearStreamingCache() } label: {
+            Text(DulcetStrings.offlineClearCache)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
             .accessibilityIdentifier("dulcet.offline.clearCache")
     }
     private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }

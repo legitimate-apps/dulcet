@@ -206,6 +206,8 @@ struct DulcetAccountConnectionView: View {
                 }
             }
             .formStyle(.grouped)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dulcet.account.settingsForm")
             .scrollContentBackground(.hidden)
             .safeAreaPadding(.bottom, DulcetSpacing.lg)
             .frame(maxWidth: 640)
