@@ -7,7 +7,8 @@ A visible button moves during a scroll and must settle before a tap. Geometry po
 immutable window snapshot; live geometry reads fail the control. Temporary target absence and
 an occluded settled target must be re-observed, with hittability still required.
 An opening confirmation ignores its first tap; the observed empty form must follow a retry.
-A slow navigation that reveals Sign Out must succeed even when it consumes the wait deadline.
+Connection must be opened before querying Sign Out after a Library relaunch. A slow navigation
+that reveals Sign Out must succeed even when it consumes the wait deadline.
 Missing/changed Objective-C methods fall back safely. This checks the test's wait boundary, not
 which UIKit animation prevented CI's reply. --source can run the original implementation against
 the snapshot control; --mutant demonstrates rejected wait boundaries and the confirmation race.
@@ -166,6 +167,8 @@ struct Element {
     var exists: Bool {
         precondition(!app.forbidLiveGeometry || (key != "moving-button" && key != "window"),
                      "presence polling must come from the same snapshot as geometry")
+        precondition(key != "Sign Out" || !app.awaitingConnection,
+                     "Sign Out must not traverse Library before Connection is opened")
         if scope == "tab" || scope == "sidebar" { return true }
         if key == "moving-button" || key == "window" { return true }
         if key == "dulcet.account-connect.primary-action" { return app.state == "signed-out" }
@@ -293,11 +296,12 @@ struct Check {
         precondition(proof.signOut(in: app) && app.confirmTapCount == 2 && !app.confirmationExists)
         print("opening confirmation / observed empty form: PASS")
         app.state = "connected"
-        precondition(proof.awaitSignOut(in: app, compact: false) && app.connectionOpens == 0)
-        print("already visible Sign Out / no navigation: PASS")
         app.awaitingConnection = true
         precondition(proof.awaitSignOut(in: app, compact: false) && app.connectionOpens == 1)
-        print("slow Connection navigation / Sign Out at deadline: PASS")
+        print("Library relaunch / Connection before Sign Out / slow arrival at deadline: PASS")
+        precondition(proof.awaitSignOut(in: app, compact: false) && app.connectionOpens == 2)
+        print("already visible Sign Out / idempotent Connection arrival: PASS")
+        AccountWaitClock.offset = 0
         app.selectedTab = "Connection"
         precondition(proof.openDestination("Search", sidebarIdentifier: "search", in: app, compact: true))
         precondition(app.selectedTab == "Search" && app.navigationTaps == 1)
