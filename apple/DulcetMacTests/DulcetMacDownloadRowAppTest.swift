@@ -128,8 +128,28 @@ final class DulcetMacDownloadRowAppTest: XCTestCase {
         let playable = try await app.element(timeout: .seconds(10), described: "promoted offline reader row") {
             app.identifier($0) == "dulcet.reader.track" && (app.label($0) ?? "").hasPrefix(self.track)
         }
+        guard case let .album(albumID)? = app.store.readerPath.last else {
+            throw HostedAppError.unexpected("The reader must still show its open album")
+        }
+        let reader = try XCTUnwrap(app.store.librarySession?.reader)
+        var promotedTrack: DulcetTrack?
+        let cachedAlbum = reader.subscribeWindow(.album(rawID: albumID.rawID)) { publication in
+            promotedTrack = publication.items.first { $0.id == id }?.playableTrack
+        }
+        defer { cachedAlbum.close() }
+        try await waitUntil(timeout: .seconds(5), "The offline reader must publish its promoted track metadata") {
+            promotedTrack != nil
+        }
+        let localAsset = try XCTUnwrap(downloads.offlinePlaybackAsset(for: try XCTUnwrap(promotedTrack)),
+                                      "The promoted row must resolve its validated local audio with network clients closed")
+        XCTAssertGreaterThan(localAsset.exactByteLength, 0)
         try app.press(playable, named: "promoted offline track")
-        try await waitUntil(timeout: .seconds(15), "Offline playback must advance from the reader row") {
+        try await waitUntil(timeout: .seconds(15), "Offline playback must advance from the reader row;"
+            + " status=\(app.store.snapshot.playbackStatus)"
+            + " current=\(app.store.snapshot.nowPlaying?.current.id.rawID ?? "none")"
+            + " phase=\(app.store.snapshot.nowPlaying?.phase.rawValue ?? "none")"
+            + " progress=\(app.store.snapshot.nowPlaying?.progressBegan ?? false)"
+            + " elapsed=\(app.store.snapshot.nowPlaying?.elapsed ?? .zero)") {
             guard let playing = app.store.snapshot.nowPlaying else { return false }
             return playing.current.id == id && playing.progressBegan && playing.elapsed > .zero
         }
@@ -142,6 +162,9 @@ final class DulcetMacDownloadRowAppTest: XCTestCase {
         XCTAssertEqual(streams.count, 1, "The download must fetch the track exactly once, including after promotion")
         XCTAssertEqual(streams.first?["answered"] as? Bool, true)
         XCTAssertEqual(streams.first?["status"] as? Int, 200)
+        print("DULCET MAC OFFLINE READER ROW PROOF PASS track=\(track.debugDescription)"
+            + " local-bytes=\(localAsset.exactByteLength) engine-progress=true additional-requests=\(count - offlineBaseline)"
+            + " stream-reads=\(streams.count)")
     }
 
     private func streamRequests(_ base: String, since: Int, songID: String) async throws -> [[String: Any]] {
