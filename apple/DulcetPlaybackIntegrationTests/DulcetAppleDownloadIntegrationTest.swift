@@ -367,6 +367,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         XCTAssertGreaterThan(storedByteCount, 0)
         XCTAssertEqual(storedByteCount, asset.exactByteLength)
 
+        try await proveStreamCacheThroughPlaybackEngine()
         try await proveStreamCacheAndAutomaticRetention()
 
         print(
@@ -375,19 +376,83 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         )
     }
 
-    /// Runs under each existing Mac/iPhone/iPad download selector, so the regular full Apple
-    /// conformance run exercises the same streamed bytes and ownership transitions as the apps.
-    private func proveStreamCacheAndAutomaticRetention() async throws {
+    /// A real AVPlayer consumes the streamed response; cache promotion cannot be caused by
+    /// the manual sparse-range proof below. A fresh engine then consumes only the local file.
+    private func proveStreamCacheThroughPlaybackEngine() async throws {
         let context = try makeContext()
         defer { context.tearDown() }
-        let track = try await loadLiveTrack(baseURL: context.baseURL)
-        try await waitUntil(timeout: .seconds(10), failureMessage: "offline policy never reconciled") {
+        let track = try await loadLiveTrack(baseURL: context.baseURL,
+            minimumDurationMilliseconds: 2_000, maximumDurationMilliseconds: 5_000)
+        try await waitUntil(timeout: .seconds(10), failureMessage: "engine cache policy never reconciled") {
             context.controller.offlineLibraryStorage.cacheBudgetBytes > 0
         }
-        let endpointAccount = PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+        let account = PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
             normalizedBaseUrl: context.baseURL, username: fixtureUsername, password: fixturePassword, allowLocalHttp: true)
-        let wire = ApplePlaybackWireClient(account: endpointAccount)
+        let wire = ApplePlaybackWireClient(account: account)
         defer { wire.close() }
+        let plan = try await resolveStreamingPlan(wire: wire, context: context, track: track)
+        let onlineMediaTime = try await withPlaybackEngine { online in
+            let onlineProgress = OfflineEngineProgress()
+            online.setEventListener { event in Task { @MainActor in onlineProgress.record(event) } }
+            let onlinePrepared = await execute(online, .prepare(commandID: .init("cache-engine-online-prepare"), plan: plan))
+            XCTAssertEqual(onlinePrepared, .accepted(commandID: .init("cache-engine-online-prepare")))
+            _ = await execute(online, .setVolume(commandID: .init("cache-engine-online-mute"), volume: 0))
+            _ = await execute(online, .play(commandID: .init("cache-engine-online-play")))
+            try await waitUntil(timeout: .seconds(20), failureMessage: "AVPlayer did not stream, advance and promote cache: \(onlineProgress.failure ?? "no engine failure")") {
+                onlineProgress.position > 0 && context.controller.status(for: track.id) == .cached
+            }
+            XCTAssertGreaterThan(onlineProgress.position, 0, "the production player clock must advance while streaming")
+            XCTAssertNil(onlineProgress.failure)
+            XCTAssertGreaterThan(context.controller.offlineLibraryStorage.cacheBytes, 0)
+            XCTAssertEqual(context.controller.offlineLibraryStorage.downloadBytes, 0)
+            return onlineProgress.position
+        }
+        context.controller.closeNetworkAccessForTesting()
+        wire.close()
+        let local = try XCTUnwrap(context.controller.offlinePlaybackAsset(for: track))
+        let localPlan = DulcetPlaybackPlan(playbackSessionID: .init("cache-engine-local-session"),
+            attemptID: .init("cache-engine-local-attempt"), deliveryProtocol: .httpProgressive,
+            expectedContainer: local.expectedContainer, resource: local.resource,
+            metadata: .init(title: track.title, artist: nil, albumTitle: track.albumTitle))
+        let offlineMediaTime = try await withPlaybackEngine { offline in
+            let offlineProgress = OfflineEngineProgress()
+            offline.setEventListener { event in Task { @MainActor in offlineProgress.record(event) } }
+            let offlinePrepared = await execute(offline, .prepare(commandID: .init("cache-engine-offline-prepare"), plan: localPlan))
+            XCTAssertEqual(offlinePrepared, .accepted(commandID: .init("cache-engine-offline-prepare")))
+            _ = await execute(offline, .setVolume(commandID: .init("cache-engine-offline-mute"), volume: 0))
+            _ = await execute(offline, .play(commandID: .init("cache-engine-offline-play")))
+            try await waitUntil(timeout: .seconds(15), failureMessage: "cached AVPlayer did not advance with network closed: \(offlineProgress.failure ?? "no engine failure")") {
+                offlineProgress.position > 0
+            }
+            XCTAssertGreaterThan(offlineProgress.position, 0, "cached playback must advance the real player clock")
+            XCTAssertNil(offlineProgress.failure)
+            return offlineProgress.position
+        }
+        print("OFFLINE-CACHE-ENGINE \(platformLabel) online-media-time=\(onlineMediaTime) cache=promoted network=closed offline-media-time=\(offlineMediaTime)")
+    }
+
+    /// Await release on success, cancellation and assertion-wait errors before the caller's
+    /// context teardown can remove the media files AVFoundation was reading.
+    private func withPlaybackEngine<T>(_ body: (DulcetAVPlayerEngine) async throws -> T) async throws -> T {
+        let engine = DulcetAVPlayerEngine()
+        do {
+            let result = try await body(engine)
+            _ = await execute(engine, .release(commandID: .init("cache-engine-scope-release")))
+            return result
+        } catch {
+            _ = await execute(engine, .release(commandID: .init("cache-engine-scope-release-error")))
+            throw error
+        }
+    }
+
+    private func execute(_ engine: DulcetAVPlayerEngine, _ command: DulcetPlaybackCommand) async -> DulcetPlaybackCommandOutcome {
+        await withCheckedContinuation { continuation in
+            engine.execute(command) { continuation.resume(returning: $0) }
+        }
+    }
+
+    private func resolveStreamingPlan(wire: ApplePlaybackWireClient, context: DownloadIntegrationContext,
+                                      track: DulcetTrack) async throws -> DulcetPlaybackPlan {
         let container = try XCTUnwrap(track.sourceContainer)
         let coreContainer: AudioContainer = switch container {
         case .mp3: .mp3; case .mp4: .mp4; case .wav: .wav
@@ -407,9 +472,25 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                     continuation.resume(returning: $0.plan)
                 }
         }
-        let plan = DulcetCorePlaybackPlanFactory.makePlan(client: wire, corePlan: try XCTUnwrap(corePlan),
+        return DulcetCorePlaybackPlanFactory.makePlan(client: wire, corePlan: try XCTUnwrap(corePlan),
             metadata: .init(title: track.title, artist: nil, albumTitle: track.albumTitle),
             wrapResource: { resource, expected in context.controller.cachingResource(resource, track: track, expectedContainer: expected) })
+    }
+
+    /// Runs under each existing Mac/iPhone/iPad download selector, so the regular full Apple
+    /// conformance run exercises the same streamed bytes and ownership transitions as the apps.
+    private func proveStreamCacheAndAutomaticRetention() async throws {
+        let context = try makeContext()
+        defer { context.tearDown() }
+        let track = try await loadLiveTrack(baseURL: context.baseURL)
+        try await waitUntil(timeout: .seconds(10), failureMessage: "offline policy never reconciled") {
+            context.controller.offlineLibraryStorage.cacheBudgetBytes > 0
+        }
+        let endpointAccount = PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+            normalizedBaseUrl: context.baseURL, username: fixtureUsername, password: fixturePassword, allowLocalHttp: true)
+        let wire = ApplePlaybackWireClient(account: endpointAccount)
+        defer { wire.close() }
+        let plan = try await resolveStreamingPlan(wire: wire, context: context, track: track)
         let resource = try XCTUnwrap(plan.resource as? any DulcetPlaybackResourceLoading)
         let head = await load(resource: resource, range: .init(start: 0, endInclusive: 4_095))
         guard case let .loaded(_, headerInfo) = head else { XCTFail("stream header did not validate"); return }
@@ -679,7 +760,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         )
     }
 
-    private func loadLiveTrack(baseURL: String) async throws -> DulcetTrack {
+    private func loadLiveTrack(baseURL: String, minimumDurationMilliseconds: Int64 = 0,
+                               maximumDurationMilliseconds: Int64 = .max) async throws -> DulcetTrack {
         let client = AppleLibraryBrowseClient()
         let request = AppleLibraryBrowseRequest(
             providerInstanceId: providerInstanceID,
@@ -704,7 +786,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             let read = try await readAlbumSeed(
                 client: client,
                 request: request,
-                albumRawID: album.rawID
+                albumRawID: album.rawID,
+                minimumDurationMilliseconds: minimumDurationMilliseconds,
+                maximumDurationMilliseconds: maximumDurationMilliseconds
             )
             albumsRead += 1
             tracksSeen += read.trackCount
@@ -781,7 +865,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
     private func readAlbumSeed(
         client: AppleLibraryBrowseClient,
         request: AppleLibraryBrowseRequest,
-        albumRawID: String
+        albumRawID: String,
+        minimumDurationMilliseconds: Int64 = 0,
+        maximumDurationMilliseconds: Int64 = .max
     ) async throws -> (seed: LiveDownloadTrackSeed?, trackCount: Int) {
         let (result, failure): ((LiveDownloadTrackSeed?, Int)?, String) =
             await withCheckedContinuation { continuation in
@@ -798,7 +884,10 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                         )
                         return
                     }
-                    let source = album.tracks.first { $0.sourceContainer != nil }
+                    let source = album.tracks.first {
+                        $0.sourceContainer != nil && $0.durationMilliseconds >= minimumDurationMilliseconds
+                            && $0.durationMilliseconds <= maximumDurationMilliseconds
+                    }
                     continuation.resume(returning: ((
                         source.map {
                             LiveDownloadTrackSeed(
@@ -983,5 +1072,20 @@ private final class OfflineLibraryIntegrationListener: NSObject, AppleMyLibraryL
     init(handler: @escaping @MainActor (AppleMyLibraryPublication) -> Void) { self.handler = handler }
     func onMyLibraryPublication(publication: AppleMyLibraryPublication) {
         MainActor.assumeIsolated { self.publication = publication; handler(publication) }
+    }
+}
+
+@MainActor
+private final class OfflineEngineProgress {
+    var position: TimeInterval = 0
+    var failure: String?
+    func record(_ event: DulcetPlaybackEvent) {
+        switch event {
+        case let .playbackProgressBegan(_, _, mediaPosition), let .positionChanged(_, mediaPosition, _):
+            position = max(position, mediaPosition)
+        case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error):
+            failure = String(describing: error)
+        default: break
+        }
     }
 }
