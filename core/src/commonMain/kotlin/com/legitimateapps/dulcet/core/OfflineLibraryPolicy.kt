@@ -231,15 +231,31 @@ internal class OfflineLibraryPolicy(
     /** Report actual artwork use before and after the shell trims. Only 256 px pinned keys are
      * protected by the executor; all target arithmetic and retained-item selection lives here. */
     fun planArtworkCache(serverId: String, evictableBytes: Long, pinnedBytes: Long,
-        reservationBytes: Long = 0): ArtworkCacheBudgetPlan {
+        reservationBytes: Long = 0, budgetBytesOverride: Long? = null): ArtworkCacheBudgetPlan {
+        require(serverId.isNotBlank())
         require(evictableBytes >= 0 && pinnedBytes >= 0 && reservationBytes >= 0)
+        require(budgetBytesOverride == null || budgetBytesOverride >= 0)
         artworkUsage[serverId] = ArtworkUsage(evictableBytes, pinnedBytes)
-        val budget = settings(serverId).cacheBudgetBytes
+        val budget = budgetBytesOverride ?: settings(serverId).cacheBudgetBytes
         val remaining = (budget - usedCacheBytes(serverId)).coerceAtLeast(0)
         val afterPinned = (remaining - pinnedBytes).coerceAtLeast(0)
         val target = (afterPinned - reservationBytes).coerceAtLeast(0)
-        val keys = queries.selectProtectedArtworkKeys(serverId).executeAsList().mapNotNull { it.artwork_key }
-        return ArtworkCacheBudgetPlan(target, keys)
+        return ArtworkCacheBudgetPlan(target, protectedArtworkKeys(serverId))
+    }
+
+    /** Clear all evictable artwork without changing the configured budget. Shells trim and
+     * acknowledge actual usage before [clearCache] removes unprotected streamed media. */
+    fun planClearCache(serverId: String, evictableBytes: Long, pinnedBytes: Long): ArtworkCacheBudgetPlan =
+        planArtworkCache(serverId, evictableBytes, pinnedBytes, budgetBytesOverride = 0)
+
+    private fun protectedArtworkKeys(serverId: String): List<String> {
+        val keys = queries.selectProtectedArtworkKeys(serverId).executeAsList().mapNotNull { it.artwork_key }.toMutableSet()
+        protected.asSequence().filter { it.serverId == serverId }.map { it.rawId }.distinct().forEach { rawId ->
+            val track = database.seenCacheQueries.selectTrack(serverId, rawId).executeAsOneOrNull() ?: return@forEach
+            val albumArtwork = track.album_raw_id?.let { database.seenCacheQueries.selectAlbum(serverId, it).executeAsOneOrNull()?.artwork_key }
+            (albumArtwork ?: track.artwork_key)?.let(keys::add)
+        }
+        return keys.toList()
     }
 
     fun setProtectedIdentities(identities: Set<DownloadIdentity>) {

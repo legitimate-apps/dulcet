@@ -289,6 +289,52 @@ class OfflineLibraryPolicyTest {
         assertEquals(listOf("download-cover"), plan.protectedArtworkKeys)
     }
 
+    @Test fun prospectiveBudgetTrimsArtworkBeforePersistingBudgetOrEvictingStreamedMedia() = fixture { engine, policy ->
+        policy.setCacheBudgetBytes("a", 18)
+        cache(policy, "higher-priority-stream", 1)
+        val plan = policy.planArtworkCache("a", 12, 0, budgetBytesOverride = 12)
+        assertEquals(6, plan.targetEvictableBytes)
+        assertEquals(18, policy.settings("a").cacheBudgetBytes)
+        assertNotNull(engine.record(request("higher-priority-stream").identity))
+        // The executor acknowledges artwork trimmed before committing the smaller cap.
+        policy.planArtworkCache("a", 6, 0, budgetBytesOverride = 12)
+        assertTrue(policy.setCacheBudgetBytes("a", 12).isEmpty())
+        assertNotNull(engine.record(request("higher-priority-stream").identity))
+        assertEquals(12, policy.stats("a").totalCacheBytes)
+        // Once every evictable artwork byte is gone, stream LRU can enforce a still smaller cap.
+        assertEquals(0, policy.planArtworkCache("a", 6, 0, budgetBytesOverride = 3).targetEvictableBytes)
+        policy.planArtworkCache("a", 0, 0, budgetBytesOverride = 3)
+        assertEquals(listOf("higher-priority-stream"), policy.setCacheBudgetBytes("a", 3).map { it.identity.rawId })
+    }
+
+    @Test fun clearCachePlanPreservesDownloadedAndPlayingArtworkAndOnlyClearsUnprotectedMedia() = fixtureDetailed { engine, policy, database ->
+        val bound = SeenCacheStore(database, SeenCacheWallClock { 1L }).bind(CacheBinding("a", "http://127.0.0.1", "fixture"))
+        bound.writeEntities(CacheWriteStamp(bound.issue(), 1, null), CacheEntitySource.Detail,
+            CacheEntities(tracks = listOf(
+                CacheTrackRecord("kept-download", null, "Downloaded", sourceContainer = AudioContainer.Mp3, artworkKey = "download-cover"),
+                CacheTrackRecord("playing", null, "Current", sourceContainer = AudioContainer.Mp3, artworkKey = "playing-cover"),
+                CacheTrackRecord("evictable", null, "Other", sourceContainer = AudioContainer.Mp3, artworkKey = "evictable-cover"))))
+        val other = SeenCacheStore(database, SeenCacheWallClock { 1L }).bind(CacheBinding("b", "http://127.0.0.2", "other"))
+        other.writeEntities(CacheWriteStamp(other.issue(), 1, null), CacheEntitySource.Detail,
+            CacheEntities(tracks = listOf(CacheTrackRecord("other-current", null, "Other account", artworkKey = "other-cover"))))
+        val download = engine.enqueue(request("kept-download", AUDIO.size.toLong()))
+        engine.writeCompletedTemporaryFile(download.downloadId, AUDIO)
+        assertIs<DownloadPromotionResult.Promoted>(engine.promote(download.downloadId, metadata()))
+        cache(policy, "playing", 1)
+        cache(policy, "evictable", 2)
+        policy.setProtectedIdentities(setOf(request("playing").identity, DownloadIdentity("b", "other-current", "original")))
+        val oldBudget = policy.settings("a").cacheBudgetBytes
+        val plan = policy.planClearCache("a", 30, 12)
+        assertEquals(0, plan.targetEvictableBytes)
+        assertEquals(setOf("download-cover", "playing-cover"), plan.protectedArtworkKeys.toSet())
+        assertEquals(oldBudget, policy.settings("a").cacheBudgetBytes)
+        policy.planClearCache("a", 0, 12)
+        assertEquals(listOf("evictable"), policy.clearCache("a").map { it.identity.rawId })
+        assertNotNull(engine.record(request("playing").identity))
+        assertNotNull(engine.record(download.identity))
+        assertEquals(12, policy.stats("a").artworkBytes)
+    }
+
     @Test fun releasingExplicitOwnershipKeepsAutomaticFileUntilLibraryMembershipIsRemoved() = fixture { engine, policy ->
         val requested = request("both", AUDIO.size.toLong())
         val row = engine.enqueue(requested)
