@@ -50,7 +50,10 @@ struct DulcetNowPlayingBar: View {
     }
 
     private var openButton: some View {
-        Button(action: onOpen) {
+        Button {
+            DulcetUIProofMarkers.record("mini-player-open")
+            onOpen()
+        } label: {
             HStack(spacing: DulcetSpacing.sm) {
                 artwork
                 identity

@@ -1364,10 +1364,19 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(noticeGone, "The notice must go away by itself")
 
         // Previously Played lists the skipped track like any other entry the queue passed, unmarked.
+        let markersBeforeOpen = proofMarkers(in: app)
         bar.tap()
+        let openMarkers = waitForMarkers(after: markersBeforeOpen, ["mini-player-open"], in: app, timeout: 3)
+        guard openMarkers == ["mini-player-open"] else {
+            XCTFail("The bar's single tap must reach its open handler; markers=\(openMarkers): " + app.debugDescription)
+            return
+        }
         let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
         let titled = title.waitForExistence(timeout: 10) && waitForLabel("Playable After Skip", of: title, timeout: 10)
-        XCTAssertTrue(titled, "The player must show the track that plays; title=\(title.label)")
+        guard titled else {
+            XCTFail("The player must show the track that plays; handlers=\(proofMarkers(in: app)): " + app.debugDescription)
+            return
+        }
         let upNextToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
         guard upNextToggle.waitForExistence(timeout: 5), upNextToggle.isHittable else {
             XCTFail("The playing track must offer Up Next: " + app.debugDescription)
@@ -4527,9 +4536,10 @@ final class DulcetiOSUITests: XCTestCase {
         let track = "Twenty Nine Seconds"
         let artist = "Dulcet Fixtures"
         guard let app = launchConnected(
-            serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact
+            serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact,
+            extraArguments: ["-dulcet-debug-ui-markers"]
         ) else { return }
-        guard openLibraryAlbum(album, in: app, compact: expectedCompact) else { return }
+        guard requireProofMarkers(in: app), openLibraryAlbum(album, in: app, compact: expectedCompact) else { return }
 
         // 1. The track row's heart: the one beside the row, by the row's own frame.
         let row = app.buttons.matching(identifier: "dulcet.reader.track")
@@ -4548,7 +4558,7 @@ final class DulcetiOSUITests: XCTestCase {
         let awaitSong = { (expected: Bool) in
             self.awaitServerSongStarred(track, album: album, configuration: configuration, expected: expected, timeout: 30)
         }
-        guard toggleHeartAndProve(rowHeart, what: "\(track)'s row", read: songStarred, awaitServer: awaitSong) else { return }
+        guard toggleHeartAndProve(rowHeart, in: app, what: "\(track)'s row", read: songStarred, awaitServer: awaitSong) else { return }
 
         // 2. The artist page's heart, reached through the album's artist link.
         let link = app.buttons.matching(NSPredicate(format: "label == %@", artist)).firstMatch
@@ -4588,7 +4598,7 @@ final class DulcetiOSUITests: XCTestCase {
             }
             return observed
         }
-        guard toggleHeartAndProve(artistHeart, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
+        guard toggleHeartAndProve(artistHeart, in: app, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
         print("DULCET ROW HEARTS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
             + " track=\(track.debugDescription) artist=\(artist.debugDescription) starred=true->false")
     }
@@ -4598,6 +4608,7 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func toggleHeartAndProve(
         _ heart: XCUIElement,
+        in app: XCUIApplication,
         what: String,
         read: () -> Bool?,
         awaitServer: (Bool) -> Bool?
@@ -4614,9 +4625,16 @@ final class DulcetiOSUITests: XCTestCase {
             return false
         }
         heart.tap()
-        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
-            "\(what): the heart must fill at once, before the server answers; label=\(heart.label)")
-        XCTAssertEqual(awaitServer(true), true, "\(what): the star must reach the server")
+        guard waitForLabel("Remove Favorite", of: heart, timeout: 3) else {
+            XCTFail("\(what): the heart must fill at once, before the server answers; "
+                + "label=\(heart.label) handlers=\(proofMarkers(in: app)): " + app.debugDescription)
+            return false
+        }
+        guard awaitServer(true) == true else {
+            XCTFail("\(what): the star must reach the server; handlers=\(proofMarkers(in: app)): " + app.debugDescription)
+            return false
+        }
+        print("DULCET HEART HANDLERS target=\(what.debugDescription) markers=\(proofMarkers(in: app))")
         heart.tap()
         XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "\(what): the heart must empty at once")
         XCTAssertEqual(awaitServer(false), false, "\(what): removing the favourite must reach the server")

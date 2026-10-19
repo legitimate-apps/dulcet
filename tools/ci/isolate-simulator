@@ -143,9 +143,10 @@ def main() -> int:
         return 0
 
     for udid in to_shut:
-        # A device left booted is reported below as isolated=false, never raised; a shutdown that
-        # does not return in time leaves the same state. OBSERVED in run 37346238826: shutting the
-        # iPad down timed out at 120 s right after its first boot and failed the whole step.
+        # A device left booted is reported below as isolated=false; --require-isolation makes
+        # that fail the phase. A shutdown that does not return in time leaves the same state.
+        # OBSERVED in run 37346238826: shutting the iPad down timed out at 120 s right after
+        # its first boot and failed the whole step.
         try:
             simctl("shutdown", udid)
         except subprocess.TimeoutExpired:
