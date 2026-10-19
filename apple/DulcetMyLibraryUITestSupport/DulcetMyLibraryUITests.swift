@@ -437,10 +437,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #elseif os(iOS)
         if connect {
             let connected = server == navidrome
-                ? app.otherElements["dulcet.reader.home.recentlyAdded"].firstMatch
+                ? app.buttons["dulcet.library.album"].firstMatch
                 : destination("browse")
-            // A connected Library can have an empty or unrealized lazy album grid. Its home
-            // section establishes the reader session; a tile establishes catalog visibility.
             if !connected.waitForExistence(timeout: 30) {
                 let welcome = app.buttons["Connect a Server"]
                 if welcome.exists { welcome.tap() }
@@ -474,10 +472,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
         if UIDevice.current.userInterfaceIdiom == .pad {
-            // Construct the identified query even before the account publishes its sidebar.
-            // Choosing a label-based Cell fallback before it exists leaves the wait on cells
-            // with no label; SwiftUI exposes the destination label on their StaticText child.
-            return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
+            // Resolve the indexed result after the account publishes its sidebar. The retained
+            // iPad failure's firstMatch wait reported absent while its own failure hierarchy
+            // contained this exact StaticText. The indexed query avoids that early shortcut.
+            return app.staticTexts.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
         }
         let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
