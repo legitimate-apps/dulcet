@@ -41,7 +41,9 @@ struct AVPlayerGainTests {
 struct AVPlayerCrossfadeTests {
     @Test
     func crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds() async throws {
-        let fixture = try await CrossfadeFixture.start()
+        // Decoder preparation can outlast a short track on a cold simulator. Establish
+        // both real items ready, then stage six seconds before the 12-second file ends.
+        let fixture = try await CrossfadeFixture.start(warmTransport: true)
         let engine = fixture.engine
         let queuedIncoming = try #require(fixture.originalPlayer.items().last)
         defer {
@@ -53,7 +55,7 @@ struct AVPlayerCrossfadeTests {
         let state = try await waitForCrossfadeState("crossfade did not start", engine: engine, events: fixture.events) {
             $0.incomingRate > 0 && $0.outgoingRate > 0 && $0.incomingVolume > 0.05 && $0.outgoingVolume > 0.05
         }
-        #expect(state.outgoingPosition < 6, "the old decoder must still be before its physical end")
+        #expect(state.outgoingPosition < 12, "the old decoder must still be before its physical end")
         #expect(abs(state.incomingVolume + state.outgoingVolume - 1) < 0.02)
         #expect(fixture.controls.publications.last?.sessionID == fixture.next.playbackSessionID)
         let beforeDiscardedCallbacks = fixture.events.snapshot.count
@@ -95,7 +97,7 @@ struct AVPlayerCrossfadeTests {
         })
         if case let .endedNaturally(_, position) = boundary[endIndex] {
             // The 50 ms media observer allows 250 ms for decoder/queue scheduling on loaded hosts.
-            #expect(abs(position - 4) < 0.25)
+            #expect(abs(position - 10) < 0.25)
         }
         #expect(boundary[endIndex + 1] == .advancedToPreloaded(
             oldAttemptID: fixture.first.attemptID, newAttemptID: fixture.next.attemptID))
