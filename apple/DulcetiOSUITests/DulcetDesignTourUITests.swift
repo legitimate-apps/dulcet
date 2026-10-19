@@ -45,13 +45,16 @@ final class DulcetDesignTourUITests: XCTestCase {
         XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
         let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
         let settingsForm = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
-        XCTAssertTrue(automatic.waitForExistence(timeout: 20), app.debugDescription)
-        XCTAssertTrue(settingsForm.exists, app.debugDescription)
+        XCTAssertTrue(settingsForm.waitForExistence(timeout: 20), app.debugDescription)
+        // Form rows are lazy: on iPhone this setting does not exist in accessibility
+        // until its owning Form has scrolled it into the viewport.
         XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settingsForm))
+        XCTAssertTrue(automatic.waitForExistence(timeout: 20), app.debugDescription)
         // SwiftUI exposes a row-sized switch wrapper and its native thumb. The wrapper's
         // centre lies in the label's empty space on iPad; actuate the actual UISwitch.
         let automaticControl = automatic.switches.firstMatch
         XCTAssertTrue(automaticControl.exists, automatic.debugDescription)
+        XCTAssertTrue(automaticControl.isHittable, automatic.debugDescription)
         if automatic.value as? String == "1" { automaticControl.tap() }
         _ = waitFor(timeout: 5) { automatic.value as? String == "0" }
         XCTAssertEqual(automatic.value as? String, "0")
@@ -60,9 +63,11 @@ final class DulcetDesignTourUITests: XCTestCase {
         app.launchArguments = []
         launchInInteractionScope(app)
         XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
-        XCTAssertTrue(automatic.waitForExistence(timeout: 20))
+        XCTAssertTrue(settingsForm.waitForExistence(timeout: 20))
         XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settingsForm))
+        XCTAssertTrue(automatic.waitForExistence(timeout: 20))
         XCTAssertEqual(automatic.value as? String, "0", "The account setting must survive relaunch")
+        XCTAssertTrue(automaticControl.isHittable, automatic.debugDescription)
         automaticControl.tap()
         _ = waitFor(timeout: 5) { automatic.value as? String == "1" }
         XCTAssertEqual(automatic.value as? String, "1")
