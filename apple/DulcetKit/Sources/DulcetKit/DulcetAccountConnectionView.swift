@@ -159,6 +159,7 @@ struct DulcetAccountConnectionView: View {
                     }
                     DulcetStreamingQualitySection(store: store)
                     DulcetCrossfadeSection(store: store)
+                    DulcetOfflineLibrarySection(store: store)
                 }
             }
             .padding(40)
@@ -183,6 +184,7 @@ struct DulcetAccountConnectionView: View {
                     Section { statusPanel }
                     DulcetStreamingQualitySection(store: store, inForm: true)
                     DulcetCrossfadeSection(store: store, inForm: true)
+                    DulcetOfflineLibrarySection(store: store, inForm: true)
                 }
             }
             .formStyle(.grouped)
@@ -200,6 +202,7 @@ struct DulcetAccountConnectionView: View {
                     accountStatusSection
                     DulcetStreamingQualitySection(store: store, inForm: true)
                     DulcetCrossfadeSection(store: store, inForm: true)
+                    DulcetOfflineLibrarySection(store: store, inForm: true)
                 }
             }
             .formStyle(.grouped)

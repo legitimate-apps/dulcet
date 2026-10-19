@@ -9,6 +9,24 @@ extension DulcetCoreLibraryReader: DulcetMyLibraryReading {
         let listener = DulcetCoreMyLibraryListener { [weak self] publication in
             guard let self else { return }
             self.myLibraryPublication = publication.value
+            if self.offlineLibraryHydration()?.enabled == false {
+                self.offlineHydrationOperation?.cancel()
+                self.offlineHydrationOperation = nil
+                self.attemptedOfflineHydration = []
+            }
+            var membership = [publication.value.availability]
+            for album in publication.value.albums {
+                membership += ["album", album.rawId, String(album.explicitlyAdded), String(album.memberSongCount), String(album.pending)]
+            }
+            for song in publication.value.songs {
+                membership += ["track", song.rawId, String(song.pending), song.sourceContainer ?? ""]
+            }
+            let signature = membership
+            if self.automaticMembershipSignature != signature {
+                self.automaticMembershipSignature = signature
+                self.offlineLibraryChanged()
+            }
+            self.warmAutomaticDownloadDetails()
             handler(Self.copyMyLibrary(publication.value, serverID: self.myLibraryServerID))
         }
         let subscription = library.subscribe(sort: "recentlyAdded", listener: listener)
@@ -27,16 +45,34 @@ extension DulcetCoreLibraryReader: DulcetMyLibraryReading {
         return added ? library.add(kind: target.kind.rawValue, rawId: target.id.rawID) : library.remove(kind: target.kind.rawValue, rawId: target.id.rawID)
     }
 
+    func warmAutomaticDownloadDetails() {
+        guard offlineHydrationOperation == nil, let details = offlineLibraryHydration(), details.enabled, let library = myLibraryClient else { return }
+        let albums = details.albumIds.filter { !attemptedOfflineHydration.contains("album:" + $0) }
+        let tracks = details.trackIds.filter { !attemptedOfflineHydration.contains("track:" + $0) }
+        let playlists = details.playlistIds.filter { !attemptedOfflineHydration.contains("playlist:" + $0) }
+        let loadPlaylistIndex = !attemptedOfflineHydration.contains("playlist-index")
+        guard loadPlaylistIndex || !albums.isEmpty || !tracks.isEmpty || !playlists.isEmpty else { return }
+        if loadPlaylistIndex { attemptedOfflineHydration.insert("playlist-index") }
+        attemptedOfflineHydration.formUnion(albums.map { "album:" + $0 } + tracks.map { "track:" + $0 } + playlists.map { "playlist:" + $0 })
+        offlineHydrationOperation = library.warmAutomaticDownloadDetails(albumIds: albums, trackIds: tracks, playlistIds: playlists, loadPlaylistIndex: loadPlaylistIndex) { [weak self] _ in
+            guard let self else { return }
+            self.offlineHydrationOperation = nil
+            self.offlineLibraryChanged()
+            self.warmAutomaticDownloadDetails()
+        }
+    }
+
     private static func copyMyLibrary(_ publication: AppleMyLibraryPublication, serverID: String) -> DulcetMyLibrarySnapshot {
         func item(kind: String, id: String, title: String, artist: String? = nil, artistID: String? = nil,
                   album: String? = nil, albumID: String? = nil, year: Int? = nil, artwork: String?,
-                  songCount: Int? = nil, albumCount: Int? = nil, duration: Int64? = nil) -> DulcetReaderItem {
+                  songCount: Int? = nil, albumCount: Int? = nil, duration: Int64? = nil,
+                  sourceContainer: String? = nil, playability: String? = nil) -> DulcetReaderItem {
             DulcetReaderItem(kind: kind, providerInstanceID: serverID, rawID: id, title: title,
                 artistName: artist, artistRawID: artistID, albumTitle: album, albumRawID: albumID,
                 year: year, genre: nil, durationMilliseconds: duration, songCount: songCount,
-                albumCount: albumCount, discNumber: nil, trackNumber: nil, sourceContainer: nil,
+                albumCount: albumCount, discNumber: nil, trackNumber: nil, sourceContainer: sourceContainer,
                 artworkKey: artwork, owner: nil, favourite: nil, rating: nil, playCount: nil,
-                playability: nil, detailComplete: false, metadataMissing: false)!
+                playability: playability, detailComplete: false, metadataMissing: false)!
         }
         return DulcetMyLibrarySnapshot(
             availability: DulcetMyLibraryAvailability(rawValue: publication.availability) ?? .unknown,
@@ -55,7 +91,8 @@ extension DulcetCoreLibraryReader: DulcetMyLibraryReading {
             songs: publication.songs.map {
                 item(kind: "track", id: $0.rawId, title: $0.title, artist: $0.artistName,
                      album: $0.albumTitle, albumID: $0.albumRawId, artwork: $0.artworkKey,
-                     duration: $0.durationMilliseconds >= 0 ? $0.durationMilliseconds : nil)
+                     duration: $0.durationMilliseconds >= 0 ? $0.durationMilliseconds : nil,
+                     sourceContainer: $0.sourceContainer, playability: $0.playability)
             })
     }
 }

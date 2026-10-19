@@ -188,6 +188,7 @@ public class ApplePlaybackQueueClient private constructor(
     private val database: com.legitimateapps.dulcet.database.DulcetDatabase?
     private val controller: PlaybackQueueController?
     private val resumePositions: ResumePositionStore?
+    private val availability = compositionResult.composition?.availability
     private val initializationErrorKind: String?
     private val pendingEffects = ArrayDeque<PlaybackCoreEffect>()
     private val deliveryScope = CoroutineScope(SupervisorJob() + deliveryDispatcher)
@@ -239,12 +240,16 @@ public class ApplePlaybackQueueClient private constructor(
         deliveryDispatcher,
     )
 
+    /** Network reachability changes queue eligibility without changing or deleting queue entries. */
+    public fun setNetworkAvailable(available: Boolean) { availability?.online = available }
+
     public fun configureDelivery(
         account: PlaybackEndpointAccount,
     ): ApplePlaybackDeliveryConfigurationOutcomeDto {
         val database = database
             ?: return ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
         return try {
+            setNetworkAvailable(true)
             installDelivery(
                 serverId = ServerId(account.providerInstanceId),
                 sender = ScrobbleEndpointSender(account),
@@ -267,6 +272,7 @@ public class ApplePlaybackQueueClient private constructor(
         val database = database
             ?: return ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
         return try {
+            setNetworkAvailable(false)
             configurePersistenceOnlyDelivery(PersistentScrobbleOutbox(database, ApplePlaybackWallClock))
             ApplePlaybackDeliveryConfigurationOutcomeDto(true, null)
         } catch (_: Throwable) {
@@ -994,6 +1000,7 @@ private data class ApplePlaybackQueueComposition(
     val database: com.legitimateapps.dulcet.database.DulcetDatabase?,
     val controller: PlaybackQueueController,
     val resumePositions: ResumePositionStore?,
+    val availability: ApplePlaybackAvailability? = null,
 )
 
 private data class ApplePlaybackDeliveryEvent(
@@ -1018,18 +1025,24 @@ private fun openApplePlaybackQueue(databaseName: String): ApplePlaybackQueueComp
     val databaseStore = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
     val database = databaseStore.database
     val resumePositions = PersistentResumePositionStore(database)
+    val availability = ApplePlaybackAvailability()
     ApplePlaybackQueueCompositionResult(
         composition = ApplePlaybackQueueComposition(
             databaseStore = databaseStore,
             database = database,
             controller = PlaybackQueueController(
                 queues = PersistentQueueStore(database),
+                canPlayItem = { item ->
+                    availability.online || database.downloadsQueries.selectPlayableDownloadsForItem(item.providerInstanceId, item.rawId)
+                        .executeAsList().isNotEmpty()
+                },
                 resumePositions = resumePositions,
                 identities = PlaybackIdentitySource { prefix ->
                     "$prefix:${NSUUID().UUIDString}"
                 },
             ),
             resumePositions = resumePositions,
+            availability = availability,
         ),
         errorKind = null,
     )
@@ -1221,3 +1234,5 @@ private fun PlaybackQueueSnapshot.toAppleDto() = ApplePlaybackQueueSnapshotDto(
     },
     crossfadeIntoNextMilliseconds = crossfadeIntoNext.inWholeMilliseconds,
 )
+
+private class ApplePlaybackAvailability(var online: Boolean = true)

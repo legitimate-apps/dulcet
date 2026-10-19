@@ -25,6 +25,48 @@ final class DulcetDesignTourUITests: XCTestCase {
     private var shotNumber = 0
 
     @MainActor
+    func testOfflineMusicSettingsPersistAcrossRelaunch() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DULCET_OFFLINE_PROOF"] == "1" else { throw XCTSkip("Requires the disposable offline-library fixture") }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: url)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        if let expected = environment["DULCET_OFFLINE_IDIOM"] {
+            XCTAssertEqual(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone", expected)
+        }
+        let compact = app.windows.firstMatch.frame.width < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
+        let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
+        XCTAssertTrue(automatic.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(scrollIntoView(automatic, in: app))
+        if automatic.value as? String == "1" { automatic.tap() }
+        XCTAssertEqual(automatic.value as? String, "0")
+        shoot("offline-settings-automatic-off", app)
+        app.terminate()
+        app.launchArguments = []
+        launchInInteractionScope(app)
+        XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
+        XCTAssertTrue(automatic.waitForExistence(timeout: 20))
+        XCTAssertTrue(scrollIntoView(automatic, in: app))
+        XCTAssertEqual(automatic.value as? String, "0", "The account setting must survive relaunch")
+        automatic.tap()
+        XCTAssertEqual(automatic.value as? String, "1")
+        let clear = app.buttons["dulcet.offline.clearCache"].firstMatch
+        XCTAssertTrue(clear.waitForExistence(timeout: 10))
+        XCTAssertTrue(scrollIntoView(clear, in: app))
+        clear.tap()
+        shoot("offline-settings-controls", app)
+        print("OFFLINE-SETTINGS idiom=\(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone") automatic=off-relaunch-on clear=invoked")
+    }
+
+    @MainActor
     func testListenNowLaunchAlbumAndRelaunch() throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["DULCET_HOME_PROOF"] == "1" else { throw XCTSkip("Requires a disposable home fixture") }

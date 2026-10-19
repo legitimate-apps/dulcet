@@ -110,6 +110,17 @@ enum DulcetAppleProduction {
         playbackController: DulcetCorePlaybackController? = nil,
         artworkFetcher: DulcetCoreArtworkFetcher = DulcetCoreArtworkFetcher()
     ) -> DulcetPresentationStore {
+        #if os(macOS) || os(iOS)
+        if let downloads = downloads as? DulcetCoreDownloadController {
+            artworkFetcher.cacheBudgetPlan = { [weak downloads] serverID, evictableBytes, pinnedBytes, reservationBytes in
+                downloads?.artworkCachePlan(serverID: serverID, evictableBytes: evictableBytes,
+                                           pinnedBytes: pinnedBytes, reservationBytes: reservationBytes)
+            }
+            downloads.reconcileArtworkCache = { [weak artworkFetcher] serverID, reservationBytes in
+                await artworkFetcher?.reconcileSharedCacheBudget(serverID: serverID, reservationBytes: reservationBytes)
+            }
+        }
+        #endif
         // One artwork fetcher, and so one disk cache, serves the library grid and the system Now
         // Playing entry: the lock-screen image is usually already cached by the time it is asked.
         //
@@ -144,7 +155,19 @@ enum DulcetAppleProduction {
                 librarySession: DulcetLibrarySession(
                     factory: DulcetCoreLibraryReaderFactory(
                         databaseName: databaseName,
-                        readsDownloads: downloads != nil
+                        readsDownloads: downloads != nil,
+                        offlineLibraryHydration: {
+                            #if os(macOS) || os(iOS)
+                            (downloads as? DulcetCoreDownloadController)?.missingAutomaticDownloadDetails()
+                            #else
+                            nil
+                            #endif
+                        },
+                        offlineLibraryChanged: {
+                            #if os(macOS) || os(iOS)
+                            (downloads as? DulcetCoreDownloadController)?.reconcileMyLibrary()
+                            #endif
+                        }
                     ),
                     reachability: DulcetNetworkReachability(),
                     foreground: initialForeground
@@ -649,6 +672,7 @@ final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
     private let client: AppleArtworkFetchClient
     private let cache: DulcetArtworkDiskCache
     private var operations: [DulcetCoreArtworkFetchOperation] = []
+    var cacheBudgetPlan: (@MainActor (String, Int64, Int64, Int64) -> ArtworkCacheBudgetPlan?)?
 
     init(
         client: AppleArtworkFetchClient = AppleArtworkFetchClient(),
@@ -666,12 +690,29 @@ final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
             client: client,
             cache: cache,
             request: request,
+            reconcileCacheBudget: { [weak self] in
+                await self?.reconcileSharedCacheBudget(serverID: request.reference.serverID)
+            },
             completion: completion
         )
         operations.removeAll { !$0.isActive }
         operations.append(operation)
         operation.start()
         return operation
+    }
+
+    func reconcileSharedCacheBudget(serverID: String, reservationBytes: Int64 = 0) async {
+        guard let cacheBudgetPlan else { return }
+        var usage = await cache.statistics(serverID: serverID)
+        guard let initial = cacheBudgetPlan(serverID, Int64(usage.evictableByteCount),
+                                           Int64(usage.protectedByteCount), reservationBytes) else { return }
+        await cache.protectDownloadedArtwork(serverID: serverID, artworkKeys: initial.protectedArtworkKeys)
+        usage = await cache.statistics(serverID: serverID)
+        guard let plan = cacheBudgetPlan(serverID, Int64(usage.evictableByteCount),
+                                        Int64(usage.protectedByteCount), reservationBytes) else { return }
+        await cache.trim(serverID: serverID, evictableByteTarget: plan.targetEvictableBytes)
+        usage = await cache.statistics(serverID: serverID)
+        _ = cacheBudgetPlan(serverID, Int64(usage.evictableByteCount), Int64(usage.protectedByteCount), reservationBytes)
     }
 }
 
@@ -688,6 +729,7 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
     private let client: AppleArtworkFetchClient
     private let cache: DulcetArtworkDiskCache
     private let request: DulcetArtworkFetchRequest
+    private let reconcileCacheBudget: @MainActor () async -> Void
     private var completion: (@MainActor (DulcetArtworkFetchOutcome) -> Void)?
     private var task: Task<Void, Never>?
     private var coreOperation: (any AppleArtworkFetchOperation)?
@@ -699,11 +741,13 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
         client: AppleArtworkFetchClient,
         cache: DulcetArtworkDiskCache,
         request: DulcetArtworkFetchRequest,
+        reconcileCacheBudget: @escaping @MainActor () async -> Void,
         completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
     ) {
         self.client = client
         self.cache = cache
         self.request = request
+        self.reconcileCacheBudget = reconcileCacheBudget
         self.completion = completion
     }
 
@@ -711,6 +755,8 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
         let key = cacheKey
         task = Task { [weak self] in
             guard let self else { return }
+            await reconcileCacheBudget()
+            guard !Task.isCancelled, !cancelled else { return }
             if let cached = await cache.data(for: key) {
                 guard !Task.isCancelled, !cancelled else { return }
                 if Self.isDecodableImage(cached) {
@@ -757,6 +803,7 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
                 task = Task { [weak self] in
                     guard let self, !Task.isCancelled, !cancelled else { return }
                     await cache.insert(data, for: key)
+                    await reconcileCacheBudget()
                     guard !Task.isCancelled, !cancelled else { return }
                     deliver(.loaded(data))
                 }
@@ -922,12 +969,18 @@ final class DulcetCoreAccountOperation: DulcetAccountConnectOperation {
 final class DulcetCoreLibraryReaderFactory: DulcetLibraryReaderMaking {
     private let databaseName: String
     private let readsDownloads: Bool
+    private let offlineLibraryChanged: @MainActor () -> Void
+    private let offlineLibraryHydration: @MainActor () -> AppleOfflineLibraryHydrationDto?
 
     /// `readsDownloads`: whether this device keeps downloads, so the reader marks a track whose
     /// file is on the device as downloaded and lets it play offline (§14.5). tvOS keeps none.
-    init(databaseName: String = "dulcet.db", readsDownloads: Bool = false) {
+    init(databaseName: String = "dulcet.db", readsDownloads: Bool = false,
+         offlineLibraryHydration: @escaping @MainActor () -> AppleOfflineLibraryHydrationDto? = { nil },
+         offlineLibraryChanged: @escaping @MainActor () -> Void = {}) {
+        self.offlineLibraryHydration = offlineLibraryHydration
         self.databaseName = databaseName
         self.readsDownloads = readsDownloads
+        self.offlineLibraryChanged = offlineLibraryChanged
     }
 
     func makeReader(account: DulcetLibraryReaderAccount, foreground: Bool) -> any DulcetLibraryReading {
@@ -942,7 +995,7 @@ final class DulcetCoreLibraryReaderFactory: DulcetLibraryReaderMaking {
             ),
             foreground: foreground,
             readsDownloads: readsDownloads
-        ))
+        ), offlineLibraryHydration: offlineLibraryHydration, offlineLibraryChanged: offlineLibraryChanged)
     }
 }
 
@@ -960,8 +1013,17 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
     var myLibraryPublication: AppleMyLibraryPublication?
     var myLibraryCoreSubscription: AppleMyLibrarySubscription?
     let myLibraryServerID: String
+    let offlineLibraryChanged: @MainActor () -> Void
+    let offlineLibraryHydration: @MainActor () -> AppleOfflineLibraryHydrationDto?
+    var offlineHydrationOperation: AppleLibraryReaderOperation?
+    var attemptedOfflineHydration = Set<String>()
+    var automaticMembershipSignature: [String]?
 
-    init(serverID: String, client: AppleLibraryReaderClient) {
+    init(serverID: String, client: AppleLibraryReaderClient,
+         offlineLibraryHydration: @escaping @MainActor () -> AppleOfflineLibraryHydrationDto? = { nil },
+         offlineLibraryChanged: @escaping @MainActor () -> Void = {}) {
+        self.offlineLibraryHydration = offlineLibraryHydration
+        self.offlineLibraryChanged = offlineLibraryChanged
         self.myLibraryServerID = serverID
         self.client = client
     }
@@ -971,7 +1033,15 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
         onPublication: @escaping @MainActor (DulcetLibraryWindow) -> Void
     ) -> any DulcetLibraryWindowSubscribing {
         let fields = query.request
-        let listener = DulcetCoreWindowListener(handler: onPublication)
+        let listener = DulcetCoreWindowListener { [weak self] publication in
+            // Reconcile after live metadata changes; local download status publications do not
+            // enqueue the whole personal library again.
+            if publication.itemsState == .present, publication.freshness == .live {
+                self?.offlineLibraryChanged()
+                self?.warmAutomaticDownloadDetails()
+            }
+            onPublication(publication)
+        }
         let subscription = client.subscribeLibraryWindow(
             request: AppleLibraryWindowRequest(
                 kind: fields.kind,
@@ -1041,10 +1111,13 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
 
     func downloadsChanged() {
         client.downloadsChanged()
+        myLibraryClient?.refreshLocal()
     }
 
     func setOnline(_ reachable: Bool) {
+        if reachable { attemptedOfflineHydration = [] }
         client.setOnline(reachable: reachable)
+        myLibraryClient?.refreshLocal()
     }
 
     func setForeground(_ foreground: Bool) {

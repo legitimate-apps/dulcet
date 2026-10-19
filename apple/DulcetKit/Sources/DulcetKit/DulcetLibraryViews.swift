@@ -1044,6 +1044,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         guard !offline, onDownload != nil else { return "" }
         switch track.downloadState {
         case .notDownloaded: return ""
+        case .cached: return "Cached for offline playback"
         case .queued: return DulcetStrings.downloadQueued
         case .downloading: return DulcetStrings.downloading
         case .downloaded: return DulcetStrings.downloaded
@@ -1057,7 +1058,7 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var downloadStateGlyph: some View {
         Group {
             switch track.downloadState {
-            case .notDownloaded:
+            case .notDownloaded, .cached:
                 EmptyView()
             case .queued, .downloading:
                 ProgressView()
@@ -1088,7 +1089,7 @@ struct DulcetTrackRow<Trailing: View>: View {
     @ViewBuilder
     private func downloadControlContent(action: @escaping () -> Void) -> some View {
         switch track.downloadState {
-        case .notDownloaded:
+        case .notDownloaded, .cached:
             Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: action)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
@@ -1603,11 +1604,13 @@ private struct DulcetTrackContextMenu: ViewModifier {
         }
         if let onDownload, track.availability == .playable {
             switch track.downloadState {
-            case .notDownloaded:
+            case .notDownloaded, .cached:
                 Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: onDownload)
             case .interrupted, .failed:
                 Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
-            case .queued, .downloading, .downloaded, .stale:
+            case .downloaded, .stale:
+                Button("Keep Download", systemImage: "arrow.down.circle.fill", action: onDownload)
+            case .queued, .downloading:
                 EmptyView()
             }
         }
@@ -1632,11 +1635,13 @@ private struct DulcetTrackContextMenu: ViewModifier {
         DulcetQueueInsertionMenuItems(addition: .track(track, in: store))
         if let onDownload, track.availability == .playable {
             switch track.downloadState {
-            case .notDownloaded:
+            case .notDownloaded, .cached:
                 Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: onDownload)
             case .interrupted, .failed:
                 Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
-            case .queued, .downloading, .downloaded, .stale:
+            case .downloaded, .stale:
+                Button("Keep Download", systemImage: "arrow.down.circle.fill", action: onDownload)
+            case .queued, .downloading:
                 EmptyView()
             }
         }

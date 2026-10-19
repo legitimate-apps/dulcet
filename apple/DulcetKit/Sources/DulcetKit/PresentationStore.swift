@@ -230,6 +230,20 @@ public final class DulcetPresentationStore {
         return dismissedPlaybackFailure == (snapshot.playbackFailure ?? .undescribed).identity
     }
     public var downloadsEnabled: Bool { source.downloadsEnabled }
+    public var offlineLibraryStorage: DulcetOfflineLibraryStorage? {
+        _ = downloadStateRevision
+        return downloadsEnabled ? (source as? any DulcetOfflineLibraryControlling)?.offlineLibraryStorage : nil
+    }
+    public func setAutomaticDownloadsEnabled(_ enabled: Bool) {
+        (source as? any DulcetOfflineLibraryControlling)?.setAutomaticDownloadsEnabled(enabled)
+    }
+    public func setStreamingCacheBudgetBytes(_ bytes: Int64) {
+        (source as? any DulcetOfflineLibraryControlling)?.setStreamingCacheBudgetBytes(bytes)
+    }
+    public func clearStreamingCache() {
+        (source as? any DulcetOfflineLibraryControlling)?.clearStreamingCache()
+    }
+
     public var searchQuery: String {
         didSet {
             guard !isApplyingSourceSnapshot, searchQuery != oldValue else { return }

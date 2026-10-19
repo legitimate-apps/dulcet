@@ -220,6 +220,7 @@ public struct DulcetSettingsView: View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
             DulcetStreamingQualitySection(store: store)
             DulcetCrossfadeSection(store: store)
+            DulcetOfflineLibrarySection(store: store)
         }
             .padding(DulcetSpacing.xl)
             .frame(width: 480)

@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
+import platform.Foundation.timeIntervalSince1970
 import platform.Foundation.NSData
 import platform.Foundation.NSMutableData
 import platform.posix.memcpy
@@ -98,6 +99,30 @@ public class AppleDownloadFileTargetOutcomeDto internal constructor(
     public val errorKind: String?,
 )
 
+public class AppleOfflineLibraryHydrationDto internal constructor(
+    public val enabled: Boolean,
+    public val albumIds: List<String>,
+    public val trackIds: List<String>,
+    public val playlistIds: List<String>,
+)
+
+public class AppleOfflineLibraryStorageDto internal constructor(
+    public val automaticDownloadsEnabled: Boolean,
+    public val cacheBudgetBytes: Long,
+    public val downloadBytes: Long,
+    public val cacheBytes: Long,
+    public val artworkBytes: Long,
+    public val queuedAutomaticCount: Int,
+    public val completedAutomaticCount: Int,
+    public val errorKind: String?,
+)
+
+public class AppleOfflineLibraryChangeDto internal constructor(
+    public val taskIdentifiersToCancel: List<String>,
+    public val hasChanges: Boolean,
+    public val errorKind: String?,
+)
+
 /**
  * Objective-C-compatible facade over the durable download policy.
  *
@@ -112,6 +137,7 @@ public class AppleDownloadClient(
     private val scope: CoroutineScope = MainScope()
     private var database: DulcetDatabaseStore? = null
     private var engine: DownloadPolicyEngine? = null
+    private var offline: OfflineLibraryPolicy? = null
     private var wireClient: PlaybackWireClient? = null
     private var requestClient: AuthenticatedEndpointClient? = null
     private var reconciled = false
@@ -163,6 +189,9 @@ public class AppleDownloadClient(
                 transcodeProfile = DownloadIdentity.ORIGINAL_PROFILE,
             )
             val existing = policy.record(identity)
+            if (existing != null) policy.enqueue(DownloadRequest(identity, sourceContainer, null,
+                DownloadServerSnapshot(durationMilliseconds.takeIf { it >= 0 }, null),
+                credentialGeneration, wallClockMilliseconds))
             if (existing?.state == DownloadState.Complete || existing?.state == DownloadState.Stale) {
                 AppleDownloadPreparationOutcomeDto(null, "downloaded", null, null)
             } else if (existing?.state == DownloadState.Downloading) {
@@ -360,7 +389,10 @@ public class AppleDownloadClient(
     public fun status(rawId: String): AppleDownloadStatusOutcomeDto = try {
         requireReconciled()
         val record = requireNotNull(engine).record(originalIdentity(rawId))
-        AppleDownloadStatusOutcomeDto(record?.state.appleState(), null, record?.retryNotBeforeWallClock)
+        val cached = requireNotNull(engine).recordsForItem(account.providerInstanceId, rawId).firstOrNull {
+            it.state in setOf(DownloadState.Complete, DownloadState.Stale)
+        }
+        AppleDownloadStatusOutcomeDto(if (cached != null && record?.state !in setOf(DownloadState.Complete, DownloadState.Stale)) (if (cached.state == DownloadState.Stale) "stale" else "cached") else record?.state.appleState(), null, record?.retryNotBeforeWallClock)
     } catch (_: Throwable) {
         AppleDownloadStatusOutcomeDto("notDownloaded", "persistence", null)
     }
@@ -408,7 +440,7 @@ public class AppleDownloadClient(
     public fun localPlaybackPlan(rawId: String): AppleLocalPlaybackPlanOutcomeDto = try {
         requireReconciled()
         val policy = requireNotNull(engine)
-        when (val result = policy.offlinePlaybackPlan(originalIdentity(rawId))) {
+        when (val result = requireNotNull(offline).offlinePlaybackPlan(account.providerInstanceId, rawId, (platform.Foundation.NSDate().timeIntervalSince1970 * 1000).toLong())) {
             is OfflinePlaybackPlanResult.Available -> when (policy.verifyOffline(result.plan)) {
                 OfflinePlaybackVerification.Valid -> AppleLocalPlaybackPlanOutcomeDto(
                     AppleLocalPlaybackPlanDto(result.plan),
@@ -429,14 +461,107 @@ public class AppleDownloadClient(
         AppleLocalPlaybackPlanOutcomeDto(null, "notDownloaded", "persistence")
     }
 
+    public fun missingAutomaticDownloadDetails(): AppleOfflineLibraryHydrationDto = try {
+        requireReconciled()
+        val policy = requireNotNull(offline)
+        AppleOfflineLibraryHydrationDto(policy.settings(account.providerInstanceId).automaticDownloadsEnabled,
+            policy.missingAutomaticDownloadAlbumIds(account.providerInstanceId),
+            policy.missingAutomaticDownloadTrackIds(account.providerInstanceId),
+            policy.missingAutomaticDownloadPlaylistIds(account.providerInstanceId))
+    } catch (_: Throwable) { AppleOfflineLibraryHydrationDto(false, emptyList(), emptyList(), emptyList()) }
+
+    public fun offlineLibraryStorage(): AppleOfflineLibraryStorageDto = try {
+        requireReconciled()
+        val policy = requireNotNull(offline)
+        val settings = policy.settings(account.providerInstanceId)
+        val stats = policy.stats(account.providerInstanceId)
+        AppleOfflineLibraryStorageDto(settings.automaticDownloadsEnabled, settings.cacheBudgetBytes,
+            stats.downloadBytes, stats.cacheBytes, stats.artworkBytes, stats.queuedAutomaticCount, stats.completedAutomaticCount, null)
+    } catch (_: Throwable) { AppleOfflineLibraryStorageDto(false, 0, 0, 0, 0, 0, 0, "persistence") }
+
+    public fun setAutomaticDownloadsEnabled(enabled: Boolean, allowNewDownloads: Boolean, credentialGeneration: Long, wallClockMilliseconds: Long): AppleOfflineLibraryChangeDto = try {
+        requireReconciled()
+        val policy = requireNotNull(offline)
+        val changed = policy.setAutomaticDownloadsEnabled(account.providerInstanceId, enabled)
+        val reconciled = if (enabled) policy.reconcileFromSeenCache(account.providerInstanceId, credentialGeneration, wallClockMilliseconds,
+            allowNewDownloads = allowNewDownloads) else changed
+        AppleOfflineLibraryChangeDto(reconciled.removed.map { it.downloadId.value }, true, null)
+    } catch (_: Throwable) { AppleOfflineLibraryChangeDto(emptyList(), false, "persistence") }
+
+    public fun reconcileMyLibrary(allowNewDownloads: Boolean, credentialGeneration: Long, wallClockMilliseconds: Long): AppleOfflineLibraryChangeDto = try {
+        requireReconciled()
+        val changed = requireNotNull(offline).reconcileFromSeenCache(account.providerInstanceId, credentialGeneration, wallClockMilliseconds,
+            allowNewDownloads = allowNewDownloads)
+        AppleOfflineLibraryChangeDto(changed.removed.map { it.downloadId.value }, changed.queued.isNotEmpty() || changed.removed.isNotEmpty(), null)
+    } catch (_: Throwable) { AppleOfflineLibraryChangeDto(emptyList(), false, "persistence") }
+
+    public fun setCacheBudgetBytes(bytes: Long): Boolean = try {
+        requireReconciled()
+        requireNotNull(offline).setCacheBudgetBytes(account.providerInstanceId, bytes)
+        true
+    } catch (_: Throwable) { false }
+
+    public fun clearStreamingCache(): Boolean = try {
+        requireReconciled()
+        requireNotNull(offline).clearCache(account.providerInstanceId)
+        true
+    } catch (_: Throwable) { false }
+
+    public fun protectPlaybackItems(rawIds: List<String>) {
+        try {
+            requireReconciled()
+            val ids = rawIds.toSet()
+            requireNotNull(offline).setProtectedIdentities(requireNotNull(engine).records(account.providerInstanceId)
+                .filter { it.identity.rawId in ids }.map { it.identity }.toSet() +
+                rawIds.flatMap { rawId -> AudioContainer.entries.map { container ->
+                    DownloadIdentity(account.providerInstanceId, rawId, "stream:${container.name}")
+                } })
+        } catch (_: Throwable) { }
+    }
+
+    public fun beginStreamingCache(rawId: String, container: AudioContainer, totalLength: Long,
+        durationMilliseconds: Long, rangeStart: Long, credentialGeneration: Long, wallClockMilliseconds: Long): String? = try {
+        requireReconciled()
+        val source = database?.database?.offlineLibraryQueries?.selectSourceSnapshot(account.providerInstanceId, rawId)?.executeAsOneOrNull()
+        requireNotNull(offline).beginCacheWrite(DownloadRequest(
+            DownloadIdentity(account.providerInstanceId, rawId, "stream:${container.name}"), container,
+            PlaybackContentLength.Exact(totalLength), DownloadServerSnapshot(source?.duration_milliseconds ?: durationMilliseconds.takeIf { it >= 0 }, source?.size_bytes),
+            credentialGeneration, wallClockMilliseconds), responseStatus = 206, rangeStart = rangeStart)?.writeId
+    } catch (_: Throwable) { null }
+
+    public fun appendStreamingCache(writeId: String, bytes: NSData, offset: Long): Boolean = try {
+        requireNotNull(offline).appendCacheWrite(writeId, bytes.toDownloadByteArray(), offset)
+    } catch (_: Throwable) { false }
+
+    public fun isStreamingCacheWriteComplete(writeId: String): Boolean =
+        offline?.isCacheWriteComplete(writeId) == true
+
+    public fun planArtworkCache(evictableBytes: Long, pinnedBytes: Long, reservationBytes: Long): ArtworkCacheBudgetPlan? = try {
+        requireReconciled()
+        requireNotNull(offline).planArtworkCache(account.providerInstanceId, evictableBytes, pinnedBytes, reservationBytes)
+    } catch (_: Throwable) { null }
+
+    public fun finishStreamingCache(writeId: String, totalLength: Long, wallClockMilliseconds: Long): Boolean = try {
+        val result = requireNotNull(offline).finishCacheWrite(writeId,
+            DownloadResponseMetadata(null, PlaybackContentLength.Exact(totalLength)), wallClockMilliseconds)
+        result is DownloadPromotionResult.Promoted || result is DownloadPromotionResult.AlreadyPromoted
+    } catch (_: Throwable) { false }
+
+    public fun abortStreamingCache(writeId: String) {
+        try { offline?.abortCacheWrite(writeId) } catch (_: Throwable) { }
+    }
+
     public fun removeAccountData(): AppleDownloadAccountRemovalOutcomeDto = try {
-        openPolicy().removeAccountData(account.providerInstanceId)
+        openPolicy()
+        offline?.close()
+        requireNotNull(engine).removeAccountData(account.providerInstanceId)
         AppleDownloadAccountRemovalOutcomeDto(null)
     } catch (_: Throwable) {
         AppleDownloadAccountRemovalOutcomeDto("persistence")
     }
 
     public fun close() {
+        try { offline?.close() } catch (_: Throwable) { }
         try {
             requestClient?.close()
         } catch (_: Throwable) {
@@ -453,6 +578,7 @@ public class AppleDownloadClient(
         wireClient = null
         database = null
         engine = null
+        offline = null
         reconciled = false
     }
 
@@ -489,7 +615,10 @@ public class AppleDownloadClient(
         return DownloadPolicyEngine(
             opened.database,
             DownloadFileStore(downloadRootPath, okio.FileSystem.SYSTEM),
-        ).also { engine = it }
+        ).also {
+            engine = it
+            offline = OfflineLibraryPolicy(opened.database, it)
+        }
     }
 
     private suspend fun prepare(

@@ -259,6 +259,7 @@ public final class DulcetLibrarySession {
     public private(set) var playlists: DulcetPlaylistEditor?
     /// Negotiation and lifecycle reports for the saved account, before the reader may send.
     @ObservationIgnored public var onSavedReconnectRequested: (@MainActor () -> Void)?
+    @ObservationIgnored public var onServerConnectionChanged: (@MainActor (Bool) -> Void)?
     @ObservationIgnored public var onConnectionEnvironmentChanged: (@MainActor (Bool, Bool) -> Void)?
     /// Receives the playable tracks of every screen publication, for queue restoration.
     @ObservationIgnored public var onTracksSeen: (@MainActor ([DulcetTrack]) -> Void)?
@@ -612,6 +613,7 @@ public final class DulcetLibrarySession {
     }
 
     private func receive(_ connection: DulcetReaderConnection) {
+        onServerConnectionChanged?(connection.error == nil)
         if connection.error == nil { (reader as? any DulcetMyLibraryReading)?.refreshMyLibrary() }
         if connection.epochKnown {
             connectionFailure = nil

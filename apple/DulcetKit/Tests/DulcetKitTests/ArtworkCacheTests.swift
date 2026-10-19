@@ -192,6 +192,29 @@ func cancelledArtworkWriteCannotRecreateADeletedServerCache() async {
     #expect(await cache.statistics() == .init(entryCount: 0, byteCount: 0))
 }
 
+@Test
+func artworkSharedBudgetTrimIsScopedAndPreservesDownloadedAlbumCover() async {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = DulcetArtworkDiskCache(rootDirectory: root)
+    let pinned = DulcetArtworkCacheKey(serverID: "provider-A", artworkKey: "album-cover", sizeBucket: .pixels256)
+    let unpinned = DulcetArtworkCacheKey(serverID: "provider-A", artworkKey: "album-cover", sizeBucket: .pixels512)
+    let otherAccount = DulcetArtworkCacheKey(serverID: "provider-B", artworkKey: "album-cover", sizeBucket: .pixels512)
+    await cache.protectDownloadedArtwork(serverID: "provider-A", artworkKeys: ["album-cover"])
+    await cache.insert(Data([1, 2]), for: pinned)
+    await cache.insert(Data([3, 4, 5]), for: unpinned)
+    await cache.insert(Data([6]), for: otherAccount)
+    #expect(await cache.statistics(serverID: "provider-A") == .init(evictableByteCount: 3, protectedByteCount: 2))
+    await cache.trim(serverID: "provider-A", evictableByteTarget: 0)
+    #expect(await cache.data(for: unpinned) == nil)
+    #expect(await cache.data(for: pinned) == Data([1, 2]))
+    #expect(await cache.data(for: otherAccount) == Data([6]))
+    await cache.protectDownloadedArtwork(serverID: "provider-A", artworkKeys: [])
+    await cache.trim(serverID: "provider-A", evictableByteTarget: 0)
+    #expect(await cache.data(for: pinned) == nil)
+    #expect(await cache.data(for: otherAccount) == Data([6]))
+}
+
 private actor ArtworkCacheWriteGate {
     private var continuation: CheckedContinuation<Void, Never>?
     var isWaiting: Bool { continuation != nil }

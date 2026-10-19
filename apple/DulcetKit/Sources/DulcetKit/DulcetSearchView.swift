@@ -493,7 +493,7 @@ private struct DulcetSearchResultMenuItems: View {
                 DulcetQueueInsertionMenuItems(addition: .searchResult(track))
                 if store.downloadsEnabled {
                     switch store.downloadState(for: track) {
-                    case .notDownloaded:
+                    case .notDownloaded, .cached:
                         Button(DulcetStrings.download, systemImage: "arrow.down.circle") {
                             store.requestDownload(track)
                         }
@@ -501,7 +501,9 @@ private struct DulcetSearchResultMenuItems: View {
                         Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise") {
                             store.requestDownload(track)
                         }
-                    case .queued, .downloading, .downloaded, .stale:
+                    case .downloaded, .stale:
+                        Button("Keep Download", systemImage: "arrow.down.circle.fill") { store.requestDownload(track) }
+                    case .queued, .downloading:
                         EmptyView()
                     }
                 }

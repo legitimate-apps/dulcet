@@ -93,3 +93,19 @@ tvos)
         DulcetTVUITests
     ;;
 esac
+if [ "$mode" = iphone ] || [ "$mode" = ipados ]; then
+    TEST_RUNNER_DULCET_OFFLINE_PROOF=1 TEST_RUNNER_DULCET_OFFLINE_IDIOM="$mode" \
+        xcodebuild test-without-building \
+        -project apple/Dulcet.xcodeproj -scheme "$scheme" -configuration Debug \
+        -destination "$destination" -derivedDataPath "$RUNNER_TEMP/$derived" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-$mode-offline-settings.xcresult" \
+        -parallel-testing-enabled NO -test-timeouts-enabled YES \
+        -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 180 \
+        -only-testing:DulcetiOSUITests/DulcetDesignTourUITests/testOfflineMusicSettingsPersistAcrossRelaunch \
+        2>&1 | tee "$RUNNER_TEMP/dulcet-$mode-offline-settings.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-$mode-offline-settings.xcresult" \
+        DulcetiOSUITests.DulcetDesignTourUITests testOfflineMusicSettingsPersistAcrossRelaunch
+    python3 tools/swift-testing-junit "$RUNNER_TEMP/dulcet-$mode-offline-settings.xcresult" \
+        "$RUNNER_TEMP/dulcet-$mode-home-junit/TEST-OfflineSettings.xml" DulcetDesignTourUITests
+fi

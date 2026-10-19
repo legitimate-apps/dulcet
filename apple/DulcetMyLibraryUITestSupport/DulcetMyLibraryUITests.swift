@@ -70,6 +70,32 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertEqual(add.label, "Add to Library")
         activate(add)
         awaitLabel(add, "Remove from Library")
+#if !os(tvOS)
+        // The production reader expands the newly added album, and the existing executor
+        // downloads it without an explicit Download action. Cut only this account's HTTP
+        // route before playing, so the native engine must consume the retained local file.
+        let albumResponse = try rest("getAlbum", params: ["id": album.id])
+        let detail = try XCTUnwrap(albumResponse["album"] as? [String: Any])
+        let songs = try XCTUnwrap(detail["song"] as? [[String: Any]])
+        let songTitle = try XCTUnwrap(songs.first?["title"] as? String)
+        let song = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@",
+                                                    songTitle, "Current track, " + songTitle)).firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 20), app.debugDescription)
+        let downloaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "Downloaded"), object: song)
+        XCTAssertEqual(XCTWaiter.wait(for: [downloaded], timeout: 90), .completed,
+                       "Adding an album must automatically download its songs through the production reader")
+        try setOffline(true)
+        activate(song)
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        XCTAssertTrue(playPause.waitForExistence(timeout: 30), app.debugDescription)
+        awaitLabel(playPause, "Pause")
+        XCTAssertTrue(app.buttons["dulcet.mini-player.open"].firstMatch.label.contains(songTitle))
+        try capture("Offline-Automatic-Album-Playback")
+        print("OFFLINE-AUTO-UI account=\(user) trigger=album-add downloaded=true route=offline engine=playing")
+        app.terminate()
+        try setOffline(false)
+        try launch()
+#endif
         try select("library")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)

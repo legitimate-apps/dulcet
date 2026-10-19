@@ -5,10 +5,11 @@ import Network
 
 /// Copies the exported Kotlin plan classes into DulcetKit value types at the Objective-C boundary.
 enum DulcetCorePlaybackPlanFactory {
-    static func makePlan(
+    @MainActor static func makePlan(
         client: ApplePlaybackWireClient,
         corePlan: AppleRemotePlaybackPlanDto,
-        metadata: DulcetNowPlayingMetadata
+        metadata: DulcetNowPlayingMetadata,
+        wrapResource: (@MainActor (any DulcetPlaybackResourceLoading, DulcetAudioContainer) -> any DulcetPlaybackResourceLoading)? = nil
     ) -> DulcetPlaybackPlan {
         let deliveryProtocol: DulcetPlaybackDeliveryProtocol = switch corePlan.deliveryProtocol {
         case "HttpProgressive": .httpProgressive
@@ -34,7 +35,7 @@ enum DulcetCorePlaybackPlanFactory {
             attemptID: DulcetPlaybackAttemptID(corePlan.attemptId),
             deliveryProtocol: deliveryProtocol,
             expectedContainer: expectedContainer,
-            resource: resource,
+            resource: wrapResource?(resource, expectedContainer) ?? resource,
             metadata: metadata
         )
     }

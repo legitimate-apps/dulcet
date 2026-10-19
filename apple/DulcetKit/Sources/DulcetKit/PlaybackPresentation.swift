@@ -213,6 +213,8 @@ public protocol DulcetPlaybackControlling: AnyObject {
     func configure(account: DulcetPlaybackAccount)
     /// Configures local playback and durable plays, holding server requests until account negotiation succeeds.
     func configureOffline(account: DulcetPlaybackAccount)
+    func setNetworkAvailable(_ available: Bool)
+    func setServerAvailable(_ available: Bool)
     func restorePersistedQueue(
         with tracks: [DulcetTrack],
         catalogCoverage: DulcetLibraryCatalogCoverage
@@ -224,6 +226,8 @@ public protocol DulcetPlaybackControlling: AnyObject {
 
 public extension DulcetPlaybackControlling {
     func configureOffline(account: DulcetPlaybackAccount) {}
+    func setNetworkAvailable(_ available: Bool) {}
+    func setServerAvailable(_ available: Bool) {}
 }
 
 /// What starting playback does to the surface the person is looking at.

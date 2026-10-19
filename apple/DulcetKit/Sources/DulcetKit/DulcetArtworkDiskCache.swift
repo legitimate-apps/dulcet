@@ -27,6 +27,11 @@ public actor DulcetArtworkDiskCache {
         public let byteCount: Int
     }
 
+    public struct AccountStatistics: Sendable, Equatable {
+        public let evictableByteCount: Int
+        public let protectedByteCount: Int
+    }
+
     private struct Entry {
         let url: URL
         let byteCount: Int
@@ -40,6 +45,7 @@ public actor DulcetArtworkDiskCache {
     private let now: @Sendable () -> Date
     private var indexedEntries: [String: Entry]?
     private var indexedByteCount = 0
+    private var protectedPathsByServer: [String: Set<String>] = [:]
     private(set) var directoryEnumerationCount = 0
 
     public init(
@@ -94,6 +100,7 @@ public actor DulcetArtworkDiskCache {
     public func remove(serverID: String) {
         loadIndexIfNeeded()
         let directory = serverDirectory(for: serverID)
+        protectedPathsByServer[serverID] = nil
         try? fileManager.removeItem(at: directory)
         for entry in (indexedEntries ?? [:]).values.filter({ $0.url.deletingLastPathComponent().path == directory.path }) {
             forget(entry.url)
@@ -110,6 +117,50 @@ public actor DulcetArtworkDiskCache {
     public func statistics() -> Statistics {
         loadIndexIfNeeded()
         return Statistics(entryCount: indexedEntries?.count ?? 0, byteCount: indexedByteCount)
+    }
+
+    /// The shared core supplies downloaded album cover identities. Only the required 256 px
+    /// representation is pinned; larger grid images remain ordinary LRU entries.
+    public func protectDownloadedArtwork(serverID: String, artworkKeys: [String]) {
+        protectedPathsByServer[serverID] = Set(artworkKeys.map {
+            fileURL(for: .init(serverID: serverID, artworkKey: $0, sizeBucket: .pixels256)).path
+        })
+        loadIndexIfNeeded()
+    }
+
+    public func statistics(serverID: String) -> AccountStatistics {
+        loadIndexIfNeeded()
+        let directory = serverDirectory(for: serverID).path
+        let protected = protectedPathsByServer[serverID] ?? []
+        var evictableBytes = 0
+        var protectedBytes = 0
+        for entry in (indexedEntries ?? [:]).values where entry.url.deletingLastPathComponent().path == directory {
+            if protected.contains(entry.url.path) { protectedBytes += entry.byteCount }
+            else { evictableBytes += entry.byteCount }
+        }
+        return AccountStatistics(evictableByteCount: evictableBytes, protectedByteCount: protectedBytes)
+    }
+
+    /// Executes the core's account target. The adapter never decides which media class gives
+    /// up space, and cannot cross into another account or a downloaded album's pinned cover.
+    public func trim(serverID: String, evictableByteTarget: Int64) {
+        loadIndexIfNeeded()
+        let directory = serverDirectory(for: serverID).path
+        let protected = protectedPathsByServer[serverID] ?? []
+        let candidates = (indexedEntries ?? [:]).values.filter {
+            $0.url.deletingLastPathComponent().path == directory && !protected.contains($0.url.path)
+        }.sorted {
+            $0.lastAccess == $1.lastAccess ? $0.url.path < $1.url.path : $0.lastAccess < $1.lastAccess
+        }
+        var bytes = Int64(candidates.reduce(0) { $0 + $1.byteCount })
+        for entry in candidates {
+            guard bytes > max(0, evictableByteTarget) else { break }
+            do {
+                try fileManager.removeItem(at: entry.url)
+                forget(entry.url)
+                bytes -= Int64(entry.byteCount)
+            } catch { continue }
+        }
     }
 
     /// Each cache owner inventories disk once. Inserts and hits update the index in constant
@@ -140,8 +191,10 @@ public actor DulcetArtworkDiskCache {
             if $0.lastAccess == $1.lastAccess { return $0.url.path < $1.url.path }
             return $0.lastAccess < $1.lastAccess
         }
+        let protected = protectedPathsByServer.values.reduce(into: Set<String>()) { $0.formUnion($1) }
         for entry in oldest {
             if (indexedEntries?.count ?? 0) <= entryTarget && indexedByteCount <= byteTarget { break }
+            if protected.contains(entry.url.path) { continue }
             do {
                 try fileManager.removeItem(at: entry.url)
                 forget(entry.url)

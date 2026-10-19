@@ -490,6 +490,7 @@ targets:
     sources:
       - DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest.swift
       - DulcetAppleShared/DulcetCoreDownloads.swift
+      - DulcetAppleShared/DulcetCorePlayback.swift
       - DulcetAppleShared/SQLiteLoadExtensionUnsupported.c
     dependencies:
       - package: DulcetKit

@@ -736,6 +736,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 if foreground && !self.reconnectForeground { self.reconnectRetryDelay = .seconds(2) }
                 self.reconnectForeground = foreground
                 self.reconnectReachable = reachable
+                self.playbackController?.setNetworkAvailable(reachable)
                 if !foreground || !reachable { self.cancelReconnectRetry() }
             }
             // The device library opens before any network work starts.
@@ -747,6 +748,17 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 ),
                 mode: .deviceOnly
             )
+        }
+        if restoredForReader == nil {
+            librarySession?.onConnectionEnvironmentChanged = { [weak self] foreground, reachable in
+                guard let self else { return }
+                self.reconnectForeground = foreground
+                self.reconnectReachable = reachable
+                self.playbackController?.setNetworkAvailable(reachable)
+            }
+        }
+        librarySession?.onServerConnectionChanged = { [weak self] available in
+            self?.playbackController?.setServerAvailable(available)
         }
         librarySession?.onTracksSeen = { [weak self] tracks in
             self?.restoreQueue(from: tracks)
@@ -2368,6 +2380,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             allowLocalHTTP: request.allowLocalHTTP,
             credentialGeneration: credentialStore?.credentialGeneration ?? 0
         ))
+        downloadController?.setAutomaticDownloadContactPermitted(true)
     }
 
     private func beginPlayback(_ intent: DulcetPlaybackQueueIntent) {
@@ -2792,5 +2805,24 @@ extension DulcetAccountConnectRequest {
             password: password,
             allowLocalHTTP: allowLocalHTTP
         )
+    }
+}
+
+
+extension DulcetAccountDataSource: DulcetOfflineLibraryControlling {
+    public var offlineLibraryStorage: DulcetOfflineLibraryStorage {
+        (downloadController as? any DulcetOfflineLibraryControlling)?.offlineLibraryStorage ?? .init()
+    }
+    public func setAutomaticDownloadsEnabled(_ enabled: Bool) {
+        (downloadController as? any DulcetOfflineLibraryControlling)?.setAutomaticDownloadsEnabled(enabled)
+        downloadStateChangeHandler?()
+    }
+    public func setStreamingCacheBudgetBytes(_ bytes: Int64) {
+        (downloadController as? any DulcetOfflineLibraryControlling)?.setStreamingCacheBudgetBytes(bytes)
+        downloadStateChangeHandler?()
+    }
+    public func clearStreamingCache() {
+        (downloadController as? any DulcetOfflineLibraryControlling)?.clearStreamingCache()
+        downloadStateChangeHandler?()
     }
 }

@@ -76,6 +76,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// Every preload lifecycle step, in order, for tests and diagnostics. Content-free.
     private(set) var preloadLog: [String] = []
     private var wireClient: ApplePlaybackWireClient?
+    private var serverAvailable = true
+    private var networkAvailable = true
     private var resolveOperation: (any ApplePlaybackWireOperation)?
     private var account: PlaybackEndpointAccount?
     private var presentationAccount: DulcetPlaybackAccount?
@@ -252,6 +254,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         )
         account = coreAccount
         self.presentationAccount = presentationAccount
+        serverAvailable = allowsServerAccess
         if allowsServerAccess {
             wireClient = ApplePlaybackWireClient(account: coreAccount)
             _ = queueClient.configureDelivery(account: coreAccount)
@@ -267,8 +270,29 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         autoplayOperation?.cancel()
         autoplayOperation = nil
         sentCrossfade = nil
+        queueClient.setNetworkAvailable(available: networkAvailable && serverAvailable && wireClient != nil)
         applyListeningPreference(publishing: false)
         publish(queueClient.snapshot())
+    }
+
+    func setNetworkAvailable(_ available: Bool) {
+        networkAvailable = available
+        queueClient.setNetworkAvailable(available: available && serverAvailable && wireClient != nil)
+    }
+    func setServerAvailable(_ available: Bool) {
+        serverAvailable = available
+        queueClient.setNetworkAvailable(available: available && networkAvailable && wireClient != nil)
+    }
+
+    private func cacheWrapper(for track: DulcetTrack) -> (@MainActor (any DulcetPlaybackResourceLoading, DulcetAudioContainer) -> any DulcetPlaybackResourceLoading)? {
+        #if os(macOS) || os(iOS)
+        guard let downloads = downloadController as? DulcetCoreDownloadController else { return nil }
+        return { [weak downloads] resource, container in
+            downloads?.cachingResource(resource, track: track, expectedContainer: container) ?? resource
+        }
+        #else
+        return nil
+        #endif
     }
 
     func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {
@@ -715,6 +739,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     // the identity check above already drops it; this keeps that true should a
                     // withdrawal ever arrive for a directive that is still current.
                     guard outcome.errorKind != "cancelled" else { return }
+                    if outcome.errorKind == "transport" || outcome.errorKind == "tlsUntrusted" { self.setServerAvailable(false) }
                     self.recordStartFailure(
                         attemptId: directive.attemptId,
                         errorKind: Self.closedFailureKind(outcome.errorKind)
@@ -729,7 +754,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                         title: track.title,
                         artist: track.artistNames.joined(separator: ", "),
                         albumTitle: track.albumTitle
-                    )
+                    ),
+                    wrapResource: self.cacheWrapper(for: track)
                 )
                 self.execute(.stop(commandID: self.commandID("replace"))) { [weak self] _ in
                     self?.prepare(plan)
@@ -758,6 +784,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private func receiveEngineEvent(_ event: DulcetPlaybackEvent) {
+        switch event {
+        case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error):
+            if error == .transport || error == .tlsUntrusted { setServerAvailable(false) }
+        default: break
+        }
         if let preload, event.attemptID.rawValue == preload.attemptID,
            handlePreloadedAttemptEvent(event, preload: preload) {
             return
@@ -1086,7 +1117,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 self.deliverPreload(DulcetCorePlaybackPlanFactory.makePlan(
                     client: wireClient,
                     corePlan: corePlan,
-                    metadata: metadata
+                    metadata: metadata,
+                    wrapResource: self.cacheWrapper(for: track)
                 ))
             }
         }

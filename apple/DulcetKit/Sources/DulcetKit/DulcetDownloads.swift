@@ -6,11 +6,12 @@ public enum DulcetDownloadState: String, Sendable, Hashable {
     case downloading
     case interrupted
     case downloaded
+    case cached
     case stale
     case failed
 
     public var isLocallyPlayable: Bool {
-        self == .downloaded || self == .stale
+        self == .downloaded || self == .stale || self == .cached
     }
 }
 
@@ -38,6 +39,9 @@ public protocol DulcetDownloadControlling: AnyObject {
         _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
     )
     func configure(account: DulcetPlaybackAccount)
+    /// New automatic library intent may contact the server only after account negotiation.
+    /// Existing durable downloads retain their saved-launch recovery exception.
+    func setAutomaticDownloadContactPermitted(_ permitted: Bool)
     func requestDownload(_ track: DulcetTrack)
     func status(for id: DulcetProviderItemID) -> DulcetDownloadState
     func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset?
@@ -50,6 +54,7 @@ public protocol DulcetDownloadControlling: AnyObject {
 }
 
 public extension DulcetDownloadControlling {
+    func setAutomaticDownloadContactPermitted(_ permitted: Bool) {}
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {}
 }
 

@@ -1774,6 +1774,9 @@ func aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect() {
     #expect(!downloads.configuredBeforeStatusHandler,
             "a state the reconciliation publishes must reach the presentation")
     #expect(connector.requests.count == 1, "downloads reconcile while the saved account reconnects")
+    #expect(!downloads.automaticContactPermitted, "Saved recovery must not permit new automatic library requests")
+    connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music", normalizedServerURL: "http://127.0.0.1:4533")))
+    #expect(downloads.automaticContactPermitted, "A successful negotiation permits newly automatic members")
 }
 
 /// Saved playback knows the local account while network playback remains unconfigured.
@@ -2139,7 +2142,15 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
 }
 
 @MainActor
-private final class ControlledDownloadController: DulcetDownloadControlling {
+private final class ControlledDownloadController: DulcetDownloadControlling, DulcetOfflineLibraryControlling {
+    private(set) var automaticContactPermitted = false
+    func setAutomaticDownloadContactPermitted(_ permitted: Bool) { automaticContactPermitted = permitted }
+    var offlineLibraryStorage = DulcetOfflineLibraryStorage(automaticDownloadsEnabled: true,
+        downloadBytes: 123, cacheBytes: 456, artworkBytes: 12)
+    private(set) var clearCacheCount = 0
+    func setAutomaticDownloadsEnabled(_ enabled: Bool) { offlineLibraryStorage.automaticDownloadsEnabled = enabled }
+    func setStreamingCacheBudgetBytes(_ bytes: Int64) { offlineLibraryStorage.cacheBudgetBytes = bytes }
+    func clearStreamingCache() { clearCacheCount += 1; offlineLibraryStorage.cacheBytes = 0 }
     var downloadsEnabled = true
     private var handler: (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
     private(set) var configuredAccount: DulcetPlaybackAccount?
@@ -2163,6 +2174,7 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
     }
 
     func configure(account: DulcetPlaybackAccount) {
+        automaticContactPermitted = false
         if handler == nil { configuredBeforeStatusHandler = true }
         configuredAccount = account
     }
@@ -2208,6 +2220,26 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
     func publish(_ state: DulcetDownloadState, for id: DulcetProviderItemID) {
         handler?(id, state)
     }
+}
+
+@Test @MainActor
+func offlineStorageControlsReachTheSameAccountDownloadController() {
+    let downloads = ControlledDownloadController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(), downloadController: downloads))
+    #expect(store.offlineLibraryStorage?.downloadBytes == 123)
+    #expect(store.offlineLibraryStorage?.artworkBytes == 12)
+    store.setAutomaticDownloadsEnabled(false)
+    let budget: Int64 = 256 * 1_024 * 1_024
+    store.setStreamingCacheBudgetBytes(budget)
+    store.clearStreamingCache()
+    #expect(store.offlineLibraryStorage?.automaticDownloadsEnabled == false)
+    #expect(store.offlineLibraryStorage?.cacheBudgetBytes == budget)
+    #expect(store.offlineLibraryStorage?.cacheBytes == 0)
+    #expect(store.offlineLibraryStorage?.downloadBytes == 123)
+    #expect(downloads.clearCacheCount == 1)
+    downloads.downloadsEnabled = false
+    #expect(store.offlineLibraryStorage == nil, "A shell without offline storage does not expose its controls")
 }
 
 @MainActor

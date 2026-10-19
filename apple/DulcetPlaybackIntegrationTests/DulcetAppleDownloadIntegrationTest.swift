@@ -367,10 +367,145 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         XCTAssertGreaterThan(storedByteCount, 0)
         XCTAssertEqual(storedByteCount, asset.exactByteLength)
 
+        try await proveStreamCacheAndAutomaticRetention()
+
         print(
             "CONF-51 \(platformLabel) DOWNLOAD trigger=platform-executor"
                 + " response=validated promotion=atomic exact_bytes=\(storedByteCount)"
         )
+    }
+
+    /// Runs under each existing Mac/iPhone/iPad download selector, so the regular full Apple
+    /// conformance run exercises the same streamed bytes and ownership transitions as the apps.
+    private func proveStreamCacheAndAutomaticRetention() async throws {
+        let context = try makeContext()
+        defer { context.tearDown() }
+        let track = try await loadLiveTrack(baseURL: context.baseURL)
+        try await waitUntil(timeout: .seconds(10), failureMessage: "offline policy never reconciled") {
+            context.controller.offlineLibraryStorage.cacheBudgetBytes > 0
+        }
+        let endpointAccount = PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+            normalizedBaseUrl: context.baseURL, username: fixtureUsername, password: fixturePassword, allowLocalHttp: true)
+        let wire = ApplePlaybackWireClient(account: endpointAccount)
+        defer { wire.close() }
+        let container = try XCTUnwrap(track.sourceContainer)
+        let coreContainer: AudioContainer = switch container {
+        case .mp3: .mp3; case .mp4: .mp4; case .wav: .wav
+        case .flac: .flac; case .ogg: .ogg; case .adtsAAC: .adtsaac
+        }
+        let corePlan: AppleRemotePlaybackPlanDto? = await withCheckedContinuation { continuation in
+            _ = wire.startResolve(request: PlaybackResolveRequest(
+                playbackSessionId: PlaybackSessionId(value: "offline-cache-session"),
+                attemptId: AttemptId(value: "offline-cache-attempt"),
+                itemId: ProviderItemId(providerInstanceId: providerInstanceID, rawId: track.id.rawID),
+                sourceContainer: coreContainer, supportsTranscodingExtension: false,
+                deviceProfile: PlaybackDeviceProfile(name: "Dulcet offline proof", platform: "Apple",
+                    maxAudioBitrate: 1_536_000, maxTranscodingAudioBitrate: 320_000,
+                    directPlayProfiles: [DirectPlayAudioProfile(containers: [coreContainer], audioCodecs: ["mp3", "aac", "flac", "pcm", "vorbis"], protocols: ["http"], maxAudioChannels: 8)],
+                    transcodingProfiles: [TranscodingAudioProfile(container: .mp3, audioCodec: "mp3", protocol: "http", maxAudioChannels: 2)]),
+                legacyPreference: LegacyPlaybackPreference(format: nil, maxBitRateKbps: nil), legacyTimeOffset: nil)) {
+                    continuation.resume(returning: $0.plan)
+                }
+        }
+        let plan = DulcetCorePlaybackPlanFactory.makePlan(client: wire, corePlan: try XCTUnwrap(corePlan),
+            metadata: .init(title: track.title, artist: nil, albumTitle: track.albumTitle),
+            wrapResource: { resource, expected in context.controller.cachingResource(resource, track: track, expectedContainer: expected) })
+        let resource = try XCTUnwrap(plan.resource as? any DulcetPlaybackResourceLoading)
+        let head = await load(resource: resource, range: .init(start: 0, endInclusive: 4_095))
+        guard case let .loaded(_, headerInfo) = head else { XCTFail("stream header did not validate"); return }
+        // AVFoundation commonly reads the metadata tail before returning to the audio body.
+        // Exercise that real request ordering, followed by overlapping sequential reads.
+        let tail = await load(resource: resource, range: .init(start: max(0, headerInfo.contentLength - 4_096),
+                                                             endInclusive: headerInfo.contentLength - 1))
+        guard case .loaded = tail else { XCTFail("out-of-order metadata tail did not validate"); return }
+        var streamed = Data()
+        var total: Int64 = .max
+        while Int64(streamed.count) < total {
+            let start = Int64(streamed.count)
+            let outcome = await load(resource: resource, range: .init(start: start, endInclusive: min(total - 1, start + 256 * 1024 - 1)))
+            guard case let .loaded(bytes, info) = outcome else { XCTFail("streamed bytes did not pass inline validation"); return }
+            XCTAssertFalse(bytes.isEmpty)
+            guard !bytes.isEmpty else { return }
+            total = info.contentLength
+            streamed.append(bytes)
+        }
+        try await waitUntil(timeout: .seconds(10), failureMessage: "streaming response did not promote to cache") {
+            context.controller.offlineLibraryStorage.cacheBytes == Int64(streamed.count)
+        }
+        XCTAssertEqual(context.controller.status(for: track.id), .cached)
+        context.controller.closeNetworkAccessForTesting()
+        wire.close()
+        let cached = try XCTUnwrap(context.controller.offlinePlaybackAsset(for: track))
+        let replay = await load(resource: cached.resource, range: .init(start: 0, endInclusive: cached.exactByteLength - 1))
+        if case let .loaded(bytes, _) = replay { XCTAssertEqual(bytes, streamed) }
+        else { XCTFail("cached song failed with network clients closed") }
+        XCTAssertEqual(context.controller.offlineLibraryStorage.downloadBytes, 0)
+        print("OFFLINE-CACHE \(platformLabel) validated-stream=tee sparse-ranges=true offline=identical bytes=\(streamed.count)")
+
+        // Automatic downloads require the advertised My Library contract. Plain OpenSubsonic
+        // retains the cache proof above; the Dulcet Server fixture also runs the real add/remove.
+        let automatic = try makeContext()
+        defer { automatic.tearDown() }
+        let reader = AppleLibraryReaderClient(databaseName: automatic.databaseName,
+            account: AppleLibraryReaderAccount(providerInstanceId: providerInstanceID, normalizedBaseUrl: automatic.baseURL,
+                username: fixtureUsername, password: fixturePassword, allowLocalHttp: true), foreground: true, readsDownloads: true)
+        defer { reader.close() }
+        _ = await withCheckedContinuation { continuation in _ = reader.connect { continuation.resume(returning: $0) } }
+        let library = AppleMyLibraryClient(reader: reader)
+        let listener = OfflineLibraryIntegrationListener { _ in automatic.controller.reconcileMyLibrary() }
+        let subscription = library.subscribe(sort: "recentlyAdded", listener: listener)
+        defer { subscription.close() }
+        let refresh: AppleMyLibraryRefresh = await withCheckedContinuation { continuation in
+            _ = library.refresh { continuation.resume(returning: $0) }
+        }
+        guard refresh.availability == "available" else { return }
+        _ = await withCheckedContinuation { continuation in
+            _ = library.warmAutomaticDownloadDetails(albumIds: [], trackIds: [track.id.rawID], playlistIds: [], loadPlaylistIndex: false) {
+                continuation.resume(returning: $0)
+            }
+        }
+        automatic.controller.setAutomaticDownloadContactPermitted(false)
+        automatic.controller.setAutomaticDownloadsEnabled(true)
+        XCTAssertTrue(library.add(kind: "track", rawId: track.id.rawID))
+        try await waitUntil(timeout: .seconds(10), failureMessage: "cached My Library member never published") {
+            listener.publication?.membership(kind: "track", rawId: track.id.rawID) == "added"
+        }
+        let heldConnector = DownloadRecoveryConnector()
+        let savedSource = DulcetAccountDataSource(connector: heldConnector,
+            credentialStore: DownloadRecoveryCredentialStore(request: .init(serverURL: automatic.baseURL,
+                username: fixtureUsername, password: fixturePassword, allowLocalHTTP: true),
+                providerInstanceID: providerInstanceID, credentialGeneration: 7, allowsNegotiatedSave: true),
+            downloadController: automatic.controller)
+        defer { _ = savedSource.currentSnapshot }
+        try await waitUntil(timeout: .seconds(10), failureMessage: "saved automatic policy never reconciled") {
+            automatic.controller.offlineLibraryStorage.cacheBudgetBytes > 0
+        }
+        automatic.controller.reconcileMyLibrary()
+        XCTAssertEqual(automatic.controller.status(for: track.id), .notDownloaded,
+                       "Cached membership cannot create a new download while saved negotiation is held")
+        XCTAssertEqual(automatic.controller.offlineLibraryStorage.queuedAutomaticCount, 0)
+        XCTAssertTrue(try regularFiles(in: automatic.downloadRoot).isEmpty)
+        XCTAssertEqual(savedSource.currentSnapshot.accountConnection, .connecting)
+        heldConnector.complete(.connected(.init(serverName: "Disposable fixture", normalizedServerURL: automatic.baseURL)))
+        try await waitUntil(timeout: .seconds(60), failureMessage: "My Library add did not automatically download") {
+            automatic.controller.status(for: track.id) == .downloaded
+        }
+        XCTAssertGreaterThan(automatic.controller.offlineLibraryStorage.downloadBytes, 0)
+        let explicitUpgrade = expectation(description: "explicit Keep Download ownership recorded")
+        automatic.controller.setStatusHandler { id, state in
+            if id == track.id, state == .downloaded { explicitUpgrade.fulfill() }
+        }
+        automatic.controller.requestDownload(track) // Explicit Keep Download upgrades the same row.
+        await fulfillment(of: [explicitUpgrade], timeout: 10)
+        XCTAssertTrue(library.remove(kind: "track", rawId: track.id.rawID))
+        try await waitUntil(timeout: .seconds(10), failureMessage: "My Library removal did not publish") {
+            listener.publication?.membership(kind: "track", rawId: track.id.rawID) == "notAdded"
+        }
+        XCTAssertNotNil(automatic.controller.offlinePlaybackAsset(for: track), "explicit download must survive My Library removal")
+        automatic.controller.setAutomaticDownloadsEnabled(false)
+        XCTAssertNotNil(automatic.controller.offlinePlaybackAsset(for: track), "explicit download must survive disabling Automatic Downloads")
+        XCTAssertEqual(automatic.controller.status(for: track.id), .downloaded)
+        print("OFFLINE-AUTO \(platformLabel) trigger=my-library-add held-contact=no-new-row negotiated=downloaded explicit-survives-remove-and-off=true")
     }
 
     private func proveOfflinePlaybackLoadsIdenticalBytesAfterNetworkClientsClose() async throws {
@@ -492,6 +627,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             allowLocalHTTP: true,
             credentialGeneration: 7
         ))
+        controller.setAutomaticDownloadContactPermitted(true)
         return DownloadIntegrationContext(
             controller: controller,
             downloadRoot: root,
@@ -679,7 +815,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         await withCheckedContinuation { continuation in
             _ = resource.load(DulcetPlaybackResourceLoadRequest(
                 range: range,
-                requiresAudioSignature: true
+                requiresAudioSignature: range.start == 0
             )) { outcome in
                 continuation.resume(returning: outcome)
             }
@@ -751,17 +887,22 @@ private final class DownloadRecoveryCredentialStore: DulcetProviderInstanceCrede
     let request: DulcetAccountConnectRequest
     let providerInstanceID: String?
     let credentialGeneration: Int64
+    private let allowsNegotiatedSave: Bool
 
-    init(request: DulcetAccountConnectRequest, providerInstanceID: String, credentialGeneration: Int64) {
+    init(request: DulcetAccountConnectRequest, providerInstanceID: String, credentialGeneration: Int64,
+         allowsNegotiatedSave: Bool = false) {
         self.request = request
         self.providerInstanceID = providerInstanceID
         self.credentialGeneration = credentialGeneration
+        self.allowsNegotiatedSave = allowsNegotiatedSave
     }
 
     func load() throws -> DulcetAccountConnectRequest? { request }
-    func save(_ request: DulcetAccountConnectRequest) throws { XCTFail("saved launch unexpectedly saved credentials") }
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        if !allowsNegotiatedSave { XCTFail("saved launch unexpectedly saved credentials") }
+    }
     func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
-        XCTFail("saved launch unexpectedly saved an account")
+        if !allowsNegotiatedSave { XCTFail("saved launch unexpectedly saved an account") }
     }
     func delete() throws { XCTFail("saved launch unexpectedly deleted credentials") }
 }
@@ -769,12 +910,20 @@ private final class DownloadRecoveryCredentialStore: DulcetProviderInstanceCrede
 @MainActor
 private final class DownloadRecoveryConnector: DulcetAccountConnecting {
     private(set) var requestCount = 0
+    private var completion: (@MainActor (DulcetAccountConnectOutcome) -> Void)?
+
+    func complete(_ outcome: DulcetAccountConnectOutcome) {
+        let callback = completion
+        completion = nil
+        callback?(outcome)
+    }
 
     func connect(
         _ request: DulcetAccountConnectRequest,
         completion: @escaping @MainActor (DulcetAccountConnectOutcome) -> Void
     ) -> any DulcetAccountConnectOperation {
         requestCount += 1
+        self.completion = completion
         return DownloadRecoveryConnectOperation()
     }
 }
@@ -782,4 +931,14 @@ private final class DownloadRecoveryConnector: DulcetAccountConnecting {
 @MainActor
 private final class DownloadRecoveryConnectOperation: DulcetAccountConnectOperation {
     func cancel() {}
+}
+
+
+private final class OfflineLibraryIntegrationListener: NSObject, AppleMyLibraryListener, @unchecked Sendable {
+    private let handler: @MainActor (AppleMyLibraryPublication) -> Void
+    @MainActor var publication: AppleMyLibraryPublication?
+    init(handler: @escaping @MainActor (AppleMyLibraryPublication) -> Void) { self.handler = handler }
+    func onMyLibraryPublication(publication: AppleMyLibraryPublication) {
+        MainActor.assumeIsolated { self.publication = publication; handler(publication) }
+    }
 }
