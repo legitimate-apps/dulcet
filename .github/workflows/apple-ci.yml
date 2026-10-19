@@ -2020,25 +2020,17 @@ jobs:
   # iPhone and iPadOS builds its `test-without-building` proofs reuse, the corpus and the
   # configuration -- and then runs the iPadOS and iPhone proof chain against its own server.
   #
-  # 110 = ceil(1.5 x 72.3 / 5) x 5. 72.3 minutes is a PROJECTION from run 37105472578: the
-  # composite's 59.6 (see its cap) plus 12.7 for the setup, where the closure install took 4.0, the
-  # iPhone and iPadOS builds 3.1 and 1.7, and the iOS-simulator framework link is ASSUMED at 2.5. The
-  # job cap stays above the composite's 90 plus the rest of the job: 12.7 of setup, 6.3 for the
-  # devices' first boots, and 4 more when an ffmpeg cache miss (estimated at 8) replaces the old
-  # closure install's 4.0 -- 90 + 12.7 + 6.3 + 4 = 113.0, under 115.
-  # One leg per device, in parallel, each against its own disposable server. As one job the iPad
-  # proofs and then the iPhone proofs ran in a single 90-minute step that took 74 to 82 minutes
-  # when green (runs 37375260936, 37379563022, 37388349181, 37388698250) and was cancelled at 90 on
-  # main in run 37483187883, during its last proof. Every new device proof lengthened it. The legs
-  # share no server state: the iPhone playback proof records its canary baseline rather than
-  # assuming the iPad's plays. The job id stays, so `needs` and the artifact names keep it; the
-  # check runs are named apple-conformance-ipad and apple-conformance-iphone.
+  # §21.5 rule 5, measured after the device split: 145 = ceil(1.5 x 95.350 / 5) x 5.
+  # Run 39144805540's successful iPad member took 95.350 minutes, including its
+  # 81.850-minute composite. The new 125-minute composite envelope plus the measured
+  # remaining 13.500 fits within 145. Both matrix members retain the same tests,
+  # disposable server ownership and individual proof bounds; no extra runner is added.
   apple-conformance-ipad-iphone:
     name: apple-conformance-${{ matrix.device }}
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 115
+    timeout-minutes: 145
     strategy:
       fail-fast: false
       matrix:
@@ -2191,16 +2183,9 @@ jobs:
       # run-my-library-proofs then boots and settles this member's one device, exactly once,
       # before xcodebuild starts any per-test execution allowance. Keep it booted for later proofs.
       - name: Assert this leg's conformance proofs
-        # 90 = ceil(1.5 x 59.6 / 5) x 5, rule 5's leg formula applied to this step. 59.6 minutes is
-        # what these phases took inside the single composite of run 37105472578 -- the canary and
-        # iPadOS proofs 27.8, the iPhone proofs from the playlist proof on 27.8, the server start and
-        # preconditions 0.6. This member now pays its one first boot after fixture readiness and
-        # before the UI tests' own clocks. Run 37125098942, which paid
-        # both first boots inside this step, finished the iPad proofs and the iPhone search in 43 m.
-        # Since the device split each member runs one half of that chain, so 90 is now headroom, not
-        # a fit: the whole chain took 74 to 82 of it when green, and ran out on main in run
-        # 37483187883. Re-derive the cap from the members' own times once they are measured.
-        timeout-minutes: 90
+        # §21.5 rule 5: 125 = ceil(1.5 x 81.850 / 5) x 5, measured in
+        # 39144805540's successful iPad member. Replaces the pre-split projection.
+        timeout-minutes: 125
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
