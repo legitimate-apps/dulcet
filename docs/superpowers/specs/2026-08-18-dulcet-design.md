@@ -1990,7 +1990,8 @@ Listing route and interruption events is not a policy. The normative policy:
   `InterruptionBegan` playback pauses; on `InterruptionEnded` it resumes **only** if the system
   indicates resumption is appropriate and no newer Pause, Stop, noisy-route pause or terminal
   playback failure revoked the earlier playing intent. A later explicit Play still starts playback.
-  An interruption whose reason is that the system **suspended
+  Same-session stream replacement preserves accepted Play or Pause intent; a lagging native
+  playing report is not a new Play request. An interruption whose reason is that the system **suspended
   the app** (iOS) is not a call or Siri taking audio and is ignored. iOS, iPadOS and tvOS declare the
   `audio` background mode; without it the system suspends playback at screen lock.
 - **Android:** `AudioAttributes` usage `MEDIA` / content type `MUSIC`, with
@@ -7860,6 +7861,14 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-19 - Preserve the latest playback intent across interruptions and replacement.**
+§12.9 makes explicit that a newer Pause, Stop, noisy-route pause or terminal failure revokes
+an earlier interruption's permission to resume. Same-session replacement preserves accepted
+Play or Pause intent instead of inferring it from a native transport report that may lag the
+command. Regression cases inject both interruption orderings and native-status lag, retain
+allowed replacement resumption, and require a later explicit Play to work after Pause.
+No platform UI or feature-matrix status is promoted by these engine policy controls.
 
 **2026-10-18 — Re-measure Apple workflow envelopes from successful legs.**
 §21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) now sets the

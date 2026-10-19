@@ -247,6 +247,7 @@ struct AVPlayerCrossfadeTests {
                                                       playAfterPreparation: false)
         let engine = fixture.engine
         defer {
+            _ = player.finishSeek()
             engine.execute(.release(commandID: .init("cleanup"))) { _ in }
             try? FileManager.default.removeItem(at: fixture.localURL)
         }
@@ -259,8 +260,9 @@ struct AVPlayerCrossfadeTests {
         print("DULCET BOUNDARY SEEK PREPARATION ready-items=2 paused=true replace=\(replaceDuringSeek) stale-timestamp=\(boundaryTimestamp)")
         player.holdSeek()
         let seeking = Task { await execute(engine, .seek(commandID: .init("held-seek"), position: 0)) }
-        try await waitUntil("seek was not held", engine: engine) { player.hasHeldSeek }
-        try #require(player.hasHeldSeek, "The stale callback proof requires an outstanding seek")
+        try await waitUntil("native seek did not reach the held engine completion", engine: engine) { player.hasHeldSeek }
+        try #require(player.hasHeldSeek && player.heldSeekSucceeded,
+                     "The native seek must succeed while its engine completion remains outstanding")
         try #require(await execute(engine, .play(commandID: .init("play-during-held-seek"))) ==
             .accepted(commandID: .init("play-during-held-seek")))
         try #require(player.rate > 0 && player.currentItem === items.first
@@ -273,24 +275,8 @@ struct AVPlayerCrossfadeTests {
                      "The stored pre-seek callback must actually be delivered during the held seek")
         #expect(engine.crossfadeStateForTesting() == nil)
         #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
-        try #require(await execute(engine, .pause(commandID: .init("hold-between-callbacks"))) ==
-            .completed(commandID: .init("hold-between-callbacks"), result: .withoutData))
-        try await waitUntil("transport did not pause between callback proofs", engine: engine) {
-            player.rate == 0 && player.timeControlStatus == .paused
-        }
-        let heldAfterPause = player.rate == 0 && player.timeControlStatus == .paused
-        if !heldAfterPause {
-            // Preserve the failed observation before collecting subsequent transitions. No
-            // later recovery can turn it into a pass or erase an unexpected Play invocation.
-            var observations: [String] = []
-            for _ in 0..<50 {
-                let mediaRate = player.currentItem?.timebase.map { CMTimebaseGetRate($0) } ?? -1
-                observations.append("rate=\(player.rate),control=\(player.timeControlStatus.rawValue),media-rate=\(mediaRate),position=\(CMTimeGetSeconds(player.currentTime()))")
-                try await Task.sleep(for: .milliseconds(20))
-            }
-            print("DULCET BOUNDARY PAUSE FAILURE calls=\(player.transportTrace) following=\(observations) events=\(fixture.events.snapshot)")
-        }
-        try #require(heldAfterPause, "Transport after Pause: \(player.transportTrace)")
+        // The boundary proof needs active playback at both injections. Keep it running;
+        // native seek completion is already held, so no extra Play/Pause interleaving is needed.
         try #require(await execute(engine, .setCrossfade(commandID: .init("policy-during-seek"),
             attemptID: fixture.first.attemptID, duration: 2)) ==
             .completed(commandID: .init("policy-during-seek"), result: .withoutData))
@@ -303,10 +289,6 @@ struct AVPlayerCrossfadeTests {
             try #require(await execute(engine, .replaceCurrent(commandID: .init("replace-seeking"), plan: replacement)) ==
                 .accepted(commandID: .init("replace-seeking")))
             replayAttempt = replacement.attemptID
-            // Replacement creates a new playback context. Hold that context explicitly before
-            // waiting for its decoder; the earlier pause belonged to the outgoing attempt.
-            try #require(await execute(engine, .pause(commandID: .init("hold-replacement-for-replay"))) ==
-                .completed(commandID: .init("hold-replacement-for-replay"), result: .withoutData))
             try #require(await execute(engine, .setCrossfade(commandID: .init("rearm-replacement"),
                 attemptID: replacement.attemptID, duration: 2)) ==
                 .completed(commandID: .init("rearm-replacement"), result: .withoutData))
@@ -316,21 +298,15 @@ struct AVPlayerCrossfadeTests {
         let replayReady = { @Sendable in
             replayItems.allSatisfy { $0.status == .readyToPlay } && player.currentItem === replayItems[0]
         }
-        let replayHeld = { @Sendable in
-            replayReady() && player.rate == 0 && player.timeControlStatus == .paused
-        }
-        try await waitUntil("held replay fixture did not prepare both real items", engine: engine,
+        try await waitUntil("replay fixture did not prepare both real items while playing", engine: engine,
                             mediaState: {
-                                "statuses=\(replayItems.map { $0.status.rawValue }) rate=\(player.rate) control=\(player.timeControlStatus.rawValue) position=\(CMTimeGetSeconds(player.currentTime()))"
-                            }, condition: replayHeld)
-        try #require(replayHeld())
-        player.finishSeek()
+                                "statuses=\(replayItems.map { $0.status.rawValue }) rate=\(player.rate) control=\(player.timeControlStatus.rawValue) calls=\(player.transportTrace) events=\(fixture.events.snapshot)"
+                            }) { replayReady() && player.rate > 0 }
+        try #require(player.finishSeek(), "The real seek completion must actually be delivered")
         let expected: DulcetPlaybackCommandOutcome = replaceDuringSeek
             ? .rejected(commandID: .init("held-seek"), reason: .invalidState)
             : .completed(commandID: .init("held-seek"), result: .withoutData)
         try #require(await seeking.value == expected)
-        try #require(await execute(engine, .play(commandID: .init("resume-before-stale-replay"))) ==
-            .accepted(commandID: .init("resume-before-stale-replay")))
         try #require(replayReady() && player.rate > 0,
                      "The replayed callback must face ready items and active playback")
         print("DULCET BOUNDARY SEEK CALLBACK phase=replay replace=\(replaceDuringSeek) ready-items=2 rate=\(player.rate)")
@@ -406,15 +382,17 @@ private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Senda
         super.pause()
     }
     private nonisolated(unsafe) var shouldHold = false
-    private nonisolated(unsafe) var heldSeek: (CMTime, CMTime, CMTime, @Sendable (Bool) -> Void)?
+    private nonisolated(unsafe) var finishRequested = false
+    private nonisolated(unsafe) var heldSeek: (Bool, @Sendable (Bool) -> Void)?
     private nonisolated(unsafe) var latestCallback: (@Sendable (CMTime) -> Void)?
     private nonisolated(unsafe) var originalCallback: (@Sendable (CMTime) -> Void)?
     private nonisolated(unsafe) var callbackQueue: DispatchQueue?
 
     nonisolated func holdSeek() {
-        seekLock.withLock { shouldHold = true; originalCallback = latestCallback }
+        seekLock.withLock { shouldHold = true; finishRequested = false; originalCallback = latestCallback }
     }
     nonisolated var hasHeldSeek: Bool { seekLock.withLock { heldSeek != nil } }
+    nonisolated var heldSeekSucceeded: Bool { seekLock.withLock { heldSeek?.0 == true } }
     nonisolated func captureLatestCallbackForReplay() {
         seekLock.withLock { originalCallback = latestCallback }
     }
@@ -425,22 +403,33 @@ private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Senda
     ) {
         let hold = seekLock.withLock {
             if shouldHold {
-                heldSeek = (time, toleranceBefore, toleranceAfter, completionHandler)
                 shouldHold = false
                 return true
             }
             return false
         }
-        if !hold {
-            super.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter,
-                       completionHandler: completionHandler)
+        super.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter) { [weak self] success in
+            guard let self, hold else { completionHandler(success); return }
+            let deferred = self.seekLock.withLock {
+                guard !self.finishRequested else { return false }
+                self.heldSeek = (success, completionHandler)
+                return true
+            }
+            if !deferred { completionHandler(success) }
         }
     }
 
-    nonisolated func finishSeek() {
-        let held = seekLock.withLock { let value = heldSeek; heldSeek = nil; return value }
-        guard let (time, before, after, completion) = held else { return }
-        super.seek(to: time, toleranceBefore: before, toleranceAfter: after, completionHandler: completion)
+    @discardableResult
+    nonisolated func finishSeek() -> Bool {
+        let held = seekLock.withLock {
+            finishRequested = true
+            let value = heldSeek
+            heldSeek = nil
+            return value
+        }
+        guard let (success, completion) = held else { return false }
+        completion(success)
+        return true
     }
 
     nonisolated override func addPeriodicTimeObserver(
@@ -1017,9 +1006,23 @@ struct AVPlayerStartupRecoveryTests {
         case .release: _ = await execute(engine, .release(commandID: .init("release")))
         }
         engine.reportPlayerTransportChangedForTesting()
-        #expect(!clock.fireScheduledDeadline())
-        #expect(player.playRequestCount == 1)
-        #expect(!events.snapshot.contains { if case .failedBeforeStart(_, .engine) = $0 { true } else { false } })
+        if case .replacement = reason {
+            // Replacement retains accepted Play intent even when the old native Play was
+            // dropped. Its own recovery is valid; the retired attempt must never fail later.
+            try #require(player.playRequestCount == 2)
+            engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+            try #require(clock.fireScheduledDeadline())
+            #expect(player.playRequestCount == 3)
+            try #require(clock.fireScheduledDeadline())
+            #expect(events.snapshot.contains(.failedBeforeStart(attemptID: .init("replacement"), error: .engine)))
+            #expect(!events.snapshot.contains {
+                if case let .failedBeforeStart(id, .engine) = $0 { id == playbackPlan.attemptID } else { false }
+            })
+        } else {
+            #expect(!clock.fireScheduledDeadline())
+            #expect(player.playRequestCount == 1)
+            #expect(!events.snapshot.contains { if case .failedBeforeStart(_, .engine) = $0 { true } else { false } })
+        }
         _ = await execute(engine, .release(commandID: .init("cleanup")))
     }
 }
