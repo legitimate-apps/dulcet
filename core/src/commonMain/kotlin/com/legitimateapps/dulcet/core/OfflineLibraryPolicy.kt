@@ -5,7 +5,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.intOrNull
-import okio.BufferedSink
+import okio.FileHandle
 
 public data class OfflineLibrarySettings(val automaticDownloadsEnabled: Boolean, val cacheBudgetBytes: Long)
 public data class AutomaticDownloadMember(val request: DownloadRequest, val addedAtWallClock: Long)
@@ -15,8 +15,12 @@ public data class OfflineLibraryStats(
     val cacheBytes: Long,
     val queuedAutomaticCount: Int,
     val completedAutomaticCount: Int,
-)
+    val artworkBytes: Long = 0,
+) {
+    public val totalCacheBytes: Long get() = cacheBytes + artworkBytes
+}
 public data class StreamCacheWrite(val writeId: String)
+public data class ArtworkCacheBudgetPlan(val targetEvictableBytes: Long, val protectedArtworkKeys: List<String>)
 
 /**
  * Account-scoped retention decisions. All methods run on the download executor's confined thread.
@@ -29,6 +33,7 @@ internal class OfflineLibraryPolicy(
     private val queries get() = database.offlineLibraryQueries
     private val writes = mutableMapOf<String, CacheWrite>()
     private var protected = emptySet<DownloadIdentity>()
+    private val artworkUsage = mutableMapOf<String, ArtworkUsage>()
 
     init {
         engine.cacheReconciliationHandler = {
@@ -214,10 +219,29 @@ internal class OfflineLibraryPolicy(
             cache.sumOf { it.fileSizeBytes },
             automatic.count { it.state !in setOf(DownloadState.Complete, DownloadState.Stale) },
             automatic.count { it.state in setOf(DownloadState.Complete, DownloadState.Stale) },
+            artworkBytes(serverId),
         )
     }
 
-    fun setProtectedIdentities(identities: Set<DownloadIdentity>) { protected = identities.toSet() }
+    /** Report actual artwork use before and after the shell trims. Only 256 px pinned keys are
+     * protected by the executor; all target arithmetic and retained-item selection lives here. */
+    fun planArtworkCache(serverId: String, evictableBytes: Long, pinnedBytes: Long,
+        reservationBytes: Long = 0): ArtworkCacheBudgetPlan {
+        require(evictableBytes >= 0 && pinnedBytes >= 0 && reservationBytes >= 0)
+        artworkUsage[serverId] = ArtworkUsage(evictableBytes, pinnedBytes)
+        val budget = settings(serverId).cacheBudgetBytes
+        val remaining = (budget - usedCacheBytes(serverId)).coerceAtLeast(0)
+        val afterPinned = (remaining - pinnedBytes).coerceAtLeast(0)
+        val target = (afterPinned - reservationBytes).coerceAtLeast(0)
+        val keys = queries.selectProtectedArtworkKeys(serverId).executeAsList().mapNotNull { it.artwork_key }
+        return ArtworkCacheBudgetPlan(target, keys)
+    }
+
+    fun setProtectedIdentities(identities: Set<DownloadIdentity>) {
+        val releasedServers = (protected - identities).map { it.serverId }.toSet()
+        protected = identities.toSet()
+        releasedServers.forEach { evict(it, 0) }
+    }
 
     fun markCacheAccess(identity: DownloadIdentity, wallClockMilliseconds: Long) {
         val old = engine.retention(identity) ?: return
@@ -252,13 +276,14 @@ internal class OfflineLibraryPolicy(
     }
 
     /**
-     * 206 is accepted only for contiguous reads beginning at zero with an exact FULL resource
-     * length. A caller must not finish a range at its own EOF; all resource bytes must arrive.
+     * A 206 requires an exact FULL resource length. Validated ranges may arrive out of order;
+     * promotion requires coverage of every byte. Unknown-length 200 bodies remain sequential.
      */
     fun beginCacheWrite(request: DownloadRequest, responseStatus: Int, rangeStart: Long = 0,
         acceptedContainers: List<AudioContainer> = listOf(request.expectedContainer)): StreamCacheWrite? {
-        if (rangeStart != 0L || responseStatus !in setOf(200, 206)) return null
+        if (rangeStart < 0 || responseStatus !in setOf(200, 206)) return null
         if (responseStatus == 206 && request.declaredContentLength !is PlaybackContentLength.Exact) return null
+        if (responseStatus == 200 && rangeStart != 0L) return null
         val budget = settings(request.identity.serverId).cacheBudgetBytes
         if (budget == 0L) return null
         engine.record(request.identity)?.let { existing ->
@@ -270,14 +295,14 @@ internal class OfflineLibraryPolicy(
             engine.remove(existing.identity)
         }
         val expected = (request.declaredContentLength as? PlaybackContentLength.Exact)?.byteCount
-        if (expected != null && expected > budget) return null
+        if (expected != null && (expected > budget || rangeStart > expected)) return null
         evict(request.identity.serverId, expected ?: 0)
-        if (usedCacheBytes(request.identity.serverId) + (expected ?: 0) > budget) return null
+        if (usedCacheBytes(request.identity.serverId) + artworkBytes(request.identity.serverId) + (expected ?: 0) > budget) return null
         val row = engine.enqueueRetained(request, explicit = false)
         queries.upsertRetention(row.identity.serverId, row.identity.rawId, row.identity.transcodeProfile, 0, 0, 0, request.wallClockMilliseconds)
         database.downloadsQueries.markDownloadStarted(row.downloadId.value)
         return try {
-            writes[row.downloadId.value] = CacheWrite(row, engine.files.openTemporarySink(row), expected, acceptedContainers.toList())
+            writes[row.downloadId.value] = CacheWrite(row, engine.files.openTemporaryHandle(row), expected, acceptedContainers.toList())
             StreamCacheWrite(row.downloadId.value)
         } catch (_: Exception) {
             engine.remove(row.identity)
@@ -287,25 +312,42 @@ internal class OfflineLibraryPolicy(
 
     fun appendCacheWrite(writeId: String, bytes: ByteArray, offset: Long): Boolean {
         val write = writes[writeId] ?: return false
-        val next = write.bytes + bytes.size
-        if (offset != write.bytes || next < write.bytes || (write.expected != null && next > write.expected)) {
+        if (bytes.isEmpty()) return offset >= 0 && (write.expected == null || offset <= write.expected)
+        val end = offset + bytes.size
+        if (offset < 0 || end < offset || (write.expected != null && end > write.expected) ||
+            (write.expected == null && offset != write.bytes)) {
             abortCacheWrite(writeId); return false
         }
-        evict(write.row.identity.serverId, bytes.size.toLong())
-        if (usedCacheBytes(write.row.identity.serverId) + bytes.size > settings(write.row.identity.serverId).cacheBudgetBytes) {
+        val coverage = mergeCoverage(write.coverage, ByteRange(offset, end))
+        if (coverage.size > MAX_CACHE_INTERVALS) { abortCacheWrite(writeId); return false }
+        val nextExtent = maxOf(write.bytes, end)
+        val growth = if (write.expected != null) 0 else nextExtent - write.bytes
+        evict(write.row.identity.serverId, growth)
+        if (usedCacheBytes(write.row.identity.serverId) + artworkBytes(write.row.identity.serverId) + growth >
+            settings(write.row.identity.serverId).cacheBudgetBytes) {
             abortCacheWrite(writeId); return false
         }
-        return try { write.sink.write(bytes); write.bytes = next; true }
-        catch (_: Exception) { abortCacheWrite(writeId); false }
+        return try {
+            write.file.write(offset, bytes, 0, bytes.size)
+            write.bytes = nextExtent
+            write.coverage = coverage
+            true
+        } catch (_: Exception) { abortCacheWrite(writeId); false }
+    }
+
+    fun isCacheWriteComplete(writeId: String): Boolean {
+        val write = writes[writeId] ?: return false
+        val total = write.expected ?: return false
+        return write.coverage == listOf(ByteRange(0, total))
     }
 
     fun finishCacheWrite(writeId: String, metadata: DownloadResponseMetadata, wallClockMilliseconds: Long): DownloadPromotionResult {
         val write = writes.remove(writeId) ?: return DownloadPromotionResult.UnknownDownload
-        try { write.sink.close() } catch (_: Exception) {
+        try { write.file.flush(); write.file.close() } catch (_: Exception) {
             discardUnfinishedWrite(write)
             return DownloadPromotionResult.Rejected(DomainError.Protocol.UnexpectedBinary)
         }
-        if (write.expected != null && write.expected != write.bytes) {
+        if (write.expected != null && write.coverage != listOf(ByteRange(0, write.expected))) {
             discardUnfinishedWrite(write)
             return DownloadPromotionResult.Rejected(DomainError.Protocol.UnexpectedBinary)
         }
@@ -320,7 +362,7 @@ internal class OfflineLibraryPolicy(
 
     fun abortCacheWrite(writeId: String) {
         val write = writes.remove(writeId) ?: return
-        try { write.sink.close() } finally { discardUnfinishedWrite(write) }
+        try { write.file.close() } finally { discardUnfinishedWrite(write) }
     }
 
     private fun discardUnfinishedWrite(write: CacheWrite) {
@@ -335,16 +377,24 @@ internal class OfflineLibraryPolicy(
     fun close() { writes.keys.toList().forEach(::abortCacheWrite) }
 
     private fun usedCacheBytes(serverId: String): Long = engine.records(serverId).filter { isCache(it.identity) }
-        .sumOf { row -> writes[row.downloadId.value]?.bytes ?: row.fileSizeBytes }
+        .sumOf { row -> writes[row.downloadId.value]?.let { it.expected ?: it.bytes } ?: row.fileSizeBytes }
 
     private fun evict(serverId: String, additional: Long): List<DownloadRecord> {
         val removed = mutableListOf<DownloadRecord>()
         val budget = settings(serverId).cacheBudgetBytes
+        val artwork = artworkUsage[serverId]
+        if (artwork != null) {
+            val available = (budget - usedCacheBytes(serverId)).coerceAtLeast(0)
+            val target = ((available - artwork.pinned).coerceAtLeast(0) - additional).coerceAtLeast(0)
+            // The shell trims artwork first, then reports the resulting actual usage. Until that
+            // acknowledgement arrives, preserve media rather than reversing the priority order.
+            if (artwork.evictable > target) return emptyList()
+        }
         val candidates = engine.records(serverId).filter {
             isCache(it.identity) && it.identity !in protected && it.downloadId.value !in writes
         }.sortedBy { engine.retention(it.identity)?.last_access_wall ?: Long.MIN_VALUE }
         for (row in candidates) {
-            if (usedCacheBytes(serverId) <= (budget - additional).coerceAtLeast(0)) break
+            if (usedCacheBytes(serverId) + artworkBytes(serverId) <= (budget - additional).coerceAtLeast(0)) break
             engine.remove(row.identity)?.let(removed::add)
         }
         return removed
@@ -354,5 +404,21 @@ internal class OfflineLibraryPolicy(
         it.explicit_download == 0L && it.automatic_download == 0L
     } ?: false
 
-    private data class CacheWrite(val row: DownloadRecord, val sink: BufferedSink, val expected: Long?, val acceptedContainers: List<AudioContainer>, var bytes: Long = 0)
+    private fun artworkBytes(serverId: String): Long = artworkUsage[serverId]?.let { it.evictable + it.pinned } ?: 0
+
+    private fun mergeCoverage(held: List<ByteRange>, incoming: ByteRange): List<ByteRange> {
+        val merged = mutableListOf<ByteRange>()
+        (held + incoming).sortedBy { it.start }.forEach { range ->
+            val last = merged.lastOrNull()
+            if (last != null && range.start <= last.end) merged[merged.lastIndex] = ByteRange(last.start, maxOf(last.end, range.end))
+            else merged += range
+        }
+        return merged
+    }
+
+    private data class ByteRange(val start: Long, val end: Long)
+    private data class ArtworkUsage(val evictable: Long, val pinned: Long)
+    private data class CacheWrite(val row: DownloadRecord, val file: FileHandle, val expected: Long?,
+        val acceptedContainers: List<AudioContainer>, var bytes: Long = 0, var coverage: List<ByteRange> = emptyList())
+    private companion object { const val MAX_CACHE_INTERVALS = 1024 }
 }

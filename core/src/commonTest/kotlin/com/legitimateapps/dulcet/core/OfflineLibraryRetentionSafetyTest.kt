@@ -55,16 +55,20 @@ class OfflineLibraryRetentionSafetyTest {
     }
 
     @Test
-    fun cacheCannotPromoteTruncatedResponsesOrDiscontinuousSeekRanges() = withFixture { f ->
+    fun cacheCannotPromoteTruncatedResponsesOrIncompleteSparseRanges() = withFixture { f ->
         val full = request("account-a", "truncated")
         val write = assertNotNull(f.policy.beginCacheWrite(full, 200))
         f.policy.appendCacheWrite(write.writeId, AUDIO.copyOfRange(0, 3), 0)
         assertIs<DownloadPromotionResult.Rejected>(f.policy.finishCacheWrite(write.writeId, response(), 10))
         assertNull(f.engine.record(full.identity))
         val seek = request("account-a", "seek")
-        assertNull(f.policy.beginCacheWrite(seek, 206, rangeStart = 3))
-        val discontinuous = assertNotNull(f.policy.beginCacheWrite(seek, 200))
-        assertEquals(false, f.policy.appendCacheWrite(discontinuous.writeId, AUDIO, 3))
+        val sparse = assertNotNull(f.policy.beginCacheWrite(seek, 206, rangeStart = 3))
+        assertEquals(true, f.policy.appendCacheWrite(sparse.writeId, AUDIO.copyOfRange(3, 6), 3))
+        assertEquals(false, f.policy.isCacheWriteComplete(sparse.writeId))
+        assertIs<DownloadPromotionResult.Rejected>(f.policy.finishCacheWrite(sparse.writeId, response(), 10))
+        assertNull(f.engine.record(seek.identity))
+        val outside = assertNotNull(f.policy.beginCacheWrite(seek, 206, rangeStart = 3))
+        assertEquals(false, f.policy.appendCacheWrite(outside.writeId, AUDIO, 3))
         assertNull(f.engine.record(seek.identity))
     }
 
@@ -76,6 +80,9 @@ class OfflineLibraryRetentionSafetyTest {
         assertNull(f.engine.record(request("account-a", "old").identity))
         assertIs<OfflinePlaybackPlanResult.Available>(f.engine.offlinePlaybackPlan(request("account-a", "current").identity))
         assertIs<OfflinePlaybackPlanResult.Available>(f.engine.offlinePlaybackPlan(request("account-a", "preloaded").identity))
+        f.policy.setProtectedIdentities(emptySet())
+        assertNull(f.engine.record(request("account-a", "current").identity))
+        assertNull(f.engine.record(request("account-a", "preloaded").identity))
     }
 
     @Test

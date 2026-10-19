@@ -50,14 +50,21 @@ class OfflineLibraryPolicyTest {
 
     @Test fun partialRangesAndSeekHolesCannotPromote() = fixture { engine, policy ->
         assertNull(policy.beginCacheWrite(request("range-no-total"), 206))
-        assertNull(policy.beginCacheWrite(request("range-offset", 6), 206, 3))
+        val tail = assertNotNull(policy.beginCacheWrite(request("range-offset", 6), 206, 3))
+        assertTrue(policy.appendCacheWrite(tail.writeId, AUDIO.copyOfRange(3, 6), 3))
+        assertFalse(policy.isCacheWriteComplete(tail.writeId))
+        assertIs<DownloadPromotionResult.Rejected>(policy.finishCacheWrite(tail.writeId, metadata(), 10))
         val partial = assertNotNull(policy.beginCacheWrite(request("partial", 100), 206))
         assertTrue(policy.appendCacheWrite(partial.writeId, AUDIO, 0))
         assertIs<DownloadPromotionResult.Rejected>(policy.finishCacheWrite(partial.writeId, metadata(), 10))
         assertNull(engine.record(request("partial").identity))
         val seek = assertNotNull(policy.beginCacheWrite(request("seek", 100), 206))
-        assertFalse(policy.appendCacheWrite(seek.writeId, AUDIO, 50))
+        assertTrue(policy.appendCacheWrite(seek.writeId, AUDIO, 50))
+        assertFalse(policy.isCacheWriteComplete(seek.writeId))
+        assertIs<DownloadPromotionResult.Rejected>(policy.finishCacheWrite(seek.writeId, metadata(), 10))
         assertNull(engine.record(request("seek").identity))
+        val unknown = assertNotNull(policy.beginCacheWrite(request("unknown"), 200))
+        assertFalse(policy.appendCacheWrite(unknown.writeId, AUDIO, 1))
     }
 
     @Test fun lruEvictsOnlyUnprotectedCacheAndRespectsAccountAndDiskBudget() = fixture { engine, policy ->
@@ -207,6 +214,72 @@ class OfflineLibraryPolicyTest {
         assertFalse(database.database.seenCacheQueries.selectPins("a").executeAsList().any { it.raw_id == "orphan-cache" })
     }
 
+    @Test fun mp4TailThenHeaderThenOverlappingMiddlePromotesOnlyAfterFullCoverage() = fixture { engine, policy ->
+        val mp4 = byteArrayOf(0, 0, 0, 24, 102, 116, 121, 112, 77, 52, 65, 32, 0, 0, 0, 0)
+        val request = request("sparse-mp4", mp4.size.toLong()).copy(expectedContainer = AudioContainer.Mp4)
+        val writer = assertNotNull(policy.beginCacheWrite(request, 206, 12))
+        assertTrue(policy.appendCacheWrite(writer.writeId, mp4.copyOfRange(12, 16), 12))
+        assertFalse(policy.isCacheWriteComplete(writer.writeId))
+        assertTrue(policy.appendCacheWrite(writer.writeId, mp4.copyOfRange(0, 8), 0))
+        assertFalse(policy.isCacheWriteComplete(writer.writeId))
+        assertTrue(policy.appendCacheWrite(writer.writeId, mp4.copyOfRange(4, 14), 4))
+        assertTrue(policy.isCacheWriteComplete(writer.writeId))
+        assertIs<DownloadPromotionResult.Promoted>(policy.finishCacheWrite(writer.writeId,
+            DownloadResponseMetadata("audio/mp4", PlaybackContentLength.Exact(mp4.size.toLong())), 2))
+        val plan = assertIs<OfflinePlaybackPlanResult.Available>(policy.offlinePlaybackPlan("a", "sparse-mp4", 3)).plan
+        val loaded = assertIs<OfflinePlaybackLoadResult.Audio>(engine.loadOffline(plan))
+        kotlin.test.assertContentEquals(mp4, loaded.bytes)
+    }
+
+    @Test fun inFlightExactResourceReservesItsWholeBudgetBeforeAnyRangeArrives() = fixture { _, policy ->
+        policy.setCacheBudgetBytes("a", 10)
+        val first = assertNotNull(policy.beginCacheWrite(request("first", 10), 206, 9))
+        assertNull(policy.beginCacheWrite(request("second", 1), 200))
+        assertFalse(policy.appendCacheWrite(first.writeId, AUDIO, 9))
+        assertNotNull(policy.beginCacheWrite(request("second", 1), 200))
+    }
+
+    @Test fun artworkIsTrimmedBeforeMediaAndSharesTheSameCacheBudget() = fixture { engine, policy ->
+        policy.setCacheBudgetBytes("a", AUDIO.size.toLong() * 2)
+        cache(policy, "kept-stream", 1)
+        val plan = policy.planArtworkCache("a", AUDIO.size.toLong(), 0, AUDIO.size.toLong())
+        assertEquals(0, plan.targetEvictableBytes)
+        // Until the executor reports artwork trimmed, media keeps its higher priority.
+        assertNull(policy.beginCacheWrite(request("new-stream", AUDIO.size.toLong()), 200))
+        assertNotNull(engine.record(request("kept-stream").identity))
+        policy.planArtworkCache("a", 0, 0, AUDIO.size.toLong())
+        cache(policy, "new-stream", 2)
+        assertNotNull(engine.record(request("kept-stream").identity))
+        assertEquals(0, policy.planArtworkCache("a", 0, 0).targetEvictableBytes)
+    }
+
+    @Test fun downloadedArtworkIsPinnedButStreamingArtworkRemainsEvictable() = fixtureDetailed { engine, policy, database ->
+        val bound = SeenCacheStore(database, SeenCacheWallClock { 1L }).bind(CacheBinding("a", "http://127.0.0.1", "fixture"))
+        bound.writeEntities(CacheWriteStamp(bound.issue(), 1, null), CacheEntitySource.Detail,
+            CacheEntities(tracks = listOf(CacheTrackRecord("art-download", null, "Downloaded", sourceContainer = AudioContainer.Mp3, artworkKey = "download-cover"),
+                CacheTrackRecord("art-stream", null, "Streamed", sourceContainer = AudioContainer.Mp3, artworkKey = "stream-cover"))))
+        val row = engine.enqueue(request("art-download", AUDIO.size.toLong()))
+        engine.writeCompletedTemporaryFile(row.downloadId, AUDIO)
+        assertIs<DownloadPromotionResult.Promoted>(engine.promote(row.downloadId, metadata()))
+        cache(policy, "art-stream", 1)
+        val plan = policy.planArtworkCache("a", 10, 10)
+        assertEquals(listOf("download-cover"), plan.protectedArtworkKeys)
+    }
+
+    @Test fun releasingExplicitOwnershipKeepsAutomaticFileUntilLibraryMembershipIsRemoved() = fixture { engine, policy ->
+        val requested = request("both", AUDIO.size.toLong())
+        val row = engine.enqueue(requested)
+        engine.writeCompletedTemporaryFile(row.downloadId, AUDIO)
+        assertIs<DownloadPromotionResult.Promoted>(engine.promote(row.downloadId, metadata()))
+        policy.reconcileAutomaticDownloads("a", listOf(AutomaticDownloadMember(requested, 1)))
+        assertNull(engine.releaseExplicitDownload(requested.identity))
+        assertNotNull(engine.record(requested.identity))
+        assertTrue(engine.destinationExists(row.downloadId))
+        assertEquals(0, engine.retention(requested.identity)?.explicit_download)
+        policy.reconcileAutomaticDownloads("a", emptyList())
+        assertNull(engine.record(requested.identity))
+    }
+
     private fun cache(policy: OfflineLibraryPolicy, id: String, wall: Long) {
         val write = assertNotNull(policy.beginCacheWrite(request(id, AUDIO.size.toLong()), 200))
         assertTrue(policy.appendCacheWrite(write.writeId, AUDIO, 0))
@@ -221,7 +294,8 @@ class OfflineLibraryPolicyTest {
         try {
             val engine = DownloadPolicyEngine(database.database, DownloadFileStore(root.toString(), FileSystem.SYSTEM))
             engine.reconcile(emptyList(), mapOf("a" to 1L))
-            block(engine, OfflineLibraryPolicy(database.database, engine), database)
+            val policy = OfflineLibraryPolicy(database.database, engine)
+            try { block(engine, policy, database) } finally { policy.close() }
         } finally {
             database.close()
             FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)

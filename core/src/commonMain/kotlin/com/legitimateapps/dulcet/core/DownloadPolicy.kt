@@ -1,7 +1,6 @@
 package com.legitimateapps.dulcet.core
 
 import com.legitimateapps.dulcet.database.DulcetDatabase
-import okio.buffer
 import okio.Buffer
 import okio.FileSystem
 import okio.Path
@@ -651,6 +650,18 @@ internal class DownloadPolicyEngine(
         return row
     }
 
+    /** A user releases explicit retention; My Library's automatic owner keeps its file/task. */
+    fun releaseExplicitDownload(identity: DownloadIdentity): DownloadRecord? {
+        requireReconciled()
+        val old = retention(identity)
+        if (old?.automatic_download == 1L) {
+            database.offlineLibraryQueries.upsertRetention(identity.serverId, identity.rawId,
+                identity.transcodeProfile, 0, 1, old.added_rank, old.last_access_wall)
+            return null
+        }
+        return remove(identity)
+    }
+
     /** Every row of one server, in enqueue order. */
     fun records(serverId: String): List<DownloadRecord> {
         requireReconciled()
@@ -743,7 +754,7 @@ internal class DownloadFileStore(
         fileSystem.write(temporaryPath(row)) { write(bytes) }
     }
 
-    fun openTemporarySink(row: DownloadRecord): okio.BufferedSink = fileSystem.sink(temporaryPath(row)).buffer()
+    fun openTemporaryHandle(row: DownloadRecord): okio.FileHandle = fileSystem.openReadWrite(temporaryPath(row))
 
     fun exists(path: Path): Boolean = fileSystem.exists(path)
 
