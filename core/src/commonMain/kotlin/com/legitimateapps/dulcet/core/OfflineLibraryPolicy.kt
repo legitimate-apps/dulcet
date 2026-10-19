@@ -75,6 +75,7 @@ internal class OfflineLibraryPolicy(
         serverId: String,
         members: List<AutomaticDownloadMember>,
         membershipComplete: Boolean = true,
+        allowNewDownloads: Boolean = true,
     ): OfflineLibraryReconciliation {
         require(members.all { it.request.identity.serverId == serverId })
         val enabled = settings(serverId).automaticDownloadsEnabled
@@ -83,6 +84,9 @@ internal class OfflineLibraryPolicy(
         wanted.values.sortedByDescending { it.addedAtWallClock }.forEach { member ->
             val identity = member.request.identity
             val previous = engine.record(identity)
+            // A saved account may recover already queued transfers before fresh negotiation,
+            // but cached library membership alone never authorizes a new server contact.
+            if (previous == null && !allowNewDownloads) return@forEach
             val row = previous ?: engine.enqueueRetained(member.request, explicit = false)
             val old = engine.retention(identity)
             // An existing row without a retention row predates this feature and is explicit.
@@ -115,7 +119,8 @@ internal class OfflineLibraryPolicy(
      * Shared My Library projection, including pending local membership. Unknown album detail never
      * authorizes deletion. Shells request missing album detail through their existing reader.
      */
-    fun reconcileFromSeenCache(serverId: String, credentialGeneration: Long, wallClockMilliseconds: Long): OfflineLibraryReconciliation {
+    fun reconcileFromSeenCache(serverId: String, credentialGeneration: Long, wallClockMilliseconds: Long,
+        allowNewDownloads: Boolean = true): OfflineLibraryReconciliation {
         val library = database.myLibraryQueries
         val members = memberRanks(serverId)
         var complete = library.selectState(serverId).executeAsOneOrNull()?.complete == 1L
@@ -142,7 +147,7 @@ internal class OfflineLibraryPolicy(
             AutomaticDownloadMember(DownloadRequest(DownloadIdentity(serverId, id, DownloadIdentity.ORIGINAL_PROFILE),
                 container, null, DownloadServerSnapshot(track.duration_milliseconds, null), credentialGeneration, wallClockMilliseconds), rank)
         }
-        return reconcileAutomaticDownloads(serverId, requests, complete)
+        return reconcileAutomaticDownloads(serverId, requests, complete, allowNewDownloads)
     }
 
     fun needsAutomaticPlaylistIndex(serverId: String): Boolean =

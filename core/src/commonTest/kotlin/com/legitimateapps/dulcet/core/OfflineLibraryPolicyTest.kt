@@ -30,6 +30,29 @@ class OfflineLibraryPolicyTest {
         assertEquals("new", assertIs<DownloadScheduleResult.Start>(engine.schedule(context())).record.identity.rawId)
     }
 
+    @Test fun savedLibraryCannotCreateNewTransfersBeforeContactIsPermittedButCanReleaseOwnership() = fixture { engine, policy ->
+        val existing = AutomaticDownloadMember(request("already-queued"), 1)
+        val fresh = AutomaticDownloadMember(request("new-library-member"), 2)
+        policy.reconcileAutomaticDownloads("a", listOf(existing))
+        val explicit = engine.enqueue(request("explicit"))
+        val beforeContact = policy.reconcileAutomaticDownloads("a", listOf(existing, fresh), allowNewDownloads = false)
+        assertTrue(beforeContact.queued.isEmpty())
+        assertNull(engine.record(fresh.request.identity))
+        assertNotNull(engine.record(existing.request.identity))
+        // Previously queued work keeps the existing launch recovery exception.
+        assertEquals(explicit.identity, assertIs<DownloadScheduleResult.Start>(engine.schedule(context())).record.identity)
+        assertEquals(existing.request.identity, assertIs<DownloadScheduleResult.Start>(engine.schedule(context())).record.identity)
+        val released = policy.reconcileAutomaticDownloads("a", listOf(fresh), allowNewDownloads = false)
+        assertEquals(listOf(existing.request.identity), released.removed.map { it.identity })
+        assertNotNull(engine.record(explicit.identity))
+        assertNull(engine.record(fresh.request.identity))
+        policy.reconcileAutomaticDownloads("a", listOf(fresh), allowNewDownloads = true)
+        assertNotNull(engine.record(fresh.request.identity))
+        policy.setAutomaticDownloadsEnabled("a", false)
+        assertNull(engine.record(fresh.request.identity))
+        assertNotNull(engine.record(explicit.identity))
+    }
+
     @Test fun incompleteAlbumExpansionCannotDeleteExistingAutomaticDownloads() = fixture { engine, policy ->
         policy.setAutomaticDownloadsEnabled("a", true)
         policy.reconcileAutomaticDownloads("a", listOf(AutomaticDownloadMember(request("kept"), 1)))
