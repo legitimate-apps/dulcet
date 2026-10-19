@@ -86,6 +86,29 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hostingView = hosting
         self.window = window
 
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "home" {
+            store.accountServerURL = serverURL
+            store.accountUsername = username
+            store.accountPassword = password
+            store.accountAllowLocalHTTP = true
+            store.submitAccountConnection()
+            let connected = await waitFor(seconds: 30, { store.snapshot.accountConnected && session.mode == .connected })
+            XCTAssertTrue(connected)
+            XCTAssertEqual(store.selectedDestination, .listenNow)
+            await step("listen-now") { await self.find("dulcet.library.album") != nil }
+            let pressed = await press("dulcet.library.album")
+            XCTAssertTrue(pressed)
+            let opened = await waitFor(seconds: 20, { !store.readerPath.isEmpty })
+            XCTAssertTrue(opened)
+            await shoot("listen-now-album")
+            store.navigate(to: .library)
+            XCTAssertEqual(store.selectedDestination, .library)
+            store.navigate(to: .listenNow)
+            store.popReader(to: [])
+            await step("listen-now-return") { await self.find("dulcet.library.album") != nil }
+            return
+        }
+
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "saved" {
             store.accountServerURL = serverURL
             store.accountUsername = username

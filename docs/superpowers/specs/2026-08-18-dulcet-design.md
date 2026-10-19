@@ -228,7 +228,7 @@ Navidrome's private `/api` surface. §2.4 forbids it.
   are the server's business.
 - No server-side play-queue sync (§14.4). Not "default off" — not built.
 - No `sonicSimilarity` UI (§18.5). Negotiated and recorded only.
-- No CarPlay / Android Auto (deferred, not precluded — §12.11).
+- CarPlay / Android Auto use the existing playback owner (§12.11); activation and evidence are separate from source implementation.
 - No Intel Macs, no Intel simulators (§4).
 - No telemetry or analytics, ever. A goal, not a deferral.
 
@@ -2026,11 +2026,14 @@ when the transport changes (play, pause, seek, rate, buffering) or when the syst
 extrapolation has drifted by more than 0.75 s, not on every position sample; while **buffering** the
 entry stays "playing" with rate 0, so the lock-screen scrubber does not run ahead of the audio.
 
-### 12.11 Deferred but not precluded
+### 12.11 External system surfaces
 
-CarPlay and Android Auto are out of scope. The constraint they impose — the queue and metadata must be
-fully expressible without the app's own UI — is already satisfied by the core owning queue state and by
-`NowPlayingSink`. No v1 decision may violate that.
+App Intents, WidgetKit, CarPlay, Android Auto and the Android home-screen widget project the same
+account, core reader and playback owner as the native app. They never create a second queue or
+store credentials in widget containers, media IDs or URLs. Apple's existing NowPlayingSink and
+remote command center remain the single Lock Screen / Control Center Now Playing integration.
+See the 2026-10-16 system-surfaces revision record and `docs/evidence/system-surfaces.md` for the
+capability boundary, channel signing requirements and evidence limitations.
 
 ### 12.12 A failure that belongs to the track moves the queue on
 
@@ -6965,7 +6968,11 @@ because the median is above 75 minutes. Either reading adopts the split.
    is killed by the job and reported against whichever step was active: the worst case is 74.1
    for the platform leg and 219.8 for the conformance leg. The composite's own cap is 190 minutes,
    1.37x its projected maximum of 138.7 (measured 83.7, plus the same 27 and 28), the ratio its
-   earlier 85 had to the 62.2 it was raised from. Every other per-step cap is unchanged. Re-size from the
+   earlier 85 had to the 62.2 it was raised from. *Since 2026-10-17* the serial native macOS
+   test step has a six-minute cap. Run 39054152378 passed all 355 tests (110.482 seconds of test
+   execution), but compilation, tests and result-bundle finalization exhausted its four-minute
+   cap before JUnit conversion. Six minutes is a projection at 1.5 times that observed lower
+   bound; the platform leg remains 80 minutes. Every other per-step cap is unchanged. Re-size from the
    legs' history as it grows.
 6. **`tools/verify_ci_policy.py` enforces the shape, and a control proves each rule fires.** The
    aggregator must be named `apple-ci` and must run `if: always()`. It must need every macOS job and
@@ -7852,6 +7859,31 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-18 — Re-measure Apple workflow envelopes from successful legs.**
+§21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) now sets the
+platform job to 105 minutes (69.833 measured in successful run 39136881185), the Darwin
+core job to 170 and its composite step to 130 (111.367 and 84.900 in the successful core
+leg of 39133541765), and each device-matrix job to 145 and its composite to 125 (95.350
+and 81.850 in the successful iPad member of 39144805540). These measurements supersede
+the older projections and caps in §21.5 rule 5. The sampled core and iPad remainder plus
+the new composite cap is 156.467 and 138.500 minutes, respectively, below its job cap.
+The old 100-minute Darwin composite expired while TV proofs were progressing on main
+(39131842852) and this branch (39144805540); a workflow timeout is not a passing proof.
+The job graph, standard `macos-26` runners, step commands, test cases, execution guards,
+readiness bounds, simulator acknowledgments and parity evidence requirements are unchanged.
+No feature status is promoted by this workflow calibration.
+
+**2026-10-18 — Carry validated conformance repairs into system surfaces.**
+The system-surfaces integration retains the published conformance and playback-owner repairs:
+actual player gains are verified after writes, the Close toolbar retains its host during
+preparation changes, and the television discography realizes its first row with a lazy tail.
+The positive catalog-scroll, collapsed-history, native-menu and paused-fixture controls replace
+the integration branch's earlier setup variants; the dated earlier observations remain historical.
+System-surface actions still use the same account-bound reader, queue and player. The pinned
+snapshot projection and opaque-identity replay regressions remain, along with the keyboard
+helper's distinction between a visible keyboard and a retained zero-height accessibility container.
+No system-surface FEATURES cell gains a stronger verification claim through this merge.
+
 **2026-10-18 — Establish real readiness before crossfade transport-disposal proofs.**
 Only the five transport arguments warm both actual queued items through real
 playback of a 12-second local WAV while crossfade is disarmed. They require the
@@ -7938,11 +7970,70 @@ the native menu; interception is an inference. A temporary custom preview also p
 26.5, so that intermittent mutation cannot establish discrimination. iPad retains its existing
 Albums setup and drag interaction.
 
+**2026-10-17 — Make continuation regression publications follow the real request.**
+The system-surface continuation fixture publishes page two only when the production action
+calls `loadMore`, then awaits the action and requires the exact viewport/load/close event order
+and all three opaque IDs. It no longer assumes the action's 50 ms polling task resumes before
+a separate 75 ms test sleep. A hosted serial run exposed that scheduling race: page two had
+been published by the test before production requested it. Production behavior and its deadline
+are unchanged; removing continuation must leave the fixture unable to complete the action.
+
+**2026-10-17 — Make the phone album drag proof independent of fixture creation time.**
+The phone proof opens the full Albums collection and explicitly selects Title order before
+exercising the original centered drag from a native context menu onto the mini-player.
+It still requires one ordered album addition, paused playback and no menu left open, with the
+same hold times, velocity, retry limit and queue assertions. Recently Added placed the fixture
+near the top in hosted runs; its native menu intercepted that path even with the system preview.
+The alphabetical setup passes with the real drag source and fails when that source is removed.
+A temporary custom-preview control also passes on iOS 26.5 in this setup, so this is evidence for
+album drag delivery and rejection of menu side effects, not a claim that every custom-preview
+regression is detected on that runtime. iPad retains its existing Albums setup.
+
+**2026-10-17 — Reach artist discography with the television remote.**
+On tvOS, an artist's discography creates the album controls for the reader's currently loaded
+items in an eager grid. Top Songs can place that entire grid below the viewport; with a lazy
+grid, repeated Down presses left focus on the last Top Songs pin control and no album controls
+were present in the accessibility hierarchy. The full-width discography focus section remains,
+as do release grouping, newest-first ordering and focus restoration after Back. The remote
+regression crosses Top Songs before requiring complete album membership/order, selection,
+playback progress and Back focus. Other platforms retain their lazy discography grids.
+
+**2026-10-17 — Integrate library depth with system surfaces.**
+The system-surfaces branch merges collection controls, artist depth, grouped search and trusted
+proxy handling without replacing either feature record. Identical shuffle query/parser additions
+are consolidated. WidgetKit now consumes the existing account-bound `.pinned` reader window;
+its metadata-only snapshot excludes foreign accounts and unpinned entries, decodes older snapshots,
+and revalidates opaque kind/provider/ID plus pin membership before playback. Android pinned widgets
+remain deferred. This source and regression coverage does not claim Pinned widget host interaction.
+The build-order guard checks the four pure Swift widget extensions separately, requiring no Kotlin
+link flags/provider/dependency and extension-safe APIs; every other native target retains its ordered
+strong DulcetCore linkage requirement.
+The merged Mac UI proofs resolve static text by exact accessibility identifier and accept the
+platform's AXValue as well as AXLabel. Hosted failure recordings showed the offline pinned album
+and the selected Artists count while indexed name queries and label-only reads failed; the
+assertions still require the visible Pinned heading and exactly one artist result. Phone UI proofs scroll the
+lazy album grid after an offline cold launch and allow enough real swipes to reach a fixture album
+at the largest text size. The app-host offline control allows URLSession five seconds to initialize
+while still requiring `NSURLErrorCannotConnectToHost`; a timeout cannot satisfy its offline evidence.
+
 **2026-10-16 — Dulcet Server recommends songs from its local library.**
 `getSimilarSongs` and `getSimilarSongs2` accept a visible song, album or artist id and return
 local artist and genre neighbours instead of always returning an empty container (§29.1).
 They require no external similarity service. Source permissions constrain both seed metadata
 and returned songs; unknown or invisible seeds return error 70.
+
+**2026-10-16 — Listen Now home and optional recommendations contract.**
+Dulcet API v1 adds `dulcet.home` version 1 and `GET /recommendations/home` (§30,
+`docs/dulcet-api/openapi.yaml`); the Home conformance profile covers its bounded, per-user shelves.
+Dulcet Server computes them from live and imported annotations (§29.4). The same picks are
+available to current OpenSubsonic-authenticated apps through advertised `dulcetHome` version 1,
+`getDulcetHome(shelf,size)`. Submitted REST scrobbles may carry the actual playlist source via
+`dulcetContextType=playlist` and `dulcetContextId` when that extension is advertised; visible
+member plays update only the playlist's last-played timestamp. Core `ListenNowShelf` queries use the persistent reader seen-cache,
+including cached first paint, freshness, account binding and failure retention. Plain servers use
+only recent/frequent/newest/random album lists and starred content; unsupported personal shelves
+are empty and hidden. Listen Now is a first destination beside Library and Browse. Track shelves
+play through the existing queue-entry surface. Reading a home never records a play.
 
 **2026-10-16 — Apple engine overlaps the preloaded boundary.**
 `DulcetAVPlayerEngine` accepts `setCrossfade` only for its current attempt and a finite,
@@ -8031,6 +8122,57 @@ empty by default. Only a trusted socket peer may supply a forwarded client ident
 Dulcet API and OAuth IP limits share the resolver described in §29.1; reverse proxies must sanitize
 forwarded headers. OBSERVED: `ClientAddressesTest` and real-CIO `TrustedProxyIntegrationTest` cover
 configuration, spoofing, multi-hop boundaries and isolation across the three limiters.
+
+**2026-10-16 — System surfaces share playback ownership and channel identities.**
+App Intents on iOS/iPadOS/macOS resolve exact album, artist, playlist and song names through the
+reader; duplicate names ask the person to choose in the app. Resume/toggle, favourites, current-song
+favourite (idempotent), playlist append and library shuffle enter the existing presentation store.
+An explicit external command may reconnect saved credentials even when the app is backgrounded;
+automatic foreground/reachability reconnect rules otherwise remain unchanged. Requests are bounded,
+close their transient reader handles and reject an account change. Catalog shuffle uses a fresh
+OpenSubsonic `getRandomSongs` selection of at most500 songs, matching lane A's shared query. Dulcet
+Server My Library uses owned songs; an unknown membership capability does not silently mean catalog.
+App Shortcut discovery is the initial Spotlight integration; catalog-wide Spotlight indexing is not
+introduced. tvOS compiles the shared intent types where SDK availability permits, without widgets
+or a car presentation on a television.
+
+WidgetKit extensions use channel-isolated App Groups: `group.com.legitimateapps.dulcet.dev` and
+`group.com.legitimateapps.dulcet`. They store display metadata and opaque song references only;
+account changes clear recent items. AudioPlaybackIntent buttons execute in the host app. Now Playing
+widgets support Home Screen/macOS and iOS Lock Screen families; iOS18+ also has a ControlWidget.
+Recently Played is device-local. The Pinned widget projects up to four items from the shared account-bound
+`.pinned` reader window and shows up to three buttons; each button revalidates kind/provider/ID
+and current pin membership before entering the existing player. Android's widget uses private app preferences and explicit
+PendingIntents into its existing media session; no App Group or second player is involved.
+
+CarPlay uses CPTemplate scenes and the shared queue/Now Playing state. Simulator builds request
+`com.apple.developer.carplay-audio`; Apple's simulator documentation requires that entitlement in
+the app even before testing. Device archives request it only when the selected installed host
+profile grants it. After Apple grants the managed capability, refresh BOTH channel host profiles;
+the next normal archive then activates CarPlay. Pre-grant device builds retain the ordinary app
+behavior. A portal grant alone cannot alter an installed signed binary. Search is exposed through
+App Intents rather than a CarPlay keyboard template in this first implementation.
+Android Auto uses MediaLibraryService/MediaLibrarySession, a finite browse hierarchy with explicit
+continuation folders, search and validated selection. Media3 UID-trusted controllers (including the app UID) are
+accepted; an unverified claimed package name cannot bypass that trust check. Google Assistant's media search/transport uses that
+session; no separate account or cloud action is registered.
+
+New extension IDs are `com.legitimateapps.dulcet[.dev].widgets` on iOS and macOS. DEV/PROD each need
+App Group registration, group capability on host/extension IDs, and refreshed host profiles. The four
+new distribution profiles are `Dulcet CI Dev iOS Widgets App Store`, `Dulcet CI iOS Widgets App Store`,
+`Dulcet CI Mac Dev Widgets App Store`, `Dulcet CI Mac Widgets App Store`; their optional CI profile
+inputs are documented in the evidence file. Both channels compile identical extension sources.
+Hosts and extensions inherit numeric `CURRENT_PROJECT_VERSION=4` for local installation; iOS
+rejects an extension with an empty build version. The project-level release-policy allowlist pins
+this default to `4`; release automation overrides every target together for the selected build.
+On macOS15+, the selected `group.` App Group identifiers require provisioned group authorization.
+The installed Xcode27 Device Hub supports CarPlay only with USB-connected physical devices, not
+simulators (Apple Developer Tools Engineer, https://developer.apple.com/forums/thread/834440).
+Simulator entitlement installation therefore does not establish CarPlay display/interaction proof.
+Release policy permits only the documented app entitlement selector, constrains all widget target
+settings, validates both entitlement variants and maps extensions in export options. No release,
+portal change or new profile is claimed by this source change.
+
 
 **2026-10-16 — Required CI exercises My Library against disposable Dulcet Server.**
 The automated-server boundary includes local disposable Dulcet Server as well as Navidrome;
@@ -9491,6 +9633,30 @@ as Android's Play after Stop.
   overlay and recorded value at each delivery); the core's adopt-then-republish order it relies on
   is ASSUMED from `MutationOutbox.flush` there, not measured by that test.
 
+**2026-09-30 — Android downloads (§14.5).** Android gains the download executor the policy had
+waited for: a core `AndroidDownloadController` over `DownloadPolicyEngine`, WorkManager tasks named by
+`downloadId`, per-track and per-album download and removal on the phone and TV album pages, a
+downloaded marker and progress, local-file playback through the validating data source, and removal
+of an account's tasks and files at sign-out. `DownloadPolicyEngine` gains `remove` (temporary file,
+promoted file, then row) and `records`. Three contracts changed: §14.5's Android precondition now
+names the executor that keeps it; §14.7's Android step 7 now cancels tasks (step 4) instead of
+saying there are none; and a found defect is recorded — the Android queue start read the song from
+the server before looking for a local plan, so offline a downloaded album could not start. Every
+start now asks for the local plan first. Evidence: Robolectric host tests of the controller against
+a loopback server (promotion, an HTTP 200 envelope rejected, a short or grown file refused, removal,
+relaunch reconciliation, `Retry-After`), of the WorkManager executor and sign-out, and of the phone
+and TV controls; emulator proofs of CONF-51 and CONF-52 on phone and TV are wired into the
+`android-emulator` job. Left open: title metadata offline for tracks the reader never read.
+**Fix round, same day.** Review found three defects, each corrected here. (1) Promotion, recovery
+and Apple's local-plan check read the whole file to validate it; a large FLAC exhausted the heap,
+and the `OutOfMemoryError` escaped the executor's `catch (Exception)`, leaving the row `downloading`
+for ever. Validation now reads a bounded prefix plus the on-disk length (§14.5 *Atomic promotion*),
+and the executor records any throwable but a cancellation as a failure. (2) WorkManager stops
+ordinary work after about ten minutes, and each rerun restarted from byte zero, so a long transfer
+never finished; transfers now resume by `Range` (§14.5, *The Android executor*). (3) A download sent
+`stream` with no `format`, so a server transcoding for this player made every download fail
+validation; Apple had the same gap. Both now send `format=raw`.
+
 **2026-09-29 — A lost create's offer is actionable when made; an owed list re-read survives a
 cut-off (§16.14 step 3, §18.6).** A second review of the owed list re-read (§28 revision 104 item 33)
 found it could still be lost in two reachable ways, and the offer it serves not yet actionable, each
@@ -9526,30 +9692,6 @@ OBSERVED with a failing test on the reviewed code; the tests are in `PlaylistRec
   instance: an account switch builds a new reader, so it never crosses accounts, and a relaunch loses
   it — a candidate written by the offer survives in the cache, but the list itself is not re-read
   until its screen reads.
-
-**2026-09-30 — Android downloads (§14.5).** Android gains the download executor the policy had
-waited for: a core `AndroidDownloadController` over `DownloadPolicyEngine`, WorkManager tasks named by
-`downloadId`, per-track and per-album download and removal on the phone and TV album pages, a
-downloaded marker and progress, local-file playback through the validating data source, and removal
-of an account's tasks and files at sign-out. `DownloadPolicyEngine` gains `remove` (temporary file,
-promoted file, then row) and `records`. Three contracts changed: §14.5's Android precondition now
-names the executor that keeps it; §14.7's Android step 7 now cancels tasks (step 4) instead of
-saying there are none; and a found defect is recorded — the Android queue start read the song from
-the server before looking for a local plan, so offline a downloaded album could not start. Every
-start now asks for the local plan first. Evidence: Robolectric host tests of the controller against
-a loopback server (promotion, an HTTP 200 envelope rejected, a short or grown file refused, removal,
-relaunch reconciliation, `Retry-After`), of the WorkManager executor and sign-out, and of the phone
-and TV controls; emulator proofs of CONF-51 and CONF-52 on phone and TV are wired into the
-`android-emulator` job. Left open: title metadata offline for tracks the reader never read.
-**Fix round, same day.** Review found three defects, each corrected here. (1) Promotion, recovery
-and Apple's local-plan check read the whole file to validate it; a large FLAC exhausted the heap,
-and the `OutOfMemoryError` escaped the executor's `catch (Exception)`, leaving the row `downloading`
-for ever. Validation now reads a bounded prefix plus the on-disk length (§14.5 *Atomic promotion*),
-and the executor records any throwable but a cancellation as a failure. (2) WorkManager stops
-ordinary work after about ten minutes, and each rerun restarted from byte zero, so a long transfer
-never finished; transfers now resume by `Range` (§14.5, *The Android executor*). (3) A download sent
-`stream` with no `format`, so a server transcoding for this player made every download fail
-validation; Apple had the same gap. Both now send `format=raw`.
 
 **2026-09-29 — Playlists and lyrics on Apple.** The Apple shells gain a Playlists section, a playlist
 page that plays in the playlist's own order, Add to Playlist on tracks and albums, create, rename and
@@ -13788,6 +13930,33 @@ them.
   plus Browse. Browse is the whole catalog, which every server already offers. My Library is
   served by the extension where a server advertises it.
 
+### 29.4.1 Listen Now
+
+Recent playlist picks use only playlist contexts recorded in that user's play history, with playlist visibility and catalog permissions applied. The app's Continue Listening action resumes the existing queue and its position. Plain REST has no playlist play history; it does not fabricate one.
+
+`HomeRecommendations` computes bounded, explainable shelves from the authenticated user's
+annotations. Imported song-only play counts and last-played times contribute to album shelves;
+`MAX(album plays, sum of song plays)` avoids counting each scrobble twice. Rediscover requires
+a favourite, rating >=4 or at least three plays and no play in 30 days. Daily and station shelves
+have no candidates until that user has an affinity signal. Personal track shelves omit one- and
+two-star songs; explicit song ratings take precedence over album/artist ratings, with zero
+meaning unrated. Recent/frequent album shelves continue to report actual history. Every candidate is filtered through
+catalog access before selection; no other user's annotations participate.
+
+`dulcet.home` v1 advertises the Dulcet API endpoint. Current `/rest` clients negotiate
+`dulcetHome` v1 before calling `getDulcetHome` with a shelf id and `size` (1–50, default 20).
+Its `dulcetHome` response contains normal `album`, `playlist` and `song` arrays. Both contracts use the same
+selection function. Unknown shelf ids fail with 70. Reading recommendations changes no user data.
+The core's public shelf ids are available to shells and future system surfaces.
+
+The same extension accepts optional `dulcetContextType=playlist` and `dulcetContextId` on
+`scrobble` submissions. Clients attach only the actual playlist queue source, after negotiating
+`dulcetHome` v1. For a visible playlist containing the submitted song, the server stores
+`MAX(previous played, submitted timestamp)` in the user's playlist annotation; no playlist play
+count is manufactured. Invalid, private, deleted and non-member contexts are ignored without
+rejecting the ordinary song scrobble. Playlist reads and now-playing reports do not create
+history. API playlist contexts and these REST annotations merge into one deduplicated shelf.
+
 ### 29.5 Lyrics
 
 Lyrics are looked up in this order:
@@ -13983,6 +14152,12 @@ the 2026-10-12 §28 entry.
   wins; remote commands are relayed over `/events`; an offline device reconnects with its base
   revision and the server's queue wins unless the person chooses "Continue here".
 - My Library carries the `dulcetLibrary` semantics, plus removal records in the feed.
+- Optional `dulcet.home` v1 exposes `GET /recommendations/home?limit=20` only after capability
+  negotiation. It requires `catalog:read` and `user:read`, returns ordered shelves of visible
+  resources with explanations, bounds each shelf to 1–50 items, and supports private ETag
+  revalidation. Picks use the authenticated user's history, stars and ratings (§29.4.1); reads
+  do not record plays or change My Library. The optional Home conformance profile is `DA-HOME-1`
+  (`docs/dulcet-api/CONFORMANCE.md`).
 - Plays carry a client-generated id recorded once, so retries never double-count.
 - Server-Sent Events with a schema per event type, Standard Webhooks signing with SSRF rules, and
   an MCP endpoint (`docs/dulcet-api/mcp-tools.json`) whose write tools require `user:write`, whose

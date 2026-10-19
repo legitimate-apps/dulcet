@@ -4,7 +4,42 @@ import XCTest
 
 final class DulcetTVUITests: XCTestCase {
     /// Section order in the tvOS section bar, which is also the order the remote traverses.
-    private static let sections = ["library", "search", "nowPlaying", "settings"]
+    @MainActor
+    func testListenNowLaunchAlbumAndRelaunch() throws {
+        let environment=ProcessInfo.processInfo.environment
+        guard environment["DULCET_HOME_PROOF"] == "1" else { throw XCTSkip("Requires a disposable home fixture") }
+        let url=try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        XCTAssertEqual(URLComponents(string:url)?.host,"127.0.0.1")
+        let app=XCUIApplication()
+        app.launchArguments=["-dulcet-debug-connect-account","-dulcet-debug-account-server-url",url,
+            "-dulcet-debug-account-username",try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password",try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        app.launch()
+        XCTAssertTrue(waitForNavigationTitle("Listen Now",in:app,timeout:60),app.debugDescription)
+        let refresh=app.buttons["dulcet.listenNow.refresh"].firstMatch
+        XCTAssertTrue(refresh.waitForExistence(timeout:10))
+        XCTAssertTrue(focusByRemote(refresh,in:app),"Home's Refresh must take remote focus")
+        // tvOS can initially focus this first button instead of Refresh. It must remain a
+        // named control so launch/navigation drivers can observe the actual focused action.
+        let library = app.buttons["dulcet.listenNow.library"].firstMatch
+        XCTAssertTrue(library.waitForExistence(timeout:10))
+        XCTAssertTrue(focusByRemote(library,in:app))
+        XCTAssertEqual(focusedControlIdentifier(app), "dulcet.listenNow.library")
+        let album=app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertTrue(album.waitForExistence(timeout:30),app.debugDescription)
+        XCTAssertTrue(focusByRemote(album,in:app))
+        let shot=XCTAttachment(screenshot:app.screenshot());shot.name="listen-now-tv";shot.lifetime = .keepAlways;add(shot)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout:20))
+        app.terminate(); app.launchArguments=[]; app.launch()
+        XCTAssertTrue(waitForNavigationTitle("Listen Now",in:app,timeout:30))
+        XCTAssertTrue(album.waitForExistence(timeout:20))
+        XCTAssertTrue(selectSection(app,"library"))
+        XCTAssertTrue(selectSection(app,"listenNow"))
+        XCTAssertTrue(waitForNavigationTitle("Listen Now",in:app,timeout:10))
+    }
+
+    private static let sections = ["listenNow", "library", "search", "nowPlaying", "settings"]
 
     /// Server cleanup a test registers once it has made something on the disposable server; run
     /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
@@ -1404,12 +1439,12 @@ final class DulcetTVUITests: XCTestCase {
             "The heart must fill at once, before the server answers; label=\(heart.label)")
         XCTAssertEqual(awaitServerAlbumStarred(albumName, true, server: server), true, "The favourite must reach the server")
 
-        // 2. Relaunch with nothing but the saved account: Library, from what this device saw.
+        // 2. Relaunch with the saved account: Listen Now, from what this device saw.
         app.terminate()
         app.launchArguments = []
         app.launch()
-        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30),
-            "A saved account must open straight into Library, not \(app.navigationBars.firstMatch.identifier.debugDescription): "
+        XCTAssertTrue(waitForNavigationTitle("Listen Now", in: app, timeout: 30),
+            "A saved account must open straight into Listen Now, not \(app.navigationBars.firstMatch.identifier.debugDescription): "
                 + app.debugDescription)
         let launchFocus = focusedElement(app)
         XCTAssertTrue(selectSection(app, "settings"), "Connection must be reachable by remote")
@@ -1445,7 +1480,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
         XCTAssertEqual(awaitServerAlbumStarred(albumName, false, server: server), false,
             "Removing the favourite must reach the server")
-        print("DULCET TV READER PROOF PASS relaunch=Library launch-focus=\(launchFocus?.id ?? "-")"
+        print("DULCET TV READER PROOF PASS relaunch=ListenNow launch-focus=\(launchFocus?.id ?? "-")"
             + " reconnect=automatic scope=\(scopeLabel.debugDescription) album-row=\(albumRow)"
             + " setup=debug-account-then-none")
     }
@@ -2809,7 +2844,7 @@ final class DulcetTVUITests: XCTestCase {
     private func awaitLaunchAndLiveConnection(
         _ app: XCUIApplication
     ) throws -> (section: String, focus: String) {
-        let launchSections = ["Connection", "Library"]
+        let launchSections = ["Connection", "Listen Now"]
         let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         var section = ""
         var observedFocus: String?
@@ -2844,12 +2879,12 @@ final class DulcetTVUITests: XCTestCase {
             )
             // A connection asked for on Connection lands on the library it connected to.
             let landing = ContinuousClock.now.advanced(by: .seconds(60))
-            while app.navigationBars.firstMatch.identifier != "Library", ContinuousClock.now < landing {
+            while app.navigationBars.firstMatch.identifier != "Listen Now", ContinuousClock.now < landing {
                 Thread.sleep(forTimeInterval: 0.25)
             }
             XCTAssertEqual(
-                app.navigationBars.firstMatch.identifier, "Library",
-                "A connection made on Connection must land on Library: " + app.debugDescription
+                app.navigationBars.firstMatch.identifier, "Listen Now",
+                "A connection made on Connection must land on Listen Now: " + app.debugDescription
             )
             XCTAssertTrue(
                 selectSection(app, "settings"),

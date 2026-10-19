@@ -335,6 +335,12 @@ public class LibrarySession internal constructor(
      */
 
     /** The home screen: N independent single-page rows (§16.9, CONF-86). The caller closes each. */
+    /** Listen Now shares the reader cache, freshness and playback metadata with Library. */
+    public fun openListenNow(shelf: com.legitimateapps.dulcet.core.ListenNowShelf): LibrarySurface =
+        openSurface("listenNow.${shelf.wireName}") { listener ->
+            reader.openWindow(com.legitimateapps.dulcet.core.AndroidLibraryQuery.ListenNow(shelf), listener)
+        }
+
     public fun openHome(): List<LibraryHomeRowSurface> = HOME_ROWS.mapIndexed { index, row ->
         LibraryHomeRowSurface(row, openSurface("home.$index", favourites = row == AndroidLibraryHomeRow.Favourites) { listener ->
             reader.openHomeRow(row, listener)

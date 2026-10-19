@@ -9,7 +9,7 @@ import java.util.UUID
 
 const val SUITE_VERSION = "0.1.0"
 
-enum class Profile { Core, Sync, Device, Testing, Queue, Events, Webhooks, MCP }
+enum class Profile { Core, Sync, Device, Testing, Queue, Events, Webhooks, MCP, Home }
 
 /** MANUAL: the check needs an action outside the API that the run was not given a command for. */
 enum class Outcome { PASS, FAIL, SKIP, MANUAL }

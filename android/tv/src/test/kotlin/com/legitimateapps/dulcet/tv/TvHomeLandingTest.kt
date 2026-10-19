@@ -43,18 +43,19 @@ class TvHomeLandingTest {
     private val compose = createAndroidComposeRule<TvSearchActivity>()
     @get:Rule val rules: RuleChain = RuleChain.outerRule(saved).around(compose)
 
-    /** The Problem: a connected account opens on Library, not on an empty search field. */
+    /** A connected account opens on Listen Now with the remote on its tab. */
     @Test fun aConnectedAccountOpensOnTheLibraryWithTheRemoteOnTheLibraryTab() {
-        await("the library at launch") { exists("library.surface") }
+        await("Listen Now at launch") { exists("listenNow.surface") }
         assertFalse(exists("search.query"), "The app must not open on search")
-        assertTrue(selected("library.open"), "The bar's Library tab is lit")
-        await("the remote on the bar's Library tab") { focused("library.open") }
+        assertTrue(selected("listenNow.open"), "The bar's Listen Now tab is lit")
+        await("the remote on Listen Now") { focused("listenNow.open") }
         assertFalse(focused("tv.account.signout"), "Sign out is never where focus starts")
         assertTrue(!exists("tv.account.signout"), "Sign out is not on the library or the bar")
     }
 
     /** Automatic offline recovery keeps manual Reconnect reachable with the remote. */
     @Test fun aSavedAccountSaysItWaitsForReconnectWhichIsOneDownFromTheBar() {
+        landOnLibrary()
         await("the remote on the bar's Library tab") { focused("library.open") }
         await("the automatic connection notice") { exists("library.saved") }
         assertTrue(exists("library.reconnect"), "Manual reconnect remains available while the server is unreachable")
@@ -87,6 +88,7 @@ class TvHomeLandingTest {
      * library with the remote where it was.
      */
     @Test fun theBarReachesAccountWhichOpensOnBackThenSignOutAndBackReturnsToTheLibrary() {
+        landOnLibrary()
         await("the remote on the bar's Library tab") { focused("library.open") }
         key(Key.DirectionRight)
         assertFocused("tv.account.open")
@@ -112,10 +114,11 @@ class TvHomeLandingTest {
     }
 
     /**
-     * Back from Account opened over Search returns to Search; Back from Search goes to the library,
+     * Back from Account opened over Search returns to Search; Back from Search goes to Listen Now,
      * the screen the app opens on.
      */
     @Test fun backFromAccountReturnsToSearchAndBackFromSearchToTheLibrary() {
+        landOnLibrary()
         await("the remote on the bar's Library tab") { focused("library.open") }
         key(Key.DirectionLeft)
         assertFocused("search.open")
@@ -131,7 +134,7 @@ class TvHomeLandingTest {
         back()
         await("Back from Account returns to search") { exists("search.query") && !exists("account.surface") }
         back()
-        await("Back from search goes to the library") { exists("library.surface") && !exists("search.query") }
+        await("Back from search goes to Listen Now") { exists("listenNow.surface") && !exists("search.query") }
         assertFalse(compose.activity.isFinishing, "Back from search does not leave the app")
     }
 
@@ -144,6 +147,15 @@ class TvHomeLandingTest {
     }
 
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+
+    private fun landOnLibrary() {
+        await("the Listen Now tab at launch") { focused("listenNow.open") }
+        key(Key.DirectionRight)
+        key(Key.DirectionRight)
+        assertFocused("library.open")
+        key(Key.DirectionCenter)
+        await("Library") { exists("library.surface") }
+    }
 
     private fun focused(tag: String): Boolean = compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()
         .any { it.config.getOrElse(SemanticsProperties.Focused) { false } }

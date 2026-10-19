@@ -25,6 +25,42 @@ final class DulcetDesignTourUITests: XCTestCase {
     private var shotNumber = 0
 
     @MainActor
+    func testListenNowLaunchAlbumAndRelaunch() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DULCET_HOME_PROOF"] == "1" else { throw XCTSkip("Requires a disposable home fixture") }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: url)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        if let expected = environment["DULCET_HOME_IDIOM"] {
+            XCTAssertEqual(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone", expected)
+        }
+        let home = app.descendants(matching: .any)["dulcet.listenNow"].firstMatch
+        XCTAssertTrue(home.waitForExistence(timeout: 40), app.debugDescription)
+        let album = app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertTrue(album.waitForExistence(timeout: 30), app.debugDescription)
+        shoot("listen-now", app)
+        album.tap()
+        XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20))
+        shoot("listen-now-album", app)
+        app.terminate()
+        app.launchArguments = []
+        launchInInteractionScope(app)
+        XCTAssertTrue(home.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(album.waitForExistence(timeout: 20), "Cached home must survive relaunch")
+        shoot("listen-now-relaunch", app)
+        let compact = app.windows.firstMatch.frame.width < 700
+        XCTAssertTrue(openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact))
+        XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
+        XCTAssertTrue(home.waitForExistence(timeout: 10))
+    }
+
+    @MainActor
     func testDesignTour() {
         guard ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" else { return }
         let app = XCUIApplication()

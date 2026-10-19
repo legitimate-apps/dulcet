@@ -59,12 +59,13 @@ internal class ReaderEnv(
     /** A new reader is a new session over the same device cache. */
     fun reader(
         config: LibraryReaderConfig = LibraryReaderConfig(),
+        transport: LibraryEndpointTransport = server,
         overlay: LibraryMutationOverlay = LibraryMutationOverlay.None,
         downloads: DownloadedTrackSource = DownloadedTrackSource.None,
         outboxes: ReconnectOutboxes = ReconnectOutboxes.None,
     ): LibraryReader = LibraryReader(
         cache = store.bind(BINDING),
-        transport = server,
+        transport = transport,
         scope = readerScope,
         config = config,
         overlay = overlay,

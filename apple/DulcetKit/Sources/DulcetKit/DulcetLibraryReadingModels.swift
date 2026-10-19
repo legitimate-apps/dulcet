@@ -460,6 +460,7 @@ public enum DulcetHomeRow: String, Sendable, Hashable, CaseIterable, Identifiabl
 
 /// Which screen to open (§16.9).
 public enum DulcetLibraryQuery: Sendable, Hashable {
+    case listenNow(DulcetListenNowShelf)
     case albums(DulcetAlbumListType)
     case artists
     case songs
@@ -479,6 +480,7 @@ public enum DulcetLibraryQuery: Sendable, Hashable {
     /// The facade request's fields, in the facade's words.
     public var request: (kind: String, rawID: String?, listType: String?, genre: String?) {
         switch self {
+        case let .listenNow(shelf): ("listenNow", nil, shelf.rawValue, nil)
         case let .albums(type): ("albumList", nil, type.rawValue, nil)
         case .artists: ("artists", nil, nil, nil)
         case .songs: ("songs", nil, nil, nil)

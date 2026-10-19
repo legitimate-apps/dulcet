@@ -15,6 +15,25 @@ import kotlin.test.assertTrue
  * Every assertion is on request counts, cache contents and publications — never wall time.
  */
 class LibraryWindowTest {
+    @Test fun everyExternalShuffleRequestsAFreshServerWideSongSample() = readerTest { env ->
+        var sequence = 0
+        env.server.responseOverride = { request -> if (request.endpoint == "getRandomSongs") {
+            sequence++
+            LibraryEndpointResponse(200,
+                """{"subsonic-response":{"status":"ok","randomSongs":{"song":[{"id":"random-$sequence","title":"Random"}]}}}""", "<redacted>")
+        } else null }
+        val reader = env.reader()
+        reader.connect()
+        val first = Publications(env.server)
+        reader.open(LibraryQuery.ShuffleSongs, first)
+        advanceUntilIdle()
+        val second = Publications(env.server)
+        reader.open(LibraryQuery.ShuffleSongs, second)
+        advanceUntilIdle()
+        assertEquals(listOf("random-2"), second.ids())
+        assertEquals(2, env.server.count("getRandomSongs"))
+    }
+
     private val grid = LibraryQuery.AlbumList(AlbumListType.AlphabeticalByName)
 
     @Test

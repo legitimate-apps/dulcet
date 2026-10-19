@@ -48,17 +48,15 @@ jobs:
   # implicates whichever step is active rather than a failed assertion, which is why the heavy
   # steps carry their own caps; those are unchanged by the split.
   #
-  # 80 = ceil(1.5 x 51.5 / 5) x 5. 51.5 minutes is this leg's MEASURED maximum over its green
-  # runs on the split (run 36196670168; the others took 43.9 to 49.5). It replaces the 60.2-minute
-  # projection the leg was first sized from (95). Each step cap here plus the rest of that leg, as
-  # measured, is at most 74.1 (the compact-shell step's 25 in the same run), so no healthy step can
-  # be killed by the job instead of by its own cap. Re-measure as the leg's history grows.
+  # §21.5 rule 5, remeasured 2026-10-18: 105 = ceil(1.5 x 69.833 / 5) x 5.
+  # Run 39136881185's successful platform leg replaces the old 51.5-minute maximum.
+  # This job envelope changes no individual step, simulator acknowledgment or assertion bound.
   apple-platform:
     name: apple-platform
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.platform == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 80
+    timeout-minutes: 105
     # The required job downloads this leg's artifacts by the attempt that PRODUCED them. See there.
     outputs:
       attempt: ${{ github.run_attempt }}
@@ -613,7 +611,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit/TEST-DulcetKeychainIOSTests.xml" \
             DulcetKeychainIOSTests
       - name: Build DulcetTV and test DulcetKit plus stored Keychain attributes on tvOS
-        timeout-minutes: 18
+        # Passing runs take 14.2–16.6 minutes; the 18-minute cap expired in
+        # runs 39131842852 and 39160676413. Preserve the individual test bounds.
+        timeout-minutes: 30
         run: |
           set -o pipefail
           xcodebuild test \
@@ -793,21 +793,18 @@ jobs:
   # iPhone proofs ending in the skip probe, which must come after everything that counts the
   # corpus, and the iPhone streaming-quality cap.
   #
-  # 140 is set by the composite's cap (below). 120 was ceil(1.5 x 77 / 5) x 5: 77 minutes was this
-  # job's MEASURED maximum over its first four green runs (70, 70, 77 and 69 minutes: 37125098942,
-  # 37133427531 and 37138000923 on the split's branch, 37142156762 on #217). Those runs paid the devices' first boots inside the composite. They are now
-  # paid in their own step, which moves them rather than adding to them. The job cap must stay above
-  # the composite's own 100-minute cap plus the rest of the job, 100 + 20.5 + 11.1 for first boots +
-  # 4 when an ffmpeg cache miss (estimated at 8) replaces the old closure install's 4.0 = 135.6, or a
-  # slow-but-healthy composite would be killed by the job and reported against whichever step was
-  # active. 105 was a projection from run 37105472578 before any of these ran; 120 held the
-  # composite's earlier 75-minute cap, raised for the Apple TV reader phases.
+  # §21.5 rule 5, remeasured 2026-10-18 from successful leg 39133541765:
+  # 170 = ceil(1.5 x 111.367 / 5) x 5. The composite took 84.900 minutes, so its
+  # 130-minute envelope plus this run's remaining 26.467 fits within the job envelope.
+  # The former 100-minute step limit expired during progressing TV proofs in both
+  # main's 39131842852 and this branch's 39144805540; these are workflow envelopes,
+  # not changes to the test cases' own readiness, observation or execution bounds.
   apple-conformance-core:
     name: apple-conformance-core
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 140
+    timeout-minutes: 170
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -1038,13 +1035,9 @@ jobs:
           python3 tools/ci/isolate-simulator --phase first-boot-tvos --keep-name "Apple TV 4K (3rd generation)"
           python3 tools/ci/isolate-simulator --phase first-boot-done --none
       - name: Assert Darwin conformance preconditions
-        # 100 = ceil(1.5 x 66.6 / 5) x 5, rule 5's leg formula applied to this step. 66.6 minutes is
-        # this composite's MEASURED maximum over its last three green runs (56.8, 46.5 and 45.1
-        # minutes: 37572667317, 37566029043, 37527778416) plus 9.8 for the Apple TV reader phases
-        # added since, PROJECTED from their slowest local passes: the core reader tests' tvOS link
-        # and run 2.4, the three counted app-host proofs 4.2 and the saved-account UI proof 3.2.
-        # The earlier 75 was projected from run 37105472578 (47.4) before this job had run.
-        timeout-minutes: 100
+        # §21.5 rule 5: 130 = ceil(1.5 x 84.900 / 5) x 5, measured in the
+        # successful Darwin leg of 39133541765. Replaces the old 66.6 projection.
+        timeout-minutes: 130
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -1195,6 +1188,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-app-test.xcresult" \
             "$RUNNER_TEMP/dulcet-mac-app-test-junit/TEST-DulcetMacAccountConnectAppTest.xml" \
             DulcetMacAccountConnectAppTest
+          tools/ci/run-home-proof macos
           # Two independent app-host proofs sharing one built product. They are separate
           # invocations with separate result bundles so an execution guard can name each one;
           # a single run of both would let one test's absence hide inside the other's pass.
@@ -1238,7 +1232,7 @@ jobs:
               -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-mac-connect-landing-test.xcresult" \
               -parallel-testing-enabled NO \
-              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectFromConnectionLandsOnTheLibraryInTheHostedApp \
+              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectFromConnectionLandsOnListenNowInTheHostedApp \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
               CODE_SIGN_ENTITLEMENTS= \
@@ -1250,7 +1244,7 @@ jobs:
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-mac-connect-landing-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
-            connectFromConnectionLandsOnTheLibraryInTheHostedApp
+            connectFromConnectionLandsOnListenNowInTheHostedApp
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-mac-connect-landing-test.xcresult" \
             "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit/TEST-DulcetMacAccountConnectAppLandingTest.xml" \
@@ -1658,6 +1652,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          tools/ci/run-home-proof tvos
           # Apple TV playback (spec §15.2): the remote plays the canary from Search past the
           # threshold and the test returns once the app's debug marker reports the play delivered;
           # the server's count is read here, outside the test. The baseline is recorded rather than
@@ -2374,6 +2369,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-np-heart-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          tools/ci/run-home-proof ipados "$IPAD_PLAYBACK_DESTINATION"
           # The iPad library on the reader (spec §16.14), while the iPad is still booted: a saved
           # account reopens into what this device saw, then Reconnect in place.
           tools/ci/run-app-host-reader-proof ipados "$IPAD_PLAYBACK_DESTINATION"
@@ -2425,6 +2421,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-search-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          tools/ci/run-home-proof iphone
           # ---- iPhone playback evidence -------------------------------------------------------
           # The iPad proof's shape on a phone: the app plays the canary from the library past the
           # §15.2 threshold and returns once its debug marker reports the play delivered; the
@@ -2840,6 +2837,10 @@ jobs:
             core-conformance/build/test-results/iosSimulatorArm64Test \
             core-conformance/build/test-results/tvosSimulatorArm64Test \
             "$RUNNER_TEMP/dulcet-swift-testing-junit" \
+            "$RUNNER_TEMP/dulcet-macos-home-junit" \
+            "$RUNNER_TEMP/dulcet-iphone-home-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-home-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-home-junit" \
             "$RUNNER_TEMP/dulcet-ios-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-ios-keychain-attributes-junit" \
             "$RUNNER_TEMP/dulcet-ipados-swift-testing-junit" \
