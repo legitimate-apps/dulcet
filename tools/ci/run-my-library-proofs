@@ -65,7 +65,9 @@ if [ "$mode" = tvos ]; then
 fi
 
 if [ "$mode" = iphone ]; then
-    python3 tools/ci/isolate-simulator --phase my-library-iphone --keep-name "iPhone 17 Pro"
+    # The caller has positively validated the server and every proxy. Pay the first boot and
+    # post-boot service burst now, before any test's execution clock, and keep this device booted.
+    python3 tools/ci/isolate-simulator --phase my-library-iphone --keep-name "iPhone 17 Pro" --settle
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
         -destination "platform=iOS Simulator,name=iPhone 17 Pro,OS=latest" \
@@ -96,7 +98,7 @@ if [ "$mode" = iphone ]; then
 fi
 
 if [ "$mode" = ipad ]; then
-    python3 tools/ci/isolate-simulator --phase my-library-ipad --keep "${IPAD_UDID:?}"
+    python3 tools/ci/isolate-simulator --phase my-library-ipad --keep "${IPAD_UDID:?}" --settle
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
         -destination "platform=iOS Simulator,id=${IPAD_UDID:?}" \

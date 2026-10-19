@@ -52,3 +52,17 @@ with patch.object(fixture, 'rest', return_value={'openSubsonicExtensions': []}) 
     else:
         raise AssertionError('catalog availability alone cannot authorize the split-library proof')
 print('READINESS NEGATIVE CONTROL PASS missing capability rejected')
+
+# The device-member workflow must reach the wrapper's positive readiness gate before booting.
+# The wrapper starts its child command only after wait_for_readiness returns; that child is
+# where the member boots/settles, then invokes xcodebuild with the original execution limits.
+root = Path(__file__).resolve().parents[1]
+workflow = (root / '.github/workflows/apple-ci.yml').read_text().split('  apple-conformance-ipad-iphone:', 1)[1]
+assert 'First-boot this leg' not in workflow
+assert 'tools/ci/isolate-simulator' not in workflow.split("- name: Assert this leg's conformance proofs", 1)[0]
+for mode in ['iphone', 'ipad']:
+    assert f'-- tools/ci/run-my-library-proofs {mode}' in workflow
+    script = (root / 'tools/ci/run-my-library-proofs').read_text().split(f'if [ "$mode" = {mode} ]; then', 1)[1].split('\nfi', 1)[0]
+    assert script.index('isolate-simulator') < script.index('xcodebuild')
+    assert '--settle' in script.split('xcodebuild', 1)[0]
+print('READINESS ORDER CONTROL PASS fixture gate before first boot and settled device before UI clocks')
