@@ -9633,6 +9633,30 @@ as Android's Play after Stop.
   overlay and recorded value at each delivery); the core's adopt-then-republish order it relies on
   is ASSUMED from `MutationOutbox.flush` there, not measured by that test.
 
+**2026-09-30 — Android downloads (§14.5).** Android gains the download executor the policy had
+waited for: a core `AndroidDownloadController` over `DownloadPolicyEngine`, WorkManager tasks named by
+`downloadId`, per-track and per-album download and removal on the phone and TV album pages, a
+downloaded marker and progress, local-file playback through the validating data source, and removal
+of an account's tasks and files at sign-out. `DownloadPolicyEngine` gains `remove` (temporary file,
+promoted file, then row) and `records`. Three contracts changed: §14.5's Android precondition now
+names the executor that keeps it; §14.7's Android step 7 now cancels tasks (step 4) instead of
+saying there are none; and a found defect is recorded — the Android queue start read the song from
+the server before looking for a local plan, so offline a downloaded album could not start. Every
+start now asks for the local plan first. Evidence: Robolectric host tests of the controller against
+a loopback server (promotion, an HTTP 200 envelope rejected, a short or grown file refused, removal,
+relaunch reconciliation, `Retry-After`), of the WorkManager executor and sign-out, and of the phone
+and TV controls; emulator proofs of CONF-51 and CONF-52 on phone and TV are wired into the
+`android-emulator` job. Left open: title metadata offline for tracks the reader never read.
+**Fix round, same day.** Review found three defects, each corrected here. (1) Promotion, recovery
+and Apple's local-plan check read the whole file to validate it; a large FLAC exhausted the heap,
+and the `OutOfMemoryError` escaped the executor's `catch (Exception)`, leaving the row `downloading`
+for ever. Validation now reads a bounded prefix plus the on-disk length (§14.5 *Atomic promotion*),
+and the executor records any throwable but a cancellation as a failure. (2) WorkManager stops
+ordinary work after about ten minutes, and each rerun restarted from byte zero, so a long transfer
+never finished; transfers now resume by `Range` (§14.5, *The Android executor*). (3) A download sent
+`stream` with no `format`, so a server transcoding for this player made every download fail
+validation; Apple had the same gap. Both now send `format=raw`.
+
 **2026-09-29 — A lost create's offer is actionable when made; an owed list re-read survives a
 cut-off (§16.14 step 3, §18.6).** A second review of the owed list re-read (§28 revision 104 item 33)
 found it could still be lost in two reachable ways, and the offer it serves not yet actionable, each
@@ -9668,30 +9692,6 @@ OBSERVED with a failing test on the reviewed code; the tests are in `PlaylistRec
   instance: an account switch builds a new reader, so it never crosses accounts, and a relaunch loses
   it — a candidate written by the offer survives in the cache, but the list itself is not re-read
   until its screen reads.
-
-**2026-09-30 — Android downloads (§14.5).** Android gains the download executor the policy had
-waited for: a core `AndroidDownloadController` over `DownloadPolicyEngine`, WorkManager tasks named by
-`downloadId`, per-track and per-album download and removal on the phone and TV album pages, a
-downloaded marker and progress, local-file playback through the validating data source, and removal
-of an account's tasks and files at sign-out. `DownloadPolicyEngine` gains `remove` (temporary file,
-promoted file, then row) and `records`. Three contracts changed: §14.5's Android precondition now
-names the executor that keeps it; §14.7's Android step 7 now cancels tasks (step 4) instead of
-saying there are none; and a found defect is recorded — the Android queue start read the song from
-the server before looking for a local plan, so offline a downloaded album could not start. Every
-start now asks for the local plan first. Evidence: Robolectric host tests of the controller against
-a loopback server (promotion, an HTTP 200 envelope rejected, a short or grown file refused, removal,
-relaunch reconciliation, `Retry-After`), of the WorkManager executor and sign-out, and of the phone
-and TV controls; emulator proofs of CONF-51 and CONF-52 on phone and TV are wired into the
-`android-emulator` job. Left open: title metadata offline for tracks the reader never read.
-**Fix round, same day.** Review found three defects, each corrected here. (1) Promotion, recovery
-and Apple's local-plan check read the whole file to validate it; a large FLAC exhausted the heap,
-and the `OutOfMemoryError` escaped the executor's `catch (Exception)`, leaving the row `downloading`
-for ever. Validation now reads a bounded prefix plus the on-disk length (§14.5 *Atomic promotion*),
-and the executor records any throwable but a cancellation as a failure. (2) WorkManager stops
-ordinary work after about ten minutes, and each rerun restarted from byte zero, so a long transfer
-never finished; transfers now resume by `Range` (§14.5, *The Android executor*). (3) A download sent
-`stream` with no `format`, so a server transcoding for this player made every download fail
-validation; Apple had the same gap. Both now send `format=raw`.
 
 **2026-09-29 — Playlists and lyrics on Apple.** The Apple shells gain a Playlists section, a playlist
 page that plays in the playlist's own order, Add to Playlist on tracks and albums, create, rename and
