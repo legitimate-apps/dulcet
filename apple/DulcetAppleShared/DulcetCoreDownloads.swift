@@ -15,7 +15,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         let totalLength: Int64
         let container: DulcetAudioContainer
     }
-    var reconcileArtworkCache: (@MainActor (String, Int64) async -> Void)?
+    var reconcileArtworkCache: (@MainActor (String, DulcetArtworkCacheIntent) async -> Void)?
     private let databaseName: String
     private let downloadRootURL: URL
     private let sessionConfiguration: URLSessionConfiguration
@@ -40,6 +40,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var reconciliationGeneration = 0
     private var reconciled = false
     private var automaticDownloadContactPermitted = false
+    private var cacheBudgetRevision = 0
 
     private var credentialGeneration: Int64 {
         account?.credentialGeneration ?? 0
@@ -248,14 +249,29 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         applyOfflineChange(outcome)
     }
     func setStreamingCacheBudgetBytes(_ bytes: Int64) {
-        guard client?.setCacheBudgetBytes(bytes: bytes) == true else { return }
-        refreshArtworkBudget()
-        stateRefreshHandler?()
+        guard bytes >= 0, reconciled, let serverID = account?.providerInstanceID else { return }
+        cacheBudgetRevision += 1
+        let revision = cacheBudgetRevision
+        let generation = reconciliationGeneration
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await reconcileArtworkCache?(serverID, .reconcile(reservationBytes: 0, budgetBytesOverride: bytes))
+            guard generation == reconciliationGeneration, revision == cacheBudgetRevision,
+                  serverID == account?.providerInstanceID,
+                  client?.setCacheBudgetBytes(bytes: bytes) == true else { return }
+            stateRefreshHandler?()
+        }
     }
     func clearStreamingCache() {
-        guard client?.clearStreamingCache() == true else { return }
-        refreshArtworkBudget()
-        stateRefreshHandler?()
+        guard reconciled, let serverID = account?.providerInstanceID else { return }
+        let generation = reconciliationGeneration
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await reconcileArtworkCache?(serverID, .clear)
+            guard generation == reconciliationGeneration, serverID == account?.providerInstanceID,
+                  client?.clearStreamingCache() == true else { return }
+            stateRefreshHandler?()
+        }
     }
     func missingAutomaticDownloadDetails() -> AppleOfflineLibraryHydrationDto? {
         guard reconciled, automaticDownloadContactPermitted else { return nil }
@@ -295,7 +311,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             Task { @MainActor [weak self] in
                 guard let self, cacheRemoteResponses, generation == reconciliationGeneration else { return }
                 if cacheWrites[token] == nil {
-                    await reconcileArtworkCache?(track.id.providerInstanceID, information.contentLength)
+                    await reconcileArtworkCache?(track.id.providerInstanceID, .reconcile(reservationBytes: information.contentLength, budgetBytesOverride: nil))
                 }
                 guard generation == reconciliationGeneration else { return }
                 cacheValidatedBytes(token: token, track: track, expectedContainer: expectedContainer,
@@ -352,14 +368,23 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     func artworkCachePlan(serverID: String, evictableBytes: Int64, pinnedBytes: Int64,
-                          reservationBytes: Int64) -> ArtworkCacheBudgetPlan? {
+                          intent: DulcetArtworkCacheIntent) -> ArtworkCacheBudgetPlan? {
         guard reconciled, serverID == account?.providerInstanceID else { return nil }
-        return client?.planArtworkCache(evictableBytes: evictableBytes, pinnedBytes: pinnedBytes,
-                                        reservationBytes: reservationBytes)
+        switch intent {
+        case let .reconcile(reservationBytes, budgetBytesOverride):
+            if let budgetBytesOverride {
+                return client?.planArtworkCacheForBudget(evictableBytes: evictableBytes, pinnedBytes: pinnedBytes,
+                    reservationBytes: reservationBytes, budgetBytes: budgetBytesOverride)
+            }
+            return client?.planArtworkCache(evictableBytes: evictableBytes, pinnedBytes: pinnedBytes,
+                                            reservationBytes: reservationBytes)
+        case .clear:
+            return client?.planClearArtworkCache(evictableBytes: evictableBytes, pinnedBytes: pinnedBytes)
+        }
     }
     private func refreshArtworkBudget() {
         guard let serverID = account?.providerInstanceID else { return }
-        Task { @MainActor [weak self] in await self?.reconcileArtworkCache?(serverID, 0) }
+        Task { @MainActor [weak self] in await self?.reconcileArtworkCache?(serverID, .reconcile(reservationBytes: 0, budgetBytesOverride: nil)) }
     }
 
     func disconnect() {

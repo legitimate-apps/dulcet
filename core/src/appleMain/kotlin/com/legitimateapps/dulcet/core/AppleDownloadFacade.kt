@@ -541,6 +541,18 @@ public class AppleDownloadClient(
         requireNotNull(offline).planArtworkCache(account.providerInstanceId, evictableBytes, pinnedBytes, reservationBytes)
     } catch (_: Throwable) { null }
 
+    public fun planArtworkCacheForBudget(evictableBytes: Long, pinnedBytes: Long, reservationBytes: Long,
+        budgetBytes: Long): ArtworkCacheBudgetPlan? = try {
+        requireReconciled()
+        requireNotNull(offline).planArtworkCache(account.providerInstanceId, evictableBytes, pinnedBytes,
+            reservationBytes, budgetBytesOverride = budgetBytes)
+    } catch (_: Throwable) { null }
+
+    public fun planClearArtworkCache(evictableBytes: Long, pinnedBytes: Long): ArtworkCacheBudgetPlan? = try {
+        requireReconciled()
+        requireNotNull(offline).planClearCache(account.providerInstanceId, evictableBytes, pinnedBytes)
+    } catch (_: Throwable) { null }
+
     public fun finishStreamingCache(writeId: String, totalLength: Long, wallClockMilliseconds: Long): Boolean = try {
         val result = requireNotNull(offline).finishCacheWrite(writeId,
             DownloadResponseMetadata(null, PlaybackContentLength.Exact(totalLength)), wallClockMilliseconds)

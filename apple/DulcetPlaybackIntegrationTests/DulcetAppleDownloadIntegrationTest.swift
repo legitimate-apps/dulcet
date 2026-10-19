@@ -440,7 +440,50 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         if case let .loaded(bytes, _) = replay { XCTAssertEqual(bytes, streamed) }
         else { XCTFail("cached song failed with network clients closed") }
         XCTAssertEqual(context.controller.offlineLibraryStorage.downloadBytes, 0)
-        print("OFFLINE-CACHE \(platformLabel) validated-stream=tee sparse-ranges=true offline=identical bytes=\(streamed.count)")
+
+        // The real Settings executor must trim artwork using the prospective limit before
+        // mutating the stream quota. A clear uses a separate target-zero shared plan.
+        let originalBudget = context.controller.offlineLibraryStorage.cacheBudgetBytes
+        let smallerBudget = max(Int64(streamed.count), originalBudget / 2)
+        var artworkBudgetApplied = false
+        var artworkClearApplied = false
+        context.controller.reconcileArtworkCache = { serverID, intent in
+            XCTAssertEqual(serverID, self.providerInstanceID)
+            switch intent {
+            case let .reconcile(reservationBytes, budgetBytesOverride):
+                guard let budgetBytesOverride else { return }
+                XCTAssertEqual(reservationBytes, 0)
+                XCTAssertEqual(budgetBytesOverride, smallerBudget)
+                XCTAssertEqual(context.controller.offlineLibraryStorage.cacheBudgetBytes, originalBudget)
+                let plan = context.controller.artworkCachePlan(serverID: serverID, evictableBytes: 20,
+                    pinnedBytes: 0, intent: intent)
+                XCTAssertNotNil(plan)
+                // The executor reports the completed trim before media eviction is considered.
+                _ = context.controller.artworkCachePlan(serverID: serverID, evictableBytes: 0,
+                    pinnedBytes: 0, intent: intent)
+                artworkBudgetApplied = true
+            case .clear:
+                XCTAssertGreaterThan(context.controller.offlineLibraryStorage.cacheBytes, 0)
+                let plan = context.controller.artworkCachePlan(serverID: serverID, evictableBytes: 20,
+                    pinnedBytes: 0, intent: intent)
+                XCTAssertEqual(plan?.targetEvictableBytes, 0)
+                _ = context.controller.artworkCachePlan(serverID: serverID, evictableBytes: 0,
+                    pinnedBytes: 0, intent: intent)
+                artworkClearApplied = true
+            }
+        }
+        context.controller.setStreamingCacheBudgetBytes(smallerBudget)
+        try await waitUntil(timeout: .seconds(10), failureMessage: "cache budget did not follow artwork trim") {
+            context.controller.offlineLibraryStorage.cacheBudgetBytes == smallerBudget
+        }
+        XCTAssertTrue(artworkBudgetApplied)
+        XCTAssertEqual(context.controller.offlineLibraryStorage.cacheBytes, Int64(streamed.count))
+        context.controller.clearStreamingCache()
+        try await waitUntil(timeout: .seconds(10), failureMessage: "clear did not follow artwork trim") { artworkClearApplied }
+        // The active playback resource keeps its validated local file protected from Clear.
+        XCTAssertNotNil(context.controller.offlinePlaybackAsset(for: track))
+        context.controller.reconcileArtworkCache = nil
+        print("OFFLINE-CACHE \(platformLabel) validated-stream=tee sparse-ranges=true offline=identical artwork-first=true active-clear=protected bytes=\(streamed.count)")
 
         // Automatic downloads require the advertised My Library contract. Plain OpenSubsonic
         // retains the cache proof above; the Dulcet Server fixture also runs the real add/remove.

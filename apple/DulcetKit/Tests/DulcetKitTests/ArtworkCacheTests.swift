@@ -221,3 +221,22 @@ private actor ArtworkCacheWriteGate {
     func wait() async { await withCheckedContinuation { continuation = $0 } }
     func release() { continuation?.resume(); continuation = nil }
 }
+
+@Test
+func artworkColdInventoryPreservesCoverUntilSharedPinsAreRestored() async {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let pinned = DulcetArtworkCacheKey(serverID: "provider-A", artworkKey: "kept-cover", sizeBucket: .pixels256)
+    let expendable = DulcetArtworkCacheKey(serverID: "provider-A", artworkKey: "grid-cover", sizeBucket: .pixels512)
+    let writer = DulcetArtworkDiskCache(rootDirectory: root, maximumByteCount: 100)
+    await writer.insert(Data(repeating: 1, count: 20), for: pinned)
+    await writer.insert(Data(repeating: 2, count: 20), for: expendable)
+    // A cold process can inventory a cache above its current bound before core restores pins.
+    let reopened = DulcetArtworkDiskCache(rootDirectory: root, maximumByteCount: 30)
+    #expect(await reopened.statistics(serverID: "provider-A").evictableByteCount == 40)
+    await reopened.protectDownloadedArtwork(serverID: "provider-A", artworkKeys: ["kept-cover"])
+    await reopened.trim(serverID: "provider-A", evictableByteTarget: 0)
+    #expect(await reopened.data(for: pinned) == Data(repeating: 1, count: 20))
+    #expect(await reopened.data(for: expendable) == nil)
+    #expect(await reopened.statistics(serverID: "provider-A") == .init(evictableByteCount: 0, protectedByteCount: 20))
+}

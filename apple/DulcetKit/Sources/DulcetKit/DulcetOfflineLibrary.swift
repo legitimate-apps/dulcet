@@ -23,6 +23,12 @@ public struct DulcetOfflineLibraryStorage: Sendable, Equatable {
     }
 }
 
+/// Artwork executors apply this shared-policy plan before the media cache is mutated.
+public enum DulcetArtworkCacheIntent: Sendable, Equatable {
+    case reconcile(reservationBytes: Int64, budgetBytesOverride: Int64?)
+    case clear
+}
+
 @MainActor
 public protocol DulcetOfflineLibraryControlling: AnyObject {
     var offlineLibraryStorage: DulcetOfflineLibraryStorage { get }
@@ -87,7 +93,7 @@ struct DulcetOfflineLibrarySection: View {
                 }.accessibilityIdentifier("dulcet.offline.cacheSize")
                 Text("Recently streamed songs stay available offline until the cache needs space. Downloads stay protected.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("Clear Streaming Cache") { store.clearStreamingCache() }
+                Button("Clear Cache") { store.clearStreamingCache() }
                     .accessibilityIdentifier("dulcet.offline.clearCache")
             }
             .accessibilityElement(children: .contain)

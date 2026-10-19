@@ -170,7 +170,8 @@ public actor DulcetArtworkDiskCache {
         let entries = entriesByLastAccess()
         indexedEntries = Dictionary(uniqueKeysWithValues: entries.map { ($0.url.path, $0) })
         indexedByteCount = entries.reduce(0) { $0 + $1.byteCount }
-        evictIfNeeded()
+        // Inventory is read-only: the shared core installs downloaded/current artwork pins
+        // after reading usage. Trimming here could erase those covers during cold launch.
     }
 
     private func remember(_ entry: Entry) {

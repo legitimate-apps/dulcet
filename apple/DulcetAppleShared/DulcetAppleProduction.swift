@@ -112,12 +112,12 @@ enum DulcetAppleProduction {
     ) -> DulcetPresentationStore {
         #if os(macOS) || os(iOS)
         if let downloads = downloads as? DulcetCoreDownloadController {
-            artworkFetcher.cacheBudgetPlan = { [weak downloads] serverID, evictableBytes, pinnedBytes, reservationBytes in
+            artworkFetcher.cacheBudgetPlan = { [weak downloads] serverID, evictableBytes, pinnedBytes, intent in
                 downloads?.artworkCachePlan(serverID: serverID, evictableBytes: evictableBytes,
-                                           pinnedBytes: pinnedBytes, reservationBytes: reservationBytes)
+                                           pinnedBytes: pinnedBytes, intent: intent)
             }
-            downloads.reconcileArtworkCache = { [weak artworkFetcher] serverID, reservationBytes in
-                await artworkFetcher?.reconcileSharedCacheBudget(serverID: serverID, reservationBytes: reservationBytes)
+            downloads.reconcileArtworkCache = { [weak artworkFetcher] serverID, intent in
+                await artworkFetcher?.reconcileSharedCacheBudget(serverID: serverID, intent: intent)
             }
         }
         #endif
@@ -672,7 +672,7 @@ final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
     private let client: AppleArtworkFetchClient
     private let cache: DulcetArtworkDiskCache
     private var operations: [DulcetCoreArtworkFetchOperation] = []
-    var cacheBudgetPlan: (@MainActor (String, Int64, Int64, Int64) -> ArtworkCacheBudgetPlan?)?
+    var cacheBudgetPlan: (@MainActor (String, Int64, Int64, DulcetArtworkCacheIntent) -> ArtworkCacheBudgetPlan?)?
 
     init(
         client: AppleArtworkFetchClient = AppleArtworkFetchClient(),
@@ -701,18 +701,18 @@ final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
         return operation
     }
 
-    func reconcileSharedCacheBudget(serverID: String, reservationBytes: Int64 = 0) async {
+    func reconcileSharedCacheBudget(serverID: String, intent: DulcetArtworkCacheIntent = .reconcile(reservationBytes: 0, budgetBytesOverride: nil)) async {
         guard let cacheBudgetPlan else { return }
         var usage = await cache.statistics(serverID: serverID)
         guard let initial = cacheBudgetPlan(serverID, Int64(usage.evictableByteCount),
-                                           Int64(usage.protectedByteCount), reservationBytes) else { return }
+                                           Int64(usage.protectedByteCount), intent) else { return }
         await cache.protectDownloadedArtwork(serverID: serverID, artworkKeys: initial.protectedArtworkKeys)
         usage = await cache.statistics(serverID: serverID)
         guard let plan = cacheBudgetPlan(serverID, Int64(usage.evictableByteCount),
-                                        Int64(usage.protectedByteCount), reservationBytes) else { return }
+                                        Int64(usage.protectedByteCount), intent) else { return }
         await cache.trim(serverID: serverID, evictableByteTarget: plan.targetEvictableBytes)
         usage = await cache.statistics(serverID: serverID)
-        _ = cacheBudgetPlan(serverID, Int64(usage.evictableByteCount), Int64(usage.protectedByteCount), reservationBytes)
+        _ = cacheBudgetPlan(serverID, Int64(usage.evictableByteCount), Int64(usage.protectedByteCount), intent)
     }
 }
 
