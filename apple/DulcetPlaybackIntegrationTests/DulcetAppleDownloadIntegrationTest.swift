@@ -393,7 +393,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         let plan = try await resolveStreamingPlan(wire: wire, context: context, track: track)
         let onlineMediaTime = try await withPlaybackEngine { online in
             let onlineProgress = OfflineEngineProgress()
-            online.setEventListener { event in Task { @MainActor in onlineProgress.record(event) } }
+            online.setEventListener { event in
+                onlineProgress.record(event)
+            }
             let onlinePrepared = await execute(online, .prepare(commandID: .init("cache-engine-online-prepare"), plan: plan))
             XCTAssertEqual(onlinePrepared, .accepted(commandID: .init("cache-engine-online-prepare")))
             _ = await execute(online, .setVolume(commandID: .init("cache-engine-online-mute"), volume: 0))
@@ -416,7 +418,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             metadata: .init(title: track.title, artist: nil, albumTitle: track.albumTitle))
         let offlineMediaTime = try await withPlaybackEngine { offline in
             let offlineProgress = OfflineEngineProgress()
-            offline.setEventListener { event in Task { @MainActor in offlineProgress.record(event) } }
+            offline.setEventListener { offlineProgress.record($0) }
             let offlinePrepared = await execute(offline, .prepare(commandID: .init("cache-engine-offline-prepare"), plan: localPlan))
             XCTAssertEqual(offlinePrepared, .accepted(commandID: .init("cache-engine-offline-prepare")))
             _ = await execute(offline, .setVolume(commandID: .init("cache-engine-offline-mute"), volume: 0))
@@ -458,7 +460,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         case .mp3: .mp3; case .mp4: .mp4; case .wav: .wav
         case .flac: .flac; case .ogg: .ogg; case .adtsAAC: .adtsaac
         }
-        let corePlan: AppleRemotePlaybackPlanDto? = await withCheckedContinuation { continuation in
+        let resolved: DulcetPlaybackPlan? = await withCheckedContinuation { continuation in
             _ = wire.startResolve(request: PlaybackResolveRequest(
                 playbackSessionId: PlaybackSessionId(value: "offline-cache-session"),
                 attemptId: AttemptId(value: "offline-cache-attempt"),
@@ -469,12 +471,19 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                     directPlayProfiles: [DirectPlayAudioProfile(containers: [coreContainer], audioCodecs: ["mp3", "aac", "flac", "pcm", "vorbis"], protocols: ["http"], maxAudioChannels: 8)],
                     transcodingProfiles: [TranscodingAudioProfile(container: .mp3, audioCodec: "mp3", protocol: "http", maxAudioChannels: 2)]),
                 legacyPreference: LegacyPlaybackPreference(format: nil, maxBitRateKbps: nil), legacyTimeOffset: nil)) {
-                    continuation.resume(returning: $0.plan)
+                    // Keep the Kotlin DTO in this callback's actor region. Only the Swift
+                    // Sendable plan crosses the continuation boundary.
+                    let plan = $0.plan.map { corePlan in
+                        DulcetCorePlaybackPlanFactory.makePlan(client: wire, corePlan: corePlan,
+                            metadata: .init(title: track.title, artist: nil, albumTitle: track.albumTitle),
+                            wrapResource: { resource, expected in
+                                context.controller.cachingResource(resource, track: track, expectedContainer: expected)
+                            })
+                    }
+                    continuation.resume(returning: plan)
                 }
         }
-        return DulcetCorePlaybackPlanFactory.makePlan(client: wire, corePlan: try XCTUnwrap(corePlan),
-            metadata: .init(title: track.title, artist: nil, albumTitle: track.albumTitle),
-            wrapResource: { resource, expected in context.controller.cachingResource(resource, track: track, expectedContainer: expected) })
+        return try XCTUnwrap(resolved)
     }
 
     /// Runs under each existing Mac/iPhone/iPad download selector, so the regular full Apple
@@ -574,25 +583,29 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             account: AppleLibraryReaderAccount(providerInstanceId: providerInstanceID, normalizedBaseUrl: automatic.baseURL,
                 username: fixtureUsername, password: fixturePassword, allowLocalHttp: true), foreground: true, readsDownloads: true)
         defer { reader.close() }
-        _ = await withCheckedContinuation { continuation in _ = reader.connect { continuation.resume(returning: $0) } }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            _ = reader.connect { _ in continuation.resume() }
+        }
         let library = AppleMyLibraryClient(reader: reader)
-        let listener = OfflineLibraryIntegrationListener { _ in automatic.controller.reconcileMyLibrary() }
+        let listener = OfflineLibraryIntegrationListener(rawID: track.id.rawID) {
+            automatic.controller.reconcileMyLibrary()
+        }
         let subscription = library.subscribe(sort: "recentlyAdded", listener: listener)
         defer { subscription.close() }
-        let refresh: AppleMyLibraryRefresh = await withCheckedContinuation { continuation in
-            _ = library.refresh { continuation.resume(returning: $0) }
+        let availability: String = await withCheckedContinuation { continuation in
+            _ = library.refresh { continuation.resume(returning: $0.availability) }
         }
-        guard refresh.availability == "available" else { return }
-        _ = await withCheckedContinuation { continuation in
+        guard availability == "available" else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             _ = library.warmAutomaticDownloadDetails(albumIds: [], trackIds: [track.id.rawID], playlistIds: [], loadPlaylistIndex: false) {
-                continuation.resume(returning: $0)
+                _ in continuation.resume()
             }
         }
         automatic.controller.setAutomaticDownloadContactPermitted(false)
         automatic.controller.setAutomaticDownloadsEnabled(true)
         XCTAssertTrue(library.add(kind: "track", rawId: track.id.rawID))
         try await waitUntil(timeout: .seconds(10), failureMessage: "cached My Library member never published") {
-            listener.publication?.membership(kind: "track", rawId: track.id.rawID) == "added"
+            listener.membership == "added"
         }
         let heldConnector = DownloadRecoveryConnector()
         let savedSource = DulcetAccountDataSource(connector: heldConnector,
@@ -623,7 +636,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         await fulfillment(of: [explicitUpgrade], timeout: 10)
         XCTAssertTrue(library.remove(kind: "track", rawId: track.id.rawID))
         try await waitUntil(timeout: .seconds(10), failureMessage: "My Library removal did not publish") {
-            listener.publication?.membership(kind: "track", rawId: track.id.rawID) == "notAdded"
+            listener.membership == "notAdded"
         }
         XCTAssertNotNil(automatic.controller.offlinePlaybackAsset(for: track), "explicit download must survive My Library removal")
         automatic.controller.setAutomaticDownloadsEnabled(false)
@@ -1066,25 +1079,37 @@ private final class DownloadRecoveryConnectOperation: DulcetAccountConnectOperat
 }
 
 
-private final class OfflineLibraryIntegrationListener: NSObject, AppleMyLibraryListener, @unchecked Sendable {
-    private let handler: @MainActor (AppleMyLibraryPublication) -> Void
-    @MainActor var publication: AppleMyLibraryPublication?
-    init(handler: @escaping @MainActor (AppleMyLibraryPublication) -> Void) { self.handler = handler }
-    func onMyLibraryPublication(publication: AppleMyLibraryPublication) {
-        MainActor.assumeIsolated { self.publication = publication; handler(publication) }
+@MainActor
+private final class OfflineLibraryIntegrationListener: NSObject, AppleMyLibraryListener {
+    private nonisolated let rawID: String
+    private let handler: @MainActor () -> Void
+    var membership = "notAdded"
+    init(rawID: String, handler: @escaping @MainActor () -> Void) {
+        self.rawID = rawID
+        self.handler = handler
+    }
+    nonisolated func onMyLibraryPublication(publication: AppleMyLibraryPublication) {
+        // The facade documents main-thread delivery. Extract a Sendable value before the
+        // actor check, so the Kotlin publication never enters another Swift isolation region.
+        let value = publication.membership(kind: "track", rawId: rawID)
+        MainActor.assumeIsolated { membership = value; handler() }
     }
 }
 
-@MainActor
-private final class OfflineEngineProgress {
-    var position: TimeInterval = 0
-    var failure: String?
+private final class OfflineEngineProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedPosition: TimeInterval = 0
+    private var storedFailure: String?
+    var position: TimeInterval { lock.lock(); defer { lock.unlock() }; return storedPosition }
+    var failure: String? { lock.lock(); defer { lock.unlock() }; return storedFailure }
     func record(_ event: DulcetPlaybackEvent) {
+        lock.lock()
+        defer { lock.unlock() }
         switch event {
         case let .playbackProgressBegan(_, _, mediaPosition), let .positionChanged(_, mediaPosition, _):
-            position = max(position, mediaPosition)
+            storedPosition = max(storedPosition, mediaPosition)
         case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error):
-            failure = String(describing: error)
+            storedFailure = String(describing: error)
         default: break
         }
     }

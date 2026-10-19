@@ -555,7 +555,9 @@ public class AppleDownloadClient(
 
     public fun finishStreamingCache(writeId: String, totalLength: Long, wallClockMilliseconds: Long): Boolean = try {
         val result = requireNotNull(offline).finishCacheWrite(writeId,
-            DownloadResponseMetadata(null, PlaybackContentLength.Exact(totalLength)), wallClockMilliseconds)
+            // Live response headers already passed the wire validator. A local file has no
+            // HTTP header, so use the same binary file type as verifyOffline, not a missing type.
+            DownloadResponseMetadata("application/octet-stream", PlaybackContentLength.Exact(totalLength)), wallClockMilliseconds)
         result is DownloadPromotionResult.Promoted || result is DownloadPromotionResult.AlreadyPromoted
     } catch (_: Throwable) { false }
 
