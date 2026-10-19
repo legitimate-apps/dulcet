@@ -172,6 +172,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     func requestDownload(_ track: DulcetTrack) {
         guard downloadsEnabled, track.availability == .playable else { return }
         guard let account, track.id.providerInstanceID == account.providerInstanceID else { return }
+        // DEBUG proof witness shared by row actions and the Mac launch-argument driver.
+        // Automatic membership reconciliation does not enter this explicit-request path.
+        probe("download-requested item=\(track.id.rawID)")
         guard reconciled else {
             if !pendingTracks.contains(where: { $0.id == track.id }) {
                 pendingTracks.append(track)
