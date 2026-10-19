@@ -240,43 +240,91 @@ struct AVPlayerCrossfadeTests {
     @Test(arguments: [false, true])
     func aBoundaryCallbackCannotOvertakeAPendingSeekOrReplayAfterIt(replaceDuringSeek: Bool) async throws {
         let player = DeferredCrossfadeSeekPlayer()
-        let fixture = try await CrossfadeFixture.start(player: player)
+        // Run 39191076357 missed the both-ready gate and later reported an original advance.
+        // Prepare them with overlap disarmed, then hold the original until the seek is arranged.
+        let fixture = try await CrossfadeFixture.start(player: player, warmTransport: true,
+                                                      playAfterPreparation: false)
         let engine = fixture.engine
         defer {
             engine.execute(.release(commandID: .init("cleanup"))) { _ in }
             try? FileManager.default.removeItem(at: fixture.localURL)
         }
-        try await waitUntil("both real items were not ready", engine: engine, timeout: 30) {
-            player.items().count == 2 && player.items().allSatisfy { $0.status == .readyToPlay }
-        }
+        let items = player.items()
+        try #require(items.count == 2 && items.allSatisfy { $0.status == .readyToPlay }
+                     && player.currentItem === items.first && player.rate == 0,
+                     "Both real items must be ready with the original held before arranging the seek")
+        let boundaryTimestamp = CMTimeGetSeconds(items[0].duration) - 2 + 0.1
+        try #require(boundaryTimestamp.isFinite && boundaryTimestamp > CMTimeGetSeconds(player.currentTime()))
+        print("DULCET BOUNDARY SEEK PREPARATION ready-items=2 paused=true replace=\(replaceDuringSeek) stale-timestamp=\(boundaryTimestamp)")
         player.holdSeek()
         let seeking = Task { await execute(engine, .seek(commandID: .init("held-seek"), position: 0)) }
         try await waitUntil("seek was not held", engine: engine) { player.hasHeldSeek }
+        try #require(player.hasHeldSeek, "The stale callback proof requires an outstanding seek")
+        try #require(await execute(engine, .play(commandID: .init("play-during-held-seek"))) ==
+            .accepted(commandID: .init("play-during-held-seek")))
+        try #require(player.rate > 0 && player.currentItem === items.first
+                     && items.allSatisfy { $0.status == .readyToPlay },
+                     "The injected boundary must face a playing original and a ready incoming item")
+        print("DULCET BOUNDARY SEEK CALLBACK phase=held replace=\(replaceDuringSeek) ready-items=2 rate=\(player.rate)")
         // Supply the same boundary timestamp AVFoundation can enqueue while seek completion
         // is outstanding. The stored callback remains the pre-seek observer after rearming.
-        player.deliverOriginalTimestamp(4.1)
+        try #require(player.deliverOriginalTimestamp(boundaryTimestamp),
+                     "The stored pre-seek callback must actually be delivered during the held seek")
         #expect(engine.crossfadeStateForTesting() == nil)
         #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
-        _ = await execute(engine, .setCrossfade(commandID: .init("policy-during-seek"),
-            attemptID: fixture.first.attemptID, duration: 2))
+        try #require(await execute(engine, .pause(commandID: .init("hold-between-callbacks"))) ==
+            .completed(commandID: .init("hold-between-callbacks"), result: .withoutData))
+        try await waitUntil("transport did not pause between callback proofs", engine: engine) {
+            player.rate == 0 && player.timeControlStatus == .paused
+        }
+        try #require(player.rate == 0 && player.timeControlStatus == .paused)
+        try #require(await execute(engine, .setCrossfade(commandID: .init("policy-during-seek"),
+            attemptID: fixture.first.attemptID, duration: 2)) ==
+            .completed(commandID: .init("policy-during-seek"), result: .withoutData))
         player.captureLatestCallbackForReplay()
+        var replayAttempt = fixture.first.attemptID
         if replaceDuringSeek {
             let replacement = plan(resource: DulcetLocalFilePlaybackResource(
-                fileURL: fixture.localURL, exactByteLength: Int64(makePCMWave(duration: 6).count)),
+                fileURL: fixture.localURL, exactByteLength: fixture.localByteLength),
                 session: "crossfade-a", attempt: "replacement-during-seek")
-            #expect(await execute(engine, .replaceCurrent(commandID: .init("replace-seeking"), plan: replacement)) ==
+            try #require(await execute(engine, .replaceCurrent(commandID: .init("replace-seeking"), plan: replacement)) ==
                 .accepted(commandID: .init("replace-seeking")))
-            _ = await execute(engine, .setCrossfade(commandID: .init("rearm-replacement"),
-                attemptID: replacement.attemptID, duration: 2))
+            replayAttempt = replacement.attemptID
+            // Replacement creates a new playback context. Hold that context explicitly before
+            // waiting for its decoder; the earlier pause belonged to the outgoing attempt.
+            try #require(await execute(engine, .pause(commandID: .init("hold-replacement-for-replay"))) ==
+                .completed(commandID: .init("hold-replacement-for-replay"), result: .withoutData))
+            try #require(await execute(engine, .setCrossfade(commandID: .init("rearm-replacement"),
+                attemptID: replacement.attemptID, duration: 2)) ==
+                .completed(commandID: .init("rearm-replacement"), result: .withoutData))
         }
+        let replayItems = player.items()
+        try #require(replayItems.count == 2)
+        let replayReady = { @Sendable in
+            replayItems.allSatisfy { $0.status == .readyToPlay } && player.currentItem === replayItems[0]
+        }
+        let replayHeld = { @Sendable in
+            replayReady() && player.rate == 0 && player.timeControlStatus == .paused
+        }
+        try await waitUntil("held replay fixture did not prepare both real items", engine: engine,
+                            mediaState: {
+                                "statuses=\(replayItems.map { $0.status.rawValue }) rate=\(player.rate) control=\(player.timeControlStatus.rawValue) position=\(CMTimeGetSeconds(player.currentTime()))"
+                            }, condition: replayHeld)
+        try #require(replayHeld())
         player.finishSeek()
         let expected: DulcetPlaybackCommandOutcome = replaceDuringSeek
             ? .rejected(commandID: .init("held-seek"), reason: .invalidState)
             : .completed(commandID: .init("held-seek"), result: .withoutData)
-        #expect(await seeking.value == expected)
-        player.deliverOriginalTimestamp(4.1)
+        try #require(await seeking.value == expected)
+        try #require(await execute(engine, .play(commandID: .init("resume-before-stale-replay"))) ==
+            .accepted(commandID: .init("resume-before-stale-replay")))
+        try #require(replayReady() && player.rate > 0,
+                     "The replayed callback must face ready items and active playback")
+        print("DULCET BOUNDARY SEEK CALLBACK phase=replay replace=\(replaceDuringSeek) ready-items=2 rate=\(player.rate)")
+        try #require(player.deliverOriginalTimestamp(boundaryTimestamp),
+                     "The stored pre-seek callback must actually be replayed after completion")
         #expect(engine.crossfadeStateForTesting() == nil)
-        #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
+        #expect(!fixture.events.containsAdvance(old: replayAttempt, new: fixture.next.attemptID))
         try await waitUntil("seek did not rearm a fresh observer", engine: engine, timeout: 30) {
             engine.crossfadeStateForTesting()?.incomingRate ?? 0 > 0
         }
@@ -370,9 +418,11 @@ private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Senda
         return super.addPeriodicTimeObserver(forInterval: interval, queue: queue, using: block)
     }
 
-    nonisolated func deliverOriginalTimestamp(_ seconds: Double) {
+    nonisolated func deliverOriginalTimestamp(_ seconds: Double) -> Bool {
         let (queue, callback) = seekLock.withLock { (callbackQueue, originalCallback) }
-        queue?.sync { callback?(CMTime(seconds: seconds, preferredTimescale: 1_000)) }
+        guard let queue, let callback else { return false }
+        queue.sync { callback(CMTime(seconds: seconds, preferredTimescale: 1_000)) }
+        return true
     }
 }
 
@@ -385,6 +435,7 @@ private extension DulcetPlaybackCommandOutcome {
 
 private struct CrossfadeFixture {
     let localURL: URL
+    let localByteLength: Int64
     let engine: DulcetAVPlayerEngine
     let originalPlayer: AVQueuePlayer
     let events: PlaybackEventRecorder
@@ -395,7 +446,8 @@ private struct CrossfadeFixture {
     static func start(
         player: AVQueuePlayer = AVQueuePlayer(),
         outgoingResource: (any DulcetPlaybackResourceLoading)? = nil,
-        warmTransport: Bool = false
+        warmTransport: Bool = false,
+        playAfterPreparation: Bool = true
     ) async throws -> CrossfadeFixture {
         let controls = RecordingSystemMediaControls()
         let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: controls)
@@ -453,10 +505,13 @@ private struct CrossfadeFixture {
         try #require(await execute(engine, .setCrossfade(commandID: .init("crossfade"),
             attemptID: first.attemptID, duration: 2)) ==
             .completed(commandID: .init("crossfade"), result: .withoutData))
-        try #require(await execute(engine, .play(commandID: .init("play"))) ==
-            .accepted(commandID: .init("play")))
+        if playAfterPreparation {
+            try #require(await execute(engine, .play(commandID: .init("play"))) ==
+                .accepted(commandID: .init("play")))
+        }
         handedOff = true
-        return Self(localURL: localURL, engine: engine, originalPlayer: player, events: events, controls: controls,
+        return Self(localURL: localURL, localByteLength: Int64(bytes.count), engine: engine,
+                    originalPlayer: player, events: events, controls: controls,
                     first: first, next: next)
     }
 }
