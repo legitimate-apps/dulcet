@@ -21,6 +21,8 @@ import com.legitimateapps.dulcet.emulator.clearRating
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
 import com.legitimateapps.dulcet.emulator.userRating
 import com.legitimateapps.dulcet.playback.PlaybackIntents
+import com.legitimateapps.dulcet.downloads.AndroidDownloads
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -45,6 +47,13 @@ class AndroidEmulatorRatingProofTest {
         connectSavedAccount(context, probe)
         val account = checkNotNull(AndroidAccountCredentialStore(context).load())
         PlaybackObserver(context).use { observer ->
+            // This control specifically requires metadata never seen by this account. Ordinary
+            // streaming cache intentionally fetches getSong metadata, which can legitimately turn
+            // Unknown into the server's known-zero rating before the player is inspected.
+            val downloads = checkNotNull(AndroidDownloads.controller(context))
+            check(runBlocking { downloads.awaitReconciled() })
+            runBlocking { downloads.setAutomaticDownloadsEnabled(false); downloads.setCacheBudgetBytes(0) }
+            check(runBlocking { downloads.localPlan(rawId) } == null) { "The unknown-rating control already has local audio" }
             val intent = PlaybackIntents.playTrack(context, account.id, rawId, RATED_TITLE)
                 .setClassName(context, PLAYBACK_ENTRY_ALIAS)
             ActivityScenario.launch<MainActivity>(intent).use {

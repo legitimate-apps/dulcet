@@ -84,6 +84,9 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
         try {
             val controller = checkNotNull(AndroidDownloads.controller(context)) { "No download controller for the saved account" }
             check(runBlocking { controller.awaitReconciled() }) { "Download reconciliation did not run" }
+            // This proof owns exactly one explicit original, independently of library retention
+            // and ordinary streaming cache. Its outer finally verifies account file/task cleanup.
+            runBlocking { controller.setAutomaticDownloadsEnabled(false); controller.setCacheBudgetBytes(0) }
             proof(controller, account, rawId, container, song.optLong("duration") * 1000, original, relay)
         } finally {
             relay.close()
@@ -136,7 +139,7 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
         check(runCatching { probe.call("ping") }.isSuccess) { "The disposable server itself stopped answering" }
         val forwardedAtCut = relay.forwardedBytes.get()
         val refusedBefore = relay.refusedConnections.get()
-        PlaybackObserver(context).use { observer ->
+        PlaybackObserver(context, removeAccountDataOnClose = false).use { observer ->
             startPlayback(account, rawId).use {
                 observer.bind()
                 val position = requireMediaTimeAdvances(observer, "offline")

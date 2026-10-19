@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import androidx.test.platform.app.InstrumentationRegistry
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
+import com.legitimateapps.dulcet.downloads.AndroidDownloads
+import kotlinx.coroutines.runBlocking
 import com.legitimateapps.dulcet.core.StreamingQuality
 import com.legitimateapps.dulcet.core.StreamingQualityPreference
 import com.legitimateapps.dulcet.playback.StreamingQualitySettings
@@ -41,6 +43,12 @@ object StreamingQualityProof {
             val account = checkNotNull(AndroidAccountCredentialStore(context).load())
             try {
                 PlaybackObserver(context).use { observer ->
+                    val downloads = checkNotNull(AndroidDownloads.controller(context))
+                    check(runBlocking { downloads.awaitReconciled() })
+                    // Both controls must resolve on the wire. Replaying the capped cached file
+                    // after choosing Original would correctly prefer local playback instead.
+                    runBlocking { downloads.setAutomaticDownloadsEnabled(false); downloads.setCacheBudgetBytes(0) }
+                    check(runBlocking { downloads.localPlan(rawId) } == null) { "The capped network control already has local audio" }
                     choose(context, CAPPED)
                     val capped = play(relay, observer, rawId) { launch(entry(context, account.id, rawId)) }
                     check(capped.answers.none { it.flac }) { "$surface: with the cap the server sent the FLAC original: ${capped.answers}" }
@@ -50,6 +58,7 @@ object StreamingQualityProof {
                     check(!capped.seekable) { "$surface: a stream the server transcodes is not seekable on Android (spec 12.5)" }
 
                     choose(context, StreamingQualityPreference.Default)
+                    check(runBlocking { downloads.localPlan(rawId) } == null) { "The original network control already has local audio" }
                     val original = play(relay, observer, rawId) { launch(entry(context, account.id, rawId)) }
                     check(original.answers.any { it.flac }) { "$surface: the control must stream the FLAC original: ${original.answers}" }
                     return "ANDROID EMULATOR STREAMING QUALITY OBSERVED surface=$surface source=flac@${sourceKbps}kbps " +

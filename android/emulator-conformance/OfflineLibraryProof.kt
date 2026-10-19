@@ -81,7 +81,7 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                 println("OFFLINE LIBRARY AUTO OBSERVED album-add->worker->local songs=${ids.size} remove->automatic-files-gone explicit-survives-remove=true explicit-survives-off=true")
             val canary = probe.songId(DisposableServerProbe.CANARY_TITLE)
             check(runBlocking { controller.localPlan(canary) } == null) { "Cache proof requires a song never downloaded or cached" }
-            PlaybackObserver(context).use { observer ->
+            PlaybackObserver(context, removeAccountDataOnClose = false).use { observer ->
                     observer.bind()
                     observer.onController { it.setAutoplay(false); it.playSong(account.id, canary, DisposableServerProbe.CANARY_TITLE) }
                     try { requireMediaTimeAdvances(observer, "first-stream") } catch (failure: Throwable) {

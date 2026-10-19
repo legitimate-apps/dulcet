@@ -18,6 +18,8 @@ import com.legitimateapps.dulcet.emulator.clearRating
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
 import com.legitimateapps.dulcet.emulator.userRating
 import com.legitimateapps.dulcet.playback.PlaybackIntents
+import com.legitimateapps.dulcet.downloads.AndroidDownloads
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,11 +48,27 @@ class AndroidTvEmulatorRatingProofTest {
         connectSavedAccount(context, probe)
         val account = checkNotNull(AndroidAccountCredentialStore(context).load())
         PlaybackObserver(context).use { observer ->
+            val downloads = checkNotNull(AndroidDownloads.controller(context))
+            check(runBlocking { downloads.awaitReconciled() })
+            // Keep this never-seen metadata control independent of cache-owned getSong reads.
+            runBlocking { downloads.setAutomaticDownloadsEnabled(false); downloads.setCacheBudgetBytes(0) }
+            check(runBlocking { downloads.localPlan(rawId) } == null) { "The rating control already has local audio" }
             val intent = PlaybackIntents.playTrack(context, account.id, rawId, RATED_TITLE)
                 .setClassName(context, TvPlaybackActivity::class.java.name)
             ActivityScenario.launch<TvPlaybackActivity>(intent).use {
                 observer.bind()
                 observer.awaitCurrent(rawId) { compose.mainClock.advanceTimeByFrame() }
+                // Queue identity precedes Media3 readiness. UP can reach the scrubber only
+                // once the actual source has established that it is seekable.
+                try {
+                    await("the original source to make the scrubber focusable") {
+                        observer.state().let { it.phase == "Progressing" && it.seekable && it.durationMilliseconds != null }
+                    }
+                } catch (failure: IllegalStateException) {
+                    val state = observer.state()
+                    throw IllegalStateException("Rating source never became focusable: phase=${state.phase} " +
+                        "seekable=${state.seekable} duration=${state.durationMilliseconds} error=${state.error}", failure)
+                }
                 awaitNode("the player's own first focus on Play/Pause") { focused("tv.player.playpause") }
                 check((1..5).none { selected(it) }) { "A song this device has never seen must show no stars" }
                 remote(KeyEvent.KEYCODE_DPAD_UP)

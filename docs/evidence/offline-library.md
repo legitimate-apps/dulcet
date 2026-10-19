@@ -47,6 +47,16 @@ stage excludes these selectors entirely, so a skipped invocation cannot masquera
 evidence. Existing REST My Library proofs continue to execute. The strict result verifier requires
 both the existing split proof and the new offline proof to pass.
 
+The complete ordinary REST suites were also exercised after cache integration: OBSERVED phone
+17 passing cases plus one existing AutoSkip fixture-assumption skip in 139.827 seconds, and TV
+16 passing cases plus the same assumption skip in 135.084 seconds, with no failures. Each playback
+proof now removes only its disposable account's data after releasing playback. Proofs that require
+a fresh network answer explicitly disable automatic retention and caching for that account; the
+rating proof preserves its never-seen metadata precondition, and the quality proof still requires
+MP3 under the cap and FLAC for Original. The TV rating proof waits for actual progressing, seekable
+playback before testing D-pad focus. These setup conditions leave all native/server assertions in
+place. The separate offline-library proofs keep automatic retention and caching enabled.
+
 Storage-budget acceptance includes trimming evictable artwork before streamed media, a prospective
 budget plan that does not mutate the setting before the executor acknowledges the trim, and Clear
 Cache preserving downloaded/current covers and protected media. Apple artwork statistics are
