@@ -18,8 +18,8 @@ Usage:
 
 Prints `SIMULATOR ISOLATION phase=... keep=... shut_down=N booted_after=[...] isolated=true|false`.
 The marker is evidence the step ran and what it left behind; `isolated=false` is reported, not
-raised, because a leftover device only restores today's behaviour. Failing to boot the device the
-phase needs IS raised: that phase cannot run.
+raised by default. --require-isolation fails unless the final list matches the requested state.
+Failing to boot the device the phase needs IS raised: that phase cannot run.
 """
 import argparse
 import json
@@ -121,6 +121,8 @@ def main() -> int:
     target.add_argument("--none", action="store_true")
     parser.add_argument("--devices-json", help="offline device list (simctl list devices -j)")
     parser.add_argument("--plan", action="store_true", help="print the plan and change nothing")
+    parser.add_argument("--require-isolation", action="store_true",
+                        help="fail unless the final booted device list matches the requested state")
     parser.add_argument("--settle", action="store_true",
                         help="after booting the kept device, wait for its services to hold steady")
     args = parser.parse_args()
@@ -162,7 +164,7 @@ def main() -> int:
     if log:
         subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "host-pressure"),
                         "mark", log, args.phase], check=False)
-    return 0
+    return 0 if after == expected or not args.require_isolation else 1
 
 
 if __name__ == "__main__":

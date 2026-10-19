@@ -105,6 +105,12 @@ jobs:
         run: python3 tools/test-ipad-destination-resolver
       - name: Prove platform iPhone startup requires positive same-device acknowledgments
         run: python3 tools/test-platform-iphone-startup
+      - name: Prove simulator shutdown and fixture readiness acknowledgments
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          python3 tools/test-isolate-simulator
+          python3 tools/test-my-library-readiness
       - name: Require SwiftUI user-facing literals to use the string catalog
         run: python3 tools/verify_string_catalog_policy.py
       - name: Prove the DulcetCore build-order guard accepts a valid project and rejects ten broken ones
@@ -493,12 +499,22 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-first-run-title.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
             testTheFirstRunLibraryTitleWrapsOnIPhone
-      - name: Boot iPadOS simulator before the layout launch
-        timeout-minutes: 6
+      - name: Release the platform iPhone before iPadOS boot
+        timeout-minutes: 5
         id: ipados_layout_destination
         run: |
-          set -o pipefail
+          set -euo pipefail
           IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
+          # The native and title proofs leave the iPhone booted. Release its services before
+          # the iPad's first boot, and require the empty booted-device list before proceeding.
+          python3 tools/ci/isolate-simulator --phase platform-before-ipad --none --require-isolation
+          echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
+      - name: Boot iPadOS simulator before the layout launch
+        timeout-minutes: 6
+        env:
+          IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
+        run: |
+          set -euo pipefail
           echo "iPadOS simulator prerequisite: udid=$IPAD_UDID"
 
           # bootstatus -b turns simulator readiness from hidden work inside Xcode's application-
@@ -516,7 +532,6 @@ jobs:
           # a different launch path regardless. So app.launch() provides the launch evidence, and
           # this prerequisite can never reject a destination that would in fact have run the test.
           echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true app-launched=false"
-          echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
       - name: Launch iPadOS shell and prove layout plus stored Keychain attributes
         timeout-minutes: 23
         env:

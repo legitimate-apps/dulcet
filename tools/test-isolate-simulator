@@ -88,3 +88,35 @@ for counts, expected in [
 ]:
     assert tool.settled(counts) is expected, (counts, expected)
 print("SETTLE DECISION CONTROLS PASS 6/6")
+
+# Execute the shutdown prerequisite with a controlled simctl boundary. A successful shutdown
+# command is insufficient: the subsequent device list must positively show no booted device.
+from contextlib import redirect_stdout
+from io import StringIO
+from unittest.mock import patch
+for remaining, strict, expected in [(False, True, 0), (True, True, 1), (True, False, 0)]:
+    empty = {"runtime": []}
+    leftover = {"runtime": [{"udid": "PHONE", "state": "Booted"}]}
+    invocations = []
+    def fake_simctl(*arguments, **kwargs):
+        invocations.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+    arguments = [TOOL, "--phase", "platform-before-ipad", "--none"]
+    if strict:
+        arguments.append("--require-isolation")
+    with patch.object(sys, "argv", arguments), patch.object(tool, "devices", side_effect=[leftover, leftover if remaining else empty]), patch.object(tool, "simctl", side_effect=fake_simctl), patch.dict(tool.os.environ, {}, clear=True), redirect_stdout(StringIO()) as output:
+        assert tool.main() == expected, (remaining, strict, output.getvalue())
+    assert invocations == [("shutdown", "PHONE")], invocations
+    assert ("isolated=true" in output.getvalue()) == (not remaining), output.getvalue()
+    print(f"SHUTDOWN ACK CONTROL PASS leftover={remaining} required={strict} exit={expected}")
+
+workflow = (Path(TOOL).parents[2] / ".github/workflows/apple-ci.yml").read_text()
+release = workflow.split("      - name: Release the platform iPhone before iPadOS boot", 1)[1].split("      - name: ", 1)[0]
+boot = workflow.split("      - name: Boot iPadOS simulator before the layout launch", 1)[1].split("      - name: ", 1)[0]
+assert "set -euo pipefail" in release
+assert "--none --require-isolation" in release
+assert release.index("--require-isolation") < release.index('echo "udid=')
+assert "timeout-minutes: 6" in boot
+assert "steps.ipados_layout_destination.outputs.udid" in boot
+assert "resolve-ipad-destination" not in boot
+print("PLATFORM IPAD ORDER CONTROL PASS verified shutdown precedes unchanged six-minute boot")

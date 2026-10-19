@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Readiness diagnostics retain the failing prerequisite without authenticated exception text."""
+from contextlib import redirect_stdout
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
+from io import StringIO
+from pathlib import Path
+from unittest.mock import patch
+
+loader = SourceFileLoader('fixture', str(Path(__file__).parent / 'ci/with-my-library-fixture'))
+fixture = module_from_spec(spec_from_loader('fixture', loader))
+loader.exec_module(fixture)
+canary = 'authenticated-query-canary'
+class Child:
+    def poll(self): return None
+for failed_port in range(4783, 4789):
+    calls = []
+    def rest(port, endpoint, **parameters):
+        calls.append((port, endpoint))
+        if port == failed_port:
+            raise TimeoutError(canary)
+        return {'albumList2': {'album': [{}]}}
+    with patch.object(fixture, 'rest', side_effect=rest), redirect_stdout(StringIO()) as output:
+        try:
+            fixture.wait_for_readiness([Child()], timeout=0)
+        except RuntimeError as error:
+            assert f'port={failed_port} endpoint=getAlbumList2 error=TimeoutError' in str(error)
+            assert canary not in str(error)
+        else:
+            raise AssertionError('an unreachable proxy cannot authorize UI testing')
+    assert canary not in output.getvalue()
+    assert calls[-1] == (failed_port, 'getAlbumList2')
+    print(f'READINESS NEGATIVE CONTROL PASS port={failed_port} failure retained and redacted')
+
+def ready(port, endpoint, **parameters):
+    if endpoint == 'getOpenSubsonicExtensions':
+        return {'openSubsonicExtensions': [{'name': 'dulcetLibrary', 'versions': [1]}]}
+    return {'albumList2': {'album': [{}]}}
+with patch.object(fixture, 'rest', side_effect=ready) as rest:
+    fixture.wait_for_readiness([Child()], timeout=0)
+    assert rest.call_count == 7
+print('READINESS POSITIVE CONTROL PASS all six catalogs and capability observed')
+
+with patch.object(fixture, 'rest', return_value={'openSubsonicExtensions': []}) as rest, redirect_stdout(StringIO()) as output:
+    def absent_capability(port, endpoint, **parameters):
+        return {'openSubsonicExtensions': []} if endpoint == 'getOpenSubsonicExtensions' else ready(port, endpoint)
+    rest.side_effect = absent_capability
+    try:
+        fixture.wait_for_readiness([Child()], timeout=0)
+    except RuntimeError as error:
+        assert 'endpoint=getOpenSubsonicExtensions error=RuntimeError' in str(error)
+    else:
+        raise AssertionError('catalog availability alone cannot authorize the split-library proof')
+print('READINESS NEGATIVE CONTROL PASS missing capability rejected')
