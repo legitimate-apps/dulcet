@@ -4769,6 +4769,324 @@
           }
         }
       }
+    },
+    {
+      "id": "downloads.automatic",
+      "title": "Keep My Library downloaded automatically",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1451-automatic-downloads-and-streaming-retention",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "Adding a real album to My Library promotes its tracks through the production automatic download executor before the relay is cut.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryMacUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ]
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "Adding a real album to My Library promotes its tracks through the production automatic download executor before the relay is cut.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ]
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "Adding a real album to My Library promotes its tracks through the production automatic download executor before the relay is cut.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPadUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ]
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS retains the v1 no-download contract; persistent Automatic Downloads and their download storage controls are not offered."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "Adding a real album produces four automatic local files; removal deletes automatic-only files while an explicit file survives removal and disabling Automatic Downloads.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "Adding a real album produces four automatic local files; removal deletes automatic-only files while an explicit file survives removal and disabling Automatic Downloads.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "playback.streaming_cache",
+      "title": "Replay recently streamed songs from a bounded cache",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#146-storage-budget-and-eviction-priority",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "The playback resource loader assembles the same response, including overlapping ranged bytes, into a validated local file and replays identical bytes after network loss.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
+            }
+          ]
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "The playback resource loader assembles the same response, including overlapping ranged bytes, into a validated local file and replays identical bytes after network loss.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
+            }
+          ]
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "The playback resource loader assembles the same response, including overlapping ranged bytes, into a validated local file and replays identical bytes after network loss.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
+            }
+          ]
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS retains network playback and the v1 no-download contract. This change does not add a file-backed offline executor or streaming cache on tvOS; the offline cache and library playback claims apply to the other supported platforms."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "The first Media3 stream makes one media GET and produces a validated 24,334-byte cache file; after relay loss local playback advances without server bytes.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "The first Media3 stream makes one media GET and produces a validated 24,334-byte cache file; after relay loss local playback advances without server bytes.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "library.offline_playable",
+      "title": "Browse and continue My Library over offline-playable music",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1451-automatic-downloads-and-streaming-retention",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "After adding an album and waiting for automatic files, cutting the real relay still permits its My Library track to play, with the correct title and Pause control.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryMacUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            }
+          ]
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "After adding an album and waiting for automatic files, cutting the real relay still permits its My Library track to play, with the correct title and Pause control.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            }
+          ]
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "After adding an album and waiting for automatic files, cutting the real relay still permits its My Library track to play, with the correct title and Pause control.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPadUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            }
+          ]
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS retains network playback and the v1 no-download contract. This change does not add a file-backed offline executor or streaming cache on tvOS; the offline cache and library playback claims apply to the other supported platforms."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "After real relay loss My Library publishes cached/downloaded and unavailable statuses; queue construction excludes the unavailable song and cached playback advances offline.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "After real relay loss My Library publishes cached/downloaded and unavailable statuses; queue construction excludes the unavailable song and cached playback advances offline.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "storage.offline_controls",
+      "title": "Manage automatic downloads and streaming cache storage",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#146-storage-budget-and-eviction-priority",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. The Mac settings controls have presentation and bridge tests; the native Mac settings interaction is not cited as executed."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "Automatic Downloads can be disabled, survives relaunch, can be enabled again, and Clear Cache is activated in native settings.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDesignTourUITests/testOfflineMusicSettingsPersistAcrossRelaunch"
+            }
+          ]
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "Automatic Downloads can be disabled, survives relaunch, can be enabled again, and Clear Cache is activated in native settings.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDesignTourUITests/testOfflineMusicSettingsPersistAcrossRelaunch"
+            }
+          ]
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS retains the v1 no-download contract; persistent Automatic Downloads and their download storage controls are not offered."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "Native settings changes Automatic Downloads and clears the streaming cache; the explicit file remains after removal and disabling automatic retention.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md.",
+          "evidence": [
+            {
+              "observes": "Native settings changes Automatic Downloads and clears the streaming cache; the explicit file remains after removal and disabling automatic retention.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ]
+        }
+      }
     }
   ]
 }

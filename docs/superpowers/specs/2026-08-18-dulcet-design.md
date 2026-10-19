@@ -3096,6 +3096,44 @@ and reconciliation against a changed server item. The platform owns the **execut
   reader's playability comes from the account's `complete` and `stale` rows. Android TV has
   downloads; only tvOS ships none.
 
+### 14.5.1 Automatic Downloads and streaming retention
+
+Automatic Downloads is a per-account setting, enabled when its settings are first created. My
+Library starts empty; adding music retains its original file through the existing §14.5 executor,
+network policy, retry boundaries, disk budget and relaunch reconciliation. A saved-account launch
+holds new automatic transfers behind the existing account contact gate (§13.1); previously queued
+downloads retain their recovery behavior. The core projects current
+membership and pending local changes into track identities. Unresolved detail may add known tracks,
+but never authorizes deleting the children of an unresolved collection. Automatic work is ordered by
+recent library addition, with explicit download requests ahead of automatic work.
+
+Explicit and automatic retention are independent reasons on the same `(server_id, raw_id,
+transcode_profile)` identity. Existing downloads retain explicit ownership. An explicit Download
+also upgrades an automatic or cached file. Where a shell offers Remove Download, it releases explicit
+ownership and retains a file still owned automatically. Removing library membership, or switching Automatic
+Downloads off, releases only automatic ownership; explicit files remain. The current and preloaded
+items remain protected until their playback ownership ends. A removal result names the exact task
+identities the executor cancels; it never authorizes a directory-wide delete.
+
+A streaming cache receives bytes from the playback engine's own response. It does not issue a
+second stream request. Exact-length resources may arrive in bounded, out-of-order ranges, including
+MP4 tail probes. The core records interval coverage while writing directly to disk; promotion
+requires every byte from zero to the exact resource length and the same §12.4 binary validation as a
+download. Unknown-length responses require a sequential body from offset zero through EOF. A seek,
+cancellation, failed response or truncated body never publishes a partial cache file. A 206 is
+eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance, rather
+than the seen-cache URL/username binding. Server-item reconciliation applies to these files too.
+
+Offline playback prefers a validated local file, including a cached stream, before making a server
+read. Downloaded continues to mean deliberately retained downloads; the broader local-playable set
+also includes cached media. Queue construction, shuffle, preload and continuation apply the core's
+current playability predicate. Unavailable songs stay identifiable in My Library, and an unavailable
+row does not silently start another song. A queue loaded online can continue offline past any number
+of unavailable entries without spending the playback failure-chain limit. If a stream request is the
+first observation that the account became unreachable while the OS still has a network, the owner
+updates account availability before delivering that failure; the core can then continue onto a local
+successor. Authentication, trust and other account failures retain their existing ownership.
+
 ### 14.6 Storage budget and eviction priority
 
 One disk budget per account, user-configurable, with a strict priority order:
@@ -3104,6 +3142,7 @@ One disk budget per account, user-configurable, with a strict priority order:
 |---|---|
 | currently playing / next preloaded | never |
 | explicit user downloads (complete) | only by explicit user action or account removal |
+| automatic library downloads | only when library membership or Automatic Downloads is released; explicit ownership still protects the file |
 | explicit user downloads (partial, stale > 30 days) | yes, with notice |
 | streamed-media cache | yes, LRU |
 | artwork cache | yes, LRU, evicted first |
@@ -7858,6 +7897,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-19 — Retain My Library automatically and cache the actual playback response.**
+§14.5.1 defines independent explicit/automatic ownership, recently-added scheduling, conservative
+collection expansion, and a validated same-response streaming cache. The Kotlin core owns retention,
+account-scoped budgets, LRU decisions and local queue eligibility. Platform executors retain the
+existing task identity, disk/retry policy and binary validation; shells expose per-account storage
+controls. The download identity, including server/account instance and media profile, scopes cache
+rows. Cached streams contribute to offline playability without turning the Downloaded destination
+into a list of opportunistic cache entries. The cache defaults to 1 GiB and can be resized or cleared;
+playing and preloaded files remain protected until playback releases them. Known-length cache writes
+assemble bounded range coverage on disk, including MP4 tail probes; incomplete coverage cannot
+promote. Artwork and streamed media share the configured cache budget, with evictable artwork
+yielding first and downloaded 256 px artwork pinned. Implementation and runtime evidence are tracked
+separately in `FEATURES.yml`; this contract entry does not promote any platform evidence claim.
 
 **2026-10-18 — Re-measure Apple workflow envelopes from successful legs.**
 §21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) now sets the
