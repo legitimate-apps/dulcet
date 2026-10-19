@@ -28,3 +28,6 @@ CREATE TABLE offline_media_retention (
   FOREIGN KEY (server_id, raw_id, transcode_profile)
     REFERENCES download(server_id, raw_id, transcode_profile) ON DELETE CASCADE
 );
+
+CREATE INDEX offline_media_retention_cache
+ON offline_media_retention(server_id, explicit_download, automatic_download, last_access_wall);

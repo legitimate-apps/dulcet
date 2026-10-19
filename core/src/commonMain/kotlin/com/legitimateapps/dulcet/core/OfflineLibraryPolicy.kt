@@ -46,11 +46,11 @@ internal class OfflineLibraryPolicy(
         }
         engine.cachePressureHandler = { serverId, requiredBytes ->
             var remaining = requiredBytes
-            val candidates = engine.records(serverId).filter {
-                isCache(it.identity) && it.identity !in protected && it.downloadId.value !in writes
-            }.sortedBy { engine.retention(it.identity)?.last_access_wall ?: Long.MIN_VALUE }
-            for (row in candidates) {
+            for (identity in cacheIdentitiesByAccess(serverId)) {
                 if (remaining <= 0) break
+                if (identity in protected) continue
+                val row = engine.record(identity) ?: continue
+                if (row.downloadId.value in writes) continue
                 if (engine.remove(row.identity) != null) remaining -= row.fileSizeBytes
             }
         }
@@ -376,26 +376,37 @@ internal class OfflineLibraryPolicy(
 
     fun close() { writes.keys.toList().forEach(::abortCacheWrite) }
 
-    private fun usedCacheBytes(serverId: String): Long = engine.records(serverId).filter { isCache(it.identity) }
-        .sumOf { row -> writes[row.downloadId.value]?.let { it.expected ?: it.bytes } ?: row.fileSizeBytes }
+    private fun usedCacheBytes(serverId: String): Long =
+        queries.selectCompletedCacheBytes(serverId).executeAsOne() +
+            writes.values.asSequence().filter { it.row.identity.serverId == serverId && isCache(it.row.identity) }
+                .sumOf { it.expected ?: it.bytes }
+
+    private fun cacheIdentitiesByAccess(serverId: String): List<DownloadIdentity> =
+        queries.selectCacheIdentitiesByAccess(serverId).executeAsList().map {
+            DownloadIdentity(it.server_id, it.raw_id, it.transcode_profile)
+        }
 
     private fun evict(serverId: String, additional: Long): List<DownloadRecord> {
         val removed = mutableListOf<DownloadRecord>()
         val budget = settings(serverId).cacheBudgetBytes
+        var used = usedCacheBytes(serverId)
+        val totalArtwork = artworkBytes(serverId)
+        val targetBytes = (budget - additional).coerceAtLeast(0)
+        if (used + totalArtwork <= targetBytes) return emptyList()
         val artwork = artworkUsage[serverId]
         if (artwork != null) {
-            val available = (budget - usedCacheBytes(serverId)).coerceAtLeast(0)
+            val available = (budget - used).coerceAtLeast(0)
             val target = ((available - artwork.pinned).coerceAtLeast(0) - additional).coerceAtLeast(0)
             // The shell trims artwork first, then reports the resulting actual usage. Until that
             // acknowledgement arrives, preserve media rather than reversing the priority order.
             if (artwork.evictable > target) return emptyList()
         }
-        val candidates = engine.records(serverId).filter {
-            isCache(it.identity) && it.identity !in protected && it.downloadId.value !in writes
-        }.sortedBy { engine.retention(it.identity)?.last_access_wall ?: Long.MIN_VALUE }
-        for (row in candidates) {
-            if (usedCacheBytes(serverId) + artworkBytes(serverId) <= (budget - additional).coerceAtLeast(0)) break
-            engine.remove(row.identity)?.let(removed::add)
+        for (identity in cacheIdentitiesByAccess(serverId)) {
+            if (used + totalArtwork <= targetBytes) break
+            if (identity in protected) continue
+            val row = engine.record(identity) ?: continue
+            if (row.downloadId.value in writes) continue
+            engine.remove(row.identity)?.let { removed += it; used -= it.fileSizeBytes }
         }
         return removed
     }

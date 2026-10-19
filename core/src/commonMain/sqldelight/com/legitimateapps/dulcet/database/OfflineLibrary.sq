@@ -29,6 +29,9 @@ CREATE TABLE offline_media_retention (
     REFERENCES download(server_id, raw_id, transcode_profile) ON DELETE CASCADE
 );
 
+CREATE INDEX offline_media_retention_cache
+ON offline_media_retention(server_id, explicit_download, automatic_download, last_access_wall);
+
 ensureSettings:
 INSERT OR IGNORE INTO offline_library_settings(server_id) VALUES (?);
 selectSettings:
@@ -46,6 +49,20 @@ INSERT OR REPLACE INTO offline_media_retention(server_id, raw_id, transcode_prof
 VALUES (?, ?, ?, ?, ?, ?, ?);
 deleteSettings:
 DELETE FROM offline_library_settings WHERE server_id = ?;
+
+-- Tee appends use this indexed cache-only aggregate, never materialize a large download library.
+selectCompletedCacheBytes:
+SELECT coalesce(sum(d.file_size_bytes), 0) AS cache_bytes
+FROM offline_media_retention AS r
+JOIN download AS d USING (server_id, raw_id, transcode_profile)
+WHERE r.server_id = ? AND r.explicit_download = 0 AND r.automatic_download = 0
+  AND d.state IN ('complete', 'stale');
+
+selectCacheIdentitiesByAccess:
+SELECT server_id, raw_id, transcode_profile
+FROM offline_media_retention
+WHERE server_id = ? AND explicit_download = 0 AND automatic_download = 0
+ORDER BY last_access_wall;
 
 -- Called only after a live cache write won its issue-sequence comparison. Applies equally to
 -- downloads and streaming cache, across all representations of this source item.
