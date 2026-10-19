@@ -37,6 +37,9 @@ SCHEMA_INTENT_TABLES = {
     "queue_entry",
     "download",
     "download_policy_state",
+    "offline_library_settings",
+    "offline_media_retention",
+    "offline_source_snapshot",
     "scrobble_outbox",
     "mutation_outbox",
     "artwork_cache",
@@ -76,6 +79,9 @@ REQUIRED_IMPLEMENTED_TABLES = {
     "queue_entry",
     "download",
     "download_policy_state",
+    "offline_library_settings",
+    "offline_media_retention",
+    "offline_source_snapshot",
     "scrobble_outbox",
     "mutation_outbox",
     "resume_position",
@@ -129,11 +135,29 @@ PROTECTED_COLUMNS = {
         "raw_id",
         "reason",
     ),
+    # Device preferences and download ownership cannot be reconstructed from the server. Losing
+    # explicit ownership can turn a retained file into evictable cache without changing download.
+    "offline_library_settings": (
+        "server_id",
+        "automatic_downloads",
+        "cache_budget_bytes",
+    ),
+    "offline_media_retention": (
+        "server_id",
+        "raw_id",
+        "transcode_profile",
+        "explicit_download",
+        "automatic_download",
+        "added_rank",
+        "last_access_wall",
+    ),
 }
 # A protected table that a released schema introduced is compared only from that version on; the
 # migration that introduces it is held to the pin-coverage contract instead.
 PROTECTED_SINCE_VERSION = {
     "cache_pin": 6,
+    "offline_library_settings": 11,
+    "offline_media_retention": 11,
 }
 PIN_COVERAGE_SINCE_VERSION = 6
 # Cache tables are re-derivable and so not protected (§11.4), but a column a released schema added
@@ -144,6 +168,7 @@ COMPARED_CACHE_ROWS_SINCE_VERSION = {
     "my_library_item": 9,
     "my_library_state": 9,
     "library_depth_entry": 10,
+    "offline_source_snapshot": 11,
 }
 
 
@@ -1167,6 +1192,44 @@ LIBRARY_DEPTH_NEGATIVE_CONTROLS = (
     ),
 )
 
+OFFLINE_LIBRARY_NEGATIVE_CONTROLS = (
+    (
+        "offline_settings_reset_to_defaults",
+        "UPDATE offline_library_settings SET automatic_downloads = 1, cache_budget_bytes = 1073741824;",
+        ("offline_library_settings: protected rows changed",),
+    ),
+    (
+        "offline_settings_account_deleted",
+        "DELETE FROM offline_library_settings WHERE server_id = 'server:fixture-beta';",
+        ("offline_library_settings: protected rows changed",),
+    ),
+    (
+        "explicit_download_ownership_lost",
+        "UPDATE offline_media_retention SET explicit_download = 0 WHERE explicit_download = 1;",
+        ("offline_media_retention: protected rows changed",),
+    ),
+    (
+        "automatic_download_ownership_lost",
+        "UPDATE offline_media_retention SET automatic_download = 0 WHERE automatic_download = 1;",
+        ("offline_media_retention: protected rows changed",),
+    ),
+    (
+        "offline_retention_profile_deleted",
+        "DELETE FROM offline_media_retention WHERE transcode_profile = 'transcode:opus-192k';",
+        ("offline_media_retention: protected rows changed",),
+    ),
+    (
+        "offline_retention_account_deleted",
+        "DELETE FROM offline_media_retention WHERE server_id = 'server:fixture-beta';",
+        ("offline_media_retention: protected rows changed",),
+    ),
+    (
+        "offline_source_snapshots_discarded",
+        "DELETE FROM offline_source_snapshot;",
+        ("offline_source_snapshot: compared cache rows changed",),
+    ),
+)
+
 # Once download/queue pins exist in a released fixture they are protected rows like any other.
 PROTECTED_PIN_NEGATIVE_CONTROLS = (
     (
@@ -1300,6 +1363,8 @@ def main() -> None:
     prove_negative_controls(fixtures[current], current, current, STRUCTURE_NEGATIVE_CONTROLS)
     depth_version = COMPARED_CACHE_ROWS_SINCE_VERSION["library_depth_entry"]
     prove_negative_controls(fixtures[depth_version], depth_version, current, LIBRARY_DEPTH_NEGATIVE_CONTROLS)
+    offline_version = PROTECTED_SINCE_VERSION["offline_media_retention"]
+    prove_negative_controls(fixtures[offline_version], offline_version, current, OFFLINE_LIBRARY_NEGATIVE_CONTROLS)
     control_count = (
         len(NEGATIVE_CONTROLS)
         + len(PIN_NEGATIVE_CONTROLS)
@@ -1308,6 +1373,7 @@ def main() -> None:
         + len(CACHE_ROW_NEGATIVE_CONTROLS)
         + len(STRUCTURE_NEGATIVE_CONTROLS)
         + len(LIBRARY_DEPTH_NEGATIVE_CONTROLS)
+        + len(OFFLINE_LIBRARY_NEGATIVE_CONTROLS)
         + 1  # latest_fixture_drift
     )
     print(
@@ -1320,6 +1386,7 @@ def main() -> None:
         f"cache_playlist rows compared from v{compared_since} ({len(compared_rows)} rows, "
         f"{len(stated)} with the added fields stated), "
         f"library_depth_entry rows compared from v{depth_version}, "
+        f"offline settings/retention protected and source snapshots compared from v{offline_version}, "
         f"fixture v{current} equal to the .sq schema ({latest_objects} objects), "
         f"download file reconciliation, and {control_count} explicit destructive "
         "negative controls"

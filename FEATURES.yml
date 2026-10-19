@@ -4794,7 +4794,12 @@
               "job": "core-ci",
               "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
         },
         "ios": {
           "status": "partial",
@@ -4812,7 +4817,12 @@
               "job": "core-ci",
               "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
         },
         "ipados": {
           "status": "partial",
@@ -4830,7 +4840,12 @@
               "job": "core-ci",
               "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
         },
         "tvos": {
           "status": "n/a",
@@ -4852,7 +4867,12 @@
               "job": "core-ci",
               "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
         },
         "androidtv": {
           "status": "partial",
@@ -4870,7 +4890,12 @@
               "job": "core-ci",
               "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
         }
       }
     },
@@ -4892,7 +4917,12 @@
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
         },
         "ios": {
           "status": "partial",
@@ -4904,7 +4934,12 @@
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
         },
         "ipados": {
           "status": "partial",
@@ -4916,7 +4951,12 @@
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
         },
         "tvos": {
           "status": "n/a",
@@ -4932,7 +4972,12 @@
               "job": "core-ci",
               "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
         },
         "androidtv": {
           "status": "partial",
@@ -4944,7 +4989,12 @@
               "job": "core-ci",
               "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
         }
       }
     },
@@ -4966,7 +5016,12 @@
               "job": "apple-ci",
               "test": "DulcetMyLibraryMacUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
         },
         "ios": {
           "status": "partial",
@@ -4978,7 +5033,12 @@
               "job": "apple-ci",
               "test": "DulcetMyLibraryIPhoneUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
         },
         "ipados": {
           "status": "partial",
@@ -4990,7 +5050,12 @@
               "job": "apple-ci",
               "test": "DulcetMyLibraryIPadUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
         },
         "tvos": {
           "status": "n/a",
@@ -5006,7 +5071,12 @@
               "job": "core-ci",
               "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
         },
         "androidtv": {
           "status": "partial",
@@ -5018,7 +5088,12 @@
               "job": "core-ci",
               "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
         }
       }
     },
@@ -5032,7 +5107,12 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. The Mac settings controls have presentation and bridge tests; the native Mac settings interaction is not cited as executed."
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. The Mac settings controls have presentation and bridge tests; the native Mac settings interaction is not cited as executed.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-mac-offline-storage-controls",
+            "reason": "Before promotion, drive the Mac settings controls for Automatic Downloads, cache capacity and Clear Cache and verify displayed usage and scoped deletion. Presentation, bridge and artwork tests do not establish native Mac settings interaction."
+          }
         },
         "ios": {
           "status": "partial",
@@ -5044,7 +5124,12 @@
               "job": "apple-ci",
               "test": "DulcetDesignTourUITests/testOfflineMusicSettingsPersistAcrossRelaunch"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-cache-capacity-and-usage-controls",
+            "reason": "Before promotion, change the native cache-size control with real protected/unprotected files and verify displayed usage and eviction. The cited automatic-retention/Clear Cache path and shared budget tests establish narrower observations."
+          }
         },
         "ipados": {
           "status": "partial",
@@ -5056,7 +5141,12 @@
               "job": "apple-ci",
               "test": "DulcetDesignTourUITests/testOfflineMusicSettingsPersistAcrossRelaunch"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-cache-capacity-and-usage-controls",
+            "reason": "Before promotion, change the native cache-size control with real protected/unprotected files and verify displayed usage and eviction. The cited automatic-retention/Clear Cache path and shared budget tests establish narrower observations."
+          }
         },
         "tvos": {
           "status": "n/a",
@@ -5072,7 +5162,12 @@
               "job": "core-ci",
               "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-cache-capacity-and-usage-controls",
+            "reason": "Before promotion, change the native cache-size control with real protected/unprotected files and verify displayed usage and eviction. The cited automatic-retention/Clear Cache path and shared budget tests establish narrower observations."
+          }
         },
         "androidtv": {
           "status": "partial",
@@ -5084,7 +5179,12 @@
               "job": "core-ci",
               "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-cache-capacity-and-usage-controls",
+            "reason": "Before promotion, change the native cache-size control with real protected/unprotected files and verify displayed usage and eviction. The cited automatic-retention/Clear Cache path and shared budget tests establish narrower observations."
+          }
         }
       }
     }

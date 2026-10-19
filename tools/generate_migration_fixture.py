@@ -23,7 +23,7 @@ it are written down. This tool is those steps:
     tools/generate_migration_fixture.py --all --check-semantic
                                                            # every version with a seed (CI)
 
-Fixtures v1-v3 were written with SQLite 3.50.6, v4-v9 with SQLite 3.51.0, and v10 with
+Fixtures v1-v3 were written with SQLite 3.50.6, v4-v9 with SQLite 3.51.0, and v10-v11 with
 SQLite 3.54.0, by Python's sqlite3 module; none reserves bytes per page. Writing and --check
 require the SQLite version recorded for that fixture and refuse a result that reserves bytes, because
 a different build lays pages out differently and a regeneration would then differ for reasons that
@@ -50,7 +50,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tools/migration-fixtures"
 MIGRATIONS = ROOT / "core/src/commonMain/sqldelight/migrations"
 SQLITE_VERSION = "3.51.0"
-SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0"}
+SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0", 11: "3.54.0"}
 PAGE_SIZE = 4096
 
 
@@ -213,7 +213,46 @@ def seed_v10(connection):
     connection.execute("UPDATE cache_meta SET last_issued = MAX(last_issued, 54) WHERE singleton_id = 1")
 
 
-SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10}
+def seed_v11(connection):
+    """Offline retention (10.sqm): device settings and explicit/automatic/cache ownership.
+
+    Reuse the prior fixture's downloads and matching files, including three representations of
+    one item. All four ownership combinations and two accounts make destructive reinterpretation
+    observable. Source snapshots are compared cache data, independently of representation length.
+    """
+    wall = 1_792_000_000_000
+    connection.executemany(
+        "INSERT INTO offline_library_settings (server_id, automatic_downloads, cache_budget_bytes) "
+        "VALUES (?, ?, ?)",
+        [
+            ("server:fixture-alpha", 0, 64_000_000),
+            ("server:fixture-beta", 1, 0),
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO offline_media_retention (server_id, raw_id, transcode_profile, "
+        "explicit_download, automatic_download, added_rank, last_access_wall) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("server:fixture-alpha", "track:download-opaque", "direct:audio/flac", 1, 1, 2, wall),
+            ("server:fixture-alpha", "track:download-shared", "direct:audio/flac", 1, 0, 0, wall + 1),
+            ("server:fixture-alpha", "track:download-shared", "transcode:opus-96k", 0, 1, 3, wall + 2),
+            ("server:fixture-alpha", "track:download-shared", "transcode:opus-192k", 0, 0, 0, wall + 3),
+            ("server:fixture-beta", "track:download-stale", "direct:audio/aac", 0, 1, 1, wall + 4),
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO offline_source_snapshot (server_id, raw_id, duration_milliseconds, size_bytes) "
+        "VALUES (?, ?, ?, ?)",
+        [
+            ("server:fixture-alpha", "track:download-opaque", 180_000, 28),
+            ("server:fixture-alpha", "track:download-shared", 181_000, 12_000),
+            ("server:fixture-beta", "track:download-stale", 182_000, None),
+        ],
+    )
+
+
+SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11}
 
 
 def require_sqlite_version(version):

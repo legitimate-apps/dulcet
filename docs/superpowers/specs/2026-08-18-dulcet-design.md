@@ -1309,8 +1309,9 @@ both additive, seeded with nothing, and not protected data.
 
 - SQLDelight `.sqm` migrations, with `verifySqlDelightMigration` in CI on every PR.
 - **Protected data — must survive every migration:** `scrobble_outbox`, `mutation_outbox`,
-  `download` rows plus their files, and `resume_position`. These are the only things not re-derivable
-  from the server. **Revision 104 adds** the pinned cache rows of downloaded and queued items
+  `download` rows plus their files, `resume_position`, and, from schema 11, device offline settings
+  and explicit/automatic retention ownership. These cannot be re-derived from the server.
+  **Revision 104 adds** the pinned cache rows of downloaded and queued items
   (§16.13): the metadata is re-derivable from the server only while the server is reachable and the
   item still exists, and a downloaded file with nothing to display is exactly the case offline use
   exists for.
@@ -1332,7 +1333,12 @@ both additive, seeded with nothing, and not protected data.
   negative control. From schema 9 it also compares the re-derivable `my_library_item` and
   `my_library_state` rows. From schema 10 it also compares `library_depth_entry` rows, with seeded
   account-scoped preferences, pins and recents and controls that reject overwrites, deletion and
-  account loss. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
+  account loss. From schema 11, per-account `offline_library_settings` and
+  `offline_media_retention` are protected user intent: preferences and explicit/automatic ownership
+  survive migrations. The derived `offline_source_snapshot` rows are compared from schema 11.
+  Seeded accounts, profiles and all ownership combinations have destructive controls that reject
+  settings resets, ownership loss, profile/account deletion and discarded source snapshots.
+  The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
   files; from schema 8 the gate also builds the schema from the current `.sq` files alone, requires
   that build to equal the snapshot (so an empty difference is the instrument agreeing, not the
   instrument reading nothing) and requires the newest fixture to equal it object for object
@@ -1342,7 +1348,7 @@ both additive, seeded with nothing, and not protected data.
   `migrations/<N−1>.sqm` as shipped, sets the schema version, adds that version's seed rows and
   vacuums; `--check` regenerates into a temporary directory and requires the committed fixture to
   be byte-identical. Writing and byte checks require the recorded SQLite build for that fixture:
-  3.51.0 for v4–v9 and 3.54.0 for v10 (v1–v3 were written by 3.50.6; none reserves bytes per page).
+  3.51.0 for v4–v9 and 3.54.0 for v10–v11 (v1–v3 were written by 3.50.6; none reserves bytes per page).
   They refuse another build, since a different build
   lays pages out differently (revision 104, item 23). That byte check is local; CI runs
   `--all --check-semantic` in the parity gate, which any SQLite build can answer: it regenerates
@@ -7911,6 +7917,8 @@ assemble bounded range coverage on disk, including MP4 tail probes; incomplete c
 promote. Artwork and streamed media share the configured cache budget, with evictable artwork
 yielding first and downloaded 256 px artwork pinned. Implementation and runtime evidence are tracked
 separately in `FEATURES.yml`; this contract entry does not promote any platform evidence claim.
+§11.4 protects the new device settings and retention ownership from schema 11, with generated
+fixtures and destructive controls; derived source snapshots are compared independently.
 
 **2026-10-18 — Re-measure Apple workflow envelopes from successful legs.**
 §21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) now sets the

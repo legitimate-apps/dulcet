@@ -26,6 +26,9 @@ COPIED = [
     "tools/migration-fixtures/v7",
     "tools/migration-fixtures/v8",
     "core/src/commonMain/sqldelight/migrations/7.sqm",
+    "tools/migration-fixtures/v10",
+    "tools/migration-fixtures/v11",
+    "core/src/commonMain/sqldelight/migrations/10.sqm",
 ]
 
 
@@ -40,9 +43,9 @@ def scratch(directory: Path) -> Path:
     return directory
 
 
-def check(root: Path) -> subprocess.CompletedProcess:
+def check(root: Path, version: int = 8) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(root / TOOL), "--to", "8", "--check-semantic"],
+        [sys.executable, str(root / TOOL), "--to", str(version), "--check-semantic"],
         capture_output=True,
         text=True,
     )
@@ -107,6 +110,29 @@ CASES = [
     ),
 ]
 
+OFFLINE_CASES = [
+    (
+        "a changed offline settings seed",
+        lambda root: edit_tool(root, '64_000_000', '64_000_001'),
+        "rows of offline_library_settings differ",
+    ),
+    (
+        "a committed explicit ownership flag edited by hand",
+        lambda root: edit_fixture(root, 11, "UPDATE offline_media_retention SET explicit_download = 0 WHERE explicit_download = 1"),
+        "rows of offline_media_retention differ",
+    ),
+    (
+        "a committed automatic ownership flag edited by hand",
+        lambda root: edit_fixture(root, 11, "UPDATE offline_media_retention SET automatic_download = 0 WHERE automatic_download = 1"),
+        "rows of offline_media_retention differ",
+    ),
+    (
+        "a committed source snapshot edited by hand",
+        lambda root: edit_fixture(root, 11, "UPDATE offline_source_snapshot SET size_bytes = 0 WHERE size_bytes IS NOT NULL"),
+        "rows of offline_source_snapshot differ",
+    ),
+]
+
 
 def main() -> None:
     failures = []
@@ -115,6 +141,9 @@ def main() -> None:
         result = check(root)
         if result.returncode != 0:
             failures.append(f"the unmodified copy was refused: {result.stderr.strip()}")
+        result = check(root, 11)
+        if result.returncode != 0:
+            failures.append(f"the unmodified offline fixture was refused: {result.stderr.strip()}")
         # The sequence guard's positive case: an earlier fixture's higher sequence is kept.
         root = scratch(Path(directory) / "raised")
         edit_fixture(root, 7, "UPDATE cache_meta SET last_issued = 100 WHERE singleton_id = 1")
@@ -122,10 +151,11 @@ def main() -> None:
         result = check(root)
         if result.returncode != 0:
             failures.append(f"a seed lowered an earlier fixture's sequence: {result.stderr.strip()}")
-        for index, (name, change, expected) in enumerate(CASES):
+        cases = [(8, *case) for case in CASES] + [(11, *case) for case in OFFLINE_CASES]
+        for index, (version, name, change, expected) in enumerate(cases):
             root = scratch(Path(directory) / f"case-{index}")
             change(root)
-            result = check(root)
+            result = check(root, version)
             if result.returncode == 0:
                 failures.append(f"{name}: accepted")
             elif expected not in result.stderr:
@@ -136,7 +166,7 @@ def main() -> None:
         sys.exit(1)
     print(
         f"test-migration-fixture-generator: the committed fixture and a raised sequence accepted; "
-        f"{len(CASES)} single changes refused, each named (SQLite {sqlite3.sqlite_version})"
+        f"{len(CASES) + len(OFFLINE_CASES)} single changes refused, each named (SQLite {sqlite3.sqlite_version})"
     )
 
 
