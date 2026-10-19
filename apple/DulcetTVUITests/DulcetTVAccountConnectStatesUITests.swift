@@ -202,7 +202,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         XCTAssertGreaterThan(accepted, 0, "The progress shown must have been a real connection to the silent port")
         print("DULCET TV ACCOUNT STATE left=in-progress via=cancel silent-connections=\(accepted)")
 
-        // 9. Connected: the account submitted through Connect's own path lands on the library,
+        // 9. Connected: the account submitted through Connect's own path lands on Listen Now,
         //    and Connection, reached through the section bar, says connected.
         app.terminate()
         guard connectByLaunchHook(app, server: (url: proxy.url, username: server.username, password: server.password)) else { return }
@@ -224,6 +224,11 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         defer { setLocalFixtureServer(running: true) }
         defer { _ = proxy.control("POST", "state=off", path: "/__dulcet/outage") }
         app.terminate(); app.launch()
+        guard awaitSection(app, among: ["Listen Now"]) != nil else { return }
+        guard selectSection(app, "library") else {
+            XCTFail("Offline Home must reach Library through the section bar: " + app.debugDescription)
+            return
+        }
         guard awaitSection(app, among: ["Library"]) != nil else { return }
         let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
         XCTAssertTrue(reconnect.waitForExistence(timeout: 20), "Offline Library remains usable with Reconnect")
@@ -259,7 +264,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         app.terminate()
         app.launchArguments = []
         app.launch()
-        guard awaitSection(app, among: ["Library"]) != nil else { return }
+        guard awaitSection(app, among: ["Listen Now"]) != nil else { return }
         guard selectSection(app, "settings") else { return }
         XCTAssertTrue(connected.waitForExistence(timeout: 20),
                       "The saved account must reconnect after an unreadable pointer: " + app.debugDescription)
@@ -269,7 +274,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
     // MARK: - Steps
 
     /// Launches with the account handed to the form by the DEBUG hook, which submits it through
-    /// Connect's own path, waits for the library it lands on, and opens Connection by remote.
+    /// Connect's own path, waits for Listen Now, and opens Connection by remote.
     @MainActor
     private func connectByLaunchHook(_ app: XCUIApplication, server: Server) -> Bool {
         app.terminate()
@@ -289,7 +294,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
             return false
         }
         guard selectSection(app, "settings") else {
-            XCTFail("The section bar must reach Connection from Library: " + app.debugDescription)
+            XCTFail("The section bar must reach Connection from Listen Now: " + app.debugDescription)
             return false
         }
         guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 60) else {
