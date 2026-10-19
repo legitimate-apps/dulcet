@@ -69,31 +69,31 @@ struct DulcetOfflineLibrarySection: View {
     var body: some View {
         if store.offlineLibraryStorage != nil {
             VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                Text("Offline Music").font(.headline)
-                Toggle("Automatic Downloads", isOn: Binding(
+                Text(DulcetStrings.offlineMusic).font(.headline)
+                Toggle(DulcetStrings.offlineAutomaticDownloads, isOn: Binding(
                     get: { storage.automaticDownloadsEnabled },
                     set: { store.setAutomaticDownloadsEnabled($0) }
                 )).accessibilityIdentifier("dulcet.offline.automaticDownloads")
-                Text("Keep the music you add to My Library on this device. Explicit downloads are always kept.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(DulcetStrings.offlineAutomaticHint)
+                    .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
                 if storage.automaticDownloadsEnabled {
-                    Text("\(storage.completedAutomaticCount) downloaded · \(storage.queuedAutomaticCount) remaining")
+                    Text(DulcetStrings.offlineDownloadProgress(completed: storage.completedAutomaticCount, remaining: storage.queuedAutomaticCount))
                         .font(.caption).accessibilityIdentifier("dulcet.offline.progress")
                 }
-                LabeledContent("Downloads", value: bytes(storage.downloadBytes))
-                LabeledContent("Streaming Cache", value: bytes(storage.cacheBytes))
-                LabeledContent("Artwork Cache", value: bytes(storage.artworkBytes))
-                Picker("Cache Size", selection: Binding(get: { storage.cacheBudgetBytes },
+                LabeledContent(DulcetStrings.offlineDownloads, value: bytes(storage.downloadBytes))
+                LabeledContent(DulcetStrings.offlineStreamingCache, value: bytes(storage.cacheBytes))
+                LabeledContent(DulcetStrings.offlineArtworkCache, value: bytes(storage.artworkBytes))
+                Picker(DulcetStrings.offlineCacheSize, selection: Binding(get: { storage.cacheBudgetBytes },
                                                         set: { store.setStreamingCacheBudgetBytes($0) })) {
-                    Text("Off").tag(Int64(0))
-                    Text("256 MB").tag(Int64(256 * 1_024 * 1_024))
-                    Text("512 MB").tag(Int64(512 * 1_024 * 1_024))
-                    Text("1 GB").tag(Int64(1_024 * 1_024 * 1_024))
-                    Text("2 GB").tag(Int64(2 * 1_024 * 1_024 * 1_024))
+                    Text(DulcetStrings.offlineCacheOff).tag(Int64(0))
+                    Text(DulcetStrings.offlineCache256MB).tag(Int64(256 * 1_024 * 1_024))
+                    Text(DulcetStrings.offlineCache512MB).tag(Int64(512 * 1_024 * 1_024))
+                    Text(DulcetStrings.offlineCache1GB).tag(Int64(1_024 * 1_024 * 1_024))
+                    Text(DulcetStrings.offlineCache2GB).tag(Int64(2 * 1_024 * 1_024 * 1_024))
                 }.accessibilityIdentifier("dulcet.offline.cacheSize")
-                Text("Recently streamed songs stay available offline until the cache needs space. Downloads stay protected.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Button("Clear Cache") { store.clearStreamingCache() }
+                Text(DulcetStrings.offlineCacheHint)
+                    .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
+                Button(DulcetStrings.offlineClearCache) { store.clearStreamingCache() }
                     .accessibilityIdentifier("dulcet.offline.clearCache")
             }
             .accessibilityElement(children: .contain)

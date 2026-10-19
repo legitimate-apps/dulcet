@@ -502,7 +502,7 @@ private struct DulcetSearchResultMenuItems: View {
                             store.requestDownload(track)
                         }
                     case .downloaded, .stale:
-                        Button("Keep Download", systemImage: "arrow.down.circle.fill") { store.requestDownload(track) }
+                        Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle.fill") { store.requestDownload(track) }
                     case .queued, .downloading:
                         EmptyView()
                     }

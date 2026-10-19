@@ -1609,7 +1609,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
             case .interrupted, .failed:
                 Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
             case .downloaded, .stale:
-                Button("Keep Download", systemImage: "arrow.down.circle.fill", action: onDownload)
+                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle.fill", action: onDownload)
             case .queued, .downloading:
                 EmptyView()
             }
@@ -1640,7 +1640,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
             case .interrupted, .failed:
                 Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
             case .downloaded, .stale:
-                Button("Keep Download", systemImage: "arrow.down.circle.fill", action: onDownload)
+                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle.fill", action: onDownload)
             case .queued, .downloading:
                 EmptyView()
             }
