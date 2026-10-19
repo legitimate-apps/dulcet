@@ -3556,7 +3556,7 @@ final class DulcetiOSUITests: XCTestCase {
         var originalAutoplay: Bool?
         defer {
             if let originalAutoplay {
-                XCTAssertTrue(chooseAutoplayForLyrics(originalAutoplay, in: XCUIApplication()),
+                XCTAssertTrue(chooseAutoplayForLyrics(originalAutoplay, in: XCUIApplication(), holdPlayback: true),
                               "Restore the person's AutoPlay choice after the lyrics proof")
             }
         }
@@ -3674,6 +3674,9 @@ final class DulcetiOSUITests: XCTestCase {
               // track's lyrics (OBSERVED locally under host load).
               playFromSearch("Thirty One Seconds", in: failedApp, compact: expectedCompact),
               openNowPlayingFromBar(in: failedApp, expectingTitle: "Thirty One Seconds"),
+              // A failed read and its retry need static lyrics, not progressing playback.
+              // Hold the named item before either wait can consume its remaining duration.
+              holdLyricsPlayback(in: failedApp),
               openLyricsPanel(in: failedApp) != nil else { return }
         let unavailable = failedApp.staticTexts["dulcet.lyrics.unavailable"].firstMatch
         let retry = failedApp.buttons["dulcet.lyrics.retry"].firstMatch
@@ -3993,8 +3996,14 @@ final class DulcetiOSUITests: XCTestCase {
     private func chooseAutoplayForLyrics(
         _ enabled: Bool,
         in app: XCUIApplication,
+        holdPlayback: Bool = false,
         capturePrevious: ((Bool) -> Void)? = nil
     ) -> Bool {
+        // Restoring AutoPlay can append short tracks immediately. Hold the current item before
+        // navigating to its switch: a natural end replaces the player with Preparing playback,
+        // destroying the queue view while XCTest is still resolving the switch's new value.
+        // The initial setup already pauses; cleanup needs the same observed precondition.
+        if holdPlayback, !holdLyricsPlayback(in: app) { return false }
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
         if !close.exists, !openNowPlayingFromBar(in: app, expectingTitle: nil) { return false }
         let lyricsPanel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
@@ -4050,6 +4059,24 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The player must close before returning to the lyrics fixture")
             return false
         }
+        return true
+    }
+
+    @MainActor
+    private func holdLyricsPlayback(in app: XCUIApplication) -> Bool {
+        func visibleTransport(_ label: String) -> XCUIElement? {
+            app.buttons.matching(NSPredicate(format: "label == %@", label))
+                .allElementsBoundByIndex.first { !$0.frame.isEmpty && $0.isHittable }
+        }
+        if let pause = visibleTransport("Pause") { pause.tap() }
+        let held = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            visibleTransport("Play") != nil
+        }, object: nil)
+        guard XCTWaiter.wait(for: [held], timeout: 10) == .completed else {
+            XCTFail("The lyrics fixture must be paused before its static-state waits and AutoPlay restoration")
+            return false
+        }
+        print("DULCET LYRICS HELD transport=Play")
         return true
     }
 

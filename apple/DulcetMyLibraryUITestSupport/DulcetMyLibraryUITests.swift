@@ -437,8 +437,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #elseif os(iOS)
         if connect {
             let connected = server == navidrome
-                ? app.buttons["dulcet.library.album"].firstMatch
+                ? app.otherElements["dulcet.reader.home.recentlyAdded"].firstMatch
                 : destination("browse")
+            // A connected Library can have an empty or unrealized lazy album grid. Its home
+            // section establishes the reader session; a tile establishes catalog visibility.
             if !connected.waitForExistence(timeout: 30) {
                 let welcome = app.buttons["Connect a Server"]
                 if welcome.exists { welcome.tap() }
@@ -570,22 +572,40 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // album page; scrolling firstMatch can hide Library before the catalog finishes loading.
         let albumPage = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
         XCTAssertTrue(albumPage.waitForExistence(timeout: 30), "The album page must load before scrolling")
+#elseif os(iOS)
+        let albumPage = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
+        XCTAssertTrue(albumPage.waitForExistence(timeout: 30), "The catalog must load before scrolling its tiles")
 #endif
 #if !os(tvOS)
+        let viewport = app.windows.firstMatch.frame.insetBy(dx: 0, dy: 100)
+        var swipes = 0
         for _ in 0..<6 {
-            if tile.exists && tile.isHittable { break }
+            if tile.exists && tile.isHittable {
+                let frame = tile.frame
+                if !frame.isEmpty && viewport.contains(CGPoint(x: frame.midX, y: frame.midY)) { break }
+            }
 #if os(macOS)
             albumPage.scroll(byDeltaX: 0, deltaY: -450)
 #else
-            app.scrollViews.firstMatch.swipeUp()
+            // On iPad the first scroll view may be the sidebar. Scroll the actual catalog,
+            // and require the tile's center, not a sliver at the bottom, to enter the window.
+            albumPage.swipeUp()
 #endif
+            swipes += 1
         }
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
         XCTAssertTrue(tile.isHittable, "The album must be visible before activation")
+        let tileFrame = tile.frame
+        XCTAssertTrue(viewport.contains(CGPoint(x: tileFrame.midX, y: tileFrame.midY)),
+                      "The album's center must be inside the visible catalog before activation: \(tileFrame)")
+        print("MY LIBRARY ALBUM target=\(title) center-in-viewport=true swipes=\(swipes) frame=\(tileFrame)")
 #else
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
 #endif
         activate(tile)
+        let header = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(header.waitForExistence(timeout: 15), "The activated tile must open its album page")
+        XCTAssertEqual(header.label, title, "The album page must name the activated tile")
     }
     @MainActor private func activate(_ element: XCUIElement) {
 #if os(tvOS)
