@@ -12,6 +12,8 @@ that reveals Sign Out must succeed even when it consumes the wait deadline.
 Missing/changed Objective-C methods fall back safely. This checks the test's wait boundary, not
 which UIKit animation prevented CI's reply. --source can run the original implementation against
 the snapshot control; --mutant demonstrates rejected wait boundaries and the confirmation race.
+Native chrome fixtures reject partially covered controls, retain actual bar buttons, and model
+content displacement to check the extracted helper's bounded, bidirectional window-anchored drag.
 """
 import argparse
 from pathlib import Path
@@ -22,7 +24,8 @@ ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument('--navigation-source-ref', help='Replay an earlier compact navigation helper')
 parser.add_argument('--source', type=Path, help='Alternate proof source for a before/after control')
-parser.add_argument('--mutant', choices=['before-only', 'after-only', 'no-scope', 'confirmation-once', 'moving-target'])
+parser.add_argument('--mutant', choices=['before-only', 'after-only', 'no-scope', 'confirmation-once', 'moving-target',
+                                       'covered-target', 'reversed-drag', 'unbounded-drag'])
 args = parser.parse_args()
 source = (args.source or ROOT / 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift').read_text()
 
@@ -51,6 +54,15 @@ scroll = method('scrollIntoView')
 stable = method('waitForStableHitTarget')
 snapshot_polling = 'matching target: HitTarget' in stable
 helpers = (declaration('    private enum HitTarget {') + '\n' + method('hitTarget')) if snapshot_polling else ''
+if '    private func hitViewport(' in source:
+    helpers += '\n' + method('hitViewport')
+if args.mutant == 'covered-target':
+    assert 'visibleFrame.contains(frame)' in stable
+    stable = stable.replace('visibleFrame.contains(frame)', 'snapshot.frame.contains(frame)')
+if args.mutant in ('reversed-drag', 'unbounded-drag'):
+    delta = 'min(limit, max(-limit, viewport.midY - targetY))'
+    assert delta in scroll
+    scroll = scroll.replace(delta, '-(' + delta + ')' if args.mutant == 'reversed-drag' else 'viewport.midY - targetY')
 if args.mutant == 'moving-target':
     scroll = scroll.replace('waitForStableHitTarget(element, matching: target, in: window, timeout: 5)' if snapshot_polling else 'waitForStableHitTarget(element, in: window, timeout: 5)', 'element.isHittable')
 if args.mutant == 'confirmation-once':
@@ -68,7 +80,7 @@ import CoreGraphics
 import Foundation
 import ObjectiveC
 
-enum XCUIElementType { case button, `switch`, window, tabBar, staticText }
+enum XCUIElementType { case button, `switch`, window, navigationBar, tabBar, keyboard, staticText }
 protocol XCUIElementSnapshot {
     var children: [XCUIElementSnapshot] { get }
     var elementType: XCUIElementType { get }
@@ -127,6 +139,8 @@ final class XCUIApplication: NSObject {
     var frameReads = 0
     var lastTargetY = 1_000.0
     var swipes = 0
+    var geometryFixture: XCUIElementSnapshot?
+    var drags: [(CGPoint, CGPoint)] = []
     var windows: Element { Element(app: self, scope: "window", key: "window") }
     func swipeUp() { swipes += 1 }
     func swipeDown() { preconditionFailure("the mock target never sits above the visible form") }
@@ -189,6 +203,7 @@ struct Element {
         precondition(key == "window", "one window snapshot per geometry poll")
         app.snapshotReads += 1
         if app.snapshotDelay > 0 { Thread.sleep(forTimeInterval: app.snapshotDelay) }
+        if let fixture = app.geometryFixture { return fixture }
         let window = CGRect(x: 0, y: 0, width: 400, height: 800)
         if app.missingSnapshots > 0 {
             app.missingSnapshots -= 1
@@ -201,6 +216,42 @@ struct Element {
         }
         let target = Snapshot(frame: CGRect(x: 20, y: app.lastTargetY, width: 100, height: 30))
         return Snapshot(children: [target], elementType: .window, identifier: "", label: "", frame: window)
+    }
+    func coordinate(withNormalizedOffset offset: CGVector) -> Coordinate {
+        precondition(key == "window", "scroll coordinates must be anchored to the window")
+        let frame = app.geometryFixture?.frame ?? CGRect(x: 0, y: 0, width: 400, height: 800)
+        return Coordinate(app: app, point: CGPoint(x: frame.minX + frame.width * offset.dx,
+                                                   y: frame.minY + frame.height * offset.dy))
+    }
+    struct Coordinate {
+        let app: XCUIApplication
+        let point: CGPoint
+        enum Velocity { case slow }
+        func withOffset(_ offset: CGVector) -> Self {
+            Self(app: app, point: CGPoint(x: point.x + offset.dx, y: point.y + offset.dy))
+        }
+        func press(forDuration duration: TimeInterval, thenDragTo end: Self,
+                   withVelocity velocity: Velocity, thenHoldForDuration hold: TimeInterval) {
+            precondition(duration == 0.05 && velocity == .slow && hold >= 0.3,
+                         "the bounded scroll must settle without fling momentum")
+            app.drags.append((point, end.point))
+            app.swipes += 1
+            if let fixture = app.geometryFixture {
+                // Model content following the finger; native chrome stays fixed.
+                func move(_ node: XCUIElementSnapshot) -> Snapshot {
+                    var children = node.children.map(move)
+                    var frame = node.frame
+                    if node.identifier == "moving-button" { frame.origin.y += end.point.y - point.y }
+                    if node.elementType == .navigationBar || node.elementType == .tabBar || node.elementType == .keyboard {
+                        children = node.children.map { Snapshot(children: $0.children, elementType: $0.elementType,
+                            identifier: $0.identifier, label: $0.label, frame: $0.frame, isEnabled: $0.isEnabled) }
+                    }
+                    return Snapshot(children: children, elementType: node.elementType, identifier: node.identifier,
+                                    label: node.label, frame: frame, isEnabled: node.isEnabled)
+                }
+                app.geometryFixture = move(fixture)
+            }
+        }
     }
     var frame: CGRect {
         precondition(!app.forbidLiveGeometry, "geometry polling must not re-resolve live queries")
@@ -312,6 +363,59 @@ struct Check {
         precondition(app.selectedTab == "Search" && app.navigationTaps == 3,
                      "A completed tap without the selected destination must not authorize a field lookup")
         print("missed compact tab tap / observed selection after retry: PASS")
+        // A hittable control may still overlap native chrome. Keep the fixture independent of
+        // the implementation's safe-viewport arithmetic, including a nonzero window origin.
+        let geometryApp = XCUIApplication()
+        geometryApp.swipes = 1
+        geometryApp.forbidLiveGeometry = true
+        let geometryTarget = Element(app: geometryApp, scope: "root", key: "moving-button")
+        let windowFrame = CGRect(x: 50, y: 40, width: 402, height: 874)
+        let navigation = Snapshot(elementType: .navigationBar, identifier: "", label: "",
+                                  frame: CGRect(x: 50, y: 102, width: 402, height: 54))
+        let tabBar = Snapshot(elementType: .tabBar, identifier: "", label: "",
+                              frame: CGRect(x: 50, y: 831, width: 402, height: 83))
+        func geometry(_ target: Snapshot, keyboard: Bool = false, nativeTab: Bool = false) -> Snapshot {
+            var tab = tabBar
+            if nativeTab { tab.children = [target] }
+            var nodes: [XCUIElementSnapshot] = [navigation, tab]
+            if !nativeTab { nodes.append(target) }
+            if keyboard { nodes.append(Snapshot(elementType: .keyboard, identifier: "", label: "",
+                frame: CGRect(x: 50, y: 640, width: 402, height: 274))) }
+            return Snapshot(children: nodes, elementType: .window, identifier: "", label: "", frame: windowFrame)
+        }
+        for frame in [CGRect(x: 70, y: 154, width: 100, height: 40), // midpoint clear, top covered
+                      CGRect(x: 70, y: 800, width: 100, height: 40)] { // midpoint clear, bottom covered
+            geometryApp.geometryFixture = geometry(Snapshot(frame: frame))
+            precondition(!proof.waitForStableHitTarget(geometryTarget, MATCHING in: geometryApp.windows, timeout: 1),
+                         "the full control, not only its midpoint, must clear navigation and tab bars")
+        }
+        geometryApp.geometryFixture = geometry(Snapshot(frame: CGRect(x: 70, y: 615, width: 100, height: 30)), keyboard: true)
+        precondition(!proof.waitForStableHitTarget(geometryTarget, MATCHING in: geometryApp.windows, timeout: 1),
+                     "an overlapping software keyboard cannot authorize a tap")
+        geometryApp.geometryFixture = geometry(Snapshot(frame: CGRect(x: 70, y: 500, width: 100, height: 30)))
+        precondition(proof.waitForStableHitTarget(geometryTarget, MATCHING in: geometryApp.windows, timeout: 1))
+        geometryApp.geometryFixture = geometry(Snapshot(frame: CGRect(x: 70, y: 850, width: 100, height: 30)), nativeTab: true)
+        precondition(proof.waitForStableHitTarget(geometryTarget, MATCHING in: geometryApp.windows, timeout: 1),
+                     "the actual native tab target remains tappable within its bar")
+        print("native navigation/tab/keyboard coverage / full bounds / native tab target: PASS")
+        for initialY in [69.7, 783.7] {
+            geometryApp.geometryFixture = geometry(Snapshot(frame: CGRect(x: 70, y: initialY, width: 100, height: 62)))
+            geometryApp.drags = []
+            precondition(proof.scrollIntoView(geometryTarget, MATCHING in: geometryApp))
+            precondition(!geometryApp.drags.isEmpty && geometryApp.drags.count <= 6)
+            let safeTop = 168.0, safeBottom = 823.0
+            for (start, end) in geometryApp.drags {
+                precondition(abs(start.x - 251) < 0.01 && abs(start.y - 495.5) < 0.01,
+                             "window-relative offsets must resolve back to the global viewport midpoint")
+                precondition(end.x == start.x && abs(end.y - start.y) <= (safeBottom - safeTop) * 0.35 + 0.01,
+                             "a bounded drag cannot overshoot the safe viewport")
+                precondition(end.y >= safeTop && end.y <= safeBottom)
+            }
+            let firstDrag = geometryApp.drags[0]
+            precondition(initialY < safeTop ? firstDrag.1.y > firstDrag.0.y : firstDrag.1.y < firstDrag.0.y,
+                         "finger movement must move the covered target toward the visible content")
+        }
+        print("covered above/below target / bounded slow drag / nonzero window origin: PASS")
         for condition in [RuntimeCase.missing, .changed] {
             runtimeCase = condition
             var calls = 0

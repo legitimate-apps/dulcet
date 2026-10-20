@@ -338,3 +338,11 @@ HTTP-consent error, cancellation, connection, saved offline recovery and persist
 assertions all execute. All seven Apple integration schemes pass build-for-testing. These
 local results establish the corrected test interaction; the final branch head requires its
 own full Apple workflow. No production playback, Kotlin policy or CI files change.
+
+The first full run on `a85270bd` stops before native testing: its source-extraction account
+harness omitted the new viewport dependency and coordinate adapter. The harness now extracts
+that actual helper and models window-anchored drags. Its controls check full bounds against
+navigation, tab and keyboard chrome, preserve native bar targets, and exercise scrolling in
+both directions from a nonzero window origin. Existing interaction-scope, moving-target,
+confirmation and navigation controls remain. This adapts the test harness; it changes no
+production or native-test behavior.
