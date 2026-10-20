@@ -145,8 +145,8 @@ Independent review covers the file deletion and playback boundaries before mergi
 
 ## Account rebinding and removal recovery (2026-10-20)
 
-A URL or username change under the same provider instance purges prior automatic, explicit and
-cached media. Password-only refresh preserves it. This is a separate boundary from removing music
+A genuinely different canonical endpoint or exact username under the same provider instance purges prior automatic, explicit and
+cached media. Equivalent URL spellings and password-only refresh preserve it. This is a separate boundary from removing music
 from My Library or disabling Automatic Downloads: those same-binding operations still preserve
 explicit downloads. The binding is a reserved durable preference outside the disposable seen-cache
 namespace. An epoch revokes old controllers and in-flight callbacks even across A → B → A. Legacy
@@ -156,8 +156,7 @@ metadata binding before automatic membership projection.
 The Android service also retires its player and session if saved credentials cannot be read:
 the plaintext account ID cannot prove that the endpoint and username are unchanged. This stops
 playback on a credential-read failure without purging files. Readable recovery creates a fresh
-controller; same-binding media remains valid. Password refresh replaces the immutable credential
-snapshot while retaining its media.
+controller; same-binding media remains valid. Password refresh updates future request credentials while retaining installed playback, preloads and media.
 
 OBSERVED against pre-fix `6e65fda8`: the independent common ownership suite executed five cases,
 with the three binding/revocation/legacy rejection cases failing and the same-binding explicit
@@ -374,3 +373,92 @@ individual-result guards pass, and each selector reports all 12 account states, 
 security-error-to-credential-edit transition that previously tapped outside the window. All
 seven Apple integration schemes pass build-for-testing on the same source. These local checks
 establish that interaction correction; the new commit still requires its own full Apple CI run.
+
+
+## Review round 3: equivalent bindings and active playback (2026-10-20)
+
+The shared Kotlin comparison now folds DNS host case, removes default HTTP(S) ports, normalizes
+trailing base separators and compares equivalent IPv6 literals. ASCII punycode uses DNS comparison;
+Unicode host input remains unsupported by the existing connection contract. Path case, interior
+separators and escaped separators remain meaningful. A stored legacy binding is canonicalized for
+comparison without rewriting its epoch on equivalence. A malformed replacement is validated before
+any unlink. The exact authenticated `getUser.username` is saved when supplied; missing/blank names
+retain the exact submitted identity, without client-side username case folding.
+
+OBSERVED fail-before at `3f11750d`: the common suite executed 14 cases on JVM and Mac, with the
+seven individual equivalent-spelling cases failing and all seven other controls passing. The Mac
+exported-adapter suite executed eight cases, with five equivalent-spelling failures and three
+ownership/password controls passing. Each failure checks the explicit local plan, not only URL
+helper output. The legacy upgrade cases seed the old JSON spelling and epoch directly. The later
+invalid-endpoint guard is additional acceptance, outside that historical 14-case snapshot.
+
+OBSERVED fail-before on Android: five adapter controls reached their assertions with real playback
+and download controllers. At the first actual media unlink, endpoint and username replacement left
+the old current player uncleared, play intent active, the preload attached and both leases/protections
+held. Equivalent URL refresh deleted active files. Same-binding/password controls additionally
+exposed a per-controller protection gap: Clear Cache from a second controller could delete files
+leased by the first. Separate service controls passed exact refresh and failed password/equivalent
+refresh by replacing the registered media session. Early fixture failures (an invalid queue source,
+then the deliberate same-album gapless rule) were corrected before these observations; they are not
+counted as evidence of production defects.
+
+OBSERVED fail-before for canonical usernames: a real loopback HTTP connection returned
+`getUser.username = Canonical-Alice`; the old connector returned no canonical identity. Missing and
+blank-username controls passed. OBSERVED fail-before for Apple item notifications: one native
+lifecycle method reported 48 retention-count violations on the historical engine. Its compatibility
+shim only exposes the historical observer-array count; it supplies no cleanup behavior. The native
+binding test's historical compatibility method is likewise a no-op callback setter, without a
+retirement or purge fix.
+
+OBSERVED pass-after: full JVM 1,166/1,166 (88 suites), including all 15 common binding controls
+and three real-HTTP canonical-username controls; selected Mac native Kotlin 67/67, including all
+15 common binding controls and eight exported-adapter controls. Metadata, iOS/tvOS simulator test
+compilation and all five device/simulator/Mac framework links pass. The unfiltered Mac Kotlin gate additionally
+passes all 1,252 native tests across 91 suites, with the Android AAR bundle built. Full Android host execution
+passes 1,389 core, 226 phone DEV, 226 phone PROD and 91 TV cases, with zero failures/errors/skips;
+all six app/instrumentation APK build tasks succeed. Independent Android controls witness playback
+retirement before the first actual unlink, preserve explicit/leased files on equivalent and password
+refreshes, and verify real HTTP token rotation for both a retained range resource and the existing
+download adapter. An old resource issues no further request after a real binding change.
+
+OBSERVED native Swift engine/canonical-username acceptance: 70 distinct methods pass with zero
+issues/skips, including 14 crossfade lifecycle methods and the observer cleanup discriminator.
+All seven Apple integrations pass build-for-testing. The current Mac handoff method passes all
+four subcases (1.481 seconds): real local current media advances and the incoming decoder is
+prepared, then a genuine URL/username rebind synchronously empties both players while the old
+files still exist at the callback witness, before the real adapter purges them. Password/equivalent
+refresh preserves both installed native items and files. The same method failed seven assertions
+on the historical head after those native readiness/progress prerequisites succeeded.
+Exact-head workflow receipts and additional runtime counts are recorded with final verification. Compilation or core tests alone do not establish a native
+settings interaction, offline relaunch matrix or audible crossfade quality.
+
+The broader controller gate exposed a loader teardown defect while validating the new wire/resource
+lifetimes. OBSERVED: unchanged controller methods repeatedly crashed in URLSession invalidation;
+a zombie probe identified a retain of a deallocated `DulcetURLSessionPlaybackResource`. Its
+`deinit` accessed a lazy session and constructed a session with the dying resource as delegate.
+The corrected loader constructs sessions only on load and invalidates only an existing session;
+a weak forwarding delegate also permits used resources to leave. Outstanding native transfers
+receive cancellation once outside the state lock. The original crashing method passes unchanged
+on the corrected source (one actual method, 0.150 seconds, no process restart). Independent
+resource lifecycle tests cover unused release, completed release and active cancellation.
+
+On the corrected loader, the combined Mac package gate executes 81 distinct methods with zero
+failures/skips: all 11 resource methods (including unused, completed and active retirement),
+all 69 engine methods and one canonical-name method. The three lifecycle controls pass in
+0.102/0.006/0.022 seconds respectively; the 14 crossfade methods pass in 85.462 seconds.
+
+The complete Mac playback-controller class passes 47/47 methods with zero failures/skips
+(24.658 seconds), including retained current/preload continuity on password refresh and delayed
+stop-completion rejection after rebind/disconnect. Both actual HTTP integration methods pass,
+including token rotation on the same retained resource and zero requests after revocation.
+All seven integration schemes are rebuilt with the corrected loader.
+
+The final tvOS simulator engine selection passes 64 distinct methods with zero failures/skips
+(92.815 seconds), including all 14 crossfade lifecycle methods and item-observer cleanup. This
+checks the shared playback engine; it does not add persistent offline storage to tvOS.
+
+OBSERVED historical resource-lifetime discrimination: the unchanged `3f11750d` loader executes
+both completed/active release controls and fails both methods (four expectation issues, 2.756
+seconds). A completed resource remains retained; the active resource remains retained and its
+completion count stays zero instead of one cancellation. These are assertion failures, with
+neither a compiler error nor an unused-resource crash counted as a discriminator.

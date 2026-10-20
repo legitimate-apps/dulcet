@@ -3130,7 +3130,7 @@ MP4 tail probes. The core records interval coverage while writing directly to di
 requires every byte from zero to the exact resource length and the same §12.4 binary validation as a
 download. Unknown-length responses require a sequential body from offset zero through EOF. A seek,
 cancellation, failed response or truncated body never publishes a partial cache file. A 206 is
-eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance, and are additionally owned by the normalized endpoint URL and username binding. Rebinding either field purges the old binding's downloaded and cached media, including explicit downloads, before local lookup can serve the new binding. Password-only credential refresh keeps media. Old executors and completions cannot publish into the new binding. A previously unbound media namespace cannot adopt bytes without proven ownership. Server-item reconciliation applies to these files too.
+eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance, and are additionally owned by the canonical endpoint URL and exact server-confirmed username (or exact submitted username when not supplied) binding. DNS host case, default HTTP(S) ports, equivalent IPv6 spellings and trailing base separators do not change that binding; path case, interior separators and escaped separators remain significant. Rebinding the actual endpoint or username purges the old binding's downloaded and cached media, including explicit downloads, before local lookup can serve the new binding. Password-only and equivalent-endpoint refresh preserve installed current/preloaded playback and media; future requests use refreshed credentials. A real binding change synchronously stops and invalidates current and preloaded playback, cancels retired callbacks and releases file protections before any old file is deleted. Old executors and completions cannot publish into the new binding. A previously unbound media namespace cannot adopt bytes without proven ownership. Server-item reconciliation applies to these files too.
 
 Offline playback prefers a validated local file, including a cached stream, before making a server
 read. Downloaded continues to mean deliberately retained downloads; the broader local-playable set
@@ -7912,6 +7912,26 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-20 — Preserve equivalent media bindings and retire playback before a real purge.**
+Local media compares a shared Kotlin canonical HTTP(S) endpoint: DNS host case is folded,
+default ports are removed, equivalent IPv6 literals compare equal, and trailing base separators
+are normalized. Endpoint path case, interior separators and escaped separators remain meaningful.
+ASCII punycode hostnames use DNS comparison; Unicode host input remains unsupported by the
+existing account/redirect contract. Both stored legacy and incoming URLs are canonicalized for
+comparison, retaining the previous binding epoch byte for byte on equivalence. Invalid replacement
+endpoints fail before files or rows are removed. Truly different host, non-default port, scheme,
+path or exact username retains the previously chosen purge policy, including explicit media.
+
+An authenticated `getUser.username`, when present and nonblank, supplies the exact canonical
+username for saved credentials and media binding. When absent, the submitted spelling remains
+exact; clients do not infer that differently cased usernames identify one person. A real binding
+change must synchronously stop and invalidate current, queued/preloaded and prepared/fading player
+items and release their file protections before the first unlink, including downloads-first entry.
+Retired events and completion callbacks cannot reinstall old items. Password-only and equivalent
+endpoint refresh retain installed playback/preload and local media while updating future request
+credentials; this supersedes the immutable-player replacement wording in the earlier entry below.
+Item-scoped Apple notification observers leave with the invalidated item.
 
 **2026-10-20 — Bind offline media to endpoint ownership and clarify storage scope.**
 §14.5.1 makes local-media ownership depend on the stable account instance plus normalized endpoint URL and username. Changing either endpoint field purges the prior binding's automatic, explicit and cached files before the new binding can look up local media. This deliberately chooses purge over retaining a hidden old-binding library; password-only refresh preserves media. Same-binding membership removal or Automatic Downloads off still leaves explicit downloads intact. Stale executors, delayed completions and unproven legacy media must not cross the binding boundary.
