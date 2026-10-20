@@ -346,3 +346,31 @@ navigation, tab and keyboard chrome, preserve native bar targets, and exercise s
 both directions from a nonzero window origin. Existing interaction-scope, moving-target,
 confirmation and navigation controls remain. This adapts the test harness; it changes no
 production or native-test behavior.
+
+A later full-run phone account proof on `85d7d4f9` reaches the expected local-HTTP security
+error after the corrected action tap, then fails to focus the server-address field. Its four
+actual synthesized field taps are all at (353.1, -10.3333), outside the 402×874 window.
+Revealing the lower error action left an existing credential field above the viewport; the
+ordinary credential helper checked existence and then bypassed the visibility guard.
+
+Every actual credential-focus tap now first uses the same stable snapshot, full-field bounds
+and bounded scroll path as other account controls. The snapshot target matches the identifier
+of a plain or secure text field. `replaceText` takes a preparation callback so its standalone
+input protocol remains testable. The ordinary trailing-edge cursor tap, real keyboard-focus
+check, deletion/readback checks, four focus attempts and three verified replacement attempts
+remain intact. The older tour-only geometry loop is replaced by this shared visibility check.
+
+OBSERVED for the credential correction's source-extraction controls: all 16 geometry/interaction
+groups and 30 text-entry/dismissal controls pass. Plain and secure fields require their exact
+identifier and must actually move clear of chrome. Lost focus and dropped taps require fresh
+preparation before the next tap; rejected preparation sends no tap, deletion or insertion.
+The original eight negative interaction controls and two controls that skip or reuse preparation
+all fail at their intended runtime assertions. Historical `85d7d4f9` still compiles and passes its
+original 14 and 24 controls; the new API-specific controls run only on the corrected source.
+
+OBSERVED on the final credential source: the whole named iPhone account selector passes 1/1
+in 274.148 seconds and the whole named iPad selector passes 1/1 in 252.516 seconds. Both strict
+individual-result guards pass, and each selector reports all 12 account states, including the
+security-error-to-credential-edit transition that previously tapped outside the window. All
+seven Apple integration schemes pass build-for-testing on the same source. These local checks
+establish that interaction correction; the new commit still requires its own full Apple CI run.

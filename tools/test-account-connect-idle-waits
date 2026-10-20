@@ -80,7 +80,7 @@ import CoreGraphics
 import Foundation
 import ObjectiveC
 
-enum XCUIElementType { case button, `switch`, window, navigationBar, tabBar, keyboard, staticText }
+enum XCUIElementType { case button, `switch`, textField, secureTextField, window, navigationBar, tabBar, keyboard, staticText }
 protocol XCUIElementSnapshot {
     var children: [XCUIElementSnapshot] { get }
     var elementType: XCUIElementType { get }
@@ -416,6 +416,7 @@ struct Check {
                          "finger movement must move the covered target toward the visible content")
         }
         print("covered above/below target / bounded slow drag / nonzero window origin: PASS")
+        __CREDENTIAL_CONTROLS__
         for condition in [RuntimeCase.missing, .changed] {
             runtimeCase = condition
             var calls = 0
@@ -429,6 +430,37 @@ struct Check {
     }
 }
 '''
+credential_controls = r'''
+        for kind in [XCUIElementType.textField, .secureTextField] {
+            let field = Snapshot(elementType: kind, identifier: "moving-button", label: "Credential",
+                                 frame: CGRect(x: 70, y: 300, width: 300, height: 40))
+            precondition(Proof.HitTarget.credential("moving-button").matches(field))
+            precondition(!Proof.HitTarget.credential("different-field").matches(field),
+                         "credential geometry must belong to the exact requested field")
+            precondition(!Proof.HitTarget.identifier("moving-button").matches(field),
+                         "a credential is not an action button")
+            var impostor = field
+            impostor.elementType = .button
+            precondition(!Proof.HitTarget.credential("moving-button").matches(impostor))
+            for y in [154.0, 800.0] {
+                var covered = field
+                covered.frame.origin.y = y
+                geometryApp.geometryFixture = geometry(covered)
+                precondition(!proof.waitForStableHitTarget(geometryTarget, matching: .credential("moving-button"),
+                    in: geometryApp.windows, timeout: 1), "covered fields cannot authorize a focus tap")
+                geometryApp.drags = []
+                precondition(proof.scrollIntoView(geometryTarget, matching: .credential("moving-button"), in: geometryApp))
+                precondition(!geometryApp.drags.isEmpty && geometryApp.drags.count <= 6)
+                let root = geometryApp.geometryFixture!
+                let revealed = proof.hitTarget(.credential("moving-button"), in: root)!.frame
+                precondition(CGRect(x: 50, y: 168, width: 402, height: 655).contains(revealed),
+                             "the whole plain or secure field must actually move clear of chrome")
+            }
+        }
+        print("plain/secure credential type and exact identifier: PASS")
+        print("covered plain/secure field / actual bounded reveal before focus: PASS")
+'''
+checks = checks.replace('__CREDENTIAL_CONTROLS__', credential_controls if 'case credential(' in source else '')
 checks = checks.replace('MATCHING ', 'matching: .identifier("moving-button"), ' if snapshot_polling else '')
 with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
     path = Path(temporary)

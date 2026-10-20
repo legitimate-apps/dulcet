@@ -971,7 +971,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         return (element.value as? String) == expected
     }
 
-    /// Reveals a credential row and replaces its text. Tour-only scrolling and photography stay
+    /// Reveals a credential row and replaces its text. Form geometry and tour photography stay
     /// here so `replaceText` keeps the self-contained input protocol that
     /// `tools/test-account-connect-text-entry` compiles and replays on its own.
     @MainActor
@@ -993,27 +993,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 let observed = field.value as? String ?? ""
                 if secure ? observed.count == value.count : observed == value { return true }
             }
-            // Large text can put the next field behind the software keyboard. Scroll the form
-            // within its visible area before tapping, without changing the behavioural proofs.
-            for _ in 0..<8 {
-                let window = app.windows.firstMatch.frame
-                let keyboard = app.keyboards.firstMatch
-                let top = window.minY + 100
-                let bottom = min(window.maxY - 24, keyboard.exists ? keyboard.frame.minY - 16 : window.maxY - 24)
-                let middle = field.frame.midY
-                if field.isHittable, middle >= top, middle <= bottom { break }
-                guard bottom > top else {
-                    XCTFail("The tour needs a visible form area above the keyboard")
-                    return false
-                }
-                let lower = (top + (bottom - top) * 0.8 - window.minY) / window.height
-                let upper = (top + (bottom - top) * 0.25 - window.minY) / window.height
-                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: middle < top ? upper : lower))
-                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: middle < top ? lower : upper))
-                start.press(forDuration: 0.01, thenDragTo: end)
-            }
         }
-        let entered = replaceText(in: field, with: value, name: name, secure: secure, photographing: photographing) {
+        let entered = replaceText(in: field, with: value, name: name, secure: secure, photographing: photographing,
+                                 beforeFocusTap: {
+            // Revealing a lower error action can leave this existing field above the window.
+            // Recheck the whole field before every cursor tap, including after focus is lost.
+            guard scrollIntoView(field, matching: .credential(field.identifier), in: app) else {
+                XCTFail("The \(name) field must be reachable before taking keyboard focus")
+                return false
+            }
+            return true
+        }) {
             guard photographing else { return }
             print("DULCET DESIGN TOUR focus-failure field=\(name) frame=\(field.frame) keyboard=\(app.keyboards.firstMatch.frame) " + app.debugDescription)
             tourPhotograph("connection-focus-UNREACHED")
@@ -1024,7 +1014,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func replaceText(in field: XCUIElement, with value: String, name: String, secure: Bool = false,
-                             photographing: Bool = false, onFocusFailure: () -> Void = {}) -> Bool {
+                             photographing: Bool = false, beforeFocusTap: () -> Bool = { true },
+                             onFocusFailure: () -> Void = {}) -> Bool {
         guard field.waitForExistence(timeout: 5) else {
             XCTFail("The \(name) field must exist")
             return false
@@ -1042,6 +1033,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         func focusForTyping(retap: Bool = false) -> Bool {
             var focused = !retap && (field.value(forKey: "hasKeyboardFocus") as? Bool ?? false)
             for _ in 0..<4 where !focused {
+                guard beforeFocusTap() else { return false }
                 if photographing { field.tap() }
                 else { field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
                 let deadline = Date().addingTimeInterval(3)
@@ -1146,6 +1138,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     /// predicate evaluated remotely over every descendant on each poll.
     private enum HitTarget {
         case identifier(String)
+        case credential(String)
         case button(String)
         case staticText(String)
         case localHTTPConsent
@@ -1156,6 +1149,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             switch self {
             case .identifier(let identifier):
                 return snapshot.elementType == .button && snapshot.identifier == identifier
+            case .credential(let identifier):
+                return (snapshot.elementType == .textField || snapshot.elementType == .secureTextField)
+                    && snapshot.identifier == identifier
             case .button(let label):
                 return snapshot.elementType == .button && snapshot.label == label
             case .staticText(let label):
