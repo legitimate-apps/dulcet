@@ -86,6 +86,20 @@ regression checks 1,000 probes without access-time changes, multiple profiles, s
 actual playback updating access time, and removal of the last completed profile. Actual plan
 resolution remains responsible for validating the selected file and recording its use.
 
+## Apple cache playback observed in full conformance
+
+OBSERVED in the Darwin core job of [full Apple run 39353311668](https://github.com/legitimate-apps/dulcet/actions/runs/39353311668), on `c19d794b`: each platform executed its own download/cache integration selector with zero failures. On Mac, real AVPlayer media time advanced to 0.385 s while streaming, then a fresh player advanced to 0.438 s from the promoted cache after both network clients were closed; the selector passed in 10.231 s. The independent iPhone selector observed 0.269 s online and 0.167 s offline and passed in 4.411 s. The independent iPad selector observed 0.342 s online and 0.364 s offline and passed in 4.873 s. Each platform also emitted its own validated tee/sparse-range/identical offline bytes/artwork-first/protected-clear marker for 5,257 bytes. These are actual engine observations, separate from the controller tests below.
+
+That entire Darwin job passed, as did both device conformance jobs. The whole workflow failed its separate platform job on native crossfade preparation; this earlier-head evidence does not replace the required final-head full Apple run. It does not establish the complete cached gapless/crossfade/seek/scrobble matrix.
+
+## Native crossfade preparation and ownership
+
+Actual tvOS and Mac testing exposed that a queued AVPlayerItem may remain unprepared even while its outgoing item is still current. For nonzero crossfade, the engine now prepares its own paused incoming player before the boundary and promotes that same player, item and asset. It retains the outgoing decoder for the overlap. Zero duration restores the incoming asset to the original native gapless queue. A failed preroll is retried only on a new readiness/rate event or accepted Play/permitted interruption resume; no retry loop starts while paused.
+
+OBSERVED on each platform: all 28 crossfade executions passed, plus selected gain, resource-loader and engine regressions. tvOS executed 32 selected cases in 79.415 s; Mac executed 34 in 80.683 s. Independent xcresult guards checked every method and all 24 parameter argument results. These tests require two real decoders at normal playback rate, one ended/advance boundary before the outgoing physical end, gain conservation, prepared player/item/asset reuse, disposal on transport/lifecycle changes, pending-seek fences, and all four interrupted-preroll intent cases. The synthetic full-response resource observed two initial AVFoundation signature/content loads; its exact request list remains unchanged at the real boundary and on return to native gapless playback. This proves no added boundary fetch, without claiming every AVFoundation preparation makes only one resource read.
+
+One additional real-playback case passed independently on tvOS (2.119 s) and Mac (1.609 s): incoming bytes remained withheld until the one-second outgoing stream ended, the same unready prepared player took over with exactly one ended/advance pair, and its real media time advanced after bytes arrived. No overlap or outgoing reopen occurred. The final class therefore has 29 exercised cases per platform across the full class checkpoint and this added case. The implementation writer did not own these test edits. This native engine evidence remains separate from the complete cache-specific transition matrix.
+
 ## Retry after observed server loss
 
 A local retry does not establish that the server returned. The common queue admits a guarded,

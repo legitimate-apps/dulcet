@@ -4912,7 +4912,7 @@
           "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md.",
           "evidence": [
             {
-              "observes": "The playback resource loader assembles the same response, including overlapping ranged bytes, into a validated local file and replays identical bytes after network loss.",
+              "observes": "Actual AVPlayer media time advances while streaming, the same response is promoted to cache, and a fresh AVPlayer advances from that file with both network clients closed. A separate loader path proves overlapping sparse ranges and identical offline bytes.",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
@@ -4929,7 +4929,7 @@
           "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md.",
           "evidence": [
             {
-              "observes": "The playback resource loader assembles the same response, including overlapping ranged bytes, into a validated local file and replays identical bytes after network loss.",
+              "observes": "Actual AVPlayer media time advances while streaming, the same response is promoted to cache, and a fresh AVPlayer advances from that file with both network clients closed. A separate loader path proves overlapping sparse ranges and identical offline bytes.",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
@@ -4946,7 +4946,7 @@
           "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md.",
           "evidence": [
             {
-              "observes": "The playback resource loader assembles the same response, including overlapping ranged bytes, into a validated local file and replays identical bytes after network loss.",
+              "observes": "Actual AVPlayer media time advances while streaming, the same response is promoted to cache, and a fresh AVPlayer advances from that file with both network clients closed. A separate loader path proves overlapping sparse ranges and identical offline bytes.",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
