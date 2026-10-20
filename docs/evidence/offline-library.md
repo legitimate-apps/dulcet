@@ -249,3 +249,28 @@ The actual iPad `testBrowseAddRemoveRelaunchAndOfflineReplay` then passes in 98.
 album addition reaches downloaded state, the relay closes, and offline engine playback progresses.
 Its individual-result guard requires one executed method without failures or skips. This verifies
 the preserved real flow, without proving every possible slow-host negotiation fits the new budget.
+
+OBSERVED in PR Apple run 39385132593: the Mac `pausedResume` argument counted two prerolls
+before the test sent interruption-ended; no native Play, effective-rate or media-motion assertion
+failed. The identical Mac stage passed in the simultaneous full run. A local instrumented six-case
+run did not reproduce the CI failure. A controlled real-resource test on the unchanged engine then
+withheld outgoing bytes, failed the incoming preroll, and released outgoing bytes. The resulting
+real outgoing readiness callback rearmed preroll through `itemStatusChanged`, while the outgoing
+player issued no Play, had zero effective rate and kept frozen media time for a second. That is
+permitted paused preparation; it is not evidence of automatic playback resumption.
+
+The interrupted-preroll fixture now consumes the outgoing engine Ready event before injecting
+failure. Its original startup Play/interruption ordering, six cases, no-retry/no-autoplay checks
+and later explicit-Play progression remain intact. The new resource control separately covers
+legitimate readiness rearming. The exact callback behind the cloud failure was not recorded;
+equating it with this controlled readiness sequence remains an inference. This changes tests,
+not production engine behavior or the feature coverage boundaries above.
+
+On the final test source, strict individual-result guards observe all seven focused executions
+(six interrupted-preroll arguments plus the resource control) passing on Mac and tvOS. The whole
+crossfade suite passes 32 executions across 13 methods on each platform. A temporary engine mutant
+that ignores the system resume permission fails exactly the two forbidden-resume arguments, with
+extra native Play/preroll calls and actual media movement; the other four arguments pass. The
+production engine is then restored byte for byte and the six tvOS arguments pass again. All seven
+Apple integration schemes build for testing on the final source. These local checks support the
+fixture correction and preserved interruption eligibility; they do not replace final-head CI.
