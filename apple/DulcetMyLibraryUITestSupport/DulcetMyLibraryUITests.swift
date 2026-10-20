@@ -478,8 +478,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // connection its tab can precede the Home landing and catalog publication;
             // tapping during that handoff can leave Home selected. Wait for actual reader
             // content, as the ordinary-server path does, before choosing another destination.
+            // A measured cold negotiation remained Connecting beyond 30 seconds under CI
+            // host contention, then published the actual album tiles; allow that cold path.
             let connected = app.buttons["dulcet.library.album"].firstMatch
-            if !connected.waitForExistence(timeout: 30) {
+            if !connected.waitForExistence(timeout: 90) {
                 let welcome = app.buttons["Connect a Server"]
                 if welcome.exists { welcome.tap() }
                 let copy = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ")

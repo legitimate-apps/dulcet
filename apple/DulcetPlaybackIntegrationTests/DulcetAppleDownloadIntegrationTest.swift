@@ -12,6 +12,86 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
+    func testAutomaticDownloadPreferenceIsNotLostDuringSameAccountReconciliation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-pending-setting-\(UUID())")
+        let databaseName = "dulcet-pending-setting-\(UUID()).db"
+        let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                                                      sessionConfiguration: .ephemeral)
+        defer {
+            controller.disconnect()
+            try? FileManager.default.removeItem(at: root)
+            removeAdapterTestDatabase(databaseName)
+        }
+        let account = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+            normalizedServerURL: "https://media.example.invalid", username: "fixture", password: "fixture",
+            allowLocalHTTP: false, credentialGeneration: 1)
+        let readyBudget: Int64 = 1_024 * 1_024 * 1_024
+        controller.configure(account: account)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "initial account did not reconcile") {
+            controller.offlineLibraryStorage.cacheBudgetBytes == readyBudget
+        }
+        XCTAssertTrue(controller.offlineLibraryStorage.automaticDownloadsEnabled)
+
+        // Keep configure and the action in one MainActor turn: the real URLSession
+        // enumeration callback cannot finish reconciliation before this user intent.
+        controller.configure(account: account)
+        controller.setAutomaticDownloadsEnabled(false)
+        // A second same-binding configure must not erase an accepted preference either.
+        controller.configure(account: account)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "replacement account did not reconcile") {
+            controller.offlineLibraryStorage.cacheBudgetBytes == readyBudget
+        }
+        XCTAssertFalse(controller.offlineLibraryStorage.automaticDownloadsEnabled,
+                       "Automatic Downloads off must survive asynchronous same-account reconciliation")
+        let persisted = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+            normalizedBaseUrl: account.normalizedServerURL, username: account.username,
+            password: account.password, allowLocalHttp: false), databaseName: databaseName, downloadRootPath: root.path)
+        defer { persisted.close() }
+        XCTAssertNil(persisted.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1).errorKind)
+        XCTAssertFalse(persisted.offlineLibraryStorage().automaticDownloadsEnabled,
+                       "The preference must be durable, not only an optimistic switch value")
+    }
+
+    func testPendingAutomaticDownloadPreferenceUsesLatestIntentAndDoesNotCrossAccounts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-setting-scope-\(UUID())")
+        let databaseName = "dulcet-setting-scope-\(UUID()).db"
+        let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                                                      sessionConfiguration: .ephemeral)
+        defer {
+            controller.disconnect()
+            try? FileManager.default.removeItem(at: root)
+            removeAdapterTestDatabase(databaseName)
+        }
+        let account = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+            normalizedServerURL: "https://media.example.invalid", username: "fixture", password: "fixture",
+            allowLocalHTTP: false, credentialGeneration: 1)
+        let readyBudget: Int64 = 1_024 * 1_024 * 1_024
+        controller.configure(account: account)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "initial account did not reconcile") {
+            controller.offlineLibraryStorage.cacheBudgetBytes == readyBudget
+        }
+        controller.configure(account: account)
+        controller.setAutomaticDownloadsEnabled(false)
+        controller.setAutomaticDownloadsEnabled(true)
+        controller.setAutomaticDownloadsEnabled(false)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "same account did not reconcile") {
+            controller.offlineLibraryStorage.cacheBudgetBytes == readyBudget
+        }
+        XCTAssertFalse(controller.offlineLibraryStorage.automaticDownloadsEnabled,
+                       "The most recent preference must win while reconciliation is pending")
+
+        controller.configure(account: account)
+        controller.setAutomaticDownloadsEnabled(false)
+        controller.configure(account: DulcetPlaybackAccount(providerInstanceID: "different-setting-owner",
+            normalizedServerURL: account.normalizedServerURL, username: "another", password: "fixture",
+            allowLocalHTTP: false, credentialGeneration: 1))
+        try await waitUntil(timeout: .seconds(5), failureMessage: "different account did not reconcile") {
+            controller.offlineLibraryStorage.cacheBudgetBytes == readyBudget
+        }
+        XCTAssertTrue(controller.offlineLibraryStorage.automaticDownloadsEnabled,
+                      "A pending action for the previous account must not turn off another account's downloads")
+    }
+
     /// No network fixture: use the real facade to validate/promote bytes, then the real Swift
     /// adapter to resolve the same raw ID before and after a saved-account binding edit.
     func testRebindingTheSameProviderRejectsPriorLocalBytesAndLateCacheCallbacks() async throws {
@@ -473,9 +553,12 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await proveStreamCacheThroughPlaybackEngine()
         try await proveStreamCacheAndAutomaticRetention()
         // Existing Mac/iPhone/iPad conformance selectors also execute these isolated adapter
-        // regressions, so the next full run exercises rebinding and restored inbox cleanup.
+        // regressions, so the next full run exercises ownership, inbox cleanup and preference
+        // delivery across asynchronous transfer reconciliation.
         try await testRebindingTheSameProviderRejectsPriorLocalBytesAndLateCacheCallbacks()
         try await testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair()
+        try await testAutomaticDownloadPreferenceIsNotLostDuringSameAccountReconciliation()
+        try await testPendingAutomaticDownloadPreferenceUsesLatestIntentAndDoesNotCrossAccounts()
 
         print(
             "CONF-51 \(platformLabel) DOWNLOAD trigger=platform-executor"

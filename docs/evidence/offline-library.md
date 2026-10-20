@@ -225,3 +225,27 @@ permission made exactly the two forbidden-resume cases fail, including actual me
 the other four parameter cases passed. The engine was restored byte-for-byte and all six cases
 then passed on tvOS. This correction changes tests only and does not establish the broader cached
 gapless/crossfade/seek/scrobbling matrix described above.
+
+OBSERVED for Apple preference delivery during reconciliation: two independent actual Mac adapter
+methods reproduce a dropped Automatic Downloads Off action on `1069e8b3`. Three expected Off
+assertions fail, including a fresh facade's persisted readback; the different-account default-On
+control passes. The corrected controller retains the latest action across same-binding
+reconfiguration and applies it through the core setter before membership projection or scheduling.
+Changed bindings, disconnect and account removal clear pending intent. Failed writes retain the
+intent and block new scheduling. With the correction, both methods and the existing binding/inbox
+adapter methods pass: four methods, zero failures or skips, with individual-result guards. Existing
+CONF-51 selectors also call these isolated regressions on Mac, iPhone and iPad.
+All seven Apple integrations pass build-for-testing with this controller. The actual iPhone
+Settings selector also passes in 57.696 seconds, including Off, persisted Off after relaunch,
+On, and Clear Cache activation. Signed proof schemes were compiled ad hoc; these builds do not
+claim signed runtime evidence.
+
+The earlier iPhone Settings failure does not establish this reconciliation window as its cause:
+its recording shows a stationary, unobstructed native switch, but does not record callback delivery.
+Separately, the iPad cold-content wait expired while Connecting and real catalog content appeared
+afterward. That helper now waits up to 90 seconds for the same actual album tile, preserving the
+content and later offline playback assertions. Host contention was observed; causation is assumed.
+The actual iPad `testBrowseAddRemoveRelaunchAndOfflineReplay` then passes in 98.718 seconds:
+album addition reaches downloaded state, the relay closes, and offline engine playback progresses.
+Its individual-result guard requires one executed method without failures or skips. This verifies
+the preserved real flow, without proving every possible slow-host negotiation fits the new budget.

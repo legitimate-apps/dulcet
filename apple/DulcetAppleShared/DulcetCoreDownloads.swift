@@ -28,6 +28,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var stateRefreshHandler: (@MainActor () -> Void)?
     private var prepareOperations: [DulcetProviderItemID: any AppleDownloadOperation] = [:]
     private var pendingTracks: [DulcetTrack] = []
+    // Like pending tracks, a preference belongs to the configured URL/user binding. Repeated
+    // same-binding reconciliation must not discard the listener's latest choice.
+    private var pendingAutomaticDownloadsEnabled: Bool?
     private var completedTaskIdentifiers: Set<Int> = []
     private var resumedTaskIdentifiers: Set<Int> = []
     private var removedTaskIdentifiers: Set<Int> = []
@@ -153,6 +156,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         client?.close()
         cacheWrites = [:]
         if !sameAccount {
+            pendingAutomaticDownloadsEnabled = nil
             protectedPlayback = [:]
             pendingTracks = []
             removedTaskIdentifiers.formUnion(knownTaskIdentifiers.keys)
@@ -254,11 +258,25 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     func setAutomaticDownloadsEnabled(_ enabled: Bool) {
-        guard reconciled, let client else { return }
-        let outcome = client.setAutomaticDownloadsEnabled(enabled: enabled, allowNewDownloads: automaticDownloadContactPermitted,
+        guard account != nil else { return }
+        pendingAutomaticDownloadsEnabled = enabled
+        _ = flushPendingAutomaticDownloadsSetting(
+            allowNewDownloads: automaticDownloadContactPermitted, scheduleDownloads: true)
+    }
+
+    @discardableResult
+    private func flushPendingAutomaticDownloadsSetting(allowNewDownloads: Bool, scheduleDownloads: Bool) -> Bool {
+        guard let enabled = pendingAutomaticDownloadsEnabled else { return true }
+        guard reconciled, let client else { return false }
+        let outcome = client.setAutomaticDownloadsEnabled(enabled: enabled, allowNewDownloads: allowNewDownloads,
             credentialGeneration: credentialGeneration,
             wallClockMilliseconds: Date().downloadWallClockMilliseconds)
-        applyOfflineChange(outcome)
+        // Keep the latest intent after a persistence/binding failure. A later same-binding
+        // reconciliation or setting action retries it without starting automatic work first.
+        guard outcome.errorKind == nil else { return false }
+        pendingAutomaticDownloadsEnabled = nil
+        applyOfflineChange(outcome, scheduleDownloads: scheduleDownloads)
+        return true
     }
     func setStreamingCacheBudgetBytes(_ bytes: Int64) {
         guard bytes >= 0, reconciled, let serverID = account?.providerInstanceID else { return }
@@ -290,7 +308,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         return client?.missingAutomaticDownloadDetails()
     }
     func reconcileMyLibrary() {
-        guard reconciled, let client else { return }
+        guard reconciled, let client,
+              flushPendingAutomaticDownloadsSetting(
+                allowNewDownloads: automaticDownloadContactPermitted, scheduleDownloads: false) else { return }
         applyOfflineChange(client.reconcileMyLibrary(allowNewDownloads: automaticDownloadContactPermitted,
             credentialGeneration: credentialGeneration,
             wallClockMilliseconds: Date().downloadWallClockMilliseconds))
@@ -299,7 +319,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         automaticDownloadContactPermitted = permitted
         if permitted { reconcileMyLibrary(); stateRefreshHandler?() }
     }
-    private func applyOfflineChange(_ outcome: AppleOfflineLibraryChangeDto) {
+    private func applyOfflineChange(_ outcome: AppleOfflineLibraryChangeDto, scheduleDownloads: Bool = true) {
         guard outcome.errorKind == nil else { return }
         let cancelled = Set(outcome.taskIdentifiersToCancel)
         if !cancelled.isEmpty {
@@ -318,7 +338,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                 }
             }
         }
-        scheduleNextDownload()
+        if scheduleDownloads { scheduleNextDownload() }
         if outcome.hasChanges { refreshArtworkBudget(); stateRefreshHandler?() }
     }
 
@@ -413,6 +433,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     func disconnect() {
+        pendingAutomaticDownloadsEnabled = nil
         reconciliationGeneration += 1
         reconciled = false
         cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
@@ -441,6 +462,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
 
     func removeAccountData() async -> Bool {
         guard !Task.isCancelled else { return false }
+        pendingAutomaticDownloadsEnabled = nil
         reconciliationGeneration += 1
         let removalGeneration = reconciliationGeneration
         reconciled = false
@@ -514,8 +536,16 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         removedTaskIdentifiers.formUnion(removed.map(\.taskIdentifier))
         removed.forEach { $0.cancel() }
         reconciled = true
-        refreshArtworkBudget()
         updatePlaybackProtection()
+        // Apply a queued preference before membership can enqueue or schedule automatic work.
+        // Core still owns retention; suppress only new enqueueing until the inbox is reconciled.
+        guard flushPendingAutomaticDownloadsSetting(allowNewDownloads: false, scheduleDownloads: false) else {
+            pendingTracks.forEach { publish(.failed, for: $0.id) }
+            pendingTracks = []
+            stateRefreshHandler?()
+            return
+        }
+        refreshArtworkBudget()
         // Remove orphaned secured deliveries before new membership can enqueue work.
         processSecuredDownloads()
         reconcileMyLibrary()
@@ -558,7 +588,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     private func scheduleNextDownload() {
-        guard reconciled, queuePrepareOperation == nil, let client else { return }
+        guard reconciled, pendingAutomaticDownloadsEnabled == nil,
+              queuePrepareOperation == nil, let client else { return }
         let generation = reconciliationGeneration
         let operation = client.startPrepareNextDownload(
             wallClockMilliseconds: Date().downloadWallClockMilliseconds,
