@@ -207,3 +207,21 @@ not claim a real daemon race. A two-line Apple platform CI step runs it on every
 leg. Separately, the actual Mac host executed the new rebinding/late-callback and restored-inbox
 adapter tests: two cases passed with strict individual-result checks. The existing CONF-51 selectors
 call these regressions independently on Mac, iPhone and iPad in full conformance.
+
+The final Android service acceptance also passed 20 repetitions of four cases in run
+39371421977: all 80 executions passed without failures or skips. Together with the two
+unchanged host suites above, the three renewed soaks total 3,100 successful executions.
+
+OBSERVED for the crossfade interruption regression: the old instantaneous requested-rate
+assertion failed on tvOS while the same player's effective timebase remained zero and its
+media clock stayed frozen. A Mac diagnostic also observed a transient startup transport getter
+report of playing with zero requested/effective rate and no media advance. The test now keeps
+the startup ordering and adds interruption after real outgoing progress. Forbidden resume checks
+player identity, effective rate, cumulative frozen media time, no new Play/preroll and eventual
+paused transport; established playback additionally requires paused native states throughout.
+Later explicit Play must advance real media. Actual full crossfade suites passed 31 executions
+across 12 methods on each of Mac and tvOS. A temporary defect that ignored system resume
+permission made exactly the two forbidden-resume cases fail, including actual media progression;
+the other four parameter cases passed. The engine was restored byte-for-byte and all six cases
+then passed on tvOS. This correction changes tests only and does not establish the broader cached
+gapless/crossfade/seek/scrobbling matrix described above.

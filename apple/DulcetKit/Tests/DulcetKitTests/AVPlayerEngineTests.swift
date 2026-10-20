@@ -402,11 +402,16 @@ struct AVPlayerCrossfadeTests {
         print("DULCET CROSSFADE UNREADY FALLBACK ended=1 advanced=1 same-prepared-player=true incoming-real-progress=true outgoing-requests=\(outgoingRequests)")
     }
 
-    @Test(arguments: ["play", "resume", "resumeForbidden", "pausedResume"])
+    @Test(arguments: ["play", "resume", "resumeForbidden", "pausedResume", "settledResume", "settledResumeForbidden"])
     func anInterruptedPrerollIsRearmedOnlyByAnAllowedPlaybackEvent(action: String) async throws {
+        let settled = action.hasPrefix("settled")
+        let allowsResume = action == "resume" || action == "settledResume"
+        let startsBeforeInterruption = allowsResume || action == "resumeForbidden" || action == "settledResumeForbidden"
         let preparedPlayers = HeldPrerollPlayers()
         let audioSession = RecordingAudioSession()
-        let engine = DulcetAVPlayerEngine(clock: ManualAVPlayerEngineClock(), usesAVFoundationMediaStack: true,
+        let primaryPlayer = DeferredCrossfadeSeekPlayer()
+        primaryPlayer.recordTransportChanges()
+        let engine = DulcetAVPlayerEngine(player: primaryPlayer, clock: ManualAVPlayerEngineClock(), usesAVFoundationMediaStack: true,
             makeCrossfadePlayer: { preparedPlayers.make(item: $0) },
             audioSession: audioSession, systemMediaControls: RecordingSystemMediaControls())
         defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
@@ -427,14 +432,32 @@ struct AVPlayerCrossfadeTests {
         try #require(preparedPlayer.status == .readyToPlay && preparedPlayer.currentItem?.status == .readyToPlay)
         let initialPreparation = try #require(engine.preparedCrossfadeStateForTesting())
         try #require(preparedPlayer.prerollCount == 1 && !initialPreparation.isReady)
-        if action == "resume" || action == "resumeForbidden" {
+        if startsBeforeInterruption {
             try #require(await execute(engine, .play(commandID: .init("before-interruption"))) ==
                 .accepted(commandID: .init("before-interruption")))
+        }
+        if settled {
+            try await waitUntil("settled interruption must begin after real outgoing playback", engine: engine, timeout: 30) {
+                primaryPlayer.timeControlStatus == .playing && CMTimeGetSeconds(primaryPlayer.currentTime()) > 0.05
+            }
+            try #require(primaryPlayer.currentItem?.status == .readyToPlay)
+            print("DULCET PREROLL SETTLED action=\(action) outgoing-real-progress=true")
         }
         if action != "play" {
             audioSession.publish(.interruptionBegan)
             try await requireEngineQueueDrain(engine)
         }
+        // A Swift queue drain does not establish native transport state. Observe the actual
+        // pause without sending another Pause; retain both startup-race and settled-play cases.
+        try await waitUntil("interrupted outgoing transport did not become paused", engine: engine, timeout: 30) {
+            primaryPlayer.timeControlStatus == .paused &&
+                primaryPlayer.currentItem?.timebase.map { CMTimebaseGetEffectiveRate($0) == 0 } == true
+        }
+        let pausedPlayerIdentity = engine.currentPlayerIdentityForTesting()
+        let pausedMediaTime = primaryPlayer.currentTime()
+        try #require(CMTimeGetSeconds(pausedMediaTime).isFinite)
+        let nativeStatesBeforeEnd = primaryPlayer.timeControlStates.count
+        let playCallsAfterPause = primaryPlayer.transportTrace.filter { $0.hasPrefix("play(") }.count
         try #require(preparedPlayer.finishFirstPreroll(false), "The interrupted native preroll completion must be delivered")
         try await requireEngineQueueDrain(engine)
         try #require(preparedPlayer.status == .readyToPlay && preparedPlayer.currentItem?.status == .readyToPlay,
@@ -451,12 +474,44 @@ struct AVPlayerCrossfadeTests {
             try #require(await execute(engine, .play(commandID: .init("retry-preroll"))) ==
                 .accepted(commandID: .init("retry-preroll")))
         } else {
-            audioSession.publish(.interruptionEnded(systemAllowsResume: action != "resumeForbidden"))
+            audioSession.publish(.interruptionEnded(systemAllowsResume: action != "resumeForbidden" && action != "settledResumeForbidden"))
             try await requireEngineQueueDrain(engine)
-            if action != "resume" {
+            if !allowsResume {
+                #expect(primaryPlayer.transportTrace.filter { $0.hasPrefix("play(") }.count == playCallsAfterPause,
+                        "A forbidden or previously paused interruption must not issue a native Play")
                 #expect(preparedPlayer.prerollCount == 1,
                         "A forbidden or previously paused interruption must not rearm or start playback")
-                #expect(engine.currentPlayerRateForTesting() == 0)
+                // AVPlayer.rate is desired rate, not proof that media is moving. Observe
+                // actual transport and its timebase throughout the forbidden-resume window.
+                for sample in 0...5 {
+                    if sample > 0 { try await Task.sleep(nanoseconds: 200_000_000) }
+                    try await requireEngineQueueDrain(engine)
+                    let timebase = try #require(primaryPlayer.currentItem?.timebase)
+                    #expect(engine.currentPlayerIdentityForTesting() == pausedPlayerIdentity)
+                    let nativeState = primaryPlayer.timeControlStatus
+                    let effectiveRate = CMTimebaseGetEffectiveRate(timebase)
+                    let mediaTime = CMTimeGetSeconds(primaryPlayer.currentTime())
+                    if settled {
+                        #expect(nativeState == .paused,
+                                "Established playback must remain paused: \(primaryPlayer.transportTrace)")
+                    } else if nativeState != .paused {
+                        // During startup the native getter can briefly lag the effective
+                        // transport. The cumulative frozen clock remains the effect oracle.
+                        print("DULCET PREROLL STARTUP TRANSIENT action=\(action) sample=\(sample) native-state=\(nativeState.rawValue) desired-rate=\(primaryPlayer.rate) effective-rate=\(effectiveRate) media-time=\(mediaTime)")
+                    }
+                    #expect(CMTimebaseGetEffectiveRate(timebase) == 0)
+                    #expect(CMTimeCompare(primaryPlayer.currentTime(), pausedMediaTime) == 0)
+                }
+                #expect(primaryPlayer.timeControlStatus == .paused,
+                        "Native transport must settle paused without another Pause")
+                if settled {
+                    #expect(primaryPlayer.timeControlStates.dropFirst(nativeStatesBeforeEnd).allSatisfy {
+                        $0 == AVPlayer.TimeControlStatus.paused.rawValue
+                    }, "Established playback must have no transient waiting or playing state after interruption pause")
+                }
+                #expect(primaryPlayer.transportTrace.filter { $0.hasPrefix("play(") }.count == playCallsAfterPause,
+                        "Forbidden resumption must not issue Play: \(primaryPlayer.transportTrace)")
+                #expect(preparedPlayer.prerollCount == 1)
                 try #require(await execute(engine, .play(commandID: .init("explicit-after-no-resume"))) ==
                     .accepted(commandID: .init("explicit-after-no-resume")))
             }
@@ -468,6 +523,11 @@ struct AVPlayerCrossfadeTests {
         try #require(await execute(engine, .play(commandID: .init("already-ready"))) ==
             .accepted(commandID: .init("already-ready")))
         #expect(preparedPlayer.prerollCount == 2, "An already-ready decoder must not preroll repeatedly")
+        let positiveStart = CMTimeGetSeconds(pausedMediaTime)
+        try await waitUntil("explicit positive Play must advance real outgoing media", engine: engine, timeout: 30) {
+            primaryPlayer.timeControlStatus == .playing &&
+                CMTimeGetSeconds(primaryPlayer.currentTime()) > positiveStart + 0.05
+        }
         print("DULCET CROSSFADE PREROLL REARM action=\(action) first-finished=false native-ready=true calls=\(preparedPlayer.prerollCount)")
     }
 
@@ -748,9 +808,19 @@ private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Senda
     private nonisolated let seekLock = NSLock()
     private nonisolated(unsafe) var transportCalls: [String] = []
     private nonisolated(unsafe) var transportObservation: NSKeyValueObservation?
+    private nonisolated(unsafe) var timeControlObservation: NSKeyValueObservation?
+    private nonisolated(unsafe) var storedTimeControlStates: [Int] = []
+    nonisolated var timeControlStates: [Int] { seekLock.withLock { storedTimeControlStates } }
     nonisolated var transportTrace: [String] { seekLock.withLock { transportCalls } }
 
     nonisolated func recordTransportChanges() {
+        timeControlObservation = observe(\.timeControlStatus, options: [.new]) { [weak self] _, change in
+            guard let self, let state = change.newValue else { return }
+            self.seekLock.withLock {
+                self.storedTimeControlStates.append(state.rawValue)
+                self.transportCalls.append("time-control=\(state.rawValue)@\(ProcessInfo.processInfo.systemUptime)")
+            }
+        }
         transportObservation = observe(\.rate, options: [.new]) { [weak self] _, change in
             guard let self else { return }
             self.seekLock.withLock {
