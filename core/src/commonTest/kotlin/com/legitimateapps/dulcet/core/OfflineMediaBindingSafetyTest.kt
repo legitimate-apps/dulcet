@@ -88,6 +88,69 @@ class OfflineMediaBindingSafetyTest {
         assertFalse(FileSystem.SYSTEM.exists(path.toPath()))
     }
 
+    @Test fun dnsCaseKeepsLegacyExplicitBytes() = equivalentLegacyUrl("https://MUSIC.invalid", "https://music.invalid")
+    @Test fun defaultHttpsPortKeepsLegacyExplicitBytes() = equivalentLegacyUrl("https://music.invalid:443", "https://music.invalid/")
+    @Test fun defaultHttpPortKeepsLegacyExplicitBytes() = equivalentLegacyUrl("http://music.invalid:80/base/", "http://MUSIC.invalid/base")
+    @Test fun trailingBaseSlashKeepsLegacyExplicitBytes() = equivalentLegacyUrl("https://music.invalid/base/", "https://music.invalid/base")
+    @Test fun punycodeDnsCaseKeepsLegacyExplicitBytes() = equivalentLegacyUrl("https://XN--BCHER-KVA.invalid:443/music", "https://xn--bcher-kva.invalid/music/")
+    @Test fun equivalentIpv6KeepsLegacyExplicitBytes() = equivalentLegacyUrl("https://[2001:0DB8:0:0:0:0:0:1]:443/base/", "https://[2001:db8::1]/base")
+    @Test fun escapedPathAndInteriorSlashesKeepLegacyExplicitBytes() = equivalentLegacyUrl("https://music.invalid/Some%2FPath//Inside/", "https://MUSIC.invalid:443/Some%2FPath//Inside")
+    private fun equivalentLegacyUrl(legacy: String, canonical: String) = fixture { f ->
+            // Seed the pre-upgrade JSON spelling explicitly; new encoders must not hide this case.
+            val epoch = "[\"$legacy\",\"alice\",\"0123456789abcdef0123456789abcdef\"]"
+            f.store.database.libraryDepthQueries.putEntry("account", MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY, epoch, 0)
+            val first = f.bound(DownloadMediaBinding("account", legacy, "alice"))
+            val row = promote(first, "kept")
+            val beforeEpoch = f.store.database.libraryDepthQueries.selectEntry("account", MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne()
+            assertEquals(epoch, beforeEpoch, "legacy epoch must be adopted, not regenerated")
+            SeenCacheStore(f.store, SeenCacheWallClock { 1 }).bind(CacheBinding("account", legacy, "alice"))
+            val seen = SeenCacheStore(f.store, SeenCacheWallClock { 2 }).bind(CacheBinding("account", canonical, "alice"))
+            val reopened = f.bound(DownloadMediaBinding("account", canonical, "alice"))
+            val plan = assertIs<OfflinePlaybackPlanResult.Available>(reopened.offlinePlaybackPlan(row.identity), "$legacy -> $canonical").plan
+            assertFalse(seen.purgedOnBind, "equivalent endpoint must keep metadata: $legacy -> $canonical")
+            assertEquals(row.downloadId, plan.downloadId)
+            assertContentEquals(AUDIO, FileSystem.SYSTEM.read(plan.absolutePath.toPath()) { readByteArray() })
+            assertTrue(first.isMediaBindingCurrent(), "equivalent refresh must not revoke a current executor")
+            assertEquals(epoch, f.store.database.libraryDepthQueries.selectEntry("account", MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne())
+    }
+
+    @Test fun genuinelyDifferentOriginOrPathPurgesExplicitBytes() {
+        for (replacement in listOf(
+            "https://other.invalid/base", "https://music.invalid:444/base", "http://music.invalid/base",
+            "https://music.invalid/BASE", "https://music.invalid/other", "https://music.invalid/base/child",
+            "https://music.invalid/base%2Fchild", "https://[2001:db8::2]/base",
+        )) fixture { f ->
+            val old = f.bound(DownloadMediaBinding("account", "https://music.invalid/base", "alice"))
+            val row = promote(old, "changed")
+            val path = assertIs<OfflinePlaybackPlanResult.Available>(old.offlinePlaybackPlan(row.identity)).plan.absolutePath
+            val next = f.bound(DownloadMediaBinding("account", replacement, "alice"))
+            assertIs<OfflinePlaybackPlanResult.NotDownloaded>(next.offlinePlaybackPlan(row.identity), replacement)
+            assertFalse(FileSystem.SYSTEM.exists(path.toPath()), replacement)
+            assertFalse(old.isMediaBindingCurrent(), replacement)
+        }
+    }
+
+    @Test fun invalidOrUnsupportedReplacementCannotDeleteTheCurrentOwnersExplicitFile() {
+        for (url in listOf("https://bücher.invalid", "https://bad.invalid/path?query=1", "not a server URL")) fixture { f ->
+            val old = f.bound(DownloadMediaBinding("account", "https://music.invalid", "alice"))
+            val row = promote(old, "kept-on-invalid-input")
+            val plan = assertIs<OfflinePlaybackPlanResult.Available>(old.offlinePlaybackPlan(row.identity)).plan
+            assertFailsWith<IllegalArgumentException>(url) { f.bound(DownloadMediaBinding("account", url, "alice")) }
+            assertTrue(old.isMediaBindingCurrent(), url)
+            assertContentEquals(AUDIO, FileSystem.SYSTEM.read(plan.absolutePath.toPath()) { readByteArray() })
+            assertIs<OfflinePlaybackPlanResult.Available>(old.offlinePlaybackPlan(row.identity), url)
+        }
+    }
+
+    @Test fun unconfirmedCaseDistinctUsernamesRemainDifferentOwners() = fixture { f ->
+        val old = f.bound(DownloadMediaBinding("account", "https://music.invalid", "Alice"))
+        val row = promote(old, "case-sensitive-user")
+        val path = assertIs<OfflinePlaybackPlanResult.Available>(old.offlinePlaybackPlan(row.identity)).plan.absolutePath
+        val next = f.bound(DownloadMediaBinding("account", "https://music.invalid", "alice"))
+        assertIs<OfflinePlaybackPlanResult.NotDownloaded>(next.offlinePlaybackPlan(row.identity))
+        assertFalse(FileSystem.SYSTEM.exists(path.toPath()))
+    }
+
     private fun promote(engine: DownloadPolicyEngine, id: String): DownloadRecord {
         val row = engine.enqueue(request(id))
         engine.writeCompletedTemporaryFile(row.downloadId, AUDIO)

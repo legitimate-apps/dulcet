@@ -61,7 +61,7 @@ internal class SeenCacheStore(
             val queries = database.seenCacheQueries
             val stored = queries.selectBinding(binding.serverId).executeAsOneOrNull()
             val matches = stored != null &&
-                stored.normalized_base_url == binding.normalizedBaseUrl &&
+                MediaBindingIdentity.sameEndpoint(stored.normalized_base_url, binding.normalizedBaseUrl) &&
                 stored.username == binding.username
             if (stored != null && stored.username != binding.username) {
                 // Changes queued as another user must never be sent as this one (§16.10, §14.7).

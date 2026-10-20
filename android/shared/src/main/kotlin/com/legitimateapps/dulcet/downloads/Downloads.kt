@@ -15,8 +15,10 @@ import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.CredentialStoreException
 import com.legitimateapps.dulcet.core.AndroidDownloadController
 import com.legitimateapps.dulcet.core.AndroidDownloadTasks
+import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
@@ -41,26 +43,33 @@ public object AndroidDownloads {
     public fun controller(context: Context): AndroidDownloadController? =
         controller(context.applicationContext, AndroidAccountCredentialStore(context.applicationContext))
 
-    @Synchronized
     internal fun controller(context: Context, credentials: AccountCredentialStore): AndroidDownloadController? {
         val activeId = try { credentials.activeAccountId() } catch (_: CredentialStoreException) { null }
         val account = try { credentials.load() } catch (_: CredentialStoreException) { null }
         val endpoint = account?.let { PlaybackEndpointAccount(it.id, it.serverUrl, it.username, it.password, it.allowLocalHttp) }
-        current?.let { existing ->
-            if (existing.providerInstanceId == activeId && endpoint != null && existing.matchesAccount(endpoint) && !existing.isClosed) return existing
-            existing.close()
-            current = null
+        // Acquire Main before the factory monitor. A download-first rebind synchronously releases
+        // playback there; Main must never wait for a monitor held by a caller waiting for Main.
+        return runBlocking(Dispatchers.Main.immediate) {
+            synchronized(this@AndroidDownloads) {
+                endpoint?.let(AndroidPlaybackController::prepareForMediaBinding)
+                current?.let { existing ->
+                    if (existing.providerInstanceId == activeId && endpoint != null &&
+                        existing.refreshAccount(endpoint)) return@synchronized existing
+                    existing.close()
+                    current = null
+                }
+                if (activeId == null || activeId in AccountRemovalJournal(context).pending()) return@synchronized null
+                // WorkManager initialises itself at process start through its startup provider; without it
+                // (a host test that never initialised it) no task could be started or found.
+                if (!WorkManager.isInitialized()) return@synchronized null
+                if (endpoint == null || endpoint.providerInstanceId != activeId) return@synchronized null
+                AndroidDownloadController(
+                    context,
+                    endpoint,
+                    WorkManagerDownloadTasks(context, endpoint.providerInstanceId),
+                ).also { current = it }
+            }
         }
-        if (activeId == null || activeId in AccountRemovalJournal(context).pending()) return null
-        // WorkManager initialises itself at process start through its startup provider; without it
-        // (a host test that never initialised it) no task could be started or found.
-        if (!WorkManager.isInitialized()) return null
-        if (endpoint == null || endpoint.providerInstanceId != activeId) return null
-        return AndroidDownloadController(
-            context,
-            endpoint,
-            WorkManagerDownloadTasks(context, endpoint.providerInstanceId),
-        ).also { current = it }
     }
 
     /**

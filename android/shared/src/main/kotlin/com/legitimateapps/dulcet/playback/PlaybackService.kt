@@ -127,7 +127,13 @@ class PlaybackService : MediaLibraryService() {
         if (activeId != account.id) { releasePlayback(); return null }
         val endpoint = PlaybackEndpointAccount(account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp)
         playback?.let { existing ->
-            if (activeId == account.id && endpoint == playbackEndpointAccount) return existing
+            if (activeId == account.id && existing.refreshAccount(endpoint)) {
+                // The local-source closure may retain this adapter without reopening the factory.
+                // Refresh its future streaming-cache/download requests as well as playback's wire.
+                AndroidDownloads.existingController(account.id)?.refreshAccount(endpoint)
+                playbackEndpointAccount = endpoint
+                return existing
+            }
             releasePlayback()
         }
         val service = applicationContext

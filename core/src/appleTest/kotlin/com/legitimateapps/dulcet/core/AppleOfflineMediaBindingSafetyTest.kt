@@ -47,6 +47,21 @@ class AppleOfflineMediaBindingSafetyTest {
         assertContentEquals(AUDIO, FileSystem.SYSTEM.read(path.toPath()) { readByteArray() })
     }
 
+    @Test fun dnsCaseKeepsExplicitBytesThroughTheExportedAdapter() = equivalentUrl("https://MUSIC.invalid", "https://music.invalid")
+    @Test fun defaultHttpsPortKeepsExplicitBytesThroughTheExportedAdapter() = equivalentUrl("https://music.invalid:443/", "https://music.invalid")
+    @Test fun defaultHttpPortKeepsExplicitBytesThroughTheExportedAdapter() = equivalentUrl("http://music.invalid:80/base/", "http://MUSIC.invalid/base")
+    @Test fun punycodeCaseKeepsExplicitBytesThroughTheExportedAdapter() = equivalentUrl("https://XN--BCHER-KVA.invalid", "https://xn--bcher-kva.invalid/")
+    @Test fun equivalentIpv6KeepsExplicitBytesThroughTheExportedAdapter() = equivalentUrl("https://[2001:0DB8:0:0:0:0:0:1]:443/base/", "https://[2001:db8::1]/base")
+    private fun equivalentUrl(before: String, after: String) = fixture { f ->
+            val original = f.client(before)
+            val path = f.explicit(before)
+            val next = f.client(after, password = "new-password")
+            next.closeNetworkAccess()
+            assertEquals(path, assertNotNull(next.localPlaybackPlan("explicit").plan, "$before -> $after").filePath)
+            assertContentEquals(AUDIO, FileSystem.SYSTEM.read(path.toPath()) { readByteArray() })
+            assertNotNull(original.localPlaybackPlan("explicit").plan, "equivalent refresh must keep the old epoch valid")
+    }
+
     private fun fixture(block: (Fixture) -> Unit) {
         val name = "dulcet-apple-media-owner-${NSUUID().UUIDString}.db"
         val root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "dulcet-apple-media-owner-${NSUUID().UUIDString}"
@@ -74,9 +89,9 @@ class AppleOfflineMediaBindingSafetyTest {
             assertTrue(client.finishStreamingCache(write, AUDIO.size.toLong(), 2))
             return assertNotNull(client.localPlaybackPlan("cached").plan).filePath
         }
-        fun explicit(): String {
+        fun explicit(url: String = "https://music.invalid"): String {
             val engine = DownloadPolicyEngine(store.database, DownloadFileStore(root, FileSystem.SYSTEM))
-            engine.bindMedia(DownloadMediaBinding("provider:apple-owner", "https://music.invalid", "alice"))
+            engine.bindMedia(DownloadMediaBinding("provider:apple-owner", url, "alice"))
             engine.reconcile(emptyList(), mapOf("provider:apple-owner" to 1L))
             val row = engine.enqueue(DownloadRequest(DownloadIdentity("provider:apple-owner", "explicit", "original"), AudioContainer.Wav,
                 PlaybackContentLength.Exact(AUDIO.size.toLong()), DownloadServerSnapshot(1, AUDIO.size.toLong()), 1, 1))

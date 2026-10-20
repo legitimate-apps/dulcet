@@ -164,8 +164,27 @@ class PlaybackAccountChangeTest {
     @Test fun changingTheUsernameUnderTheSameAccountIdRetiresTheOldPlayer() =
         assertReplacementRetiresTheOldPlayer { it.copy(username = "replacement-user") }
 
-    @Test fun refreshingThePasswordUnderTheSameAccountIdReplacesTheCredentialSnapshot() =
-        assertReplacementRetiresTheOldPlayer { it.copy(password = "replacement-password") }
+    @Test fun refreshingThePasswordUnderTheSameAccountIdKeepsTheActivePlaybackOwner() {
+        val original = StoredAccount("stable-account", "A", "http://127.0.0.1:9", "user-a", "pw-a", true)
+        SwitchableAccountStore.current = original
+        SwitchableAccountStore.unreadable = false
+        val lifecycle = Robolectric.buildService(PlaybackService::class.java).create()
+        val service = lifecycle.get()
+        try {
+            val first = assertNotNull(service.ensurePlayback())
+            val session = service.sessions.single()
+            SwitchableAccountStore.current = original.copy(password = "replacement-password")
+            val refreshed = assertNotNull(service.ensurePlayback())
+            assertSame(first, refreshed)
+            assertFalse(first.isClosed())
+            assertSame(session, service.sessions.single())
+            assertSame(refreshed, service.ensurePlayback())
+        } finally {
+            SwitchableAccountStore.current = null
+            SwitchableAccountStore.unreadable = false
+            lifecycle.destroy()
+        }
+    }
 
     private fun assertReplacementRetiresTheOldPlayer(replacement: (StoredAccount) -> StoredAccount) {
         val original = StoredAccount("stable-account", "A", "http://127.0.0.1:9", "user-a", "pw-a", true)
@@ -177,7 +196,7 @@ class PlaybackAccountChangeTest {
             val first = assertNotNull(service.ensurePlayback())
             SwitchableAccountStore.current = replacement(original)
             val second = assertNotNull(service.ensurePlayback())
-            assertNotSame(first, second, "A changed credential snapshot must not reuse the former client")
+            assertNotSame(first, second, "A changed media owner must not reuse the former client")
             assertTrue(first.isClosed(), "The former endpoint's player must be released")
             assertSame(second, service.ensurePlayback(), "The replacement snapshot is now reusable")
             assertEquals(1, service.sessions.size)

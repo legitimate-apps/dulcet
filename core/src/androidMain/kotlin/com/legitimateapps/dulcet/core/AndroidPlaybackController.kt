@@ -183,7 +183,7 @@ public enum class AndroidRepeatMode { Off, All, One }
 /** Service-owned composition root. Core policy, queue identities and outbox are reused unchanged. */
 public class AndroidPlaybackController internal constructor(
     context: Context,
-    private val account: PlaybackEndpointAccount,
+    @Volatile private var account: PlaybackEndpointAccount,
     private val boundaries: AndroidPlaybackControllerBoundaries?,
     private val localPlans: AndroidLocalPlaybackSource? = boundaries?.localPlans,
     /** Null: the server may always be contacted, as for an account connected in this process. */
@@ -206,12 +206,8 @@ public class AndroidPlaybackController internal constructor(
     private var queueConfirmation: AndroidQueueConfirmation? = null
     private var confirmationSequence = 0L
     private var autoplayJob: Job? = null
-    private val autoplayTransport by lazy {
-        KtorLibraryEndpointTransport(LibraryBrowseRequest(account.providerInstanceId, account.normalizedBaseUrl,
-            account.username, account.password, account.allowLocalHttp), saltSource = null, logSink = null,
-            hostResolver = systemHostResolver())
-    }
-    private var autoplayTransportOpened = false
+    private var autoplayTransport: KtorLibraryEndpointTransport? = null
+    private val retiredNetworkClients = mutableListOf<() -> Unit>()
     private val timerTick = object : Runnable {
         override fun run() {
             if (closed || sleepTimer == null) return
@@ -231,12 +227,18 @@ public class AndroidPlaybackController internal constructor(
             val local = !remote && localPlans?.isLocallyPlayable(item.rawId) == true
             remote || local
         })
-    private val wire = PlaybackWireClient(account)
+    private var wire = PlaybackWireClient(account)
     /** The person's streaming quality and the network the service last reported (spec §12.5). */
     private val streamingQuality = StreamingQualityPolicy()
-    private val requests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
+    @Volatile private var requests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
         account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp), "playback.resource")
-    private val sender = ScrobbleEndpointSender(account)
+    private var scrobbleRequests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
+        account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp), "playback.scrobble")
+    // Keep the delivery worker's retry/refusal state when credentials refresh; each future send
+    // obtains the current client, while an already running send retains its original client.
+    private val sender = ScrobbleEndpointSender(ScrobbleEndpointTransport { parameters ->
+        scrobbleRequests.request("scrobble", parameters)
+    })
     private val wall = OutboxWallClock(System::currentTimeMillis)
     private val outbox = PersistentScrobbleOutbox(store.database, wall)
     private val refusedDrops = AtomicLong()
@@ -275,14 +277,15 @@ public class AndroidPlaybackController internal constructor(
     private val heldAdditions = mutableListOf<HeldAddition>()
     private var droppedAdditions: AndroidDroppedAdditions? = null
     private var droppedAdditionsSequence = 0L
-    private var closed = false
+    @Volatile private var closed = false
+    public val isClosed: Boolean get() = closed
     // Presentation metadata by opaque identity. It never decides what plays: the core queue does.
     private val metadata = mutableMapOf<ProviderItemId, AndroidTrack>()
     private val metadataLoads = mutableSetOf<ProviderItemId>()
     private var metadataFill: Job? = null
     private var artworkJob: Job? = null
     private var artworkBytes: Pair<String, ByteArray>? = null
-    private val artwork: AndroidArtworkRepository? =
+    private var artwork: AndroidArtworkRepository? =
         if (boundaries == null) AndroidArtworkRepository(context, account) else boundaries.artwork
     private var failure: DomainError? = null
     private var skipNotice: AndroidSkipNotice? = null
@@ -345,10 +348,17 @@ public class AndroidPlaybackController internal constructor(
             is RemotePlaybackWirePlan -> if (boundaries?.prepareSource != null) boundaries.prepareSource.invoke(plan)
                 else (player as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(
                     AndroidPlaybackDataSourceFactory(plan, AndroidCachingPlaybackResource(
-                        AndroidHttpPlaybackResource(account, plan, requests), plan, localPlans,
+                        httpPlaybackResource(plan), plan, localPlans,
                     ).also { streamResources.put(plan.attemptId, it)?.close() }, count),
                 ).createMediaSource(item))
             else -> error("unsupported plan")
+        }
+    }
+
+    internal fun httpPlaybackResource(plan: RemotePlaybackWirePlan): AndroidPlaybackResource {
+        val resourceAccount = account
+        return AndroidHttpPlaybackResource(resourceAccount, plan, requests) {
+            if (!closed && MediaBindingIdentity.sameAccount(resourceAccount, account)) requests else null
         }
     }
 
@@ -1018,8 +1028,12 @@ public class AndroidPlaybackController internal constructor(
             val tracks = try {
                 boundaries?.autoplayCandidates?.invoke(request.seed.rawId, request.excludedRawIds, request.count)
                     ?: run {
-                        autoplayTransportOpened = true
-                        AutoplayCandidateSource(account.providerInstanceId, autoplayTransport)
+                        val transport = autoplayTransport ?: KtorLibraryEndpointTransport(
+                            LibraryBrowseRequest(account.providerInstanceId, account.normalizedBaseUrl,
+                                account.username, account.password, account.allowLocalHttp),
+                            saltSource = null, logSink = null, hostResolver = systemHostResolver(),
+                        ).also { autoplayTransport = it }
+                        AutoplayCandidateSource(account.providerInstanceId, transport)
                             .candidates(request.seed.rawId, request.excludedRawIds, request.count).map { track ->
                                 AndroidTrack(track.id.providerInstanceId, track.id.rawId, track.title,
                                     track.credits.joinToString { it.name }, track.albumTitle,
@@ -1500,6 +1514,31 @@ public class AndroidPlaybackController internal constructor(
         }
     }
 
+    /** Refresh future requests without replacing the current item, prepared item or their resources. */
+    public fun refreshAccount(expected: PlaybackEndpointAccount): Boolean {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (closed || !MediaBindingIdentity.sameAccount(account, expected)) return false
+        if (account == expected) return true
+        val oldWire = wire
+        val oldRequests = requests
+        val oldScrobbles = scrobbleRequests
+        retiredNetworkClients += oldWire::close
+        retiredNetworkClients += oldRequests::close
+        retiredNetworkClients += oldScrobbles::close
+        autoplayTransport?.let { old -> retiredNetworkClients += old::close }
+        autoplayTransport = null
+        account = expected
+        wire = PlaybackWireClient(expected,
+            KtorPlaybackEndpointTransport(expected, null, null, systemHostResolver()),
+            transcodeBudget = oldWire.transcodeBudget)
+        requests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
+            expected.normalizedBaseUrl, expected.username, expected.password, expected.allowLocalHttp), "playback.resource")
+        scrobbleRequests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
+            expected.normalizedBaseUrl, expected.username, expected.password, expected.allowLocalHttp), "playback.scrobble")
+        if (boundaries == null) artwork = AndroidArtworkRepository(playbackContext, expected)
+        return true
+    }
+
     override fun close() {
         if (closed) return
         checkMain()
@@ -1516,12 +1555,25 @@ public class AndroidPlaybackController internal constructor(
         resolution?.cancel(); startJob?.cancel(); retryDelivery.cancel(); artworkJob?.cancel(); metadataFill?.cancel()
         timerHandler.removeCallbacks(timerTick)
         deliveries.close(); scope.cancel()
-        if (autoplayTransportOpened) autoplayTransport.close()
-        sender.close(); requests.close(); wire.close(); store.close()
+        autoplayTransport?.close()
+        retiredNetworkClients.forEach { it() }
+        retiredNetworkClients.clear()
+        sender.close(); scrobbleRequests.close(); requests.close(); wire.close(); store.close()
     }
 
-    internal companion object {
+    public companion object {
         private val instances = java.util.concurrent.CopyOnWriteArraySet<AndroidPlaybackController>()
+        /** Must complete before a download controller can unlink the former binding's files. */
+        public fun prepareForMediaBinding(account: PlaybackEndpointAccount) {
+            if (instances.isEmpty()) return
+            val prepare = {
+                instances.toList().forEach { controller ->
+                    if (!controller.refreshAccount(account)) controller.close()
+                }
+            }
+            if (Looper.myLooper() == Looper.getMainLooper()) prepare()
+            else runBlocking(Dispatchers.Main.immediate) { prepare() }
+        }
         internal fun notifyServerAvailable(serverId: String, available: Boolean) {
             instances.filter { it.account.providerInstanceId == serverId }.forEach { it.serverAvailable = available }
         }

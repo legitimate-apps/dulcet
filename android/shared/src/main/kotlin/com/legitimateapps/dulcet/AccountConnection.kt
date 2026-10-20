@@ -17,7 +17,7 @@ public sealed interface AccountConnectOutcome {
 
 /**
  * The one connect sequence every Android shell uses: the core connector decides, and only an
- * account it accepted is saved, with the credentials exactly as submitted. A save that fails leaves
+ * account it accepted is saved, using a server-confirmed canonical username when supplied. A save that fails leaves
  * nothing half-connected. Presentation, cancellation and field editing belong to the caller.
  */
 public suspend fun connectAndSaveAccount(
@@ -43,7 +43,7 @@ public suspend fun connectAndSaveAccount(
                 val saved = store.save(
                     serverName = serverName,
                     serverUrl = result.account.normalizedBaseUrl,
-                    username = request.username,
+                    username = result.account.canonicalUsername ?: request.username,
                     password = request.password,
                     allowLocalHttp = request.allowLocalHttp,
                 )

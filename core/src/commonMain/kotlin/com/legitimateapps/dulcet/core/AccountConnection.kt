@@ -160,6 +160,8 @@ public data class ConnectedAccount(
     val serverVersion: String,
     val capabilities: CapabilitySet,
     val requests: List<RequestTrace>,
+    /** Server-confirmed identity from authenticated getUser; absent servers retain exact input. */
+    val canonicalUsername: String? = null,
 )
 
 public sealed interface AccountConnectionResult {
@@ -627,6 +629,7 @@ public class AccountConnector private constructor(
         val user = userEnvelope.payload["user"] as? JsonObject
             ?: return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
         if (
+            !user.hasOptionalString("username") ||
             listOf("downloadRole", "playlistRole", "shareRole", "jukeboxRole", "adminRole")
                 .any { !user.hasOptionalCompatibleRoleBoolean(it) }
         ) {
@@ -654,6 +657,7 @@ public class AccountConnector private constructor(
                     legacySubsonic = extensionListUnavailable,
                 ),
                 requests = traceRecorder.snapshot(),
+                canonicalUsername = user.string("username")?.takeIf { it.isNotBlank() },
             ),
         )
     }

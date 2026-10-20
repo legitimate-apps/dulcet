@@ -213,10 +213,12 @@ internal class DownloadPolicyEngine(
         check(!reconciled && !explicitlyBound && mediaBindingEpochs.isEmpty()) { "media binding already acquired" }
         val previous = storedMediaBinding(binding.serverId)
         val matches = matchesMediaBinding(previous, binding)
+        // Validate the replacement before unlinking anything: unsupported adapter input must not
+        // destroy the currently bound namespace and then fail to acquire its replacement.
+        val epoch = if (matches) requireNotNull(previous) else encodeMediaBinding(binding)
         val removed = if (matches) emptyList() else store.forServer(binding.serverId)
         // Keep durable rows until all named bytes are gone, so a failed purge is retryable.
         removed.forEach { row -> files.deleteTemporary(row); files.deleteDestination(row) }
-        val epoch = if (matches) requireNotNull(previous) else encodeMediaBinding(binding)
         database.transaction {
             if (!matches) {
                 removed.forEach { row ->
