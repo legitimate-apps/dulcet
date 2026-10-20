@@ -270,18 +270,25 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         autoplayOperation?.cancel()
         autoplayOperation = nil
         sentCrossfade = nil
-        queueClient.setNetworkAvailable(available: networkAvailable && serverAvailable && wireClient != nil)
+        refreshQueueAvailability()
         applyListeningPreference(publishing: false)
         publish(queueClient.snapshot())
     }
 
     func setNetworkAvailable(_ available: Bool) {
         networkAvailable = available
-        queueClient.setNetworkAvailable(available: available && serverAvailable && wireClient != nil)
+        refreshQueueAvailability()
     }
     func setServerAvailable(_ available: Bool) {
         serverAvailable = available
-        queueClient.setNetworkAvailable(available: available && networkAvailable && wireClient != nil)
+        refreshQueueAvailability()
+    }
+
+    private func refreshQueueAvailability() {
+        // Without local playback, a connection failure keeps the existing Retry/Skip behavior.
+        // With it, passive continuation considers only local files while the server is absent.
+        queueClient.setNetworkAvailable(available:
+            networkAvailable && (serverAvailable || downloadController == nil) && wireClient != nil)
     }
 
     private func cacheWrapper(for track: DulcetTrack) -> (@MainActor (any DulcetPlaybackResourceLoading, DulcetAudioContainer) -> any DulcetPlaybackResourceLoading)? {
@@ -482,6 +489,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// try again.
     private func retryCurrentEntry() {
         guard account != nil else { return }
+        // Try Again is a deliberate probe of a server that may have returned. A saved/device-only
+        // account has no configured wire, and an OS-offline device still cannot make that probe.
+        if networkAvailable, wireClient != nil { setServerAvailable(true) }
         let transition = queueClient.retryCurrent()
         guard transition.errorKind == nil else { return publishFailure() }
         guard transition.startDirective != nil else { return }
@@ -784,14 +794,16 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private func receiveEngineEvent(_ event: DulcetPlaybackEvent) {
-        switch event {
-        case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error):
-            if error == .transport || error == .tlsUntrusted { setServerAvailable(false) }
-        default: break
-        }
         if let preload, event.attemptID.rawValue == preload.attemptID,
            handlePreloadedAttemptEvent(event, preload: preload) {
             return
+        }
+        if queueClient.snapshot().snapshot?.currentSession?.attemptId == event.attemptID.rawValue {
+            switch event {
+            case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error):
+                if error == .transport || error == .tlsUntrusted { setServerAvailable(false) }
+            default: break
+            }
         }
         var holdingForPreload = false
         if case let .endedNaturally(attemptID, _) = event,

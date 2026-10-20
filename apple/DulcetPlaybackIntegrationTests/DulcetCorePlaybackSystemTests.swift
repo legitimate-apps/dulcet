@@ -1289,11 +1289,98 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(store.snapshot.state, .nowPlayingFailed)
     }
 
+    func testExplicitRetryReprobesAfterPassiveLocalOnlyFiltering() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"], downloadController: EmptyLocalDownloads())
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        let session = try XCTUnwrap(fixture.session(ofPrepare: first))
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
+        let failure = try XCTUnwrap(fixture.controller.currentPresentation.failure)
+        XCTAssertTrue(failure.canRetry, "The actual failure UI must offer the deliberate retry")
+        XCTAssertFalse(failure.canSkip,
+                       "Passive continuation must not try another remote-only item while the server is absent")
+        XCTAssertEqual(fixture.engine.count("prepare"), 1)
+
+        fixture.controller.send(.retry)
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: 1)
+        XCTAssertNotEqual(retried, first)
+        XCTAssertEqual(fixture.session(ofPrepare: retried), session,
+                       "A deliberate retry still belongs to the interrupted listen")
+    }
+
+    func testExplicitRetryCannotBypassOSOfflineAndWorksWhenNetworkReturns() async throws {
+        let fixture = makeFixture(tracks: ["a"], downloadController: EmptyLocalDownloads())
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        fixture.controller.setNetworkAvailable(false)
+        fixture.controller.send(.retry)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(fixture.engine.count("prepare"), 1)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.attemptId, first.rawValue)
+
+        fixture.controller.setNetworkAvailable(true)
+        fixture.controller.send(.retry)
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: 1)
+        XCTAssertNotEqual(retried, first)
+    }
+
+    func testExplicitRetryCannotOpenASavedDeviceOnlyAccountWire() async throws {
+        let fixture = makeFixture(tracks: ["a"], downloadController: EmptyLocalDownloads())
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        fixture.controller.configureOffline(account: account(provider))
+        fixture.controller.setNetworkAvailable(true)
+        fixture.controller.send(.retry)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(fixture.engine.count("prepare"), 1,
+                       "OS connectivity does not authorize a saved account's server contact")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.attemptId, first.rawValue)
+    }
+
+    func testAStaleFailureCannotDisableANewerRemoteAttemptWithLocalPlaybackEnabled() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"], downloadController: EmptyLocalDownloads())
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let old = try await fixture.waitForPrepare(rawID: "a")
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 1))
+        _ = try await fixture.waitForPrepare(rawID: "b", after: 1)
+        fixture.emit(.failedBeforeStart(attemptID: old, error: .transport))
+        // The event listener dispatches to the main actor; allow the obsolete report to arrive
+        // before Next asks the core whether the next remote item is still eligible.
+        try await Task.sleep(for: .milliseconds(50))
+        let before = fixture.engine.count("prepare")
+        fixture.controller.send(.next)
+        _ = try await fixture.waitForPrepare(rawID: "c", after: before)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 2)
+    }
+
+    func testFailedPreloadCannotDisableFreshRemoteContinuationWithLocalPlaybackEnabled() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"], downloadController: EmptyLocalDownloads())
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "b")
+        await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+        let before = fixture.engine.count("prepare")
+        fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+        fixture.emit(.failedBeforeStart(attemptID: preload.attempt, error: .transport))
+        let fresh = try await fixture.waitForPrepare(rawID: "b", after: before)
+        XCTAssertNotEqual(fresh, preload.attempt)
+        XCTAssertTrue(fixture.controller.preloadLog.contains("resumed-held-end"))
+    }
+
     private func makeFixture(
         tracks rawIDs: [String],
         artwork: Data? = nil,
         recordStatuses: Bool = false,
-        sourceContainer: DulcetAudioContainer = .mp3
+        sourceContainer: DulcetAudioContainer = .mp3,
+        downloadController: (any DulcetDownloadControlling)? = nil
     ) -> Fixture {
         let tracks = rawIDs.map { rawID in
             DulcetTrack(
@@ -1318,6 +1405,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
             queueClient: queue,
             engine: engine,
             catalog: tracks,
+            downloadController: downloadController,
             artworkFetcher: artwork == nil ? nil : fetcher
         )
         controller.configure(account: account(provider))
@@ -1346,6 +1434,18 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         }
         return fixture
     }
+}
+
+@MainActor
+private final class EmptyLocalDownloads: DulcetDownloadControlling {
+    let downloadsEnabled = true
+    func setStatusHandler(_ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void) {}
+    func configure(account: DulcetPlaybackAccount) {}
+    func requestDownload(_ track: DulcetTrack) { XCTFail("This proof does not request a download") }
+    func status(for id: DulcetProviderItemID) -> DulcetDownloadState { .notDownloaded }
+    func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? { nil }
+    func removeAccountData() async -> Bool { false }
+    func disconnect() {}
 }
 
 @MainActor
