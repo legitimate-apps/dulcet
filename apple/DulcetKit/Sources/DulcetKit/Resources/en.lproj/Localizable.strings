@@ -466,9 +466,9 @@
 // Offline library storage and retention
 "offline.music" = "Offline Music";
 "offline.automaticDownloads" = "Automatic Downloads";
-"offline.automaticHint" = "Keep the music you add to My Library on this device. Explicit downloads are always kept.";
-"offline.downloads" = "Downloads";
-"offline.streamingCache" = "Streaming Cache";
+"offline.automaticHint" = "Keep songs, albums and playlists you add to My Library on this device. Artist membership keeps the artist in your library without downloading their music. Explicit downloads stay when you remove music or turn this off.";
+"offline.downloads" = "Completed Downloads";
+"offline.streamingCache" = "Completed Streaming Cache";
 "offline.artworkCache" = "Artwork Cache";
 "offline.cacheSize" = "Cache Size";
 "offline.cache.off" = "Off";

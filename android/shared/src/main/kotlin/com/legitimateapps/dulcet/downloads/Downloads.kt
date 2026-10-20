@@ -44,8 +44,10 @@ public object AndroidDownloads {
     @Synchronized
     internal fun controller(context: Context, credentials: AccountCredentialStore): AndroidDownloadController? {
         val activeId = try { credentials.activeAccountId() } catch (_: CredentialStoreException) { null }
+        val account = try { credentials.load() } catch (_: CredentialStoreException) { null }
+        val endpoint = account?.let { PlaybackEndpointAccount(it.id, it.serverUrl, it.username, it.password, it.allowLocalHttp) }
         current?.let { existing ->
-            if (existing.providerInstanceId == activeId && !existing.isClosed) return existing
+            if (existing.providerInstanceId == activeId && endpoint != null && existing.matchesAccount(endpoint) && !existing.isClosed) return existing
             existing.close()
             current = null
         }
@@ -53,11 +55,11 @@ public object AndroidDownloads {
         // WorkManager initialises itself at process start through its startup provider; without it
         // (a host test that never initialised it) no task could be started or found.
         if (!WorkManager.isInitialized()) return null
-        val account = try { credentials.load() } catch (_: CredentialStoreException) { null } ?: return null
+        if (endpoint == null || endpoint.providerInstanceId != activeId) return null
         return AndroidDownloadController(
             context,
-            PlaybackEndpointAccount(account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp),
-            WorkManagerDownloadTasks(context, account.id),
+            endpoint,
+            WorkManagerDownloadTasks(context, endpoint.providerInstanceId),
         ).also { current = it }
     }
 

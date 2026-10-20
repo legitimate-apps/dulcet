@@ -96,6 +96,7 @@ class PlaybackService : MediaLibraryService() {
 
     /** The account [playback] was built for; its credentials are the controller's for its life. */
     private var playbackAccountId: String? = null
+    private var playbackEndpointAccount: PlaybackEndpointAccount? = null
     private var widgetJob: Job? = null
 
     /**
@@ -107,8 +108,8 @@ class PlaybackService : MediaLibraryService() {
      * sign-out releases it itself (spec §14.7), but an account can also be saved without one — on
      * the connect form shown when the saved record cannot be read, which is the only way to change
      * account on TV — and the new account must never be handed the old one's controller, which
-     * carries its credentials, queue and server. The saved account's id is read without decrypting
-     * its record, so this costs nothing on the usual path.
+     * carries its credentials, queue and server. Reuse compares the saved record too: a changed
+     * endpoint or username under the same persistent id must retire the former controller.
      *
      * Opted in to Media3's unstable API for the session's connection callback: accepting a trusted
      * controller with the player's own commands (`isTrusted`, `AcceptedResultBuilder`) is marked unstable.
@@ -117,33 +118,37 @@ class PlaybackService : MediaLibraryService() {
     fun ensurePlayback(): AndroidPlaybackController? {
         val store = AndroidAccountCredentialStore(this)
         val activeId = store.activeAccountId()
-        playback?.let { existing ->
-            if (activeId != null && activeId == playbackAccountId) return existing
-            releasePlayback()
-        }
         val account = try { store.load() }
         catch (_: CredentialStoreException) {
+            releasePlayback()
             unavailableReason = "Saved credentials are unavailable. Reconnect your account."
             return null
-        } ?: return null
+        } ?: run { releasePlayback(); return null }
+        if (activeId != account.id) { releasePlayback(); return null }
+        val endpoint = PlaybackEndpointAccount(account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp)
+        playback?.let { existing ->
+            if (activeId == account.id && endpoint == playbackEndpointAccount) return existing
+            releasePlayback()
+        }
         val service = applicationContext
         // A downloaded song plays from its file (spec §14.5), and only this account's downloads.
-        val controller = AndroidPlaybackController(this, PlaybackEndpointAccount(
-            account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp),
+        val controller = AndroidPlaybackController(this, endpoint,
             object : AndroidLocalPlaybackSource {
                 // Called from the player's main-thread callbacks: opening the controller reads the
                 // Keystore-backed account record and the database, so none of it runs on main.
                 @Volatile private var protectedItems = emptySet<String>()
                 @Volatile private var heldDownloads: com.legitimateapps.dulcet.core.AndroidDownloadController? = null
                 private fun downloads() = heldDownloads?.takeUnless { it.isClosed }
-                    ?: AndroidDownloads.controller(service)?.takeIf { it.providerInstanceId == account.id }?.also { heldDownloads = it; it.setProtectedRawIds(protectedItems) }
+                    ?.takeIf { it.matchesAccount(endpoint) }
+                    ?: AndroidDownloads.controller(service)?.takeIf { it.matchesAccount(endpoint) }?.also { heldDownloads = it; it.setProtectedRawIds(protectedItems) }
                 override suspend fun localPlan(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localPlan(rawId) }
+                override suspend fun acquireLocalPlan(rawId: String) = withContext(Dispatchers.IO) { downloads()?.acquireLocalPlan(rawId) }
                 // A downloaded song's title, artist and album, kept with its download (§16.13).
                 override suspend fun localTrack(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localTrack(rawId) }
                 override fun setProtectedRawIds(rawIds: Set<String>) { protectedItems = rawIds.toSet(); heldDownloads?.setProtectedRawIds(rawIds) }
                 override fun isLocallyPlayable(rawId: String) =
                     (heldDownloads?.takeUnless { it.isClosed } ?: AndroidDownloads.existingController(account.id))
-                        ?.isLocallyPlayable(rawId) == true
+                        ?.takeIf { it.matchesAccount(endpoint) }?.isLocallyPlayable(rawId) == true
                 override fun beginStreamCacheWrite(plan: com.legitimateapps.dulcet.core.RemotePlaybackWirePlan,
                     status: Int, contentType: String?, exactLength: Long?, position: Long) =
                     downloads()?.beginStreamCacheWrite(plan, status, contentType, exactLength, position)
@@ -157,6 +162,7 @@ class PlaybackService : MediaLibraryService() {
         networkCost?.let(controller::setNetworkCostClass)
         playback = controller
         playbackAccountId = account.id
+        playbackEndpointAccount = endpoint
         widgetJob?.cancel()
         widgetJob = serviceScope.launch {
             controller.state.map { Triple(it.title, it.artist ?: it.album ?: "", it.playWhenReady) }
@@ -201,6 +207,7 @@ class PlaybackService : MediaLibraryService() {
         session = null
         playback = null
         playbackAccountId = null
+        playbackEndpointAccount = null
     }
 
     override fun onBind(intent: Intent?): IBinder? =

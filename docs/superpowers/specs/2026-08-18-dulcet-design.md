@@ -3108,13 +3108,13 @@ and reconciliation against a changed server item. The platform owns the **execut
 ### 14.5.1 Automatic Downloads and streaming retention
 
 Automatic Downloads is a per-account setting, enabled when its settings are first created. My
-Library starts empty; adding music retains its original file through the existing §14.5 executor,
+Library starts empty; adding songs, albums or playlists retains their original files through the existing §14.5 executor,
 network policy, retry boundaries, disk budget and relaunch reconciliation. A saved-account launch
 holds new automatic transfers behind the existing account contact gate (§13.1); previously queued
 downloads retain their recovery behavior. The core projects current
 membership and pending local changes into track identities. Unresolved detail may add known tracks,
 but never authorizes deleting the children of an unresolved collection. Automatic work is ordered by
-recent library addition, with explicit download requests ahead of automatic work.
+recent library addition, with explicit download requests ahead of automatic work. Artist membership is metadata-only: it keeps that artist in My Library but does not imply membership or automatic retention of the artist's discography. Settings explains this distinction.
 
 Explicit and automatic retention are independent reasons on the same `(server_id, raw_id,
 transcode_profile)` identity. Existing downloads retain explicit ownership. An explicit Download
@@ -3130,8 +3130,7 @@ MP4 tail probes. The core records interval coverage while writing directly to di
 requires every byte from zero to the exact resource length and the same §12.4 binary validation as a
 download. Unknown-length responses require a sequential body from offset zero through EOF. A seek,
 cancellation, failed response or truncated body never publishes a partial cache file. A 206 is
-eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance, rather
-than the seen-cache URL/username binding. Server-item reconciliation applies to these files too.
+eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance, and are additionally owned by the normalized endpoint URL and username binding. Rebinding either field purges the old binding's downloaded and cached media, including explicit downloads, before local lookup can serve the new binding. Password-only credential refresh keeps media. Old executors and completions cannot publish into the new binding. A previously unbound media namespace cannot adopt bytes without proven ownership. Server-item reconciliation applies to these files too.
 
 Offline playback prefers a validated local file, including a cached stream, before making a server
 read. Downloaded continues to mean deliberately retained downloads; the broader local-playable set
@@ -7913,6 +7912,11 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-20 — Bind offline media to endpoint ownership and clarify storage scope.**
+§14.5.1 makes local-media ownership depend on the stable account instance plus normalized endpoint URL and username. Changing either endpoint field purges the prior binding's automatic, explicit and cached files before the new binding can look up local media. This deliberately chooses purge over retaining a hidden old-binding library; password-only refresh preserves media. Same-binding membership removal or Automatic Downloads off still leaves explicit downloads intact. Stale executors, delayed completions and unproven legacy media must not cross the binding boundary.
+
+Artist membership is metadata-only and does not download a discography; Automatic Downloads covers the songs, albums and playlists a person adds. Settings explains this. Storage figures are labeled completed downloads/completed cache: active partial transfer and streaming-write bytes are excluded from those displayed totals, while existing budget admission continues to account for reservations and active writes. Android playback leases a local file atomically with resolution and holds it until the corresponding attempt releases it, so cache eviction cannot remove it between lookup and preparation. Apple removes canceled or no-longer-retained transfer payloads and their secured inbox metadata instead of retrying orphaned deliveries.
 
 **2026-10-19 — Scope offline recovery to the selected retry.**
 §14.5.1 distinguishes deliberate retry permission from account reachability. Retrying an already

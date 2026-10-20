@@ -12,6 +12,109 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
+    /// No network fixture: use the real facade to validate/promote bytes, then the real Swift
+    /// adapter to resolve the same raw ID before and after a saved-account binding edit.
+    func testRebindingTheSameProviderRejectsPriorLocalBytesAndLateCacheCallbacks() async throws {
+        for editUsername in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-rebind-\(UUID())")
+            let databaseName = "dulcet-rebind-\(UUID()).db"
+            defer {
+                try? FileManager.default.removeItem(at: root)
+                removeAdapterTestDatabase(databaseName)
+            }
+            let account = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+                normalizedServerURL: "https://media.example.invalid", username: "first", password: "fixture",
+                allowLocalHTTP: false, credentialGeneration: 1)
+            let bytes = try XCTUnwrap(Data(base64Encoded: "UklGRjQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YRAAAAAAAAAAAAAAAAAAAAAAAAAA"))
+            let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+                normalizedBaseUrl: account.normalizedServerURL, username: account.username,
+                password: account.password, allowLocalHttp: false), databaseName: databaseName, downloadRootPath: root.path)
+            defer { seed.close() }
+            XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1).errorKind)
+            let write = try XCTUnwrap(seed.beginStreamingCache(rawId: "same-raw-id", container: .wav,
+                totalLength: Int64(bytes.count), durationMilliseconds: 1, rangeStart: 0,
+                credentialGeneration: 1, wallClockMilliseconds: 1))
+            XCTAssertTrue(seed.appendStreamingCache(writeId: write, bytes: bytes, offset: 0))
+            XCTAssertTrue(seed.finishStreamingCache(writeId: write, totalLength: Int64(bytes.count), wallClockMilliseconds: 2))
+            let previousFilePath = try XCTUnwrap(seed.localPlaybackPlan(rawId: "same-raw-id").plan?.filePath)
+            seed.close()
+            let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                                                          sessionConfiguration: .ephemeral)
+            defer { controller.disconnect() }
+            let track = DulcetTrack(id: .init(providerInstanceID: providerInstanceID, rawID: "same-raw-id"),
+                title: "Binding control", credits: [], albumTitle: nil, duration: .milliseconds(1), sourceContainer: .wav, mediaSourceID: nil,
+                artwork: DulcetArtwork(seed: "binding-control", palette: .indigoCoral))
+            controller.configure(account: account)
+            try await waitUntil(timeout: .seconds(5), failureMessage: "same binding did not retain validated cache") {
+                controller.offlineLibraryStorage.cacheBytes == Int64(bytes.count)
+            }
+            XCTAssertNotNil(controller.offlinePlaybackAsset(for: track), "same URL and username must retain local bytes")
+            let sourceURL = root.appendingPathComponent("late-playback.wav")
+            try bytes.write(to: sourceURL)
+            let late = controller.cachingResource(DulcetLocalFilePlaybackResource(fileURL: sourceURL,
+                exactByteLength: Int64(bytes.count)), track: track, expectedContainer: .wav)
+            controller.configure(account: DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+                normalizedServerURL: editUsername ? account.normalizedServerURL : "https://other.example.invalid",
+                username: editUsername ? "second" : account.username, password: "fixture",
+                allowLocalHTTP: false, credentialGeneration: 2))
+            try await waitUntil(timeout: .seconds(5), failureMessage: "new binding did not reconcile") {
+                controller.offlineLibraryStorage.cacheBudgetBytes > 0
+            }
+            XCTAssertNil(controller.offlinePlaybackAsset(for: track), "same raw ID must not resolve prior binding bytes")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: previousFilePath), "old binding file must actually be purged")
+            let lateResult = await load(resource: late, range: .init(start: 0, endInclusive: Int64(bytes.count - 1)))
+            if case let .loaded(data, _) = lateResult { XCTAssertEqual(data, bytes) }
+            else { XCTFail("old resource must actually deliver bytes to exercise stale-tap rejection") }
+            // Drain the tap's main-actor callback rather than depending on a network request.
+            await Task.yield()
+            await Task.yield()
+            XCTAssertEqual(controller.offlineLibraryStorage.cacheBytes, 0, "old playback tap must not publish into new binding")
+            XCTAssertNil(controller.offlinePlaybackAsset(for: track))
+        }
+    }
+
+    func testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-orphan-\(UUID())")
+        let databaseName = "dulcet-orphan-\(UUID()).db"
+        let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                                                      sessionConfiguration: .ephemeral)
+        let session = URLSession(configuration: .ephemeral)
+        defer {
+            session.invalidateAndCancel()
+            controller.disconnect()
+            try? FileManager.default.removeItem(at: root)
+            removeAdapterTestDatabase(databaseName)
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let systemFile = root.appendingPathComponent("system-delivery")
+        try Data("late removed automatic bytes".utf8).write(to: systemFile)
+        let task = session.downloadTask(with: URL(string: "https://media.example.invalid/stream")!)
+        task.taskDescription = "removed-download-row"
+        controller.urlSession(session, downloadTask: task, didFinishDownloadingTo: systemFile)
+        let inbox = root.appendingPathComponent(".incoming")
+        let secured = try FileManager.default.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil)
+        XCTAssertEqual(secured.count, 2, "completion before reconciliation must secure payload and metadata")
+        let unrelated = inbox.appendingPathComponent("unrelated.keep")
+        try Data("unrelated".utf8).write(to: unrelated)
+        controller.configure(account: DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+            normalizedServerURL: "https://media.example.invalid", username: "fixture", password: "fixture",
+            allowLocalHTTP: false, credentialGeneration: 1))
+        try await waitUntil(timeout: .seconds(5), failureMessage: "restored orphan remained in secured inbox") {
+            secured.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
+        }
+        XCTAssertEqual(try Data(contentsOf: unrelated), Data("unrelated".utf8))
+        XCTAssertEqual(controller.offlineLibraryStorage.downloadBytes, 0)
+        XCTAssertEqual(controller.offlineLibraryStorage.cacheBytes, 0)
+    }
+
+    private func removeAdapterTestDatabase(_ name: String) {
+        let directory = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases")
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name + suffix))
+        }
+    }
+
     func http206ExactLengthFailsClosedWithoutAValidConsistentContentRange() throws {
         let cases: [(label: String, headers: [String: String], expected: Int64?)] = [
             (
@@ -369,6 +472,10 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
 
         try await proveStreamCacheThroughPlaybackEngine()
         try await proveStreamCacheAndAutomaticRetention()
+        // Existing Mac/iPhone/iPad conformance selectors also execute these isolated adapter
+        // regressions, so the next full run exercises rebinding and restored inbox cleanup.
+        try await testRebindingTheSameProviderRejectsPriorLocalBytesAndLateCacheCallbacks()
+        try await testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair()
 
         print(
             "CONF-51 \(platformLabel) DOWNLOAD trigger=platform-executor"

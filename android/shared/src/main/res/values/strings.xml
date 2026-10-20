@@ -306,10 +306,10 @@
     <string name="library_depth_save_failed">Couldn’t save this Library choice on this device. Try the change again.</string>
     <string name="offline_storage_title">Offline Music</string>
     <string name="offline_automatic_downloads">Automatic Downloads</string>
-    <string name="offline_automatic_hint">Keep My Library on this device. Recent additions download first. Explicit downloads stay when you remove music from My Library or turn this off.</string>
-    <string name="offline_download_usage">Downloads: %1$s</string>
+    <string name="offline_automatic_hint">Keep songs, albums and playlists you add to My Library on this device. Artist membership keeps the artist in your library without downloading their music. Explicit downloads stay when you remove music or turn this off.</string>
+    <string name="offline_download_usage">Completed downloads: %1$s</string>
     <string name="offline_automatic_progress">My Library: %1$d of %2$d songs downloaded</string>
-    <string name="offline_cache_usage">Cache: %1$s</string>
+    <string name="offline_cache_usage">Completed cache: %1$s</string>
     <string name="offline_cache_limit">Cache limit: %1$s</string>
     <string name="offline_clear_cache">Clear Cache</string>
     <string name="offline_cached">Cached for Offline Playback</string>

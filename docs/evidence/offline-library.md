@@ -3,7 +3,7 @@
 The Kotlin core owns retention, scheduling order, local playability, validation, storage limits and
 LRU decisions. Native shells own settings presentation and the operating system's file/network and
 playback services. Cache identity uses the same account/server instance, raw item and profile tuple
-as downloads; a URL and username alone cannot identify cached media.
+as downloads. A durable normalized endpoint URL/username binding additionally owns that namespace; a rebind purges old media before the new binding can resolve a local file.
 
 ## Evidence boundaries
 
@@ -142,3 +142,53 @@ executor and policy; TV interaction evidence remains distinct from phone evidenc
 Run the changed common/core contracts and platform integrations, soak changed Android host tests
 for 20 Linux repetitions, and dispatch the complete Apple workflow on the final branch head.
 Independent review covers the file deletion and playback boundaries before merging.
+
+## Account rebinding and removal recovery (2026-10-20)
+
+A URL or username change under the same provider instance purges prior automatic, explicit and
+cached media. Password-only refresh preserves it. This is a separate boundary from removing music
+from My Library or disabling Automatic Downloads: those same-binding operations still preserve
+explicit downloads. The binding is a reserved durable preference outside the disposable seen-cache
+namespace. An epoch revokes old controllers and in-flight callbacks even across A → B → A. Legacy
+media with no provable binding is purged rather than adopted. Startup establishes both media and
+metadata binding before automatic membership projection.
+
+OBSERVED against pre-fix `6e65fda8`: the independent common ownership suite executed five cases,
+with the three binding/revocation/legacy rejection cases failing and the same-binding explicit
+retention and artist-metadata controls passing. The exported Apple facade suite executed three
+cases: URL and username replacement each wrongly returned the previous binding's local plan;
+password refresh passed. Android's two corresponding adapter cases also returned the previous
+binding's local plan. The isolated historical worktree supplies test-only compatibility names for
+the new binding/lease APIs; these are no-op binding and unprotected legacy lookup wrappers. They
+do not backport the fix or change historical row lookup and deletion behavior.
+
+OBSERVED after the fix: all 1,153 JVM cases passed; the selected macOS native gate passed 52
+cases. Each runtime passed the independent five-case common suite, and macOS passed all three
+exported Apple facade cases. iOS simulator test compilation, Mac framework linking, SQLDelight
+migration verification and metadata packaging passed. No schema bump was required; the existing
+11-fixture migration gate, seven protected comparisons and 28 negative controls also passed.
+
+Artist membership remains metadata-only. Settings explicitly says that it keeps the artist in
+My Library without downloading their music. Storage labels say completed downloads/completed
+cache because active partial bytes are not part of those counters; existing admission policy
+still accounts for active writes and reservations. These are clarified product contracts and
+copy changes, so there is no fail-before runtime behavior change claimed for either clarification.
+
+OBSERVED for Android resolution safety: the same four-case acceptance file fails all four cases
+on the historical adapter, including the direct assertion that Clear Cache deleted the selected
+file in the resolution-to-Prepare gap. With the fix, all four pass: real adapter resolution leases
+keep the file present through the controller's Prepare boundary, Stop releases it, and closing one
+of two leases twice cannot release the other lease. The nine streaming-cache regressions also pass,
+as do 125 download/playback/reader/listening/artwork regressions and 13 saved-account launch cases.
+The three existing streaming-cache seed engines now bind their fixture account before constructing
+the platform controller; all original assertions remain. Unproven legacy files are tested separately.
+
+OBSERVED for Apple secured deliveries: the source-body Swift harness passes all four controls.
+Historical `6e65fda8` fails the membership-cancellation-before-enumeration control and the restored
+orphan cleanup control at their expected assertions. The passing controls also require retained
+explicit/unrelated files to survive, persistence errors to keep retryable payloads, and untrusted
+metadata to stay within the inbox. This harness substitutes URLSession/facade collaborators and does
+not claim a real daemon race. A two-line Apple platform CI step runs it on every selected platform
+leg. Separately, the actual Mac host executed the new rebinding/late-callback and restored-inbox
+adapter tests: two cases passed with strict individual-result checks. The existing CONF-51 selectors
+call these regressions independently on Mac, iPhone and iPad in full conformance.

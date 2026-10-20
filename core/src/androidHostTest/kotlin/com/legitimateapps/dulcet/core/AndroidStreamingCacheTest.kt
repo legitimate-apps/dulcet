@@ -164,6 +164,7 @@ class AndroidStreamingCacheTest {
         val store = DulcetDatabaseStore.open(DulcetDriverFactory(context, databaseName).createDriver())
         try {
             val engine = DownloadPolicyEngine(store.database, DownloadFileStore(directory.path, okio.FileSystem.SYSTEM))
+            engine.bindMedia(DownloadMediaBinding("provider:opaque", "http://127.0.0.1:9", "fixture"))
             engine.reconcile(emptyList(), mapOf("provider:opaque" to 1L))
             val stream = engine.records("provider:opaque").single()
             fun access() = store.database.offlineLibraryQueries.selectRetention("provider:opaque", "song:opaque",
@@ -195,6 +196,7 @@ class AndroidStreamingCacheTest {
         val store = DulcetDatabaseStore.open(DulcetDriverFactory(context, databaseName).createDriver())
         try {
             val engine = DownloadPolicyEngine(store.database, DownloadFileStore(directory.path, okio.FileSystem.SYSTEM))
+            engine.bindMedia(DownloadMediaBinding("provider:opaque", "http://127.0.0.1:9", "fixture"))
             engine.reconcile(emptyList(), mapOf("provider:opaque" to 1L))
             val original = engine.enqueue(DownloadRequest(DownloadIdentity("provider:opaque", "song:opaque", "original"),
                 AudioContainer.Wav, PlaybackContentLength.Exact(audio.size.toLong()), DownloadServerSnapshot(null, null), 1, 100))
@@ -231,6 +233,7 @@ class AndroidStreamingCacheTest {
         val store = DulcetDatabaseStore.open(DulcetDriverFactory(context, databaseName).createDriver())
         try {
             val engine = DownloadPolicyEngine(store.database, DownloadFileStore(directory.path, okio.FileSystem.SYSTEM))
+            engine.bindMedia(DownloadMediaBinding("provider:opaque", "http://127.0.0.1:9", "fixture"))
             engine.reconcile(emptyList(), mapOf("provider:opaque" to 1L))
             val policy = OfflineLibraryPolicy(store.database, engine)
             val request = DownloadRequest(DownloadIdentity("provider:opaque", "song:opaque", "original"),

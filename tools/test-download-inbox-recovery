@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""Run actual Swift adapter bodies against deterministic completion/cancellation races.
+
+Only URLSession and the Kotlin facade are substituted. Real inbox files are created in a
+private temporary directory. --source-ref demonstrates the controls fail before the fix.
+This does not claim an app/runtime or background-daemon integration test.
+"""
+from pathlib import Path
+import argparse
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser()
+parser.add_argument('--source-ref')
+parser.add_argument('--control', choices=['membership-cancellation-before-enumeration',
+    'restored-orphan-cleanup-retains-explicit-and-unrelated',
+    'transient-target-error-keeps-payload-for-retry', 'untrusted-metadata-cannot-delete-outside-inbox'])
+args = parser.parse_args()
+path = 'apple/DulcetAppleShared/DulcetCoreDownloads.swift'
+source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{path}'], cwd=ROOT, text=True)
+          if args.source_ref else (ROOT / path).read_text())
+
+
+def method(name):
+    start = source.index(f'    private func {name}(')
+    end = source.index('\n    }', start) + len('\n    }')
+    return source[start:end].replace('    private func ', '    func ', 1)
+
+
+names = ['applyOfflineChange', 'handleCompletedDownload', 'processSecuredDownload',
+         'processSecuredDownloads', 'removeSecuredMetadata']
+if 'private func removeSecuredDownload(' in source:
+    names.append('removeSecuredDownload')
+bodies = '\n'.join(method(name) for name in names)
+harness = r'''
+import Foundation
+let selectedControl: String? = __CONTROL__
+struct AppleOfflineLibraryChangeDto {
+    var errorKind: String? = nil
+    let taskIdentifiersToCancel: [String]
+    var hasChanges = true
+}
+struct DulcetProviderItemID { let providerInstanceID: String; let rawID: String }
+struct Account { let providerInstanceID = "account" }
+enum DulcetDownloadState: String { case interrupted, queued, downloaded, failed }
+struct Target { var temporaryFilePath: String?; var rawId: String?; var errorKind: String? }
+struct Outcome { var state = "downloaded"; var retryNotBeforeWallClock: NSNumber? = nil }
+@MainActor final class Client {
+    let targetRoot: URL
+    var targets: [String: Target] = [:]
+    var finishes: [String] = []
+    init(_ root: URL) { targetRoot = root }
+    func fileTarget(downloadIdentifier: String) -> Target {
+        targets[downloadIdentifier] ?? Target(errorKind: "unknownDownload")
+    }
+    func finishDownload(downloadIdentifier: String, statusCode: Int32, contentType: String?,
+                        contentLength: Int64, retryAfterMilliseconds: Int64,
+                        wallClockMilliseconds: Int64) -> Outcome {
+        finishes.append(downloadIdentifier); return Outcome()
+    }
+    func recordFailure(downloadIdentifier: String, wallClockMilliseconds: Int64) -> Outcome { Outcome() }
+}
+final class SessionTask: @unchecked Sendable {
+    let taskIdentifier: Int
+    var taskDescription: String?
+    var cancellations = 0
+    init(_ id: Int, _ description: String) { taskIdentifier = id; taskDescription = description }
+    func cancel() { cancellations += 1 }
+}
+typealias URLSessionDownloadTask = SessionTask
+@MainActor final class Session {
+    var pending: (@Sendable ([SessionTask]) -> Void)?
+    func getAllTasks(completionHandler: @escaping @Sendable ([SessionTask]) -> Void) { pending = completionHandler }
+}
+struct DulcetSecuredDownload: Codable {
+    let identifier: String
+    let downloadIdentifier: String?
+    var statusCode: Int? = 200
+    var contentType: String? = "audio/wav"
+    var deliveredFileLength: Int64 = 8
+    var exactContentLength: Int64? { deliveredFileLength }
+    var retryAfterMilliseconds: Int64 { -1 }
+    func payloadURL(in inbox: URL) -> URL { inbox.appendingPathComponent("\(identifier).download") }
+    func metadataURL(in inbox: URL) -> URL { inbox.appendingPathComponent("\(identifier).json") }
+}
+extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
+@MainActor final class Controller {
+    let downloadInboxURL: URL
+    var client: Client?
+    var account: Account? = Account()
+    let session = Session()
+    var removedTaskIdentifiers: Set<Int> = []
+    var knownTaskIdentifiers: [Int: String] = [:]
+    var completedTaskIdentifiers: Set<Int> = []
+    var reconciliationGeneration = 1
+    var stateRefreshHandler: (() -> Void)?
+    var securedAttempts = 0
+    init(_ root: URL) { downloadInboxURL = root.appendingPathComponent(".incoming"); client = Client(root) }
+    func scheduleNextDownload() {}
+    func refreshArtworkBudget() {}
+    func scheduleRetry(at: Int64?) {}
+    func publish(_ state: DulcetDownloadState, for id: DulcetProviderItemID) {}
+    func probe(_ message: @autoclosure () -> String) {}
+    func secureDownloadedFile(task: SessionTask, location: URL) -> DulcetSecuredDownload? {
+        securedAttempts += 1; return nil
+    }
+__BODIES__
+}
+struct Failure: Error, CustomStringConvertible { let description: String }
+@MainActor func require(_ value: Bool, _ message: String) throws {
+    if !value { throw Failure(description: message) }
+}
+@MainActor func run(_ name: String, _ body: (Controller, URL) throws -> Void) throws {
+    guard selectedControl == nil || selectedControl == name else { return }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-inbox-control-\(UUID())")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try body(Controller(root), root)
+    print("PASS \(name)")
+}
+@MainActor func seed(_ controller: Controller, download: String, identifier: String = UUID().uuidString) throws -> DulcetSecuredDownload {
+    let secured = DulcetSecuredDownload(identifier: identifier, downloadIdentifier: download)
+    try FileManager.default.createDirectory(at: controller.downloadInboxURL, withIntermediateDirectories: true)
+    try Data("wavebody".utf8).write(to: secured.payloadURL(in: controller.downloadInboxURL))
+    try JSONEncoder().encode(secured).write(to: secured.metadataURL(in: controller.downloadInboxURL))
+    return secured
+}
+@MainActor func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
+@main struct Main {
+    static func main() async throws {
+        try await MainActor.run {
+            try run("membership-cancellation-before-enumeration") { controller, root in
+                controller.knownTaskIdentifiers = [42: "auto", 43: "explicit"]
+                controller.applyOfflineChange(.init(taskIdentifiersToCancel: ["auto"]))
+                try require(controller.session.pending != nil, "must exercise suspended enumeration")
+                try require(controller.removedTaskIdentifiers == [42], "cancelled membership task must be marked synchronously; explicit must survive")
+                let source = root.appendingPathComponent("late-system-payload")
+                try Data("late bytes".utf8).write(to: source)
+                controller.handleCompletedDownload(task: SessionTask(42, "auto"), location: source)
+                try require(!exists(source) && controller.securedAttempts == 0, "late removed completion must not enter inbox")
+                try require(controller.removedTaskIdentifiers.contains(42), "tombstone must survive until didComplete, preventing resume-data republishing")
+            }
+            try run("restored-orphan-cleanup-retains-explicit-and-unrelated") { controller, root in
+                let orphan = try seed(controller, download: "removed-auto")
+                let explicit = try seed(controller, download: "retained-explicit")
+                let target = root.appendingPathComponent("explicit.part")
+                let final = root.appendingPathComponent("explicit.complete")
+                try Data("explicit final".utf8).write(to: final)
+                controller.client!.targets["retained-explicit"] = Target(temporaryFilePath: target.path, rawId: "explicit")
+                let unrelated = controller.downloadInboxURL.appendingPathComponent("unrelated.keep")
+                try Data("unrelated".utf8).write(to: unrelated)
+                controller.processSecuredDownloads()
+                try require(!exists(orphan.payloadURL(in: controller.downloadInboxURL)) && !exists(orphan.metadataURL(in: controller.downloadInboxURL)), "removed row's restored payload and metadata must both be deleted")
+                try require(controller.client!.finishes == ["retained-explicit"] && exists(target), "retained explicit delivery must complete normally")
+                try require(try Data(contentsOf: final) == Data("explicit final".utf8), "explicit completed file must survive")
+                try require(exists(unrelated), "unrelated inbox file must survive")
+                try require(!exists(explicit.metadataURL(in: controller.downloadInboxURL)), "completed metadata must be consumed")
+                controller.processSecuredDownloads()
+                try require(controller.client!.finishes.count == 1 && exists(unrelated), "retry must not resurrect or delete unrelated files")
+            }
+            try run("transient-target-error-keeps-payload-for-retry") { controller, _ in
+                let secured = try seed(controller, download: "retained-explicit")
+                controller.client!.targets["retained-explicit"] = Target(errorKind: "persistence")
+                controller.processSecuredDownloads()
+                try require(exists(secured.payloadURL(in: controller.downloadInboxURL)) && exists(secured.metadataURL(in: controller.downloadInboxURL)), "transient persistence failure must retain secured bytes")
+            }
+            try run("untrusted-metadata-cannot-delete-outside-inbox") { controller, root in
+                let outside = root.appendingPathComponent("outside.download")
+                try Data("outside".utf8).write(to: outside)
+                let forged = DulcetSecuredDownload(identifier: "../outside", downloadIdentifier: "removed")
+                try FileManager.default.createDirectory(at: controller.downloadInboxURL, withIntermediateDirectories: true)
+                try JSONEncoder().encode(forged).write(to: controller.downloadInboxURL.appendingPathComponent("forged.json"))
+                controller.processSecuredDownloads()
+                try require(exists(outside), "forged identifier must not traverse outside secured inbox")
+            }
+        }
+        print("Adapter controls passed; no app/runtime claim")
+    }
+}
+'''.replace('__BODIES__', bodies).replace('__CONTROL__', '"' + args.control + '"' if args.control else 'nil')
+with tempfile.TemporaryDirectory(prefix='dulcet-inbox-adapter-') as directory:
+    swift = Path(directory) / 'controls.swift'
+    binary = Path(directory) / 'controls'
+    swift.write_text(harness)
+    subprocess.run(['swiftc', '-swift-version', '6', '-parse-as-library', str(swift), '-o', str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)

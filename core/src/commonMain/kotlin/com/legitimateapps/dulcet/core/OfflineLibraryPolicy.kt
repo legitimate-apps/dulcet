@@ -38,7 +38,7 @@ internal class OfflineLibraryPolicy(
     init {
         engine.cacheReconciliationHandler = {
             database.downloadsQueries.selectAllDownloads().executeAsList().filter {
-                it.state !in setOf("complete", "stale") && it.download_id !in writes
+                engine.ownsMediaServer(it.server_id) && it.state !in setOf("complete", "stale") && it.download_id !in writes
             }.forEach { row ->
                 val identity = DownloadIdentity(row.server_id, row.raw_id, row.transcode_profile)
                 if (isCache(identity)) engine.remove(identity)
@@ -58,6 +58,7 @@ internal class OfflineLibraryPolicy(
 
     fun settings(serverId: String): OfflineLibrarySettings {
         require(serverId.isNotBlank())
+        engine.requireMediaBinding(serverId)
         queries.ensureSettings(serverId)
         val row = queries.selectSettings(serverId).executeAsOne()
         return OfflineLibrarySettings(row.automatic_downloads == 1L, row.cache_budget_bytes)
@@ -170,6 +171,7 @@ internal class OfflineLibraryPolicy(
         if (!settings(serverId).automaticDownloadsEnabled) emptyList() else playlistTracks(serverId).missingDetails
 
     private fun memberRanks(serverId: String): Map<Pair<String, String>, Long> {
+        engine.requireMediaBinding(serverId)
         val members = database.myLibraryQueries.selectMembers(serverId).executeAsList()
             .associate { (it.item_kind to it.raw_id) to it.added_rank }.toMutableMap()
         database.protectedReservedDataQueries.selectPendingMutations(serverId).executeAsList().forEach { row ->
@@ -233,6 +235,7 @@ internal class OfflineLibraryPolicy(
     fun planArtworkCache(serverId: String, evictableBytes: Long, pinnedBytes: Long,
         reservationBytes: Long = 0, budgetBytesOverride: Long? = null): ArtworkCacheBudgetPlan {
         require(serverId.isNotBlank())
+        engine.requireMediaBinding(serverId)
         require(evictableBytes >= 0 && pinnedBytes >= 0 && reservationBytes >= 0)
         require(budgetBytesOverride == null || budgetBytesOverride >= 0)
         artworkUsage[serverId] = ArtworkUsage(evictableBytes, pinnedBytes)
@@ -259,6 +262,8 @@ internal class OfflineLibraryPolicy(
     }
 
     fun setProtectedIdentities(identities: Set<DownloadIdentity>) {
+        check(engine.isMediaBindingCurrent()) { "media binding was revoked" }
+        identities.forEach { engine.requireMediaBinding(it.serverId) }
         val releasedServers = (protected - identities).map { it.serverId }.toSet()
         protected = identities.toSet()
         releasedServers.forEach { evict(it, 0) }
@@ -333,6 +338,7 @@ internal class OfflineLibraryPolicy(
 
     fun appendCacheWrite(writeId: String, bytes: ByteArray, offset: Long): Boolean {
         val write = writes[writeId] ?: return false
+        if (!engine.isMediaBindingCurrent()) { abortCacheWrite(writeId); return false }
         if (bytes.isEmpty()) return offset >= 0 && (write.expected == null || offset <= write.expected)
         val end = offset + bytes.size
         if (offset < 0 || end < offset || (write.expected != null && end > write.expected) ||
@@ -358,12 +364,17 @@ internal class OfflineLibraryPolicy(
 
     fun isCacheWriteComplete(writeId: String): Boolean {
         val write = writes[writeId] ?: return false
+        if (!engine.isMediaBindingCurrent()) { abortCacheWrite(writeId); return false }
         val total = write.expected ?: return false
         return write.coverage == listOf(ByteRange(0, total))
     }
 
     fun finishCacheWrite(writeId: String, metadata: DownloadResponseMetadata, wallClockMilliseconds: Long): DownloadPromotionResult {
         val write = writes.remove(writeId) ?: return DownloadPromotionResult.UnknownDownload
+        if (!engine.isMediaBindingCurrent()) {
+            try { write.file.close() } catch (_: Exception) { }
+            return DownloadPromotionResult.UnknownDownload
+        }
         try { write.file.flush(); write.file.close() } catch (_: Exception) {
             discardUnfinishedWrite(write)
             return DownloadPromotionResult.Rejected(DomainError.Protocol.UnexpectedBinary)
@@ -387,6 +398,7 @@ internal class OfflineLibraryPolicy(
     }
 
     private fun discardUnfinishedWrite(write: CacheWrite) {
+        if (!engine.isMediaBindingCurrent()) return
         // An explicit click can upgrade an in-flight cache row. Never delete that ownership.
         if (isCache(write.row.identity)) engine.remove(write.row.identity)
         else {

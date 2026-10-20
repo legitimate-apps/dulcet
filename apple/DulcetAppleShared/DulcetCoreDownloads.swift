@@ -31,6 +31,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var completedTaskIdentifiers: Set<Int> = []
     private var resumedTaskIdentifiers: Set<Int> = []
     private var removedTaskIdentifiers: Set<Int> = []
+    // Includes restored tasks before any membership change can schedule cancellation.
+    private var knownTaskIdentifiers: [Int: String] = [:]
     private var redirectsByTaskIdentifier: [Int: Int] = [:]
     private var queuePrepareOperation: (any AppleDownloadOperation)?
     private var retryTask: Task<Void, Never>?
@@ -138,6 +140,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     func configure(account: DulcetPlaybackAccount) {
         automaticDownloadContactPermitted = false
         let sameAccount = self.account?.providerInstanceID == account.providerInstanceID
+            && self.account?.normalizedServerURL == account.normalizedServerURL
+            && self.account?.username == account.username
         reconciliationGeneration += 1
         let generation = reconciliationGeneration
         reconciled = false
@@ -148,7 +152,11 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         cancelRetry()
         client?.close()
         cacheWrites = [:]
-        if !sameAccount { protectedPlayback = [:] }
+        if !sameAccount {
+            protectedPlayback = [:]
+            pendingTracks = []
+            removedTaskIdentifiers.formUnion(knownTaskIdentifiers.keys)
+        }
         self.account = account
         client = AppleDownloadClient(
             account: PlaybackEndpointAccount(
@@ -189,6 +197,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             return
         }
         publish(.queued, for: track.id)
+        let generation = reconciliationGeneration
         let operation = client.startPrepareOriginalDownload(
             rawId: track.id.rawID,
             sourceContainer: sourceContainer,
@@ -199,7 +208,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             unknownLengthReservationBytes: unknownLengthReservationBytes
         ) { [weak self] outcome in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, generation == reconciliationGeneration else { return }
                 prepareOperations[track.id] = nil
                 handlePreparationOutcome(outcome, fallbackItemID: track.id)
             }
@@ -294,8 +303,19 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         guard outcome.errorKind == nil else { return }
         let cancelled = Set(outcome.taskIdentifiersToCancel)
         if !cancelled.isEmpty {
-            session.getAllTasks { tasks in
-                tasks.filter { $0.taskDescription.map(cancelled.contains) == true }.forEach { $0.cancel() }
+            // Mark known tasks before URLSession's asynchronous enumeration. Completion may
+            // already be queued on the main actor when cancellation loses the race.
+            removedTaskIdentifiers.formUnion(knownTaskIdentifiers.compactMap { taskID, identifier in
+                cancelled.contains(identifier) ? taskID : nil
+            })
+            let generation = reconciliationGeneration
+            session.getAllTasks { [weak self] tasks in
+                Task { @MainActor [weak self] in
+                    guard let self, generation == reconciliationGeneration else { return }
+                    let removed = tasks.filter { $0.taskDescription.map(cancelled.contains) == true }
+                    removedTaskIdentifiers.formUnion(removed.map(\.taskIdentifier))
+                    removed.forEach { $0.cancel() }
+                }
             }
         }
         scheduleNextDownload()
@@ -322,7 +342,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             }
         }, release: { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                // A same-binding credential refresh may keep this resource playing. A
+                // rebind clears its unique token, so an old account cannot publish a release.
+                guard let self, protectedPlayback[token] == track.id.rawID else { return }
                 if let write = cacheWrites.removeValue(forKey: token) { client?.abortStreamingCache(writeId: write.identifier) }
                 protectedPlayback[token] = nil
                 updatePlaybackProtection()
@@ -402,7 +424,15 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         queuePrepareOperation?.cancel()
         queuePrepareOperation = nil
         cancelRetry()
-        session.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
+        removedTaskIdentifiers.formUnion(knownTaskIdentifiers.keys)
+        let generation = reconciliationGeneration
+        session.getAllTasks { [weak self] tasks in
+            Task { @MainActor [weak self] in
+                guard let self, generation == reconciliationGeneration else { return }
+                removedTaskIdentifiers.formUnion(tasks.map(\.taskIdentifier))
+                tasks.forEach { $0.cancel() }
+            }
+        }
         client?.close()
         client = nil
         account = nil
@@ -465,6 +495,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
 
     private func finishReconciliation(tasks: [URLSessionTask]) {
         guard let client else { return }
+        for task in tasks { knownTaskIdentifiers[task.taskIdentifier] = task.taskDescription }
         let identifiers = tasks.compactMap(\.taskDescription)
         let outcome = client.reconcile(
             outstandingTaskIdentifiers: identifiers,
@@ -476,17 +507,20 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             return
         }
         let cancel = Set(outcome.taskIdentifiersToCancel)
-        tasks.filter { task in
+        let removed = tasks.filter { task in
             guard let description = task.taskDescription else { return true }
             return cancel.contains(description)
-        }.forEach { $0.cancel() }
+        }
+        removedTaskIdentifiers.formUnion(removed.map(\.taskIdentifier))
+        removed.forEach { $0.cancel() }
         reconciled = true
         refreshArtworkBudget()
         updatePlaybackProtection()
+        // Remove orphaned secured deliveries before new membership can enqueue work.
+        processSecuredDownloads()
         reconcileMyLibrary()
         probe("reconciled outstanding=\(identifiers.isEmpty ? "none" : identifiers.joined(separator: ",")) cancelled=\(cancel.count)")
         stateRefreshHandler?()
-        processSecuredDownloads()
         let queued = pendingTracks
         pendingTracks = []
         queued.forEach(requestDownload)
@@ -525,13 +559,14 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
 
     private func scheduleNextDownload() {
         guard reconciled, queuePrepareOperation == nil, let client else { return }
+        let generation = reconciliationGeneration
         let operation = client.startPrepareNextDownload(
             wallClockMilliseconds: Date().downloadWallClockMilliseconds,
             diskBudgetBytes: diskBudgetBytes,
             unknownLengthReservationBytes: unknownLengthReservationBytes
         ) { [weak self] outcome in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, generation == reconciliationGeneration else { return }
                 queuePrepareOperation = nil
                 handlePreparationOutcome(outcome, fallbackItemID: nil)
             }
@@ -582,6 +617,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             task = session.downloadTask(with: request)
         }
         task.taskDescription = prepared.downloadIdentifier
+        knownTaskIdentifiers[task.taskIdentifier] = prepared.downloadIdentifier
         publish(.downloading, for: itemID)
         task.resume()
         probe("task-started download=\(prepared.downloadIdentifier) item=\(itemID.rawID)")
@@ -591,7 +627,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         task: URLSessionDownloadTask,
         location: URL
     ) {
-        if removedTaskIdentifiers.remove(task.taskIdentifier) != nil {
+        if removedTaskIdentifiers.contains(task.taskIdentifier) {
             try? FileManager.default.removeItem(at: location)
             return
         }
@@ -606,9 +642,16 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
 
     @discardableResult
     private func processSecuredDownload(_ secured: DulcetSecuredDownload) -> Bool {
-        guard let downloadIdentifier = secured.downloadIdentifier,
-              let client else { return false }
+        guard UUID(uuidString: secured.identifier) != nil, let client else { return false }
+        guard let downloadIdentifier = secured.downloadIdentifier else {
+            return removeSecuredDownload(secured)
+        }
         let target = client.fileTarget(downloadIdentifier: downloadIdentifier)
+        if target.errorKind == "unknownDownload" {
+            // The durable row was removed (or belonged to a purged media binding). Only
+            // this secured delivery is unowned; persistence failures remain retryable.
+            return removeSecuredDownload(secured)
+        }
         guard target.errorKind == nil,
               let temporaryFilePath = target.temporaryFilePath,
               let rawID = target.rawId,
@@ -687,6 +730,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
 
     private func handleTaskCompletion(task: URLSessionTask, error: Error?) {
         redirectsByTaskIdentifier[task.taskIdentifier] = nil
+        knownTaskIdentifiers[task.taskIdentifier] = nil
         if removedTaskIdentifiers.remove(task.taskIdentifier) != nil {
             resumedTaskIdentifiers.remove(task.taskIdentifier)
             return
@@ -781,7 +825,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         ) else { return }
         for metadataURL in files where metadataURL.pathExtension == "json" {
             guard let data = try? Data(contentsOf: metadataURL),
-                  let secured = try? JSONDecoder().decode(DulcetSecuredDownload.self, from: data) else {
+                  let secured = try? JSONDecoder().decode(DulcetSecuredDownload.self, from: data),
+                  UUID(uuidString: secured.identifier) != nil,
+                  secured.metadataURL(in: downloadInboxURL).lastPathComponent == metadataURL.lastPathComponent else {
                 continue
             }
             guard FileManager.default.fileExists(
@@ -791,6 +837,21 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                 continue
             }
             _ = processSecuredDownload(secured)
+        }
+    }
+
+    private func removeSecuredDownload(_ secured: DulcetSecuredDownload) -> Bool {
+        guard UUID(uuidString: secured.identifier) != nil else { return false }
+        do {
+            let payload = secured.payloadURL(in: downloadInboxURL)
+            if FileManager.default.fileExists(atPath: payload.path) {
+                try FileManager.default.removeItem(at: payload)
+            }
+            // Keep metadata if payload removal fails, so reconciliation can retry cleanup.
+            try FileManager.default.removeItem(at: secured.metadataURL(in: downloadInboxURL))
+            return true
+        } catch {
+            return false
         }
     }
 

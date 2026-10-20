@@ -141,6 +141,22 @@ public class AppleDownloadClient(
     private var wireClient: PlaybackWireClient? = null
     private var requestClient: AuthenticatedEndpointClient? = null
     private var reconciled = false
+    private var closed = false
+    private var initializationFailed = false
+    private var bindingPurgedDownloadIds = emptySet<DownloadId>()
+
+    // Acquire during configuration, never on a delayed old-account callback. A construction
+    // failure stays closed; retrying configuration creates a fresh client explicitly.
+    init {
+        try { openPolicy() } catch (_: Throwable) {
+            close()
+            initializationFailed = true
+        }
+    }
+
+    public fun isMediaBindingCurrent(): Boolean = try {
+        !closed && !initializationFailed && engine?.isMediaBindingCurrent() == true
+    } catch (_: Throwable) { false }
 
     public fun reconcile(
         outstandingTaskIdentifiers: List<String>,
@@ -160,7 +176,7 @@ public class AppleDownloadClient(
         )
         reconciled = true
         AppleDownloadReconciliationOutcomeDto(
-            taskIdentifiersToCancel = result.taskIdsToCancel.map { it.value },
+            taskIdentifiersToCancel = (result.taskIdsToCancel + bindingPurgedDownloadIds).map { it.value },
             interruptedDownloadIdentifiers = result.interruptedRows.map { it.value },
             recoveredDownloadIdentifiers = result.recoveredPromotions.map { it.value },
             errorKind = null,
@@ -533,8 +549,9 @@ public class AppleDownloadClient(
         requireNotNull(offline).appendCacheWrite(writeId, bytes.toDownloadByteArray(), offset)
     } catch (_: Throwable) { false }
 
-    public fun isStreamingCacheWriteComplete(writeId: String): Boolean =
+    public fun isStreamingCacheWriteComplete(writeId: String): Boolean = try {
         offline?.isCacheWriteComplete(writeId) == true
+    } catch (_: Throwable) { false }
 
     public fun planArtworkCache(evictableBytes: Long, pinnedBytes: Long, reservationBytes: Long): ArtworkCacheBudgetPlan? = try {
         requireReconciled()
@@ -575,6 +592,7 @@ public class AppleDownloadClient(
     }
 
     public fun close() {
+        closed = true
         try { offline?.close() } catch (_: Throwable) { }
         try {
             requestClient?.close()
@@ -611,7 +629,8 @@ public class AppleDownloadClient(
     }
 
     private fun openPolicy(): DownloadPolicyEngine {
-        engine?.let { return it }
+        check(!closed && !initializationFailed)
+        engine?.let { check(it.isMediaBindingCurrent()); return it }
         require(databaseName.isNotBlank())
         require(downloadRootPath.isNotBlank())
         val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
@@ -630,6 +649,15 @@ public class AppleDownloadClient(
             opened.database,
             DownloadFileStore(downloadRootPath, okio.FileSystem.SYSTEM),
         ).also {
+            bindingPurgedDownloadIds = it.bindMedia(DownloadMediaBinding(
+                account.providerInstanceId, account.normalizedBaseUrl, account.username,
+            )).purgedDownloadIds
+            // Downloads can reconcile before the asynchronously opened reader. Establish its
+            // metadata binding now, so automatic projection cannot consume the previous user's
+            // My Library. The independently acquired media epoch survives this cache purge.
+            SeenCacheStore(opened, SeenCacheWallClock {
+                (platform.Foundation.NSDate().timeIntervalSince1970 * 1000).toLong()
+            }).bind(CacheBinding(account.providerInstanceId, account.normalizedBaseUrl, account.username))
             engine = it
             offline = OfflineLibraryPolicy(opened.database, it)
         }
@@ -654,6 +682,7 @@ public class AppleDownloadClient(
                 legacyTimeOffset = null,
             ),
         )
+        requireReconciled() // The network suspension may have outlived this account binding.
         if (resolution is PlaybackResolutionResult.Failed) {
             val retry = requireNotNull(engine).recordFailure(
                 row.downloadId,
@@ -724,6 +753,7 @@ public class AppleDownloadClient(
 
     private fun requireReconciled() {
         check(reconciled) { "download reconciliation must finish before subsystem use" }
+        check(isMediaBindingCurrent()) { "media binding was revoked" }
     }
 }
 

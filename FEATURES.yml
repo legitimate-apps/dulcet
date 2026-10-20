@@ -4780,7 +4780,7 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography.",
           "evidence": [
             {
               "observes": "Adding a real album to My Library promotes its tracks through the production automatic download executor before the relay is cut.",
@@ -4803,7 +4803,7 @@
         },
         "ios": {
           "status": "partial",
-          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography.",
           "evidence": [
             {
               "observes": "Adding a real album to My Library promotes its tracks through the production automatic download executor before the relay is cut.",
@@ -4826,7 +4826,7 @@
         },
         "ipados": {
           "status": "partial",
-          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography.",
           "evidence": [
             {
               "observes": "Adding a real album to My Library promotes its tracks through the production automatic download executor before the relay is cut.",
@@ -4853,7 +4853,7 @@
         },
         "android": {
           "status": "partial",
-          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography.",
           "evidence": [
             {
               "observes": "Adding a real album produces four automatic local files; removal deletes automatic-only files while an explicit file survives removal and disabling Automatic Downloads.",
@@ -4876,7 +4876,7 @@
         },
         "androidtv": {
           "status": "partial",
-          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md.",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography.",
           "evidence": [
             {
               "observes": "Adding a real album produces four automatic local files; removal deletes automatic-only files while an explicit file survives removal and disabling Automatic Downloads.",
@@ -5107,7 +5107,7 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. The Mac settings controls have presentation and bridge tests; the native Mac settings interaction is not cited as executed.",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. The Mac settings controls have presentation and bridge tests; the native Mac settings interaction is not cited as executed. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters.",
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "macos-native-mac-offline-storage-controls",
@@ -5116,7 +5116,7 @@
         },
         "ios": {
           "status": "partial",
-          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md.",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters.",
           "evidence": [
             {
               "observes": "Automatic Downloads can be disabled, survives relaunch, can be enabled again, and Clear Cache is activated in native settings.",
@@ -5133,7 +5133,7 @@
         },
         "ipados": {
           "status": "partial",
-          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md.",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters.",
           "evidence": [
             {
               "observes": "Automatic Downloads can be disabled, survives relaunch, can be enabled again, and Clear Cache is activated in native settings.",
@@ -5154,7 +5154,7 @@
         },
         "android": {
           "status": "partial",
-          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md.",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters.",
           "evidence": [
             {
               "observes": "Native settings changes Automatic Downloads and clears the streaming cache; the explicit file remains after removal and disabling automatic retention.",
@@ -5171,7 +5171,7 @@
         },
         "androidtv": {
           "status": "partial",
-          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md.",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters.",
           "evidence": [
             {
               "observes": "Native settings changes Automatic Downloads and clears the streaming cache; the explicit file remains after removal and disabling automatic retention.",

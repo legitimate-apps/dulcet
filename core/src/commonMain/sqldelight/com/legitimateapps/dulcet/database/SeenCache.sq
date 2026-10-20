@@ -714,7 +714,7 @@ purgeNamespace {
   DELETE FROM cache_artist WHERE server_id = :server_id;
   DELETE FROM cache_playlist WHERE server_id = :server_id;
   DELETE FROM cache_pin WHERE server_id = :server_id;
-  DELETE FROM library_depth_entry WHERE server_id = :server_id;
+  DELETE FROM library_depth_entry WHERE server_id = :server_id AND category != 'download.mediaBinding';
   DELETE FROM cache_epoch WHERE server_id = :server_id;
   DELETE FROM cache_binding WHERE server_id = :server_id;
   DELETE FROM my_library_item WHERE server_id = :server_id;
