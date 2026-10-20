@@ -86,6 +86,36 @@ regression checks 1,000 probes without access-time changes, multiple profiles, s
 actual playback updating access time, and removal of the last completed profile. Actual plan
 resolution remains responsible for validating the selected file and recording its use.
 
+## Retry after observed server loss
+
+A local retry does not establish that the server returned. The common queue admits a guarded,
+explicit retry of its selected current item without changing the predicate used by other entries.
+Native start still validates the local file before using it. If that file is missing, a deliberate
+remote fallback requires OS connectivity and configured account contact. Only accepted progress
+from the matching current remote attempt restores playback reachability; resolving a URL or
+starting a local file does not.
+
+OBSERVED after this correction: the focused shared queue suites passed 25/25 on both JVM and
+macOS native (nine offline cases plus sixteen queue-controller cases), with zero failures, errors
+or skips. The actual Mac playback-controller integration class passed 45/45 with zero failures
+in 24.515 seconds and an exact-method execution guard. Its three new cases use the production
+cache facade and the queue's actual database: complete cache rows for current a and successor c,
+remote-only b, observed transport failure, same-session local retry, then preload/Next or natural
+handover to c. The missing-file case rejects OS-offline wire fallback and restores remote
+continuation only after current remote progress. The OS playback engine is recorded in this
+controller class; these observations do not claim a new AVPlayer cache-transition matrix.
+
+Android's focused controller, listening-session and streaming-cache suites passed 83/83 with zero
+failures, errors or skips. Its controller regressions cover the same cached retry and all three
+continuation paths, stale indexed files, remote progress, and OS/contact denial. They use the real
+controller and database with a recorded Media3 player; the separate phone/TV emulator evidence
+above remains the actual Media3 observation. OBSERVED in
+[Linux soak 39361262476](https://github.com/legitimate-apps/dulcet/actions/runs/39361262476)
+on `3746e37b`: all 20 repetitions executed 64 controller cases each, with Gradle exit zero,
+zero failed tests and zero skips in every iteration. Final `SOAK RESULT passed=20 failed=0`;
+1,280 test executions. Later evidence-catalog and Apple-fixture changes leave those Android
+production/test blobs unchanged.
+
 ## Platform scope
 
 Apple TV retains the existing v1 no-download contract and network playback. This change skips
