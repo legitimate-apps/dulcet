@@ -35,6 +35,42 @@ def rest(port: int, endpoint: str, **parameters: str) -> dict:
     return body
 
 
+
+def wait_for_readiness(children, timeout: float = 60) -> None:
+    """Witness the catalog through every proxy and the server's advertised capability.
+
+    Report only fixed endpoint names, ports and exception types. An HTTP exception may contain
+    the authenticated URL, so never include its message in fixture diagnostics.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if any(child.poll() is not None for child in children):
+            raise RuntimeError('fixture process exited before readiness')
+        port, endpoint = 4783, 'getAlbumList2'
+        started = time.monotonic()
+        try:
+            for port in range(4783, 4789):
+                endpoint = 'getAlbumList2'
+                started = time.monotonic()
+                body = rest(port, endpoint, type='alphabeticalByName', size='1')
+                if not body['albumList2'].get('album'):
+                    raise RuntimeError('fixture corpus empty')
+            port, endpoint = 4783, 'getOpenSubsonicExtensions'
+            started = time.monotonic()
+            advertised = rest(port, endpoint)['openSubsonicExtensions']
+            if not any(e['name'] == 'dulcetLibrary' and 1 in e['versions'] for e in advertised):
+                raise RuntimeError('Dulcet Server must advertise dulcetLibrary v1')
+            return
+        except (OSError, ValueError, RuntimeError) as error:
+            reason = type(error).__name__
+            print(f'MY LIBRARY READINESS port={port} endpoint={endpoint} '
+                  f'error={reason} seconds={time.monotonic() - started:.3f}', flush=True)
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f'fixture readiness deadline expired: port={port} '
+                                   f'endpoint={endpoint} error={reason}') from None
+            time.sleep(.2)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True, type=Path)
@@ -86,23 +122,7 @@ def main() -> int:
         for port in range(4784, 4789):
             start(f'proxy-{port}', [sys.executable, str(REPO / 'tools/my-library-ui-proxy'),
                 '--port', str(port), '--upstream-port', '4533' if port == 4785 else '4783'])
-        deadline = time.monotonic() + 60
-        while True:
-            if any(child.poll() is not None for child in children):
-                raise RuntimeError(f'fixture process exited; see {args.root}')
-            try:
-                for port in range(4783, 4789):
-                    body = rest(port, 'getAlbumList2', type='alphabeticalByName', size='1')
-                    if not body['albumList2'].get('album'):
-                        raise RuntimeError(f'fixture corpus empty on {port}')
-                advertised = rest(4783, 'getOpenSubsonicExtensions')['openSubsonicExtensions']
-                if not any(e['name'] == 'dulcetLibrary' and 1 in e['versions'] for e in advertised):
-                    raise RuntimeError('Dulcet Server must advertise dulcetLibrary v1')
-                break
-            except (OSError, ValueError, RuntimeError):
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(f'fixture readiness deadline expired; see {args.root}') from None
-                time.sleep(.2)
+        wait_for_readiness(children)
         print('MY LIBRARY FIXTURE ready split=4783 fallback=4785 proxies=4784,4786,4787,4788', flush=True)
         child = subprocess.Popen(command)
         children.append(child)

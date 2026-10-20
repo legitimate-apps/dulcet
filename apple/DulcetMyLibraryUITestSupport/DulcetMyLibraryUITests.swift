@@ -486,10 +486,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
         if UIDevice.current.userInterfaceIdiom == .pad {
-            // Construct the identified query even before the account publishes its sidebar.
-            // Choosing a label-based Cell fallback before it exists leaves the wait on cells
-            // with no label; SwiftUI exposes the destination label on their StaticText child.
-            return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
+            // Resolve the indexed result after the account publishes its sidebar. The retained
+            // iPad failure's firstMatch wait reported absent while its own failure hierarchy
+            // contained this exact StaticText. The indexed query avoids that early shortcut.
+            return app.staticTexts.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
         }
         let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
@@ -607,22 +607,42 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // album page; scrolling firstMatch can hide Library before the catalog finishes loading.
         let albumPage = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
         XCTAssertTrue(albumPage.waitForExistence(timeout: 30), "The album page must load before scrolling")
+#elseif os(iOS)
+        let albumPage = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
+        XCTAssertTrue(albumPage.waitForExistence(timeout: 30), "The catalog must load before scrolling its tiles")
 #endif
 #if !os(tvOS)
+        let viewport = app.windows.firstMatch.frame.insetBy(dx: 0, dy: 100)
+        var swipes = 0
         for _ in 0..<6 {
-            if tile.exists && tile.isHittable { break }
+            if tile.exists && tile.isHittable {
+                let frame = tile.frame
+                if !frame.isEmpty && viewport.contains(CGPoint(x: frame.midX, y: frame.midY)) { break }
+            }
 #if os(macOS)
             albumPage.scroll(byDeltaX: 0, deltaY: -450)
 #else
+            // On iPad the first scroll view may be the sidebar. Scroll the actual catalog,
+            // and require the tile's center, not a sliver at the bottom, to enter the window.
             albumPage.swipeUp()
 #endif
+            swipes += 1
         }
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
         XCTAssertTrue(tile.isHittable, "The album must be visible before activation")
+        let tileFrame = tile.frame
+        XCTAssertTrue(viewport.contains(CGPoint(x: tileFrame.midX, y: tileFrame.midY)),
+                      "The album's center must be inside the visible catalog before activation: \(tileFrame)")
+        print("MY LIBRARY ALBUM target=\(title) center-in-viewport=true swipes=\(swipes) frame=\(tileFrame)")
 #else
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
 #endif
         activate(tile)
+        // Resolve the indexed result, as for the iPad sidebar. On the Mac the firstMatch wait
+        // reported absent for 15 s while the failure hierarchy held this exact titled StaticText.
+        let header = app.staticTexts.matching(identifier: "dulcet.album.title").element(boundBy: 0)
+        XCTAssertTrue(header.waitForExistence(timeout: 15), "The activated tile must open its album page")
+        XCTAssertEqual(header.label, title, "The album page must name the activated tile")
     }
     @MainActor private func activate(_ element: XCUIElement) {
 #if os(tvOS)

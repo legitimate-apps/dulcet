@@ -62,10 +62,20 @@ final class DulcetPlayerTransition: NSObject, UIViewControllerTransitioningDeleg
     }
 
     private func open(interactive: Bool) {
-        guard player == nil, let presenter, presenter.view.window != nil else { return }
+        guard player == nil else {
+            DulcetUIProofMarkers.record("player-open:already-open")
+            return
+        }
+        guard let presenter, presenter.view.window != nil else {
+            DulcetUIProofMarkers.record("player-open:presenter-unavailable")
+            return
+        }
         var owner = presenter
         while let parent = owner.parent { owner = parent }
-        guard owner.presentedViewController == nil else { return }
+        guard owner.presentedViewController == nil else {
+            DulcetUIProofMarkers.record("player-open:modal-busy")
+            return
+        }
         let host = UIHostingController(rootView: content())
         host.modalPresentationStyle = .custom
         host.transitioningDelegate = self

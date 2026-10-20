@@ -490,7 +490,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         endOverlap()
         removeCrossfadeTimeObserver()
         crossfadeDuration = 0
-        let wasPlaying = player.timeControlStatus == .playing
+        let wasPlaying = current?.playRequested == true
+        if !replacing { interruptionWasPlaying = false }
         let context = makeContext(plan: plan, resource: resource, isPreloaded: false)
         current?.invalidate()
         current = context
@@ -609,6 +610,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func stop(reason: DulcetPlaybackSkipReason) {
+        interruptionWasPlaying = false
         endOverlap()
         crossfadeDuration = 0
         removeCrossfadeTimeObserver()
@@ -632,6 +634,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
 
     private func releaseEngine() {
         guard !released else { return }
+        interruptionWasPlaying = false
         endOverlap()
         removeCrossfadeTimeObserver()
         player.pause()
@@ -958,6 +961,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     /// the current one alone: its failure is not the current item's.
     private func stopPresentingAsPlaying(afterFailureOf context: PlayerItemContext) {
         guard context === current else { return }
+        interruptionWasPlaying = false
         endOverlap()
         context.playRequested = false
         player.pause()
@@ -1240,6 +1244,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func pause(context: PlayerItemContext) {
+        interruptionWasPlaying = false
         endOverlap()
         context.playRequested = false
         context.cancelStartupRecovery()
@@ -1330,7 +1335,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         switch event {
         case .interruptionBegan:
             endOverlap()
-            interruptionWasPlaying = current.playRequested || player.timeControlStatus == .playing
+            // Native transport can lag a newer Pause. Only accepted Play intent may
+            // grant automatic resumption; an old playing report cannot recreate it.
+            interruptionWasPlaying = current.playRequested
             current.playRequested = false
             current.cancelStartupRecovery()
             current.pausedAfterProgress = current.progressBegan
@@ -1358,6 +1365,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             let didPause = becomingNoisy &&
                 (current.playRequested || player.timeControlStatus == .playing)
             if becomingNoisy {
+                interruptionWasPlaying = false
                 current.playRequested = false
                 current.cancelStartupRecovery()
                 current.pausedAfterProgress = current.progressBegan
@@ -1372,6 +1380,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 didPause: didPause
             ))
         case .externalPlaybackBegan:
+            interruptionWasPlaying = false
             endOverlap()
             current.playRequested = false
             player.pause()
