@@ -153,6 +153,12 @@ namespace. An epoch revokes old controllers and in-flight callbacks even across 
 media with no provable binding is purged rather than adopted. Startup establishes both media and
 metadata binding before automatic membership projection.
 
+The Android service also retires its player and session if saved credentials cannot be read:
+the plaintext account ID cannot prove that the endpoint and username are unchanged. This stops
+playback on a credential-read failure without purging files. Readable recovery creates a fresh
+controller; same-binding media remains valid. Password refresh replaces the immutable credential
+snapshot while retaining its media.
+
 OBSERVED against pre-fix `6e65fda8`: the independent common ownership suite executed five cases,
 with the three binding/revocation/legacy rejection cases failing and the same-binding explicit
 retention and artist-metadata controls passing. The exported Apple facade suite executed three
@@ -182,6 +188,15 @@ of two leases twice cannot release the other lease. The nine streaming-cache reg
 as do 125 download/playback/reader/listening/artwork regressions and 13 saved-account launch cases.
 The three existing streaming-cache seed engines now bind their fixture account before constructing
 the platform controller; all original assertions remain. Unproven legacy files are tested separately.
+
+The renewed Linux soaks each passed all 20 repetitions without failures or skips: 138 core-host
+cases per repetition in run 39370058874 (2,760 executions), and 13 saved-account launch cases in
+run 39370065513 (260 executions). Their complete iteration logs were checked individually.
+The service's four account-change cases also passed in both complete phone app suites (220
+cases per channel); the complete TV host suite passed 91 cases, all without failures or skips.
+They cover unreadable credentials and recovery, plus URL, username and password replacement
+under a stable account ID. The prior assertion allowing an unreadable record to reuse its player
+was intentionally replaced by the fail-closed ownership contract.
 
 OBSERVED for Apple secured deliveries: the source-body Swift harness passes all four controls.
 Historical `6e65fda8` fails the membership-cancellation-before-enumeration control and the restored

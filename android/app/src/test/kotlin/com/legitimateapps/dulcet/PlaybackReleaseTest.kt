@@ -132,13 +132,18 @@ class PlaybackAccountChangeTest {
             val first = assertNotNull(service.ensurePlayback())
             assertSame(first, service.ensurePlayback(), "The same account keeps its controller")
             SwitchableAccountStore.unreadable = true
-            assertSame(first, service.ensurePlayback(), "An unreadable record of the same account keeps its controller")
+            assertNull(service.ensurePlayback(), "An account ID cannot establish ownership of unreadable credentials")
+            assertTrue(first.isClosed(), "Unreadable credentials retire the old endpoint's player")
+            assertTrue(service.sessions.isEmpty())
             SwitchableAccountStore.unreadable = false
+            val recovered = assertNotNull(service.ensurePlayback())
+            assertNotSame(first, recovered, "Readable recovery creates a fresh controller")
+            assertSame(recovered, service.ensurePlayback())
 
             SwitchableAccountStore.current = StoredAccount("account-b", "B", "http://127.0.0.1:9", "user-b", "pw-b", true)
             val second = assertNotNull(service.ensurePlayback())
-            assertNotSame(first, second, "Account B must not be handed account A's controller")
-            assertTrue(first.isClosed(), "Account A's controller must be closed")
+            assertNotSame(recovered, second, "Account B must not be handed account A's controller")
+            assertTrue(recovered.isClosed(), "Account A's controller must be closed")
             assertEquals(1, service.sessions.size)
             assertSame(second.sessionPlayer, (service.sessions.single().player as ForwardingPlayer).wrappedPlayer)
 
@@ -148,6 +153,38 @@ class PlaybackAccountChangeTest {
             assertTrue(service.sessions.isEmpty())
         } finally {
             SwitchableAccountStore.current = null
+            SwitchableAccountStore.unreadable = false
+            lifecycle.destroy()
+        }
+    }
+
+    @Test fun changingTheEndpointUnderTheSameAccountIdRetiresTheOldPlayer() =
+        assertReplacementRetiresTheOldPlayer { it.copy(serverUrl = "http://127.0.0.1:10") }
+
+    @Test fun changingTheUsernameUnderTheSameAccountIdRetiresTheOldPlayer() =
+        assertReplacementRetiresTheOldPlayer { it.copy(username = "replacement-user") }
+
+    @Test fun refreshingThePasswordUnderTheSameAccountIdReplacesTheCredentialSnapshot() =
+        assertReplacementRetiresTheOldPlayer { it.copy(password = "replacement-password") }
+
+    private fun assertReplacementRetiresTheOldPlayer(replacement: (StoredAccount) -> StoredAccount) {
+        val original = StoredAccount("stable-account", "A", "http://127.0.0.1:9", "user-a", "pw-a", true)
+        SwitchableAccountStore.current = original
+        SwitchableAccountStore.unreadable = false
+        val lifecycle = Robolectric.buildService(PlaybackService::class.java).create()
+        val service = lifecycle.get()
+        try {
+            val first = assertNotNull(service.ensurePlayback())
+            SwitchableAccountStore.current = replacement(original)
+            val second = assertNotNull(service.ensurePlayback())
+            assertNotSame(first, second, "A changed credential snapshot must not reuse the former client")
+            assertTrue(first.isClosed(), "The former endpoint's player must be released")
+            assertSame(second, service.ensurePlayback(), "The replacement snapshot is now reusable")
+            assertEquals(1, service.sessions.size)
+            assertSame(second.sessionPlayer, (service.sessions.single().player as ForwardingPlayer).wrappedPlayer)
+        } finally {
+            SwitchableAccountStore.current = null
+            SwitchableAccountStore.unreadable = false
             lifecycle.destroy()
         }
     }
