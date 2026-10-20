@@ -4078,12 +4078,39 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func chooseStreamingQuality(_ option: String, row identifier: String, in app: XCUIApplication) -> Bool {
         let picker = app.buttons[identifier].firstMatch
-        // Native Form realizes each quality row when it enters the viewport.
-        for _ in 0..<6 {
-            if picker.exists { break }
-            app.swipeUp()
+        let form = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+        guard form.waitForExistence(timeout: 10) else {
+            XCTFail("Connection must offer its Settings Form: " + app.debugDescription)
+            return false
         }
-        guard picker.waitForExistence(timeout: 10), scrollIntoView(picker, in: app) else {
+        // A Form row can be hittable while its midpoint is beneath the translucent navigation
+        // bar. Reveal the entire picker inside the content viewport before the real tap.
+        var revealed = false
+        for attempt in 0...6 {
+            let navigationBar = app.navigationBars.firstMatch
+            let tabBar = app.tabBars.firstMatch
+            let top = (navigationBar.exists ? navigationBar.frame.maxY : form.frame.minY) + 16
+            let bottom = (tabBar.exists ? tabBar.frame.minY : form.frame.maxY) - 16
+            var above = false
+            if picker.exists {
+                let frame = picker.frame
+                above = frame.minY < top
+                if !frame.isEmpty, frame.minY >= top, frame.maxY <= bottom, picker.isHittable {
+                    revealed = true
+                    break
+                }
+            }
+            guard attempt < 6 else { break }
+            if picker.exists {
+                form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                    .press(forDuration: 0.05, thenDragTo:
+                        form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.75 : 0.25)))
+            } else {
+                // Native Form realizes each quality row when it enters the viewport.
+                form.swipeUp()
+            }
+        }
+        guard revealed, picker.waitForExistence(timeout: 10) else {
             XCTFail("Connection must offer the \(identifier) picker: " + app.debugDescription)
             return false
         }
