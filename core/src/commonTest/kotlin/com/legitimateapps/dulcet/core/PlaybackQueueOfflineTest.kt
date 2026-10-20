@@ -90,6 +90,54 @@ class PlaybackQueueOfflineTest {
         assertEquals(local.playbackSessionId, stillOnline.snapshot.currentSession?.playbackSessionId)
     }
 
+    @Test
+    fun explicitRetryPermissionDoesNotMakeRemoteSuccessorsEligible() = withQueue { queue, available ->
+        available += listOf("current", "remote", "cached")
+        val first = assertNotNull(queue.replaceAndStart(request(listOf("current", "remote", "cached"))).startDirective)
+        // Keep current eligible while the failure is recorded, as when its cache just completed.
+        available.retainAll(setOf("current", "cached"))
+        queue.recordPlaybackEvent(PlaybackEngineEvent.FailedBeforeStart(first.attemptId, DomainError.Transport.Unreachable))
+        available -= "current" // A stale cache row may subsequently fail local-file validation.
+        assertNull(queue.retryCurrent().startDirective)
+        assertEquals(first.attemptId, queue.snapshot().currentSession?.currentAttempt?.attemptId)
+        val retry = assertNotNull(queue.retryCurrent(allowUnavailableCurrent = true).startDirective)
+        assertEquals(first.playbackSessionId, retry.playbackSessionId)
+        assertEquals("current", retry.itemId.rawId)
+        assertEquals("cached", queue.preloadNext(retry.playbackSessionId).preloadDirective?.itemId?.rawId)
+        assertEquals("cached", queue.next().startDirective?.itemId?.rawId)
+    }
+
+    @Test
+    fun explicitProbeCanReplayAfterFailureAtTheEndWithoutEnablingRemoteSuccessors() = withQueue { queue, available ->
+        available += listOf("current", "remote", "cached")
+        val first = assertNotNull(queue.replaceAndStart(request(listOf("current", "remote", "cached"))).startDirective)
+        queue.recordPlaybackEvent(PlaybackEngineEvent.Ready(first.attemptId, 180.seconds, PlaybackSeekability.Seekable))
+        queue.recordPlaybackEvent(PlaybackEngineEvent.PlaybackProgressBegan(first.attemptId, PlaybackWallClockTime(1), 1.seconds))
+        available.retainAll(setOf("current", "cached"))
+        queue.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(first.attemptId, 180.seconds, DomainError.Transport.Unreachable))
+        available -= "current"
+        assertNull(queue.retryCurrent().startDirective)
+        val replay = assertNotNull(queue.retryCurrent(allowUnavailableCurrent = true).startDirective)
+        assertEquals("current", replay.itemId.rawId)
+        assertEquals(false, first.playbackSessionId == replay.playbackSessionId)
+        assertNull(replay.resumePosition)
+        assertEquals("cached", queue.preloadNext(replay.playbackSessionId).preloadDirective?.itemId?.rawId)
+    }
+
+    @Test
+    fun explicitProbeCanStartSelectedEntryWithNoSessionWithoutChangingAvailability() = withQueue { queue, available ->
+        available += "current"
+        val first = assertNotNull(queue.replaceAndStart(request(listOf("current"))).startDirective)
+        queue.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(first.attemptId, 180.seconds))
+        available.clear()
+        assertNull(queue.retryCurrent().startDirective)
+        val restarted = assertNotNull(queue.retryCurrent(allowUnavailableCurrent = true).startDirective)
+        assertEquals("current", restarted.itemId.rawId)
+        assertEquals(false, first.playbackSessionId == restarted.playbackSessionId)
+        assertNull(queue.retryCurrent(allowUnavailableCurrent = true).startDirective, "A live attempt is not retried")
+        assertNull(queue.next().startDirective)
+    }
+
     private fun request(ids: List<String>, start: Int = 0, shuffle: Boolean = false) = PlaybackQueueRequest(
         ids.map { PlaybackQueueItem(ProviderItemId("account", it), 180.seconds) },
         QueueSourceContext(QueueSourceKind.Library, null, "My Library"), start, shuffle,

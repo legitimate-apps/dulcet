@@ -5015,6 +5015,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMyLibraryMacUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "The production queue and validated same-database cache retry the current cached song in the same session, then preload and advance to cached c past remote-only b after observed server loss. The OS engine is recorded in this controller integration test.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetCorePlaybackSystemTests/testCachedRetryKeepsServerLossFilteringForPreloadAndNext"
             }
           ],
           "promotion_condition": {
@@ -5070,6 +5076,12 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            },
+            {
+              "observes": "The Android controller with a recorded Media3 player retries a now-local current song in the same session and excludes remote-only successors for preload, Next and natural completion. Separate cases cover stale local-file validation, actual remote progress and OS/contact guards.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/retryingTheNowCachedCurrentSongPreservesTheOutageForPreloadNextAndNaturalEnd"
             }
           ],
           "promotion_condition": {
@@ -5087,6 +5099,12 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            },
+            {
+              "observes": "The Android controller with a recorded Media3 player retries a now-local current song in the same session and excludes remote-only successors for preload, Next and natural completion. Separate cases cover stale local-file validation, actual remote progress and OS/contact guards.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/retryingTheNowCachedCurrentSongPreservesTheOutageForPreloadNextAndNaturalEnd"
             }
           ],
           "promotion_condition": {

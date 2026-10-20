@@ -209,6 +209,7 @@ public class AndroidPlaybackController internal constructor(
     private val store = boundaries?.store ?: DulcetDriverFactory(context.applicationContext).openDulcetDatabase()
     private val resumes = PersistentResumePositionStore(store.database)
     @Volatile private var serverAvailable = AndroidLibraryReader.currentFor(account.providerInstanceId)?.serverAvailableForPlayback ?: true
+    private var remoteRetryAttempt: AttemptId? = null
     private var networkAvailable = true
     private val queue = PlaybackQueueController(PersistentQueueStore(store.database), resumes,
         PlaybackIdentitySource { "$it:${UUID.randomUUID()}" }, canPlayItem = { item ->
@@ -387,7 +388,15 @@ public class AndroidPlaybackController internal constructor(
         }
         engine.setEventListener { event ->
             if (closed) return@setEventListener
-            if (event is PlaybackEngineEvent.PlaybackProgressBegan) progressedAttempt = event.attemptId
+            if (event is PlaybackEngineEvent.PlaybackProgressBegan) {
+                progressedAttempt = event.attemptId
+                // A local retry proves only that its file plays. URL resolution and a prepared
+                // remote source also say nothing about contact: only the current remote attempt's
+                // actual progress establishes recovery, never an outgoing/preloaded attempt.
+                val remote = activePlan as? RemotePlaybackWirePlan
+                if (networkAvailable && contactOpen() && remote?.attemptId == event.attemptId &&
+                    queue.snapshot().currentSession?.currentAttempt?.attemptId == event.attemptId) serverAvailable = true
+            }
             if (event is PlaybackEngineEvent.FailedBeforeStart) failure = event.error
             if (event is PlaybackEngineEvent.FailedAfterPartial) failure = event.error
             val failedAttempt = when (event) {
@@ -625,9 +634,6 @@ public class AndroidPlaybackController internal constructor(
 
     public fun play() {
         if (!live()) return
-        // Play after an unreachable failure is the person's Try Again. Continuation still
-        // observes the last server result; an explicit retry may discover it has returned.
-        if (networkAvailable && failure == DomainError.Transport.Unreachable) serverAvailable = true
         if (activePlan == null) {
             if (resolution?.isActive == true || startJob?.isActive == true) {
                 wantsPlay = true; recordPlayRequested(); return
@@ -648,7 +654,21 @@ public class AndroidPlaybackController internal constructor(
             // listen interrupted by a failure scrobbles once. Otherwise the selected entry starts
             // a new session.
             val failed = queue.snapshot().currentSession?.currentAttempt?.phase == PlaybackAttemptPhase.Failed
-            transition(if (failed) queue.retryCurrent() else queue.restartCurrent(ServerId(account.providerInstanceId)))
+            // Try Again may probe the selected song while the server is known unreachable, but
+            // it does not admit other remote songs. start() still validates any local file first;
+            // a missing/stale file can fall back to this deliberate remote retry. Until genuine
+            // remote progress, continuation and overlap keep using the last observed outage.
+            val allowRemoteRetry = networkAvailable && contactOpen()
+            val retry = if (failed) queue.retryCurrent(allowUnavailableCurrent = allowRemoteRetry)
+                else queue.restartCurrent(ServerId(account.providerInstanceId))
+            remoteRetryAttempt = retry.startDirective?.attemptId?.takeIf { failed && allowRemoteRetry }
+            if (failed && retry.startDirective == null) {
+                wantsPlay = false
+                if (!contactOpen()) needsReconnect = true
+                publish()
+                return
+            }
+            transition(retry)
         } else { wantsPlay = true; recordPlayRequested(); command(PlaybackCommand.Play(id())) }
     }
 
@@ -1212,6 +1232,13 @@ public class AndroidPlaybackController internal constructor(
                     heldStart = directive
                     if (wantsPlay) { wantsPlay = false; needsReconnect = true }
                     publish()
+                    return@launch
+                }
+                // Availability is deliberately cheap; a file may disappear between queue
+                // selection and validation. Only an authorized explicit retry may probe past an
+                // observed outage, and OS loss still refuses the wire even for that retry.
+                if (!networkAvailable || (!serverAvailable && localPlans != null && remoteRetryAttempt != directive.attemptId)) {
+                    failBeforeStart(directive, DomainError.Transport.Unreachable, generation)
                     return@launch
                 }
                 val song = knownSong ?: loadSong(directive.itemId.rawId)

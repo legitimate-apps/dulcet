@@ -575,14 +575,16 @@ internal class PlaybackQueueController(
      * leaves it, the selected entry starts. A session that has not failed changes nothing: there
      * is nothing to try again.
      */
-    fun retryCurrent(): PlaybackQueueTransition {
+    fun retryCurrent(allowUnavailableCurrent: Boolean = false): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = queues.load(serverId)
         val index = state.currentIndex ?: return emptyTransition()
         val entry = state.entries[index]
-        if (!canPlayItem(entry.providerItemId)) return emptyTransition()
+        // An explicit, contact-authorized probe may retry this entry without changing the
+        // availability predicate used by passive continuation and preloading.
+        if (!allowUnavailableCurrent && !canPlayItem(entry.providerItemId)) return emptyTransition()
         skippedPastFailures.clear()
-        val session = playback.currentSession ?: return startAt(state, index)
+        val session = playback.currentSession ?: return startAt(state, index, allowUnavailableCurrent = allowUnavailableCurrent)
         val failed = session.currentAttempt
         if (session.queueEntryId != entry.queueEntryId || failed.phase != PlaybackAttemptPhase.Failed) {
             return emptyTransition()
@@ -1114,11 +1116,13 @@ internal class PlaybackQueueController(
         priorEffects: List<PlaybackCoreEffect> = emptyList(),
         travel: QueueTravel = QueueTravel.Forward,
         resume: Boolean = false,
+        allowUnavailableCurrent: Boolean = false,
     ): PlaybackQueueTransition {
         val entry = state.entries[index]
-        if (!canPlayItem(entry.providerItemId)) return emptyTransition(priorEffects)
+        if (!allowUnavailableCurrent && !canPlayItem(entry.providerItemId)) return emptyTransition(priorEffects)
         queues.setCurrentIndex(state.serverId, index)
-        val transition = beginSession(entry, replacingQueue = false, travel = travel, resume = resume)
+        val transition = beginSession(entry, replacingQueue = false, travel = travel, resume = resume,
+            allowUnavailableCurrent = allowUnavailableCurrent)
         return transition.copy(effects = priorEffects + transition.effects)
     }
 
@@ -1133,8 +1137,9 @@ internal class PlaybackQueueController(
         replacingQueue: Boolean,
         travel: QueueTravel = QueueTravel.Forward,
         resume: Boolean = false,
+        allowUnavailableCurrent: Boolean = false,
     ): PlaybackQueueTransition {
-        if (!canPlayItem(entry.providerItemId)) return emptyTransition()
+        if (!allowUnavailableCurrent && !canPlayItem(entry.providerItemId)) return emptyTransition()
         // Anything but Previous reaches the entry going forward, and so does an automatic skip
         // that did not start from a Previous (§12.12).
         this.travel = travel

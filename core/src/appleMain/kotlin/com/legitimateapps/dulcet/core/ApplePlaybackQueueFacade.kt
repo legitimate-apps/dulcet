@@ -511,6 +511,11 @@ public class ApplePlaybackQueueClient private constructor(
         controllerOrThrow().retryCurrent()
     }
 
+    /** Only the selected current item may be probed; passive queue eligibility is unchanged. */
+    public fun retryCurrentAllowingUnavailableCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().retryCurrent(allowUnavailableCurrent = true)
+    }
+
     /**
      * Play after a stop (§12.1): the current attempt was stopped (`Skipped`), the engine's stop
      * removed its item, and a play addressed to it would reach nothing. The selected entry starts

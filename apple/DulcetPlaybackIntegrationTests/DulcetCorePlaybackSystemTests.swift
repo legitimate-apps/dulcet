@@ -1375,6 +1375,80 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertTrue(fixture.controller.preloadLog.contains("resumed-held-end"))
     }
 
+    func testCachedRetryKeepsServerLossFilteringForPreloadAndNext() async throws {
+        try await assertCachedRetryKeepsServerLossFiltering(naturalCompletion: false)
+    }
+
+    func testCachedRetryKeepsServerLossFilteringForNaturalCompletion() async throws {
+        try await assertCachedRetryKeepsServerLossFiltering(naturalCompletion: true)
+    }
+
+    private func assertCachedRetryKeepsServerLossFiltering(naturalCompletion: Bool) async throws {
+        let downloads = try CacheBackedLocalDownloads(account: account(provider))
+        defer { downloads.close() }
+        let fixture = makeFixture(tracks: ["a", "b", "c"], sourceContainer: .wav,
+                                  downloadController: downloads)
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        let session = try XCTUnwrap(fixture.session(ofPrepare: first))
+        // Complete the same stream while its original remote attempt remains active. These are
+        // validated cache rows in the queue's actual database, not a fake availability predicate.
+        try downloads.cache("a")
+        try downloads.cache("c")
+        XCTAssertNil(downloads.client.localPlaybackPlan(rawId: "b").plan)
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        fixture.controller.send(.retry)
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: 1)
+        XCTAssertEqual(fixture.session(ofPrepare: retried), session)
+        XCTAssertEqual(downloads.localAssetIDs, ["a"], "Retry must actually select the validated cache")
+        fixture.emit(.ready(attemptID: retried, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: retried, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "c")
+        await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+        if naturalCompletion {
+            fixture.emit(.endedNaturally(attemptID: retried, finalPosition: 120))
+            fixture.emit(.advancedToPreloaded(oldAttemptID: retried, newAttemptID: preload.attempt))
+            await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentIndex == 2 }
+        } else {
+            fixture.controller.send(.next)
+            _ = try await fixture.waitForPrepare(rawID: "c", after: 2)
+        }
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 2)
+        XCTAssertFalse(fixture.engine.commands.contains {
+            ($0.kind == "prepare" || $0.kind == "preload") && $0.title == "Track b"
+        }, "Local retry progress must not advertise recovery and select the remote-only successor")
+    }
+
+    func testExplicitRetryWithMissingCachedFileCanProbeAndRemoteProgressRestoresContinuation() async throws {
+        let downloads = try CacheBackedLocalDownloads(account: account(provider))
+        defer { downloads.close() }
+        let fixture = makeFixture(tracks: ["a", "b"], sourceContainer: .wav,
+                                  downloadController: downloads)
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        try downloads.cache("a")
+        let cached = try XCTUnwrap(downloads.client.localPlaybackPlan(rawId: "a").plan)
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        // The SQL availability row still exists, but actual local validation must reject the file.
+        try FileManager.default.removeItem(atPath: cached.filePath)
+        fixture.controller.setNetworkAvailable(false)
+        fixture.controller.send(.retry)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(fixture.engine.count("prepare"), 1,
+                       "A stale SQL row must not authorize remote fallback while OS-offline")
+        fixture.controller.setNetworkAvailable(true)
+        fixture.controller.send(.retry)
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: 1)
+        XCTAssertTrue(downloads.localAssetIDs.isEmpty, "The retry fell back to its authorized remote path")
+        XCTAssertFalse(fixture.engine.commands.contains { $0.kind == "preload" && $0.title == "Track b" })
+        fixture.emit(.ready(attemptID: retried, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: retried, wallClock: Date(), mediaPosition: 1))
+        _ = try await fixture.waitForPreload(rawID: "b")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
+    }
+
     private func makeFixture(
         tracks rawIDs: [String],
         artwork: Data? = nil,
@@ -1434,6 +1508,59 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         }
         return fixture
     }
+}
+
+/// Only the OS engine is simulated: cache promotion and local validation use the exported
+/// production client and the same SQLite database as the production queue facade.
+@MainActor
+private final class CacheBackedLocalDownloads: DulcetDownloadControlling {
+    let downloadsEnabled = true
+    let client: AppleDownloadClient
+    private let root: URL
+    private(set) var localAssetIDs: [String] = []
+
+    init(account: DulcetPlaybackAccount) throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("retry-cache-\(UUID().uuidString)")
+        client = AppleDownloadClient(account: PlaybackEndpointAccount(
+            providerInstanceId: account.providerInstanceID, normalizedBaseUrl: account.normalizedServerURL,
+            username: account.username, password: account.password, allowLocalHttp: account.allowLocalHTTP
+        ), databaseName: ":memory:", downloadRootPath: root.path)
+        XCTAssertNil(client.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1).errorKind)
+    }
+
+    func cache(_ rawID: String) throws {
+        // Complete mono PCM WAV: eight 16-bit samples at 8 kHz.
+        let bytes = Data([0x52,0x49,0x46,0x46,52,0,0,0,0x57,0x41,0x56,0x45,
+                          0x66,0x6d,0x74,0x20,16,0,0,0,1,0,1,0,0x40,0x1f,0,0,
+                          0x80,0x3e,0,0,2,0,16,0,0x64,0x61,0x74,0x61,16,0,0,0]
+                         + [UInt8](repeating: 0, count: 16))
+        let write = try XCTUnwrap(client.beginStreamingCache(rawId: rawID, container: .wav,
+            totalLength: Int64(bytes.count), durationMilliseconds: 120_000, rangeStart: 0,
+            credentialGeneration: 1, wallClockMilliseconds: 1))
+        XCTAssertTrue(client.appendStreamingCache(writeId: write, bytes: bytes, offset: 0))
+        XCTAssertTrue(client.finishStreamingCache(writeId: write, totalLength: Int64(bytes.count), wallClockMilliseconds: 2))
+        XCTAssertNotNil(client.localPlaybackPlan(rawId: rawID).plan)
+    }
+
+    func close() {
+        _ = client.removeAccountData()
+        client.close()
+        try? FileManager.default.removeItem(at: root)
+    }
+    func setStatusHandler(_ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void) {}
+    func configure(account: DulcetPlaybackAccount) {}
+    func requestDownload(_ track: DulcetTrack) { XCTFail("This proof only retains streamed bytes") }
+    func status(for id: DulcetProviderItemID) -> DulcetDownloadState { .notDownloaded }
+    func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? {
+        guard let plan = client.localPlaybackPlan(rawId: track.id.rawID).plan,
+              plan.expectedContainer == "Wav" else { return nil }
+        localAssetIDs.append(track.id.rawID)
+        return DulcetOfflinePlaybackAsset(expectedContainer: .wav, exactByteLength: plan.exactByteLength,
+            resource: DulcetLocalFilePlaybackResource(fileURL: URL(fileURLWithPath: plan.filePath),
+                                                     exactByteLength: plan.exactByteLength))
+    }
+    func removeAccountData() async -> Bool { false }
+    func disconnect() {}
 }
 
 @MainActor

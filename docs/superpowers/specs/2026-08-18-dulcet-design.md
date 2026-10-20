@@ -3143,6 +3143,13 @@ first observation that the account became unreachable while the OS still has a n
 updates account availability before delivering that failure; the core can then continue onto a local
 successor. Authentication, trust and other account failures retain their existing ownership.
 
+Try Again may probe only the selected entry when OS connectivity and the account contact
+gate permit it. That permission does not make remote-only successors eligible. A retry that starts
+from a validated local file preserves the last observed server loss; only actual playback progress
+from the matching current remote attempt restores playback reachability. URL construction, local
+progress, and stale or preloaded events are insufficient. If a local row outlives its file, validation
+still runs before playback, and its remote fallback remains subject to the same OS/contact gates.
+
 ### 14.6 Storage budget and eviction priority
 
 One disk budget per account, user-configurable, with a strict priority order:
@@ -7906,6 +7913,13 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-19 — Scope offline recovery to the selected retry.**
+§14.5.1 distinguishes deliberate retry permission from account reachability. Retrying an already
+cached current entry leaves passive continuation restricted to locally playable successors after
+an observed server loss. The shared queue may admit only the selected current entry for a guarded
+remote probe; actual current remote playback progress restores reachability. This also preserves
+OS-offline and saved-account contact boundaries when an indexed local file disappears.
 
 **2026-10-19 — Give completed parity checks enough time to finish cleanup.**
 Both attempts of Actions run `39300490385` passed every test step, then the five-minute

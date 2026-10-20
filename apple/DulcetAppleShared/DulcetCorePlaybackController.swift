@@ -72,6 +72,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// busy server's own `Retry-After` is honoured rather than re-attacked (spec §12.2, §12.8).
     private var preloadSuppressedUntil: ContinuousClock.Instant?
     private var currentPlanIsTranscoded = false
+    /// Only actual progress from this remote attempt can establish that the server returned.
+    private var currentRemoteAttemptID: String?
     private let clock = ContinuousClock()
     /// Every preload lifecycle step, in order, for tests and diagnostics. Content-free.
     private(set) var preloadLog: [String] = []
@@ -235,6 +237,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         restoredPausedSessions = []
         pendingStarts = [:]
         activeDirectiveIdentity = nil
+        currentRemoteAttemptID = nil
         // A notice names a track of the account's queue, so reaching another server withdraws it
         // (§12.12 rule 5). Configuring the same server again keeps it.
         if self.presentationAccount?.providerInstanceID != presentationAccount.providerInstanceID {
@@ -489,14 +492,17 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// try again.
     private func retryCurrentEntry() {
         guard account != nil else { return }
-        // Try Again is a deliberate probe of a server that may have returned. A saved/device-only
-        // account has no configured wire, and an OS-offline device still cannot make that probe.
-        if networkAvailable, wireClient != nil { setServerAvailable(true) }
-        let transition = queueClient.retryCurrent()
+        // Authorize only this deliberate probe. A cached retry says nothing about whether the
+        // server returned, so passive continuation retains its observed availability throughout.
+        // Saved/device-only accounts have no wire; OS-offline devices cannot authorize a probe.
+        let permitsRemoteProbe = networkAvailable && wireClient != nil
+        let transition = permitsRemoteProbe
+            ? queueClient.retryCurrentAllowingUnavailableCurrent()
+            : queueClient.retryCurrent()
         guard transition.errorKind == nil else { return publishFailure() }
         guard transition.startDirective != nil else { return }
         publishPreparing()
-        start(transition.startDirective)
+        start(transition.startDirective, allowsUnavailableServerProbe: permitsRemoteProbe)
     }
 
     /// Play after a stop: the selected entry again, as a new session (spec §12.1), resuming where
@@ -632,6 +638,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         progressingSessions = []
         restoredPausedSessions = []
         activeDirectiveIdentity = nil
+        currentRemoteAttemptID = nil
         pendingStarts = [:]
         autoplayOperation?.cancel()
         autoplayOperation = nil
@@ -648,11 +655,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         emitPresentation()
     }
 
-    private func start(_ directive: ApplePlaybackStartDirectiveDto?) {
+    private func start(_ directive: ApplePlaybackStartDirectiveDto?, allowsUnavailableServerProbe: Bool = false) {
         guard let directive else {
             publish(queueClient.snapshot())
             return
         }
+        currentRemoteAttemptID = nil
         // Every start below issues a stop, and the engine's stop removes its preloaded item too;
         // the core discarded its registration when it began this session.
         abandonPreload(reason: "start")
@@ -709,7 +717,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             }
             return
         }
-        guard let wireClient else {
+        guard networkAvailable,
+              serverAvailable || downloadController == nil || allowsUnavailableServerProbe,
+              let wireClient else {
+            // An invalid local file cannot turn passive continuation or an OS-offline retry
+            // into a new remote probe. Only this contact-authorized explicit retry may probe.
             // No connection to the server at all: that is never the item's own failure, so it
             // must not read as one and send the queue skipping (spec §12.12).
             recordStartFailure(attemptId: directive.attemptId, errorKind: "transport")
@@ -756,6 +768,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     )
                     return
                 }
+                self.currentRemoteAttemptID = directive.attemptId
                 self.currentPlanIsTranscoded = corePlan.isTranscoded
                 let plan = DulcetCorePlaybackPlanFactory.makePlan(
                     client: wireClient,
@@ -828,12 +841,19 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         if case let .advancedToPreloaded(_, newAttemptID) = event,
            preload?.attemptID == newAttemptID.rawValue {
             preloadLog.append("advanced")
+            currentRemoteAttemptID = preload?.corePlan == nil ? nil : newAttemptID.rawValue
             currentPlanIsTranscoded = preload?.corePlan?.isTranscoded ?? false
             preload = nil
         }
         if case let .playbackProgressBegan(attemptID, _, _) = event,
            let session = transition.snapshot?.currentSession,
            session.attemptId == attemptID.rawValue {
+            // Resolution can merely construct a URL. Remote playback progress, unlike a local
+            // retry or a stale/preloaded event, demonstrates a successful current wire attempt.
+            if currentRemoteAttemptID == attemptID.rawValue, session.phase == "Progressing",
+               networkAvailable, wireClient != nil {
+                setServerAvailable(true)
+            }
             progressingSessions.insert(session.playbackSessionId)
             restoredPausedSessions.remove(session.playbackSessionId)
         }
