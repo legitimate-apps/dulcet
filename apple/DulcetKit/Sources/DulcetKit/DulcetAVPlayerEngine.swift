@@ -112,6 +112,20 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         return state
     }
 
+    /// Counts live item-scoped registrations, including any fading tail, on the engine queue.
+    func itemNotificationObserverCountForTesting() -> Int {
+        var count = 0
+        performOnQueueSynchronously { [self] in
+            var visited: Set<ObjectIdentifier> = []
+            for context in [current, preloaded, overlap?.context, preparedCrossfadeIncoming?.context].compactMap({ $0 }) {
+                if visited.insert(ObjectIdentifier(context)).inserted {
+                    count += context.notificationObservers.count
+                }
+            }
+        }
+        return count
+    }
+
     func currentPlayerIdentityForTesting() -> ObjectIdentifier {
         var identity: ObjectIdentifier!
         performOnQueueSynchronously { [self] in identity = ObjectIdentifier(player) }
@@ -221,6 +235,15 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 return
             }
             self.executeOnQueue(command, completion: completion)
+        }
+    }
+
+    /// Account reconfiguration is a lifetime barrier, not an asynchronous transport command.
+    /// Once this returns, no native player retains a current, queued, prepared or fading item.
+    public func stopForAccountChange() {
+        performOnQueueSynchronously { [self] in
+            guard !released else { return }
+            stop(reason: .user)
         }
     }
 
@@ -680,7 +703,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         removeCrossfadeTimeObserver()
         guard let current else {
             player.pause()
+            preloaded?.invalidate()
+            preloaded = nil
+            artworkBySession = [:]
             player.removeAllItems()
+            deactivateAudioSessionImmediately()
+            systemMediaControls.clear()
             return
         }
         let position = currentPosition(for: current)
@@ -835,7 +863,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             }
         )
         let center = NotificationCenter.default
-        notificationObservers.append(
+        context.notificationObservers.append(
             center.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,
                 object: observedItem,
@@ -848,7 +876,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 }
             }
         )
-        notificationObservers.append(
+        context.notificationObservers.append(
             center.addObserver(
                 forName: .AVPlayerItemFailedToPlayToEndTime,
                 object: observedItem,
@@ -865,7 +893,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 }
             }
         )
-        notificationObservers.append(
+        context.notificationObservers.append(
             center.addObserver(
                 forName: .AVPlayerItemPlaybackStalled,
                 object: observedItem,
@@ -1869,6 +1897,7 @@ private final class PlayerItemContext: @unchecked Sendable {
     let loader: DulcetAVAssetResourceLoaderDelegate
     var isPreloaded: Bool
     var observers: [NSKeyValueObservation] = []
+    var notificationObservers: [NSObjectProtocol] = []
     var readyEmitted = false
     var playRequested = false
     var progressBegan = false
@@ -1908,6 +1937,8 @@ private final class PlayerItemContext: @unchecked Sendable {
         cancelStartupRecovery()
         observers.forEach { $0.invalidate() }
         observers.removeAll()
+        notificationObservers.forEach(NotificationCenter.default.removeObserver)
+        notificationObservers.removeAll()
     }
 
     func cancelStartupRecovery() {

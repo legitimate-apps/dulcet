@@ -1047,7 +1047,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             case let .connected(account):
                 do {
                     let instanceID = self.providerInstanceID ?? self.providerInstanceIDFactory()
-                    let saved = request.savingServerURL(account.normalizedServerURL)
+                    let saved = request.savingConnectedAccount(account)
                     if let credentialStore = self.credentialStore
                         as? any DulcetProviderInstanceCredentialStoring {
                         try credentialStore.save(saved, providerInstanceID: instanceID)
@@ -1058,12 +1058,12 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                         self.savedServerName = account.serverName
                     }
                     self.providerInstanceID = instanceID
-                    self.configurePlayback(account: account, request: request)
-                    self.openConnectedReader(account: account, request: request)
+                    self.configurePlayback(account: account, request: saved)
+                    self.openConnectedReader(account: account, request: saved)
                     self.publish(
                         state: .accountConnected,
                         destination: .settings,
-                        form: request,
+                        form: saved,
                         status: .connected(account)
                     )
                     // A connection the person asked for lands on their library, from Connection as
@@ -1073,7 +1073,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                     // just established, so anything held is another session's.
                     if origin == .library || origin == .listenNow || origin == .settings {
                         if self.readerOwnsLibrary {
-                            self.publish(state: .libraryBrowse, destination: origin == .settings ? .listenNow : origin, form: request, status: .connected(account))
+                            self.publish(state: .libraryBrowse, destination: origin == .settings ? .listenNow : origin, form: saved, status: .connected(account))
                         } else { self.openLibrary(reason: .connected) }
                     }
                 } catch {
@@ -1131,7 +1131,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         case let .connected(account):
             do {
                 let instanceID = providerInstanceID ?? providerInstanceIDFactory()
-                let saved = request.savingServerURL(account.normalizedServerURL)
+                let saved = request.savingConnectedAccount(account)
                 if let credentialStore = credentialStore as? any DulcetProviderInstanceCredentialStoring {
                     try credentialStore.save(saved, providerInstanceID: instanceID)
                 } else {
@@ -1143,9 +1143,9 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 providerInstanceID = instanceID
                 reconnectRetryDelay = .seconds(2)
                 cancelReconnectRetry()
-                configurePlayback(account: account, request: request)
-                openConnectedReader(account: account, request: request)
-                publishInPlace(status: .connected(account), form: request)
+                configurePlayback(account: account, request: saved)
+                openConnectedReader(account: account, request: saved)
+                publishInPlace(status: .connected(account), form: saved)
                 switch currentSnapshot.selectedDestination {
                 case .listenNow:
                     break
@@ -2795,6 +2795,16 @@ extension DulcetAccountDataSource: DulcetLibrarySessionProviding {
 }
 
 extension DulcetAccountConnectRequest {
+    /// Preserve the server-confirmed account name exactly; servers decide username identity.
+    func savingConnectedAccount(_ account: DulcetConnectedAccountSummary) -> DulcetAccountConnectRequest {
+        DulcetAccountConnectRequest(
+            serverURL: account.normalizedServerURL.isEmpty ? serverURL : account.normalizedServerURL,
+            username: account.canonicalUsername ?? username,
+            password: password,
+            allowLocalHTTP: allowLocalHTTP
+        )
+    }
+
     /// The request as saved: with the address the server was actually reached at, so the next
     /// launch opens the same cache namespace without having to reach the server first.
     func savingServerURL(_ normalizedServerURL: String) -> DulcetAccountConnectRequest {

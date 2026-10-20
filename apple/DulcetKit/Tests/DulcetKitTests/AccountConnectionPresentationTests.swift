@@ -6,6 +6,24 @@ import Security
 import Testing
 @testable import DulcetKit
 
+@MainActor
+@Test
+func authenticatedCanonicalUsernameIsSavedAndUsedWithoutClientCaseFolding() throws {
+    for canonical in ["Canonical-Alice", nil] as [String?] {
+        let connector = ControlledAccountConnector()
+        let credentials = MemoryCredentialStore(persisted: nil)
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector, credentialStore: credentials))
+        store.accountServerURL = "https://music.example.invalid"
+        store.accountUsername = "ALIce"
+        store.accountPassword = "fixture"
+        store.submitAccountConnection()
+        connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+            normalizedServerURL: "https://music.example.invalid", canonicalUsername: canonical)))
+        #expect(try credentials.load()?.username == (canonical ?? "ALIce"))
+        #expect(store.accountUsername == (canonical ?? "ALIce"))
+    }
+}
+
 @Test
 func credentialBearingPresentationValuesCannotPrintCredentials() {
     let credentialValues = [

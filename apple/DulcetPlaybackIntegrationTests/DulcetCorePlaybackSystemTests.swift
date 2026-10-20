@@ -1449,6 +1449,56 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
     }
 
+    func testPasswordRefreshKeepsInstalledCurrentAndPreloadedLocalPlans() async throws {
+        let downloads = try CacheBackedLocalDownloads(account: account(provider))
+        defer { downloads.close() }
+        try downloads.cache("a")
+        try downloads.cache("b")
+        let fixture = makeFixture(tracks: ["a", "b"], sourceContainer: .wav, downloadController: downloads)
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let next = try await fixture.waitForPreload(rawID: "b")
+        await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+        let counts = ["prepare", "stop", "discard", "preload"].map(fixture.engine.count)
+        let oldSession = fixture.session(ofPrepare: first)
+        let original = account(provider)
+        fixture.controller.configure(account: .init(providerInstanceID: provider,
+            normalizedServerURL: original.normalizedServerURL, username: original.username,
+            password: "refreshed-password", allowLocalHTTP: true))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(["prepare", "stop", "discard", "preload"].map(fixture.engine.count), counts)
+        XCTAssertEqual(fixture.session(ofPrepare: first), oldSession)
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "preload" }?.attempt, next.attempt.rawValue)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
+    }
+
+    func testHeldStopCompletionCannotPrepareTheOldBindingAfterRebindOrDisconnect() async throws {
+        for disconnect in [false, true] {
+            let downloads = try CacheBackedLocalDownloads(account: account(provider))
+            defer { downloads.close() }
+            try downloads.cache("a")
+            let fixture = makeFixture(tracks: ["a"], sourceContainer: .wav, downloadController: downloads)
+            fixture.engine.holdStopCompletions = true
+            fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+            await fixture.waitFor { fixture.engine.count("stop") > 0 }
+            XCTAssertEqual(fixture.engine.count("prepare"), 0)
+            if disconnect {
+                fixture.controller.disconnect()
+            } else {
+                let original = account(provider)
+                fixture.controller.configure(account: .init(providerInstanceID: provider,
+                    normalizedServerURL: original.normalizedServerURL, username: "different-user",
+                    password: original.password, allowLocalHTTP: true))
+            }
+            fixture.engine.completeHeldStops()
+            try await Task.sleep(for: .milliseconds(50))
+            XCTAssertEqual(fixture.engine.count("prepare"), 0,
+                "A delayed old stop completion must not prepare after account retirement")
+        }
+    }
+
     private func makeFixture(
         tracks rawIDs: [String],
         artwork: Data? = nil,
@@ -1710,6 +1760,8 @@ private struct RecordedCommand: Sendable {
 
 /// Accepts every command; emits nothing on its own.
 private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked Sendable {
+    func stopForAccountChange() { execute(.stop(commandID: .init("binding-stop"))) { _ in } }
+
     private let lock = NSLock()
     private var listener: DulcetPlaybackEventHandler?
     private var recorded: [RecordedCommand] = []
@@ -1717,6 +1769,16 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
     private var heldPreloads: [(DulcetPlaybackCommandOutcome, DulcetPlaybackCommandCompletion)] = []
     /// When set, `preloadNext` is recorded but not answered until `completeHeldPreloads()`.
     var holdPreloadCompletions = false
+    var holdStopCompletions = false
+    private var heldStops: [(DulcetPlaybackCommandOutcome, DulcetPlaybackCommandCompletion)] = []
+
+    func completeHeldStops() {
+        let held = lock.withLock { () -> [(DulcetPlaybackCommandOutcome, DulcetPlaybackCommandCompletion)] in
+            defer { heldStops = [] }
+            return heldStops
+        }
+        held.forEach { outcome, completion in completion(outcome) }
+    }
 
     func completeHeldPreloads() {
         let held = lock.withLock { () -> [(DulcetPlaybackCommandOutcome, DulcetPlaybackCommandCompletion)] in
@@ -1789,6 +1851,10 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
         lock.withLock { recorded.append(entry) }
         if entry.kind == "preload", holdPreloadCompletions {
             lock.withLock { heldPreloads.append((outcome, completion)) }
+            return
+        }
+        if entry.kind == "stop", holdStopCompletions {
+            lock.withLock { heldStops.append((outcome, completion)) }
             return
         }
         completion(outcome)

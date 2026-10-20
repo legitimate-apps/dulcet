@@ -3,12 +3,89 @@ import DulcetKit
 import Foundation
 import Network
 
+/// A configured client may outlive a credential refresh while its validated media is retained.
+/// Only the controller and its playback resources own this lifetime; callback collaborators do not.
+final class DulcetCorePlaybackWireLifetime: @unchecked Sendable {
+    let client: ApplePlaybackWireClient
+    private let lock = NSLock()
+    private var closed = false
+    private let closesClient: Bool
+
+    init(client: ApplePlaybackWireClient, closesClient: Bool = true) {
+        self.client = client
+        self.closesClient = closesClient
+    }
+
+    func close() {
+        lock.lock()
+        guard !closed else { lock.unlock(); return }
+        closed = true
+        lock.unlock()
+        client.close()
+    }
+
+    deinit { if closesClient { close() } }
+}
+
+/// Shared only by one canonical media binding. Each new open captures a client once; replacing
+/// credentials never redirects an already authorized request or an old binding to a different user.
+final class DulcetCorePlaybackWireSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: DulcetCorePlaybackWireLifetime?
+    private var revoked = false
+    private let binding: PlaybackEndpointAccount?
+
+    /// Standalone factory callers retain one immutable client and cannot rotate its account.
+    init(client: ApplePlaybackWireClient) {
+        binding = nil
+        current = DulcetCorePlaybackWireLifetime(client: client, closesClient: false)
+    }
+
+    init(account: PlaybackEndpointAccount) {
+        binding = account
+        current = DulcetCorePlaybackWireLifetime(client: ApplePlaybackWireClient(account: account))
+    }
+
+    func select() -> DulcetCorePlaybackWireLifetime? {
+        lock.lock()
+        defer { lock.unlock() }
+        return revoked ? nil : current
+    }
+
+    @discardableResult
+    func replace(account: PlaybackEndpointAccount) -> Bool {
+        guard let binding, MediaBindingIdentity.shared.sameAccount(first: binding, second: account) else {
+            revoke()
+            return false
+        }
+        let replacement = DulcetCorePlaybackWireLifetime(client: ApplePlaybackWireClient(account: account))
+        lock.lock()
+        guard !revoked else { lock.unlock(); return false }
+        let previous = current
+        current = replacement
+        lock.unlock()
+        // Release outside the lock: close can complete a cancelled request synchronously.
+        withExtendedLifetime(previous) {}
+        return true
+    }
+
+    func revoke() {
+        lock.lock()
+        revoked = true
+        let previous = current
+        current = nil
+        lock.unlock()
+        withExtendedLifetime(previous) {}
+    }
+}
+
 /// Copies the exported Kotlin plan classes into DulcetKit value types at the Objective-C boundary.
 enum DulcetCorePlaybackPlanFactory {
     @MainActor static func makePlan(
         client: ApplePlaybackWireClient,
         corePlan: AppleRemotePlaybackPlanDto,
         metadata: DulcetNowPlayingMetadata,
+        retaining source: DulcetCorePlaybackWireSource? = nil,
         wrapResource: (@MainActor (any DulcetPlaybackResourceLoading, DulcetAudioContainer) -> any DulcetPlaybackResourceLoading)? = nil
     ) -> DulcetPlaybackPlan {
         let deliveryProtocol: DulcetPlaybackDeliveryProtocol = switch corePlan.deliveryProtocol {
@@ -28,7 +105,8 @@ enum DulcetCorePlaybackPlanFactory {
         let resource = DulcetCorePlaybackResource(
             client: client,
             plan: corePlan,
-            expectedContainer: expectedContainer
+            expectedContainer: expectedContainer,
+            source: source ?? DulcetCorePlaybackWireSource(client: client)
         )
         return DulcetPlaybackPlan(
             playbackSessionID: DulcetPlaybackSessionID(corePlan.playbackSessionId),
@@ -42,26 +120,26 @@ enum DulcetCorePlaybackPlanFactory {
 }
 
 private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
-    DulcetPlaybackRequestAuthorizing, DulcetPlaybackResponseValidating,
-    DulcetPlaybackRedirectEvaluating, @unchecked Sendable {
-    private let client: ApplePlaybackWireClient
-    private let plan: AppleRemotePlaybackPlanDto
-    private let expectedContainer: DulcetAudioContainer
-    private lazy var sessionResource = DulcetURLSessionPlaybackResource(
-        expectedContainer: expectedContainer,
-        authorizer: self,
-        validator: self,
-        redirectEvaluator: self
-    )
+    @unchecked Sendable {
+    private let source: DulcetCorePlaybackWireSource
+    private let sessionResource: DulcetURLSessionPlaybackResource
 
     init(
         client: ApplePlaybackWireClient,
         plan: AppleRemotePlaybackPlanDto,
-        expectedContainer: DulcetAudioContainer
+        expectedContainer: DulcetAudioContainer,
+        source: DulcetCorePlaybackWireSource
     ) {
-        self.client = client
-        self.plan = plan
-        self.expectedContainer = expectedContainer
+        self.source = source
+        // The collaborators never retain this resource: otherwise resource -> session ->
+        // authorizer/validator would keep both the resource and its client lifetime alive.
+        let context = DulcetCorePlaybackRequestContext(source: source, plan: plan)
+        sessionResource = DulcetURLSessionPlaybackResource(
+            expectedContainer: expectedContainer,
+            authorizer: context,
+            validator: context,
+            redirectEvaluator: context
+        )
     }
 
     var description: String { "DulcetCorePlaybackResource(<redacted>)" }
@@ -72,6 +150,17 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
     ) -> any DulcetPlaybackResourceLoadOperation {
         sessionResource.load(request, completion: completion)
     }
+}
+
+private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAuthorizing,
+    DulcetPlaybackResponseValidating, DulcetPlaybackRedirectEvaluating, @unchecked Sendable {
+    private weak var source: DulcetCorePlaybackWireSource?
+    private let plan: AppleRemotePlaybackPlanDto
+
+    init(source: DulcetCorePlaybackWireSource, plan: AppleRemotePlaybackPlanDto) {
+        self.source = source
+        self.plan = plan
+    }
 
     func authorize(
         range: DulcetPlaybackByteRange,
@@ -79,7 +168,11 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
             Result<DulcetPlaybackAuthorizedRequest, DulcetPlaybackFailure>
         ) -> Void
     ) -> any DulcetPlaybackResourceLoadOperation {
-        let operation = client.startPrepareRequest(
+        guard let selected = source?.select() else {
+            completion(.failure(.transport))
+            return DulcetCoreRetiredPlaybackOperation()
+        }
+        let operation = selected.client.startPrepareRequest(
             plan: plan,
             rangeStart: range.start,
             rangeEndInclusive: range.endInclusive
@@ -98,7 +191,7 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
             }
             completion(.success(DulcetPlaybackAuthorizedRequest(request: request)))
         }
-        return DulcetCorePlaybackOperation(operation: operation)
+        return DulcetCorePlaybackOperation(operation: operation, lifetime: selected)
     }
 
     func validate(
@@ -107,7 +200,10 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
         requestedRange: DulcetPlaybackByteRange,
         requiresAudioSignature: Bool
     ) -> DulcetPlaybackResponseValidation {
-        let outcome = client.validateResponse(
+        guard let selected = source?.select() else {
+            return .rejected(error: .transport, refreshReason: nil)
+        }
+        let outcome = selected.client.validateResponse(
             plan: plan,
             statusCode: Int32(response.statusCode),
             contentType: response.contentType,
@@ -143,7 +239,8 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
         proposedURL: URL,
         redirectsAlreadyFollowed: Int
     ) -> DulcetPlaybackRedirectDecision {
-        let outcome = client.evaluateRedirect(
+        guard let selected = source?.select() else { return .reject(.transport) }
+        let outcome = selected.client.evaluateRedirect(
             sourceUrl: sourceURL.absoluteString,
             proposedUrl: proposedURL.absoluteString,
             redirectsAlreadyFollowed: Int32(redirectsAlreadyFollowed)
@@ -178,14 +275,21 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
 private final class DulcetCorePlaybackOperation: DulcetPlaybackResourceLoadOperation,
     @unchecked Sendable {
     private let operation: any ApplePlaybackWireOperation
+    private let lifetime: DulcetCorePlaybackWireLifetime
 
-    init(operation: any ApplePlaybackWireOperation) {
+    init(operation: any ApplePlaybackWireOperation, lifetime: DulcetCorePlaybackWireLifetime) {
         self.operation = operation
+        self.lifetime = lifetime
     }
 
     func cancel() {
         operation.cancel()
     }
+}
+
+private final class DulcetCoreRetiredPlaybackOperation: DulcetPlaybackResourceLoadOperation,
+    @unchecked Sendable {
+    func cancel() {}
 }
 
 /// The one translation between the core's failure spellings and ``DulcetPlaybackFailure``, both

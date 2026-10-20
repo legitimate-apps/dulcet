@@ -1,5 +1,6 @@
 import DulcetCore
-import DulcetKit
+@testable import DulcetKit
+import AVFoundation
 import Foundation
 import XCTest
 #if os(iOS)
@@ -185,6 +186,116 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: unrelated), Data("unrelated".utf8))
         XCTAssertEqual(controller.offlineLibraryStorage.downloadBytes, 0)
         XCTAssertEqual(controller.offlineLibraryStorage.cacheBytes, 0)
+    }
+
+    /// Drive the downloads-first entry with real promoted files and real current/prepared players.
+    /// The forwarding protocol witness runs INSIDE the real adapter's binding-change callback:
+    /// files must still exist there, while native items have already been invalidated.
+    func testLocalPlaybackStopsBeforeARealBindingPurgeAndEquivalentRefreshKeepsIt() async throws {
+        for change in ["endpoint", "username", "password", "equivalent"] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-live-rebind-\(UUID())")
+            let databaseName = "dulcet-live-rebind-\(UUID()).db"
+            let account = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+                normalizedServerURL: "https://media.example.invalid/base", username: "first", password: "fixture",
+                allowLocalHTTP: false, credentialGeneration: 1)
+            let bytes = bindingPCMWave(seconds: 30)
+            let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+                normalizedBaseUrl: account.normalizedServerURL, username: account.username,
+                password: account.password, allowLocalHttp: false), databaseName: databaseName, downloadRootPath: root.path)
+            XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1).errorKind)
+            var paths: [String] = []
+            for raw in ["current", "incoming"] {
+                let write = try XCTUnwrap(seed.beginStreamingCache(rawId: raw, container: .wav,
+                    totalLength: Int64(bytes.count), durationMilliseconds: 30_000, rangeStart: 0,
+                    credentialGeneration: 1, wallClockMilliseconds: 1))
+                XCTAssertTrue(seed.appendStreamingCache(writeId: write, bytes: bytes, offset: 0))
+                XCTAssertTrue(seed.finishStreamingCache(writeId: write, totalLength: Int64(bytes.count), wallClockMilliseconds: 2))
+                paths.append(try XCTUnwrap(seed.localPlaybackPlan(rawId: raw).plan?.filePath))
+            }
+            seed.close()
+            let downloads = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                sessionConfiguration: .ephemeral)
+            let proxy = BindingBoundaryDownloads(downloads)
+            let nativePlayer = AVQueuePlayer()
+            let engine = DulcetAVPlayerEngine(player: nativePlayer)
+            let playback = DulcetCorePlaybackController(databaseName: databaseName, engine: engine, downloadController: proxy)
+            defer {
+                playback.disconnect()
+                downloads.disconnect()
+                try? FileManager.default.removeItem(at: root)
+                removeAdapterTestDatabase(databaseName)
+            }
+            downloads.configure(account: account)
+            playback.configureOffline(account: account)
+            try await waitUntil(timeout: .seconds(5), failureMessage: "local binding did not reconcile") {
+                downloads.offlineLibraryStorage.cacheBytes == Int64(bytes.count * 2)
+            }
+            for (index, raw) in ["current", "incoming"].enumerated() {
+                let track = DulcetTrack(id: .init(providerInstanceID: providerInstanceID, rawID: raw),
+                    title: raw, credits: [], albumTitle: nil, duration: .seconds(30), sourceContainer: .wav,
+                    mediaSourceID: nil, artwork: DulcetArtwork(seed: raw, palette: .indigoCoral))
+                let local = try XCTUnwrap(downloads.offlinePlaybackAsset(for: track))
+                let plan = DulcetPlaybackPlan(playbackSessionID: .init(raw), attemptID: .init(raw),
+                    deliveryProtocol: .httpProgressive, expectedContainer: .wav, resource: local.resource,
+                    metadata: .init(title: raw))
+                let command: DulcetPlaybackCommand = index == 0
+                    ? .prepare(commandID: .init(raw), plan: plan)
+                    : .preloadNext(commandID: .init(raw), plan: plan)
+                let outcome = await bindingExecute(engine, command)
+                XCTAssertEqual(outcome, .accepted(commandID: .init(raw)))
+            }
+            let fadeOutcome = await bindingExecute(engine, .setCrossfade(commandID: .init("fade"),
+                attemptID: .init("current"), duration: 2))
+            XCTAssertEqual(fadeOutcome, .completed(commandID: .init("fade"), result: .withoutData))
+            try await waitUntil(timeout: .seconds(30), failureMessage: "both real local decoders must prepare") {
+                nativePlayer.currentItem?.status == .readyToPlay && engine.preparedCrossfadeStateForTesting()?.isReady == true
+            }
+            let playOutcome = await bindingExecute(engine, .play(commandID: .init("play-local")))
+            XCTAssertEqual(playOutcome, .accepted(commandID: .init("play-local")))
+            try await waitUntil(timeout: .seconds(10), failureMessage: "current local file must actually play before rebind") {
+                nativePlayer.rate > 0 && CMTimeGetSeconds(nativePlayer.currentTime()) > 0.1
+            }
+            let current = try XCTUnwrap(nativePlayer.currentItem)
+            let incoming = try XCTUnwrap(engine.preparedCrossfadeStateForTesting())
+            let actualChange = change == "endpoint" || change == "username"
+            var witnessedBeforePurge = 0
+            proxy.afterRetirement = {
+                witnessedBeforePurge += 1
+                XCTAssertTrue(paths.allSatisfy { FileManager.default.fileExists(atPath: $0) },
+                    "witness must occur before the real unlink, not after it")
+                XCTAssertNil(nativePlayer.currentItem, "current player must be empty BEFORE deletion")
+                XCTAssertTrue(nativePlayer.items().isEmpty, "native queue must be empty BEFORE deletion")
+                XCTAssertNil(engine.preparedCrossfadeStateForTesting(), "incoming decoder must be retired BEFORE deletion")
+                XCTAssertEqual(nativePlayer.rate, 0)
+            }
+            let replacement = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+                normalizedServerURL: change == "endpoint" ? "https://other.example.invalid/base"
+                    : change == "equivalent" ? "https://MEDIA.example.invalid:443/base/" : account.normalizedServerURL,
+                username: change == "username" ? "second" : account.username,
+                password: change == "password" ? "replacement-password" : account.password,
+                allowLocalHTTP: false, credentialGeneration: 2)
+            // Downloads may be opened before any presentation/playback reconfiguration.
+            downloads.configure(account: replacement)
+            if actualChange {
+                XCTAssertEqual(witnessedBeforePurge, 1, "real binding purge must pass the retirement barrier")
+                XCTAssertNil(nativePlayer.currentItem)
+                XCTAssertNil(engine.preparedCrossfadeStateForTesting())
+                XCTAssertTrue(paths.allSatisfy { !FileManager.default.fileExists(atPath: $0) })
+            } else {
+                XCTAssertEqual(witnessedBeforePurge, 0)
+                XCTAssertTrue(nativePlayer.currentItem === current, "same binding must preserve native current")
+                XCTAssertEqual(engine.preparedCrossfadeStateForTesting()?.itemIdentity, incoming.itemIdentity,
+                    "password/equivalent refresh must preserve prepared incoming")
+                XCTAssertTrue(paths.allSatisfy { FileManager.default.fileExists(atPath: $0) })
+            }
+            playback.configureOffline(account: replacement)
+            if !actualChange {
+                XCTAssertTrue(nativePlayer.currentItem === current)
+                XCTAssertEqual(engine.preparedCrossfadeStateForTesting()?.itemIdentity, incoming.itemIdentity)
+            }
+            _ = await bindingExecute(engine, .release(commandID: .init("cleanup")))
+            withExtendedLifetime(playback) {}
+        }
     }
 
     private func removeAdapterTestDatabase(_ name: String) {
@@ -556,6 +667,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         // regressions, so the next full run exercises ownership, inbox cleanup and preference
         // delivery across asynchronous transfer reconciliation.
         try await testRebindingTheSameProviderRejectsPriorLocalBytesAndLateCacheCallbacks()
+        try await testLocalPlaybackStopsBeforeARealBindingPurgeAndEquivalentRefreshKeepsIt()
         try await testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair()
         try await testAutomaticDownloadPreferenceIsNotLostDuringSameAccountReconciliation()
         try await testPendingAutomaticDownloadPreferenceUsesLatestIntentAndDoesNotCrossAccounts()
@@ -1308,4 +1420,45 @@ private final class OfflineEngineProgress: @unchecked Sendable {
         default: break
         }
     }
+}
+
+@MainActor
+private final class BindingBoundaryDownloads: DulcetDownloadControlling {
+    let base: DulcetCoreDownloadController
+    var afterRetirement: (() -> Void)?
+    init(_ base: DulcetCoreDownloadController) { self.base = base }
+    var downloadsEnabled: Bool { base.downloadsEnabled }
+    func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {
+        base.setMediaBindingWillChangeHandler { [weak self] upcoming in
+            handler(upcoming)
+            self?.afterRetirement?()
+        }
+    }
+    func setStatusHandler(_ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void) { base.setStatusHandler(handler) }
+    func configure(account: DulcetPlaybackAccount) { base.configure(account: account) }
+    func setAutomaticDownloadContactPermitted(_ permitted: Bool) { base.setAutomaticDownloadContactPermitted(permitted) }
+    func requestDownload(_ track: DulcetTrack) { base.requestDownload(track) }
+    func status(for id: DulcetProviderItemID) -> DulcetDownloadState { base.status(for: id) }
+    func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? { base.offlinePlaybackAsset(for: track) }
+    func removeAccountData() async -> Bool { await base.removeAccountData() }
+    func disconnect() { base.disconnect() }
+    func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) { base.setStateRefreshHandler(handler) }
+}
+
+@MainActor
+private func bindingExecute(_ engine: DulcetAVPlayerEngine, _ command: DulcetPlaybackCommand) async -> DulcetPlaybackCommandOutcome {
+    await withCheckedContinuation { continuation in engine.execute(command) { continuation.resume(returning: $0) } }
+}
+
+private func bindingPCMWave(seconds: Int) -> Data {
+    let sampleRate = 8_000
+    let size = seconds * sampleRate * 2
+    var data = Data()
+    func text(_ value: String) { data.append(contentsOf: value.utf8) }
+    func le<T: FixedWidthInteger>(_ value: T) { var value = value.littleEndian; withUnsafeBytes(of: &value) { data.append(contentsOf: $0) } }
+    text("RIFF"); le(UInt32(36 + size)); text("WAVEfmt "); le(UInt32(16))
+    le(UInt16(1)); le(UInt16(1)); le(UInt32(sampleRate)); le(UInt32(sampleRate * 2))
+    le(UInt16(2)); le(UInt16(16)); text("data"); le(UInt32(size))
+    data.append(Data(repeating: 0, count: size))
+    return data
 }

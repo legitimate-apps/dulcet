@@ -26,6 +26,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var statusHandler:
         (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
     private var stateRefreshHandler: (@MainActor () -> Void)?
+    private var mediaBindingWillChangeHandler: (@MainActor (DulcetPlaybackAccount) -> Void)?
     private var prepareOperations: [DulcetProviderItemID: any AppleDownloadOperation] = [:]
     private var pendingTracks: [DulcetTrack] = []
     // Like pending tracks, a preference belongs to the configured URL/user binding. Repeated
@@ -140,11 +141,31 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         stateRefreshHandler = handler
     }
 
+    func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {
+        mediaBindingWillChangeHandler = handler
+    }
+
     func configure(account: DulcetPlaybackAccount) {
         automaticDownloadContactPermitted = false
-        let sameAccount = self.account?.providerInstanceID == account.providerInstanceID
-            && self.account?.normalizedServerURL == account.normalizedServerURL
-            && self.account?.username == account.username
+        let sameAccount = self.account.map { previous in
+            MediaBindingIdentity.shared.sameBinding(
+                firstProviderInstanceId: previous.providerInstanceID,
+                firstNormalizedBaseUrl: previous.normalizedServerURL,
+                firstUsername: previous.username,
+                secondProviderInstanceId: account.providerInstanceID,
+                secondNormalizedBaseUrl: account.normalizedServerURL,
+                secondUsername: account.username
+            )
+        } ?? false
+        if !sameAccount {
+            // This also covers downloads-first configuration: the engine must relinquish its
+            // current and prepared items before the new client's eager bind can purge files.
+            mediaBindingWillChangeHandler?(account)
+            cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
+            cacheWrites = [:]
+            protectedPlayback = [:]
+            updatePlaybackProtection()
+        }
         reconciliationGeneration += 1
         let generation = reconciliationGeneration
         reconciled = false

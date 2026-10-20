@@ -38,6 +38,8 @@ public protocol DulcetDownloadControlling: AnyObject {
     func setStatusHandler(
         _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
     )
+    /// Invoked synchronously before an actual binding change can remove media.
+    func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void)
     func configure(account: DulcetPlaybackAccount)
     /// New automatic library intent may contact the server only after account negotiation.
     /// Existing durable downloads retain their saved-launch recovery exception.
@@ -54,6 +56,7 @@ public protocol DulcetDownloadControlling: AnyObject {
 }
 
 public extension DulcetDownloadControlling {
+    func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {}
     func setAutomaticDownloadContactPermitted(_ permitted: Bool) {}
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {}
 }

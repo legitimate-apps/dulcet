@@ -921,7 +921,8 @@ final class DulcetCoreAccountConnector: DulcetAccountConnecting {
                     ?? account.normalizedBaseUrl
                 completion(.connected(DulcetConnectedAccountSummary(
                     serverName: account.serverType.isEmpty ? fallbackName : account.serverType,
-                    normalizedServerURL: account.normalizedBaseUrl
+                    normalizedServerURL: account.normalizedBaseUrl,
+                    canonicalUsername: account.canonicalUsername
                 )))
                 return
             }

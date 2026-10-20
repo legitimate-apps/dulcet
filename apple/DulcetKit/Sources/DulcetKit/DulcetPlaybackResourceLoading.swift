@@ -151,14 +151,25 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
     /// task rather than a completion-handler one, because a completion handler is given no data
     /// when the task ends in an error, so a body cut short could not reach the validator.
     private var transfersByTask: [Int: PlaybackTransfer] = [:]
-    private lazy var session: URLSession = {
+    private var initializedSession: URLSession?
+
+    private func sessionForLoading() -> URLSession {
+        lock.lock()
+        defer { lock.unlock() }
+        if let initializedSession { return initializedSession }
         let configuration = sessionConfiguration
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
-        return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-    }()
+        let session = URLSession(
+            configuration: configuration,
+            delegate: PlaybackSessionDelegate(owner: self),
+            delegateQueue: nil
+        )
+        initializedSession = session
+        return session
+    }
 
     public init(
         expectedContainer: DulcetAudioContainer,
@@ -191,8 +202,10 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
             case let .failure(error):
                 completion(.failed(error: error, refreshReason: nil))
             case let .success(authorized):
-                let task = self.session.dataTask(with: authorized.request)
-                self.setTaskCompletion(taskIdentifier: task.taskIdentifier) { [weak self, weak operation] data, response, error in
+                let task = self.sessionForLoading().dataTask(with: authorized.request)
+                self.setTaskCompletion(taskIdentifier: task.taskIdentifier, cancellation: {
+                    completion(.cancelled)
+                }) { [weak self, weak operation] data, response, error in
                     guard let self, let operation else {
                         completion(.cancelled)
                         return
@@ -266,7 +279,17 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
     }
 
     deinit {
-        session.invalidateAndCancel()
+        lock.lock()
+        let session = initializedSession
+        initializedSession = nil
+        let transfers = Array(transfersByTask.values)
+        transfersByTask.removeAll()
+        redirectsByTask.removeAll()
+        lock.unlock()
+        // Never construct a session from deinit: its delegate must be a living object. The
+        // proxy also lets an already used resource release without a session/delegate cycle.
+        session?.invalidateAndCancel()
+        for transfer in transfers { transfer.cancellation() }
     }
 
     private static func integerHeader(_ name: String, in response: HTTPURLResponse) -> Int64? {
@@ -297,10 +320,11 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
 
     private func setTaskCompletion(
         taskIdentifier: Int,
+        cancellation: @escaping @Sendable () -> Void,
         _ completion: @escaping @Sendable (Data, URLResponse?, Error?) -> Void
     ) {
         lock.lock()
-        transfersByTask[taskIdentifier] = PlaybackTransfer(completion: completion)
+        transfersByTask[taskIdentifier] = PlaybackTransfer(completion: completion, cancellation: cancellation)
         lock.unlock()
     }
 
@@ -344,6 +368,45 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
 private struct PlaybackTransfer {
     var body = Data()
     let completion: @Sendable (Data, URLResponse?, Error?) -> Void
+    let cancellation: @Sendable () -> Void
+}
+
+/// URLSession retains its delegate until invalidation completes. The delegate must not retain
+/// the resource which owns that session, including while a cancelled task is being torn down.
+private final class PlaybackSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private weak var owner: DulcetURLSessionPlaybackResource?
+
+    init(owner: DulcetURLSessionPlaybackResource) { self.owner = owner }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        owner?.urlSession(session, dataTask: dataTask, didReceive: data)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        owner?.urlSession(session, task: task, didCompleteWithError: error)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let owner else { completionHandler(nil); return }
+        owner.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                         newRequest: request, completionHandler: completionHandler)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard let owner else { completionHandler(.cancelAuthenticationChallenge, nil); return }
+        owner.urlSession(session, task: task, didReceive: challenge, completionHandler: completionHandler)
+    }
 }
 
 extension DulcetURLSessionPlaybackResource: URLSessionDataDelegate {

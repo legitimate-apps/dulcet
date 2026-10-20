@@ -1,6 +1,7 @@
 import DulcetCore
 import DulcetKit
 import Foundation
+import CryptoKit
 import Network
 import XCTest
 @testable import DulcetKit
@@ -81,6 +82,55 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
         XCTAssertEqual(loaderSummary.contentInformationPublished, loaderSummary.started)
         XCTAssertEqual(loaderSummary.failed, 0)
         XCTAssertEqual(loaderSummary.active, 0)
+    }
+
+    func testInstalledResourceUsesRefreshedCredentialsForItsNextRangeAndRejectsARebind() async throws {
+        let audio = try navidromeReferenceMP3Fixture()
+        let server = try ProductionPathLoopbackServer(audio: audio)
+        defer { server.stop() }
+        func account(_ password: String, username: String = "loopback-user") -> PlaybackEndpointAccount {
+            PlaybackEndpointAccount(providerInstanceId: "loopback-provider",
+                normalizedBaseUrl: server.baseURL.absoluteString, username: username,
+                password: password, allowLocalHttp: true)
+        }
+        let source = DulcetCorePlaybackWireSource(account: account("old-password"))
+        defer { source.revoke() }
+        let client = try XCTUnwrap(source.select()).client
+        let corePlan = try await resolvePlan(client: client)
+        let plan = DulcetCorePlaybackPlanFactory.makePlan(client: client, corePlan: corePlan,
+            metadata: .init(title: "Credential refresh"), retaining: source)
+        let resource = try XCTUnwrap(plan.resource as? any DulcetPlaybackResourceLoading)
+        func load(_ start: Int64) async -> DulcetPlaybackResourceLoadOutcome {
+            var operation: (any DulcetPlaybackResourceLoadOperation)?
+            let result: DulcetPlaybackResourceLoadOutcome = await withCheckedContinuation { continuation in
+                operation = resource.load(.init(range: .init(start: start, endInclusive: start + 1023),
+                    requiresAudioSignature: start == 0)) { continuation.resume(returning: $0) }
+            }
+            withExtendedLifetime(operation) {}
+            return result
+        }
+        let first = await load(0)
+        guard case .loaded = first else { XCTFail("First real HTTP range must load: \(first)"); return }
+        XCTAssertTrue(source.replace(account: account("new-password")))
+        let second = await load(1024)
+        guard case .loaded = second else { XCTFail("Same resource must load a second range: \(second)"); return }
+        let requests = server.requestQueries
+        XCTAssertEqual(requests.count, 2)
+        guard requests.count == 2 else { return }
+        for (query, password) in zip(requests, ["old-password", "new-password"]) {
+            let parameters = URLComponents(string: "http://fixture" + query)?.queryItems ?? []
+            let values = Dictionary(parameters.compactMap { item in item.value.map { (item.name, $0) } },
+                                    uniquingKeysWith: { _, last in last })
+            let salt = try XCTUnwrap(values["s"])
+            let token = Insecure.MD5.hash(data: Data((password + salt).utf8))
+                .map { String(format: "%02x", $0) }.joined()
+            XCTAssertEqual(values["u"], "loopback-user")
+            XCTAssertEqual(values["t"], token, "The actual HTTP request must use its current password")
+        }
+        XCTAssertFalse(source.replace(account: account("other-password", username: "different-user")))
+        let rejected = await load(2048)
+        if case .loaded = rejected { XCTFail("An old binding resource must be revoked") }
+        XCTAssertEqual(server.requestQueries.count, 2, "Rebinding must issue no old-resource HTTP request")
     }
 
     private func resolvePlan(client: ApplePlaybackWireClient) async throws -> AppleRemotePlaybackPlanDto {
@@ -281,6 +331,9 @@ private final class ProductionPathLoopbackServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.production-http")
     private let lock = NSLock()
     private var rangeStorage: [String?] = []
+    private var queryStorage: [String] = []
+
+    var requestQueries: [String] { lock.withLock { queryStorage } }
 
     var baseURL: URL {
         URL(string: "http://127.0.0.1:\(listener.port!.rawValue)")!
@@ -357,6 +410,7 @@ private final class ProductionPathLoopbackServer: @unchecked Sendable {
             .map { String($0.dropFirst("range:".count)).trimmingCharacters(in: .whitespaces) }
         lock.lock()
         rangeStorage.append(rangeHeader)
+        queryStorage.append(request.split(separator: " ").dropFirst().first.map(String.init) ?? "")
         lock.unlock()
 
         let bounds = requestedBounds(from: rangeHeader)

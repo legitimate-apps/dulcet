@@ -40,6 +40,31 @@ struct AVPlayerGainTests {
 @Suite(.serialized)
 struct AVPlayerCrossfadeTests {
     @Test
+    func itemNotificationObserversLeaveWithDiscardedAndStoppedItems() async throws {
+        let engine = DulcetAVPlayerEngine()
+        defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
+        let baseline = engine.itemNotificationObserverCountForTesting()
+        _ = await execute(engine, .prepare(commandID: .init("current"),
+            plan: plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 30)), attempt: "first")))
+        #expect(engine.itemNotificationObserverCountForTesting() == baseline + 3)
+        for index in 0..<12 {
+            let attempt = "incoming-\(index)"
+            _ = await execute(engine, .preloadNext(commandID: .init(attempt),
+                plan: plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 30)), session: attempt, attempt: attempt)))
+            #expect(engine.itemNotificationObserverCountForTesting() == baseline + 6)
+            _ = await execute(engine, .setCrossfade(commandID: .init("arm-\(index)"), attemptID: .init("first"), duration: 2))
+            #expect(engine.itemNotificationObserverCountForTesting() == baseline + 6,
+                "cloned incoming item must replace its notification registrations")
+            _ = await execute(engine, .setCrossfade(commandID: .init("gapless-\(index)"), attemptID: .init("first"), duration: 0))
+            #expect(engine.itemNotificationObserverCountForTesting() == baseline + 6)
+            _ = await execute(engine, .discardPreloaded(commandID: .init("discard-\(index)"), attemptID: .init(attempt)))
+            #expect(engine.itemNotificationObserverCountForTesting() == baseline + 3)
+        }
+        _ = await execute(engine, .stop(commandID: .init("stop")))
+        #expect(engine.itemNotificationObserverCountForTesting() == baseline)
+    }
+
+    @Test
     func crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds() async throws {
         // Arm while paused: the engine must prepare its own incoming decoder before the
         // boundary, without depending on AVQueuePlayer making a queued item ready.

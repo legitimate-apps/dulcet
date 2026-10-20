@@ -114,10 +114,12 @@ public struct DulcetAccountConnectRequest: Sendable, Hashable,
 public struct DulcetConnectedAccountSummary: Sendable, Hashable {
     public let serverName: String
     public let normalizedServerURL: String
+    public let canonicalUsername: String?
 
-    public init(serverName: String, normalizedServerURL: String) {
+    public init(serverName: String, normalizedServerURL: String, canonicalUsername: String? = nil) {
         self.serverName = serverName
         self.normalizedServerURL = normalizedServerURL
+        self.canonicalUsername = canonicalUsername
     }
 }
 
