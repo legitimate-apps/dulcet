@@ -3604,6 +3604,16 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(current.waitForExistence(timeout: 25), "A synced line must light as the track plays: " + syncedApp.debugDescription)
         let lit = current.exists ? current.label : "<none>"
         XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(lit)")
+        // The live highlight is proven above. Hold that track before the layout snapshots and
+        // gesture: the 29-second fixture ended during coordinate resolution,
+        // replacing the lyrics ScrollView with the next track's loading state.
+        guard holdLyricsPlayback(in: syncedApp) else { return }
+        let syncedTitleID = expectedCompact ? "dulcet.lyrics.header.title" : "dulcet.now-playing.title"
+        let syncedTitle = syncedApp.staticTexts[syncedTitleID].firstMatch
+        guard waitForLabel("Twenty Nine Seconds", of: syncedTitle, timeout: 5) else {
+            XCTFail("The highlighted synced fixture must remain selected for the layout and scroll proof")
+            return
+        }
         var placement = "sheet"
         if !expectedCompact {
             // Beside the player: the panel starts right of the player's own title, in one row.
@@ -3626,8 +3636,25 @@ final class DulcetiOSUITests: XCTestCase {
                 "The lyrics and the player must share a row; \(placement)")
         }
         attachScreenshot(named: "lyrics-synced", app: syncedApp)
-        let lyricDrag = syncedPanel.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        lyricDrag.press(forDuration: 0.05, thenDragTo: lyricDrag.withOffset(CGVector(dx: 0, dy: 240)),
+        let window = syncedApp.windows.firstMatch
+        let windowFrame = window.frame
+        let panelFrame = syncedPanel.frame
+        let geometry = [windowFrame.minX, windowFrame.minY, windowFrame.width, windowFrame.height,
+                        panelFrame.minX, panelFrame.minY, panelFrame.width, panelFrame.height]
+        let visiblePanel = panelFrame.intersection(windowFrame).insetBy(dx: 16, dy: 16)
+        guard geometry.allSatisfy(\.isFinite), !visiblePanel.isEmpty, syncedPanel.isHittable,
+              visiblePanel.height > 40 else {
+            XCTFail("The lyrics drag needs a finite, visible panel; panel=\(panelFrame) window=\(windowFrame)")
+            return
+        }
+        // Resolve the panel once, then anchor both endpoints to the stable window. XCUITest
+        // otherwise re-resolves the changing lyrics element separately for each coordinate.
+        let origin = window.coordinate(withNormalizedOffset: .zero)
+        let lyricDrag = origin.withOffset(CGVector(dx: visiblePanel.midX - windowFrame.minX,
+                                                   dy: visiblePanel.midY - windowFrame.minY))
+        let lyricEnd = origin.withOffset(CGVector(dx: visiblePanel.midX - windowFrame.minX,
+                                                  dy: min(visiblePanel.midY + 240, visiblePanel.maxY) - windowFrame.minY))
+        lyricDrag.press(forDuration: 0.05, thenDragTo: lyricEnd,
                         withVelocity: .fast, thenHoldForDuration: 0)
         XCTAssertTrue(syncedPanel.exists && syncedApp.buttons["dulcet.now-playing.close"].firstMatch.isHittable,
                       "Scrolling lyrics must leave the player open and usable")
@@ -4031,8 +4058,17 @@ final class DulcetiOSUITests: XCTestCase {
             }
         }
         let queueToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
-        if queueToggle.exists && queueToggle.label == "Show Up Next" { queueToggle.tap() }
         let queue = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
+        // The title and close control can enter AX before the compact player's toolbar.
+        // Regular width already shows the queue inline; compact width needs its actual action.
+        let queueControlReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (queue.exists && queue.isHittable) || (queueToggle.exists && queueToggle.isHittable)
+        }, object: nil)
+        guard XCTWaiter.wait(for: [queueControlReady], timeout: 10) == .completed else {
+            XCTFail("Now Playing must expose Up Next or its usable control before choosing AutoPlay: " + app.debugDescription)
+            return false
+        }
+        if !queue.exists, queueToggle.label == "Show Up Next" { queueToggle.tap() }
         guard queue.waitForExistence(timeout: 10) else {
             XCTFail("Up Next must expose its actual list before choosing AutoPlay: " + app.debugDescription)
             return false

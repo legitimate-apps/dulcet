@@ -274,3 +274,40 @@ extra native Play/preroll calls and actual media movement; the other four argume
 production engine is then restored byte for byte and the six tvOS arguments pass again. All seven
 Apple integration schemes build for testing on the final source. These local checks support the
 fixture correction and preserved interruption eligibility; they do not replace final-head CI.
+
+OBSERVED in full Apple run 39389317378, attempt 2: the iPad Settings selector passes in
+85.959 seconds (Off, relaunch still Off, On, Clear Cache activation), and all five My Library
+methods pass in 557.729 seconds. The earlier first-toggle failure remains unexplained: a local
+instrumented selector delivered false through every layer to durable storage, and a separate
+native controlled experiment refuted the proposed getter-inversion mechanism during held
+reconciliation. Temporary diagnostics were restored; retry success does not establish a cause.
+
+That attempt fails later in `testTheLyricsPanelShowsEveryStateOnIPadOS`, while XCUITest resolves
+coordinates against a changing lyrics element. The recording shows Twenty Nine Seconds at
+0:23, then 0:28, then Thirty One Seconds at 0:03 during the same event resolution. The log changes
+from ScrollView to Any and raises an infinite-pointer-coordinate exception. This directly
+observes track-end replacement of the gesture target; attributing its timing to host pressure
+would remain an inference.
+
+The lyrics fixture still observes an English current line during real playback. It then pauses
+and verifies that the same track remains selected before the layout and gesture checks. One
+finite visible panel rectangle supplies both drag endpoints relative to the window, avoiding
+repeated resolution of a replaceable lyrics node. Existing synced/plain/none/failure/retry,
+layout and player-usability assertions remain. The gesture oracle establishes that the player
+stays open and usable; it does not establish a changed lyrics scroll position. This correction
+changes only the UI test, with no production engine or policy change.
+
+The first local iPhone check stops earlier, before that changed block: its recording shows one
+bar tap presenting Now Playing, while the helper checks Up Next before the toolbar control has
+arrived. It then waits for a queue it never opened. The lyrics helper now waits up to ten seconds
+for either an already visible, hittable queue (the regular iPad layout) or a real, hittable
+Up Next toggle (the compact layout), before deciding whether to open the queue.
+Its subsequent queue, switch, preference readback and restoration assertions are unchanged;
+this adds an actionable-control precondition rather than a delay or another tap.
+
+OBSERVED on the final fixture source: the complete named lyrics selector passes on a fresh
+iPhone simulator (1/1, 208.657 seconds) and a fresh iPad simulator (1/1, 197.970 seconds),
+with strict individual-result guards. Both markers report the real English current line,
+plain lyrics, the empty state, one failed read and one successful retry; preference restoration
+also passes. All seven Apple integration schemes pass build-for-testing. These are local
+fixture checks; the new final commit still requires its full Apple CI run.
