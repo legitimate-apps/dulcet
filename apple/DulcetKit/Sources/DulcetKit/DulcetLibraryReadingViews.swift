@@ -279,7 +279,8 @@ struct DulcetFavouriteButton: View {
             let on = session.isFavourite(target.id, published: published)
             let state = session.favouriteState(target)
             Button {
-                session.toggleFavourite(target, published: published)
+                let accepted = session.toggleFavourite(target, published: published)
+                DulcetUIProofMarkers.record("favorite:\(identifier):accepted=\(accepted)")
             } label: {
                 ZStack(alignment: .bottomTrailing) {
                     Image(systemName: on ? "heart.fill" : "heart")

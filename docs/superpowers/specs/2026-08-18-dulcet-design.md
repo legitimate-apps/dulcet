@@ -1994,7 +1994,10 @@ Listing route and interruption events is not a policy. The normative policy:
   created, before the first play. The session is activated on the first `prepare` of a session and
   deactivated on `stop` or after a grace period with no queue. AirPlay is permitted. On
   `InterruptionBegan` playback pauses; on `InterruptionEnded` it resumes **only** if the system
-  indicates resumption is appropriate. An interruption whose reason is that the system **suspended
+  indicates resumption is appropriate and no newer Pause, Stop, noisy-route pause or terminal
+  playback failure revoked the earlier playing intent. A later explicit Play still starts playback.
+  Same-session stream replacement preserves accepted Play or Pause intent; a lagging native
+  playing report is not a new Play request. An interruption whose reason is that the system **suspended
   the app** (iOS) is not a call or Siri taking audio and is ignored. iOS, iPadOS and tvOS declare the
   `audio` background mode; without it the system suspends playback at screen lock.
 - **Android:** `AudioAttributes` usage `MEDIA` / content type `MUSIC`, with
@@ -7927,6 +7930,14 @@ yielding first and downloaded 256 px artwork pinned. Implementation and runtime 
 separately in `FEATURES.yml`; this contract entry does not promote any platform evidence claim.
 §11.4 protects the new device settings and retention ownership from schema 11, with generated
 fixtures and destructive controls; derived source snapshots are compared independently.
+
+**2026-10-19 - Preserve the latest playback intent across interruptions and replacement.**
+§12.9 makes explicit that a newer Pause, Stop, noisy-route pause or terminal failure revokes
+an earlier interruption's permission to resume. Same-session replacement preserves accepted
+Play or Pause intent instead of inferring it from a native transport report that may lag the
+command. Regression cases inject both interruption orderings and native-status lag, retain
+allowed replacement resumption, and require a later explicit Play to work after Pause.
+No platform UI or feature-matrix status is promoted by these engine policy controls.
 
 **2026-10-18 — Re-measure Apple workflow envelopes from successful legs.**
 §21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) now sets the

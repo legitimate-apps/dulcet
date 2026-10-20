@@ -18,8 +18,8 @@ Usage:
 
 Prints `SIMULATOR ISOLATION phase=... keep=... shut_down=N booted_after=[...] isolated=true|false`.
 The marker is evidence the step ran and what it left behind; `isolated=false` is reported, not
-raised, because a leftover device only restores today's behaviour. Failing to boot the device the
-phase needs IS raised: that phase cannot run.
+raised by default. --require-isolation fails unless the final list matches the requested state.
+Failing to boot the device the phase needs IS raised: that phase cannot run.
 """
 import argparse
 import json
@@ -92,9 +92,8 @@ def running_services(udid: str):
     return sum(1 for line in listing.stdout.splitlines()[1:] if line.split("\t", 1)[0].isdigit())
 
 
-def settle(phase: str, udid: str) -> None:
-    """Waits for the post-boot burst to end. Reported, never raised: an unsettled device only
-    restores the behaviour before this wait existed."""
+def settle(phase: str, udid: str) -> bool:
+    """Report whether running-service counts stabilized. The caller may require that witness."""
     started = time.monotonic()
     counts = []
     while True:
@@ -106,6 +105,7 @@ def settle(phase: str, udid: str) -> None:
     print(f"SIMULATOR SETTLE phase={phase} udid={udid} running={shown} "
           f"settled={'true' if settled(counts) else 'false'} "
           f"seconds={time.monotonic() - started:.1f}", flush=True)
+    return settled(counts)
 
 
 def booted(all_devices: dict) -> list[str]:
@@ -121,9 +121,15 @@ def main() -> int:
     target.add_argument("--none", action="store_true")
     parser.add_argument("--devices-json", help="offline device list (simctl list devices -j)")
     parser.add_argument("--plan", action="store_true", help="print the plan and change nothing")
+    parser.add_argument("--require-isolation", action="store_true",
+                        help="fail unless the final booted device list matches the requested state")
     parser.add_argument("--settle", action="store_true",
                         help="after booting the kept device, wait for its services to hold steady")
+    parser.add_argument("--require-settle", action="store_true",
+                        help="fail if the requested service-count settle condition was not observed")
     args = parser.parse_args()
+    if args.require_settle and not args.settle:
+        parser.error("--require-settle needs --settle")
     if args.settle and args.none:
         parser.error("--settle needs a device to keep")
 
@@ -137,9 +143,10 @@ def main() -> int:
         return 0
 
     for udid in to_shut:
-        # A device left booted is reported below as isolated=false, never raised; a shutdown that
-        # does not return in time leaves the same state. OBSERVED in run 37346238826: shutting the
-        # iPad down timed out at 120 s right after its first boot and failed the whole step.
+        # A device left booted is reported below as isolated=false; --require-isolation makes
+        # that fail the phase. A shutdown that does not return in time leaves the same state.
+        # OBSERVED in run 37346238826: shutting the iPad down timed out at 120 s right after
+        # its first boot and failed the whole step.
         try:
             simctl("shutdown", udid)
         except subprocess.TimeoutExpired:
@@ -152,7 +159,9 @@ def main() -> int:
                   f"bootstatus_exit={status.returncode}: {status.stderr.strip()[-300:]}")
             return 1
         if args.settle:
-            settle(args.phase, keep)
+            did_settle = settle(args.phase, keep)
+            if args.require_settle and not did_settle:
+                return 1
     after = booted(devices(None))
     expected = [keep] if keep else []
     print(f"SIMULATOR ISOLATION phase={args.phase} keep={keep or 'none'} shut_down={len(to_shut)} "
@@ -162,7 +171,7 @@ def main() -> int:
     if log:
         subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "host-pressure"),
                         "mark", log, args.phase], check=False)
-    return 0
+    return 0 if after == expected or not args.require_isolation else 1
 
 
 if __name__ == "__main__":

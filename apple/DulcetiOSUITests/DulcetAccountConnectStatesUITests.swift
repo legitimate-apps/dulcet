@@ -772,12 +772,14 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     private func awaitSignOut(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
         let deadline = Date().addingTimeInterval(60)
+        // Restoring an account opens Library. A global Sign Out lookup there walks the
+        // catalog before navigation can run, and can exhaust the accessibility query budget.
+        // openConnection preserves the form when its destination is already selected.
+        guard openConnection(in: app, compact: compact) else { return false }
         repeat {
-            if signOut.waitForExistence(timeout: 5) { return true }
-            guard openConnection(in: app, compact: compact) else { return false }
             // Navigation and its accessibility reads can consume the deadline on a loaded
             // host. Accept the connected state just observed before checking elapsed time.
-            if signOut.exists { return true }
+            if signOut.waitForExistence(timeout: 5) { return true }
             app.swipeUp()
             if signOut.exists { return true }
         } while Date() < deadline

@@ -1364,10 +1364,19 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(noticeGone, "The notice must go away by itself")
 
         // Previously Played lists the skipped track like any other entry the queue passed, unmarked.
+        let markersBeforeOpen = proofMarkers(in: app)
         bar.tap()
+        let openMarkers = waitForMarkers(after: markersBeforeOpen, ["mini-player-open"], in: app, timeout: 3)
+        guard openMarkers == ["mini-player-open"] else {
+            XCTFail("The bar's single tap must reach its open handler; markers=\(openMarkers): " + app.debugDescription)
+            return
+        }
         let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
         let titled = title.waitForExistence(timeout: 10) && waitForLabel("Playable After Skip", of: title, timeout: 10)
-        XCTAssertTrue(titled, "The player must show the track that plays; title=\(title.label)")
+        guard titled else {
+            XCTFail("The player must show the track that plays; handlers=\(proofMarkers(in: app)): " + app.debugDescription)
+            return
+        }
         let upNextToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
         guard upNextToggle.waitForExistence(timeout: 5), upNextToggle.isHittable else {
             XCTFail("The playing track must offer Up Next: " + app.debugDescription)
@@ -2113,33 +2122,32 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // Hold the album's last track before inspecting the queue. On a loaded host the first
-        // Up Next read happened over 34 seconds after this 31-second fixture was tapped; playback
-        // was preparing another song and the footer disappeared under the toggle's tap.
-        // AutoPlay may append recommendations, so count what the drag adds to the actual queue.
+        // The 31-second canary ended before the Pause touch in run 39301701884:
+        // track touch at 141 s, Pause touch at 177 s. Restore its saved queue paused instead.
+        // This proof needs a held queue, not a timed Play/Pause race on a busy UI runner.
         let canary = track("UI Playback Canary")
         guard canary.waitForExistence(timeout: 10), scrollIntoView(canary, in: app) else {
             XCTFail("The album must list UI Playback Canary: " + app.debugDescription)
             return
         }
         canary.tap()
+        app.terminate()
+        app.launch()
+        guard awaitLiveAccountConnection(in: app, compact: true) else {
+            XCTFail("The restored queue's account must reconnect before reading its album")
+            return
+        }
+        // Reading the album supplies the catalog needed to resolve the persisted selection.
+        guard openLibraryAlbum("Threshold Boundary", in: app, compact: true),
+              dragged.waitForExistence(timeout: 15), scrollIntoView(dragged, in: app) else { return }
         let bar = app.buttons["dulcet.mini-player.open"].firstMatch
-        guard bar.waitForExistence(timeout: 15) else {
-            XCTFail("Playing a track must show the now-playing bar: " + app.debugDescription)
-            return
-        }
         let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
-        guard waitForLabelContaining("UI Playback Canary", of: bar, timeout: 10),
-              waitForLabel("Pause", of: playPause, timeout: 10) else {
-            XCTFail("The named canary must be playing before it is paused: " + app.debugDescription)
+        guard waitForLabelContaining("UI Playback Canary", of: bar, timeout: 15),
+              waitForLabel("Play", of: playPause, timeout: 10) else {
+            XCTFail("The saved queue must restore the original canary paused before reading Up Next: " + app.debugDescription)
             return
         }
-        playPause.tap()
-        guard waitForLabel("Play", of: playPause, timeout: 10),
-              bar.label.contains("UI Playback Canary") else {
-            XCTFail("Pause must hold the original canary before reading Up Next: " + app.debugDescription)
-            return
-        }
+        print("DULCET DRAG QUEUE PRECONDITION restored-canary=true paused=true")
         guard let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: true) else { return }
         let queuedBefore = before.filter { $0.hasPrefix("Thirty One Seconds") }.count
 
@@ -3559,7 +3567,7 @@ final class DulcetiOSUITests: XCTestCase {
         var originalAutoplay: Bool?
         defer {
             if let originalAutoplay {
-                XCTAssertTrue(chooseAutoplayForLyrics(originalAutoplay, in: XCUIApplication()),
+                XCTAssertTrue(chooseAutoplayForLyrics(originalAutoplay, in: XCUIApplication(), holdPlayback: true),
                               "Restore the person's AutoPlay choice after the lyrics proof")
             }
         }
@@ -3677,6 +3685,9 @@ final class DulcetiOSUITests: XCTestCase {
               // track's lyrics (OBSERVED locally under host load).
               playFromSearch("Thirty One Seconds", in: failedApp, compact: expectedCompact),
               openNowPlayingFromBar(in: failedApp, expectingTitle: "Thirty One Seconds"),
+              // A failed read and its retry need static lyrics, not progressing playback.
+              // Hold the named item before either wait can consume its remaining duration.
+              holdLyricsPlayback(in: failedApp),
               openLyricsPanel(in: failedApp) != nil else { return }
         let unavailable = failedApp.staticTexts["dulcet.lyrics.unavailable"].firstMatch
         let retry = failedApp.buttons["dulcet.lyrics.retry"].firstMatch
@@ -3996,8 +4007,14 @@ final class DulcetiOSUITests: XCTestCase {
     private func chooseAutoplayForLyrics(
         _ enabled: Bool,
         in app: XCUIApplication,
+        holdPlayback: Bool = false,
         capturePrevious: ((Bool) -> Void)? = nil
     ) -> Bool {
+        // Restoring AutoPlay can append short tracks immediately. Hold the current item before
+        // navigating to its switch: a natural end replaces the player with Preparing playback,
+        // destroying the queue view while XCTest is still resolving the switch's new value.
+        // The initial setup already pauses; cleanup needs the same observed precondition.
+        if holdPlayback, !holdLyricsPlayback(in: app) { return false }
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
         if !close.exists, !openNowPlayingFromBar(in: app, expectingTitle: nil) { return false }
         let lyricsPanel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
@@ -4053,6 +4070,24 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The player must close before returning to the lyrics fixture")
             return false
         }
+        return true
+    }
+
+    @MainActor
+    private func holdLyricsPlayback(in app: XCUIApplication) -> Bool {
+        func visibleTransport(_ label: String) -> XCUIElement? {
+            app.buttons.matching(NSPredicate(format: "label == %@", label))
+                .allElementsBoundByIndex.first { !$0.frame.isEmpty && $0.isHittable }
+        }
+        if let pause = visibleTransport("Pause") { pause.tap() }
+        let held = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            visibleTransport("Play") != nil
+        }, object: nil)
+        guard XCTWaiter.wait(for: [held], timeout: 10) == .completed else {
+            XCTFail("The lyrics fixture must be paused before its static-state waits and AutoPlay restoration")
+            return false
+        }
+        print("DULCET LYRICS HELD transport=Play")
         return true
     }
 
@@ -4530,9 +4565,10 @@ final class DulcetiOSUITests: XCTestCase {
         let track = "Twenty Nine Seconds"
         let artist = "Dulcet Fixtures"
         guard let app = launchConnected(
-            serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact
+            serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact,
+            extraArguments: ["-dulcet-debug-ui-markers"]
         ) else { return }
-        guard openLibraryAlbum(album, in: app, compact: expectedCompact) else { return }
+        guard requireProofMarkers(in: app), openLibraryAlbum(album, in: app, compact: expectedCompact) else { return }
 
         // 1. The track row's heart: the one beside the row, by the row's own frame.
         let row = app.buttons.matching(identifier: "dulcet.reader.track")
@@ -4551,7 +4587,7 @@ final class DulcetiOSUITests: XCTestCase {
         let awaitSong = { (expected: Bool) in
             self.awaitServerSongStarred(track, album: album, configuration: configuration, expected: expected, timeout: 30)
         }
-        guard toggleHeartAndProve(rowHeart, what: "\(track)'s row", read: songStarred, awaitServer: awaitSong) else { return }
+        guard toggleHeartAndProve(rowHeart, in: app, what: "\(track)'s row", read: songStarred, awaitServer: awaitSong) else { return }
 
         // 2. The artist page's heart, reached through the album's artist link.
         let link = app.buttons.matching(NSPredicate(format: "label == %@", artist)).firstMatch
@@ -4591,7 +4627,7 @@ final class DulcetiOSUITests: XCTestCase {
             }
             return observed
         }
-        guard toggleHeartAndProve(artistHeart, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
+        guard toggleHeartAndProve(artistHeart, in: app, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
         print("DULCET ROW HEARTS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
             + " track=\(track.debugDescription) artist=\(artist.debugDescription) starred=true->false")
     }
@@ -4601,6 +4637,7 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func toggleHeartAndProve(
         _ heart: XCUIElement,
+        in app: XCUIApplication,
         what: String,
         read: () -> Bool?,
         awaitServer: (Bool) -> Bool?
@@ -4617,9 +4654,16 @@ final class DulcetiOSUITests: XCTestCase {
             return false
         }
         heart.tap()
-        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
-            "\(what): the heart must fill at once, before the server answers; label=\(heart.label)")
-        XCTAssertEqual(awaitServer(true), true, "\(what): the star must reach the server")
+        guard waitForLabel("Remove Favorite", of: heart, timeout: 3) else {
+            XCTFail("\(what): the heart must fill at once, before the server answers; "
+                + "label=\(heart.label) handlers=\(proofMarkers(in: app)): " + app.debugDescription)
+            return false
+        }
+        guard awaitServer(true) == true else {
+            XCTFail("\(what): the star must reach the server; handlers=\(proofMarkers(in: app)): " + app.debugDescription)
+            return false
+        }
+        print("DULCET HEART HANDLERS target=\(what.debugDescription) markers=\(proofMarkers(in: app))")
         heart.tap()
         XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "\(what): the heart must empty at once")
         XCTAssertEqual(awaitServer(false), false, "\(what): removing the favourite must reach the server")
@@ -6008,14 +6052,12 @@ final class DulcetiOSUITests: XCTestCase {
             }
 
             var targetIsAboveWindow = false
-            var needsSpaceBelowVisibleTarget = false
+            var targetFrame: CGRect?
             if element.exists {
                 let frame = element.frame
+                if !frame.isEmpty && !frame.isInfinite { targetFrame = frame }
                 let midpoint = CGPoint(x: frame.midX, y: frame.midY)
                 targetIsAboveWindow = !frame.isEmpty && !frame.isInfinite && midpoint.y < window.frame.minY
-                needsSpaceBelowVisibleTarget = minimumSpaceBelow > 0 &&
-                    !frame.isEmpty && !frame.isInfinite && window.frame.contains(midpoint) &&
-                    window.frame.maxY - frame.maxY < minimumSpaceBelow
                 if !frame.isEmpty && !frame.isInfinite &&
                     window.frame.contains(midpoint) && element.isHittable &&
                     (followingRow?.exists ?? true) &&
@@ -6030,12 +6072,32 @@ final class DulcetiOSUITests: XCTestCase {
             // can still invoke the interruption monitors installed as a backstop.
             // A restored scroll position can place an existing destination above the window.
             // Keep the same swipe budget and reachability checks while scrolling toward it.
-            if needsSpaceBelowVisibleTarget {
-                // Once the heading is visible, a full swipe can overshoot the smaller placement
-                // band that leaves room for the grid. This real adjustment uses the same budget.
-                window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-                    .press(forDuration: 0.05, thenDragTo:
-                        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            if minimumSpaceBelow > 0, let targetFrame {
+                // A fixed quarter-window drag still flung the AX5 heading past the navigation
+                // bar; the next full reverse swipe overshot its placement band again. Move by
+                // its measured remaining distance and hold before lifting to avoid that fling.
+                let windowFrame = window.frame
+                let navigation = app.navigationBars.firstMatch
+                let tabs = app.tabBars.firstMatch
+                let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+                var top = windowFrame.minY
+                var bottom = windowFrame.maxY
+                if navigation.exists, !navigation.frame.isEmpty { top = max(top, navigation.frame.maxY) }
+                for overlay in [tabs, bar] where overlay.exists && !overlay.frame.isEmpty {
+                    bottom = min(bottom, overlay.frame.minY)
+                }
+                let movement = targetFrame.minY - (top + 16)
+                let distance = min(max(abs(movement), 30), max(30, (bottom - top) * 0.6))
+                let fromY = movement >= 0 ? bottom - 20 : top + 20
+                let toY = fromY + (movement >= 0 ? -distance : distance)
+                print("DULCET CATALOG PLACEMENT heading-y=\(targetFrame.minY) target-y=\(top + 16)"
+                    + " drag=\(toY - fromY) swipe=\(swipeCount + 1)/\(maximumSwipes)")
+                window.coordinate(withNormalizedOffset: CGVector(dx: 0.5,
+                    dy: (fromY - windowFrame.minY) / windowFrame.height))
+                    .press(forDuration: 0.1, thenDragTo:
+                        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5,
+                            dy: (toY - windowFrame.minY) / windowFrame.height)),
+                        withVelocity: .slow, thenHoldForDuration: 0.3)
             }
             else if targetIsAboveWindow { app.swipeDown() }
             else { app.swipeUp() }

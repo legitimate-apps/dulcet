@@ -337,6 +337,11 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     the unchanged 30-second deadline. The recording shows visible Cancel; the failure hierarchy
     later shows Try Again. Match Cancel's label and enabled state in the same immutable snapshots
     used for geometry, then retain the live hittability check and actual cancellation assertion.
+    OBSERVED in main run 39191569391: after account restoration the recording still showed
+    Library selected, while the first global Sign Out query traversed its catalog and timed out
+    before the helper could open Connection. Open Connection first, preserving its form if already
+    selected, then wait for Sign Out. The host control rejects querying Sign Out on Library and
+    still accepts a slow navigation whose successful arrival consumes the wait deadline.
 49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
     album or playlist in the reader's grids and lists is a `DulcetReaderItem`: a title, an id and
     counts, with its track list read on demand (`resolveTracks`). `dulcetQueueDragSource` needs the

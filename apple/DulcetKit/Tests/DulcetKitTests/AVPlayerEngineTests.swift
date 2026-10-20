@@ -115,19 +115,47 @@ struct AVPlayerCrossfadeTests {
 
     @Test
     func aStreamWithoutByteRangesOverlapsWithoutReopeningTheOutgoingResource() async throws {
-        let resource = WholeRepresentationPlaybackResource(data: makePCMWave(duration: 6))
-        let fixture = try await CrossfadeFixture.start(outgoingResource: resource)
-        let engine = fixture.engine
-        defer {
-            engine.execute(.release(commandID: .init("cleanup"))) { _ in }
-            try? FileManager.default.removeItem(at: fixture.localURL)
+        // Crossfade may begin only into a ready preload. Warm the actual queued items with
+        // crossfade disarmed, then pause before its boundary. A longer outgoing representation
+        // gives preparation its own window without seeking or reopening this nonseekable stream.
+        let resource = WholeRepresentationPlaybackResource(data: makePCMWave(duration: 12))
+        let player = AVQueuePlayer()
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
+        let first = plan(resource: resource, session: "no-range-a", attempt: "no-range-a")
+        let next = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 6)),
+                        session: "no-range-b", attempt: "no-range-b")
+        try #require(await execute(engine, .prepare(commandID: .init("prepare"), plan: first)) ==
+            .accepted(commandID: .init("prepare")))
+        try #require(await execute(engine, .preloadNext(commandID: .init("preload"), plan: next)) ==
+            .accepted(commandID: .init("preload")))
+        let items = player.items()
+        try #require(items.count == 2)
+        try #require(await execute(engine, .play(commandID: .init("warm"))) ==
+            .accepted(commandID: .init("warm")))
+        let ready = { @Sendable in
+            items.allSatisfy { $0.status == .readyToPlay } && player.currentItem === items[0] &&
+                events.containsProgressBegan
         }
-        try await waitUntil("no-range stream did not start", engine: engine, timeout: 30) {
-            fixture.events.containsProgressBegan
-        }
+        try await waitUntil("no-range stream did not prepare both real items", engine: engine, timeout: 30,
+                            mediaState: {
+                                "statuses=\(items.map { $0.status.rawValue }) rate=\(player.rate) position=\(CMTimeGetSeconds(player.currentTime())) events=\(events.snapshot)"
+                            }, condition: ready)
+        try #require(await execute(engine, .pause(commandID: .init("hold-warm"))) ==
+            .completed(commandID: .init("hold-warm"), result: .withoutData))
+        try #require(ready() && player.rate == 0 && CMTimeGetSeconds(player.currentTime()) < 10,
+                     "Both actual items must be ready, with the original paused before its overlap boundary")
         let requestsBeforeBoundary = resource.requestCount
-        #expect(requestsBeforeBoundary > 0)
-        _ = try await waitForCrossfadeState("no-range stream did not overlap", engine: engine) {
+        try #require(requestsBeforeBoundary > 0)
+        print("DULCET NO-RANGE PREPARATION ready-items=2 paused=true outgoing-position=\(CMTimeGetSeconds(player.currentTime())) requests=\(requestsBeforeBoundary)")
+        try #require(await execute(engine, .setCrossfade(commandID: .init("crossfade"),
+            attemptID: first.attemptID, duration: 2)) ==
+            .completed(commandID: .init("crossfade"), result: .withoutData))
+        try #require(await execute(engine, .play(commandID: .init("play"))) ==
+            .accepted(commandID: .init("play")))
+        _ = try await waitForCrossfadeState("no-range stream did not overlap", engine: engine, events: events) {
             $0.incomingRate > 0 && $0.outgoingRate > 0 && $0.incomingVolume > 0 && $0.outgoingVolume > 0
         }
         #expect(resource.requestCount == requestsBeforeBoundary,
@@ -214,43 +242,80 @@ struct AVPlayerCrossfadeTests {
     @Test(arguments: [false, true])
     func aBoundaryCallbackCannotOvertakeAPendingSeekOrReplayAfterIt(replaceDuringSeek: Bool) async throws {
         let player = DeferredCrossfadeSeekPlayer()
-        let fixture = try await CrossfadeFixture.start(player: player)
+        player.recordTransportChanges()
+        // Run 39191076357 missed the both-ready gate and later reported an original advance.
+        // Prepare them with overlap disarmed, then hold the original until the seek is arranged.
+        let fixture = try await CrossfadeFixture.start(player: player, warmTransport: true,
+                                                      playAfterPreparation: false)
         let engine = fixture.engine
         defer {
+            _ = player.finishSeek()
             engine.execute(.release(commandID: .init("cleanup"))) { _ in }
             try? FileManager.default.removeItem(at: fixture.localURL)
         }
-        try await waitUntil("both real items were not ready", engine: engine, timeout: 30) {
-            player.items().count == 2 && player.items().allSatisfy { $0.status == .readyToPlay }
-        }
+        let items = player.items()
+        try #require(items.count == 2 && items.allSatisfy { $0.status == .readyToPlay }
+                     && player.currentItem === items.first && player.rate == 0,
+                     "Both real items must be ready with the original held before arranging the seek")
+        let boundaryTimestamp = CMTimeGetSeconds(items[0].duration) - 2 + 0.1
+        try #require(boundaryTimestamp.isFinite && boundaryTimestamp > CMTimeGetSeconds(player.currentTime()))
+        print("DULCET BOUNDARY SEEK PREPARATION ready-items=2 paused=true replace=\(replaceDuringSeek) stale-timestamp=\(boundaryTimestamp)")
         player.holdSeek()
         let seeking = Task { await execute(engine, .seek(commandID: .init("held-seek"), position: 0)) }
-        try await waitUntil("seek was not held", engine: engine) { player.hasHeldSeek }
+        try await waitUntil("native seek did not reach the held engine completion", engine: engine) { player.hasHeldSeek }
+        try #require(player.hasHeldSeek && player.heldSeekSucceeded,
+                     "The native seek must succeed while its engine completion remains outstanding")
+        try #require(await execute(engine, .play(commandID: .init("play-during-held-seek"))) ==
+            .accepted(commandID: .init("play-during-held-seek")))
+        try #require(player.rate > 0 && player.currentItem === items.first
+                     && items.allSatisfy { $0.status == .readyToPlay },
+                     "The injected boundary must face a playing original and a ready incoming item")
+        print("DULCET BOUNDARY SEEK CALLBACK phase=held replace=\(replaceDuringSeek) ready-items=2 rate=\(player.rate)")
         // Supply the same boundary timestamp AVFoundation can enqueue while seek completion
         // is outstanding. The stored callback remains the pre-seek observer after rearming.
-        player.deliverOriginalTimestamp(4.1)
+        try #require(player.deliverOriginalTimestamp(boundaryTimestamp),
+                     "The stored pre-seek callback must actually be delivered during the held seek")
         #expect(engine.crossfadeStateForTesting() == nil)
         #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
-        _ = await execute(engine, .setCrossfade(commandID: .init("policy-during-seek"),
-            attemptID: fixture.first.attemptID, duration: 2))
+        // The boundary proof needs active playback at both injections. Keep it running;
+        // native seek completion is already held, so no extra Play/Pause interleaving is needed.
+        try #require(await execute(engine, .setCrossfade(commandID: .init("policy-during-seek"),
+            attemptID: fixture.first.attemptID, duration: 2)) ==
+            .completed(commandID: .init("policy-during-seek"), result: .withoutData))
         player.captureLatestCallbackForReplay()
+        var replayAttempt = fixture.first.attemptID
         if replaceDuringSeek {
             let replacement = plan(resource: DulcetLocalFilePlaybackResource(
-                fileURL: fixture.localURL, exactByteLength: Int64(makePCMWave(duration: 6).count)),
+                fileURL: fixture.localURL, exactByteLength: fixture.localByteLength),
                 session: "crossfade-a", attempt: "replacement-during-seek")
-            #expect(await execute(engine, .replaceCurrent(commandID: .init("replace-seeking"), plan: replacement)) ==
+            try #require(await execute(engine, .replaceCurrent(commandID: .init("replace-seeking"), plan: replacement)) ==
                 .accepted(commandID: .init("replace-seeking")))
-            _ = await execute(engine, .setCrossfade(commandID: .init("rearm-replacement"),
-                attemptID: replacement.attemptID, duration: 2))
+            replayAttempt = replacement.attemptID
+            try #require(await execute(engine, .setCrossfade(commandID: .init("rearm-replacement"),
+                attemptID: replacement.attemptID, duration: 2)) ==
+                .completed(commandID: .init("rearm-replacement"), result: .withoutData))
         }
-        player.finishSeek()
+        let replayItems = player.items()
+        try #require(replayItems.count == 2)
+        let replayReady = { @Sendable in
+            replayItems.allSatisfy { $0.status == .readyToPlay } && player.currentItem === replayItems[0]
+        }
+        try await waitUntil("replay fixture did not prepare both real items while playing", engine: engine,
+                            mediaState: {
+                                "statuses=\(replayItems.map { $0.status.rawValue }) rate=\(player.rate) control=\(player.timeControlStatus.rawValue) calls=\(player.transportTrace) events=\(fixture.events.snapshot)"
+                            }) { replayReady() && player.rate > 0 }
+        try #require(player.finishSeek(), "The real seek completion must actually be delivered")
         let expected: DulcetPlaybackCommandOutcome = replaceDuringSeek
             ? .rejected(commandID: .init("held-seek"), reason: .invalidState)
             : .completed(commandID: .init("held-seek"), result: .withoutData)
-        #expect(await seeking.value == expected)
-        player.deliverOriginalTimestamp(4.1)
+        try #require(await seeking.value == expected)
+        try #require(replayReady() && player.rate > 0,
+                     "The replayed callback must face ready items and active playback")
+        print("DULCET BOUNDARY SEEK CALLBACK phase=replay replace=\(replaceDuringSeek) ready-items=2 rate=\(player.rate)")
+        try #require(player.deliverOriginalTimestamp(boundaryTimestamp),
+                     "The stored pre-seek callback must actually be replayed after completion")
         #expect(engine.crossfadeStateForTesting() == nil)
-        #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
+        #expect(!fixture.events.containsAdvance(old: replayAttempt, new: fixture.next.attemptID))
         try await waitUntil("seek did not rearm a fresh observer", engine: engine, timeout: 30) {
             engine.crossfadeStateForTesting()?.incomingRate ?? 0 > 0
         }
@@ -296,16 +361,40 @@ struct AVPlayerCrossfadeTests {
 /// completion and an already-created media observer. Callbacks always run on the engine queue.
 private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Sendable {
     private nonisolated let seekLock = NSLock()
+    private nonisolated(unsafe) var transportCalls: [String] = []
+    private nonisolated(unsafe) var transportObservation: NSKeyValueObservation?
+    nonisolated var transportTrace: [String] { seekLock.withLock { transportCalls } }
+
+    nonisolated func recordTransportChanges() {
+        transportObservation = observe(\.rate, options: [.new]) { [weak self] _, change in
+            guard let self else { return }
+            self.seekLock.withLock {
+                self.transportCalls.append("rate=\(change.newValue ?? -1)@\(ProcessInfo.processInfo.systemUptime)")
+            }
+        }
+    }
+
+    nonisolated override func playImmediately(atRate rate: Float) {
+        seekLock.withLock { transportCalls.append("play(\(rate))@\(ProcessInfo.processInfo.systemUptime)") }
+        super.playImmediately(atRate: rate)
+    }
+
+    nonisolated override func pause() {
+        seekLock.withLock { transportCalls.append("pause@\(ProcessInfo.processInfo.systemUptime)") }
+        super.pause()
+    }
     private nonisolated(unsafe) var shouldHold = false
-    private nonisolated(unsafe) var heldSeek: (CMTime, CMTime, CMTime, @Sendable (Bool) -> Void)?
+    private nonisolated(unsafe) var finishRequested = false
+    private nonisolated(unsafe) var heldSeek: (Bool, @Sendable (Bool) -> Void)?
     private nonisolated(unsafe) var latestCallback: (@Sendable (CMTime) -> Void)?
     private nonisolated(unsafe) var originalCallback: (@Sendable (CMTime) -> Void)?
     private nonisolated(unsafe) var callbackQueue: DispatchQueue?
 
     nonisolated func holdSeek() {
-        seekLock.withLock { shouldHold = true; originalCallback = latestCallback }
+        seekLock.withLock { shouldHold = true; finishRequested = false; originalCallback = latestCallback }
     }
     nonisolated var hasHeldSeek: Bool { seekLock.withLock { heldSeek != nil } }
+    nonisolated var heldSeekSucceeded: Bool { seekLock.withLock { heldSeek?.0 == true } }
     nonisolated func captureLatestCallbackForReplay() {
         seekLock.withLock { originalCallback = latestCallback }
     }
@@ -316,22 +405,33 @@ private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Senda
     ) {
         let hold = seekLock.withLock {
             if shouldHold {
-                heldSeek = (time, toleranceBefore, toleranceAfter, completionHandler)
                 shouldHold = false
                 return true
             }
             return false
         }
-        if !hold {
-            super.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter,
-                       completionHandler: completionHandler)
+        super.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter) { [weak self] success in
+            guard let self, hold else { completionHandler(success); return }
+            let deferred = self.seekLock.withLock {
+                guard !self.finishRequested else { return false }
+                self.heldSeek = (success, completionHandler)
+                return true
+            }
+            if !deferred { completionHandler(success) }
         }
     }
 
-    nonisolated func finishSeek() {
-        let held = seekLock.withLock { let value = heldSeek; heldSeek = nil; return value }
-        guard let (time, before, after, completion) = held else { return }
-        super.seek(to: time, toleranceBefore: before, toleranceAfter: after, completionHandler: completion)
+    @discardableResult
+    nonisolated func finishSeek() -> Bool {
+        let held = seekLock.withLock {
+            finishRequested = true
+            let value = heldSeek
+            heldSeek = nil
+            return value
+        }
+        guard let (success, completion) = held else { return false }
+        completion(success)
+        return true
     }
 
     nonisolated override func addPeriodicTimeObserver(
@@ -344,9 +444,11 @@ private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Senda
         return super.addPeriodicTimeObserver(forInterval: interval, queue: queue, using: block)
     }
 
-    nonisolated func deliverOriginalTimestamp(_ seconds: Double) {
+    nonisolated func deliverOriginalTimestamp(_ seconds: Double) -> Bool {
         let (queue, callback) = seekLock.withLock { (callbackQueue, originalCallback) }
-        queue?.sync { callback?(CMTime(seconds: seconds, preferredTimescale: 1_000)) }
+        guard let queue, let callback else { return false }
+        queue.sync { callback(CMTime(seconds: seconds, preferredTimescale: 1_000)) }
+        return true
     }
 }
 
@@ -359,6 +461,7 @@ private extension DulcetPlaybackCommandOutcome {
 
 private struct CrossfadeFixture {
     let localURL: URL
+    let localByteLength: Int64
     let engine: DulcetAVPlayerEngine
     let originalPlayer: AVQueuePlayer
     let events: PlaybackEventRecorder
@@ -369,7 +472,8 @@ private struct CrossfadeFixture {
     static func start(
         player: AVQueuePlayer = AVQueuePlayer(),
         outgoingResource: (any DulcetPlaybackResourceLoading)? = nil,
-        warmTransport: Bool = false
+        warmTransport: Bool = false,
+        playAfterPreparation: Bool = true
     ) async throws -> CrossfadeFixture {
         let controls = RecordingSystemMediaControls()
         let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: controls)
@@ -427,10 +531,13 @@ private struct CrossfadeFixture {
         try #require(await execute(engine, .setCrossfade(commandID: .init("crossfade"),
             attemptID: first.attemptID, duration: 2)) ==
             .completed(commandID: .init("crossfade"), result: .withoutData))
-        try #require(await execute(engine, .play(commandID: .init("play"))) ==
-            .accepted(commandID: .init("play")))
+        if playAfterPreparation {
+            try #require(await execute(engine, .play(commandID: .init("play"))) ==
+                .accepted(commandID: .init("play")))
+        }
         handedOff = true
-        return Self(localURL: localURL, engine: engine, originalPlayer: player, events: events, controls: controls,
+        return Self(localURL: localURL, localByteLength: Int64(bytes.count), engine: engine,
+                    originalPlayer: player, events: events, controls: controls,
                     first: first, next: next)
     }
 }
@@ -901,9 +1008,23 @@ struct AVPlayerStartupRecoveryTests {
         case .release: _ = await execute(engine, .release(commandID: .init("release")))
         }
         engine.reportPlayerTransportChangedForTesting()
-        #expect(!clock.fireScheduledDeadline())
-        #expect(player.playRequestCount == 1)
-        #expect(!events.snapshot.contains { if case .failedBeforeStart(_, .engine) = $0 { true } else { false } })
+        if case .replacement = reason {
+            // Replacement retains accepted Play intent even when the old native Play was
+            // dropped. Its own recovery is valid; the retired attempt must never fail later.
+            try #require(player.playRequestCount == 2)
+            engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+            try #require(clock.fireScheduledDeadline())
+            #expect(player.playRequestCount == 3)
+            try #require(clock.fireScheduledDeadline())
+            #expect(events.snapshot.contains(.failedBeforeStart(attemptID: .init("replacement"), error: .engine)))
+            #expect(!events.snapshot.contains {
+                if case let .failedBeforeStart(id, .engine) = $0 { id == playbackPlan.attemptID } else { false }
+            })
+        } else {
+            #expect(!clock.fireScheduledDeadline())
+            #expect(player.playRequestCount == 1)
+            #expect(!events.snapshot.contains { if case .failedBeforeStart(_, .engine) = $0 { true } else { false } })
+        }
         _ = await execute(engine, .release(commandID: .init("cleanup")))
     }
 }
@@ -1882,6 +2003,152 @@ struct AVPlayerEngineTests {
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
+    @Test(arguments: ["pause", "remotePause", "noisyRoute", "failure", "stop"])
+    func aNewerStopIntentRevokesAnInterruptionsPermissionToResume(action: String) async throws {
+        let audioSession = RecordingAudioSession()
+        let clock = ManualAVPlayerEngineClock()
+        let controls = RecordingSystemMediaControls()
+        let player = StartupPlayDroppingPlayer(dropCount: .max)
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock,
+            usesAVFoundationMediaStack: false, audioSession: audioSession,
+            systemMediaControls: controls)
+        defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let first = plan()
+        try #require(await execute(engine, .prepare(commandID: .init("prepare"), plan: first)) ==
+            .accepted(commandID: .init("prepare")))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        try #require(await execute(engine, .play(commandID: .init("play"))) == .accepted(commandID: .init("play")))
+        clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 500_000_000)
+        try #require(player.playRequestCount == 1 && events.containsProgressBegan,
+                     "The interrupted attempt must have requested Play and begun progressing")
+        audioSession.publish(.interruptionBegan)
+        try await requireEngineQueueDrain(engine)
+        try #require(events.snapshot.contains(.interruptionBegan(attemptID: first.attemptID, shouldResume: false)))
+        var finalAttempt = first.attemptID
+        switch action {
+        case "remotePause": try #require(controls.send(.pause(sessionID: first.playbackSessionID)))
+        case "noisyRoute":
+            audioSession.publish(.routeChanged(old: .bluetooth, new: .builtIn, becomingNoisy: true))
+            try await requireEngineQueueDrain(engine)
+        case "failure":
+            engine.reportCurrentItemFailedForTesting(.undecodable)
+            try #require(events.snapshot.contains {
+                if case let .failedAfterPartial(id, _, failure) = $0 {
+                    return id == first.attemptID && failure == .undecodable
+                }
+                return false
+            }, "The terminal failure must be observed before interruption-end")
+        case "stop":
+            try #require(await execute(engine, .stop(commandID: .init("stop"))) ==
+                .completed(commandID: .init("stop"), result: .withoutData))
+            let next = plan(session: "new-session", attempt: "new-attempt")
+            try #require(await execute(engine, .prepare(commandID: .init("new"), plan: next)) == .accepted(commandID: .init("new")))
+            engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+            finalAttempt = next.attemptID
+        default:
+            try #require(await execute(engine, .pause(commandID: .init("pause"))) ==
+                .completed(commandID: .init("pause"), result: .withoutData))
+        }
+        let playCalls = player.playRequestCount
+        let beforeEnd = events.snapshot.count
+        audioSession.publish(.interruptionEnded(systemAllowsResume: true))
+        try await requireEngineQueueDrain(engine)
+        let expectedAfterEnd: [DulcetPlaybackEvent] = action == "failure" ? [] : [
+            .interruptionEnded(attemptID: finalAttempt, shouldResume: false)
+        ]
+        #expect(Array(events.snapshot.dropFirst(beforeEnd)) == expectedAfterEnd)
+        #expect(player.playRequestCount == playCalls, "The old interruption must not issue another Play after \(action)")
+        #expect(controls.transportPlayingStates.last == false)
+        if action != "failure" {
+            try #require(await execute(engine, .play(commandID: .init("explicit-resume"))) ==
+                .accepted(commandID: .init("explicit-resume")))
+            #expect(player.playRequestCount == playCalls + 1, "A new explicit Play must still work")
+        }
+    }
+
+    @Test
+    func aLateNativePlayingReportCannotRestorePausedInterruptionIntent() async throws {
+        let audioSession = RecordingAudioSession()
+        let controls = RecordingSystemMediaControls()
+        let player = StartupPlayDroppingPlayer(dropCount: .max)
+        let engine = DulcetAVPlayerEngine(player: player, clock: ManualAVPlayerEngineClock(),
+            usesAVFoundationMediaStack: false,
+            audioSession: audioSession, systemMediaControls: controls)
+        defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let first = plan()
+        try #require(await execute(engine, .prepare(commandID: .init("prepare"), plan: first)) ==
+            .accepted(commandID: .init("prepare")))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        try #require(await execute(engine, .play(commandID: .init("play"))) == .accepted(commandID: .init("play")))
+        try #require(await execute(engine, .pause(commandID: .init("pause"))) ==
+            .completed(commandID: .init("pause"), result: .withoutData))
+        player.setTransportOverride(.playing)
+        try #require(player.timeControlStatus == .playing && player.playRequestCount == 1,
+                     "The native status must lag the newer Pause without another engine Play")
+        audioSession.publish(.interruptionBegan)
+        try await requireEngineQueueDrain(engine)
+        try #require(events.snapshot.contains(.interruptionBegan(attemptID: first.attemptID, shouldResume: false)))
+        let beforeEnd = events.snapshot.count
+        audioSession.publish(.interruptionEnded(systemAllowsResume: true))
+        try await requireEngineQueueDrain(engine)
+        #expect(Array(events.snapshot.dropFirst(beforeEnd)) == [
+            .interruptionEnded(attemptID: first.attemptID, shouldResume: false)
+        ])
+        #expect(player.playRequestCount == 1)
+        #expect(controls.transportPlayingStates.last == false)
+        try #require(await execute(engine, .play(commandID: .init("explicit-resume"))) ==
+            .accepted(commandID: .init("explicit-resume")))
+        #expect(player.playRequestCount == 2)
+    }
+
+    @Test(arguments: [false, true])
+    func aReplacementPreservesInterruptionIntentUnlessANewerPauseRevokesIt(paused: Bool) async throws {
+        let audioSession = RecordingAudioSession()
+        let controls = RecordingSystemMediaControls()
+        let player = StartupPlayDroppingPlayer(dropCount: .max)
+        let engine = DulcetAVPlayerEngine(player: player, clock: ManualAVPlayerEngineClock(),
+            usesAVFoundationMediaStack: false, audioSession: audioSession, systemMediaControls: controls)
+        defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let first = plan()
+        try #require(await execute(engine, .prepare(commandID: .init("prepare"), plan: first)) ==
+            .accepted(commandID: .init("prepare")))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        try #require(await execute(engine, .play(commandID: .init("play"))) == .accepted(commandID: .init("play")))
+        audioSession.publish(.interruptionBegan)
+        try await requireEngineQueueDrain(engine)
+        try #require(events.snapshot.contains(.interruptionBegan(attemptID: first.attemptID, shouldResume: false)))
+        if paused {
+            try #require(await execute(engine, .pause(commandID: .init("pause"))) ==
+                .completed(commandID: .init("pause"), result: .withoutData))
+            player.setTransportOverride(.playing)
+        }
+        let replacement = plan(session: "session", attempt: "replacement")
+        try #require(replacement.playbackSessionID == first.playbackSessionID)
+        try #require(await execute(engine, .replaceCurrent(commandID: .init("replace"), plan: replacement)) ==
+            .accepted(commandID: .init("replace")))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        try #require(player.playRequestCount == 1, "Replacement must remain held during the interruption")
+        let beforeEnd = events.snapshot.count
+        audioSession.publish(.interruptionEnded(systemAllowsResume: true))
+        try await requireEngineQueueDrain(engine)
+        #expect(Array(events.snapshot.dropFirst(beforeEnd)) == [
+            .interruptionEnded(attemptID: replacement.attemptID, shouldResume: !paused)
+        ])
+        #expect(player.playRequestCount == (paused ? 1 : 2))
+        #expect(controls.transportPlayingStates.last == !paused)
+        if paused {
+            try #require(await execute(engine, .play(commandID: .init("explicit-resume"))) ==
+                .accepted(commandID: .init("explicit-resume")))
+            #expect(player.playRequestCount == 2)
+        }
+    }
+
     @Test
     func interruptionsAndNoisyRoutesPauseWithExplicitResumptionPolicy() async throws {
         let audioSession = RecordingAudioSession()
@@ -2608,6 +2875,16 @@ private let blockedQueueProbeTimeout: TimeInterval = 5
 /// `mediaState`, when given, is appended to a failure. A responsive engine queue says only that
 /// the engine could have acted; for a wait on real media time it cannot say whether media time
 /// moved, and without that a frozen player clock reads exactly like an engine that ignored one.
+private func requireEngineQueueDrain(_ engine: DulcetAVPlayerEngine) async throws {
+    let liveness = await engine.probeQueueLivenessForTesting()
+    let responsive: Bool
+    switch liveness {
+    case .responsive: responsive = true
+    case .notResponsive: responsive = false
+    }
+    try #require(responsive, "The engine queue must process the preceding audio-session event")
+}
+
 private func waitUntil(
     _ failure: String,
     engine: DulcetAVPlayerEngine,
