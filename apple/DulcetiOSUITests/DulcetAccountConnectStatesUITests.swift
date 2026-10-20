@@ -1170,7 +1170,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
     }
 
-    /// Scrolls until the element's midpoint is inside the window and hittable, at most six swipes.
+    /// Keeps the whole control clear of the native navigation and tab bars before a real tap.
     @MainActor
     private func scrollIntoView(_ element: XCUIElement, matching target: HitTarget, in app: XCUIApplication) -> Bool {
         let window = app.windows.firstMatch
@@ -1178,12 +1178,25 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             dismissPasswordSavePromptIfPresent()
             if waitForStableHitTarget(element, matching: target, in: window, timeout: 5) { return true }
             if swipe < 6 {
-                // Choose the direction from one window snapshot: live element geometry can
-                // wait on the animation idle that this scope exists to bypass.
-                let above = (try? window.snapshot()).map { snapshot in
-                    hitTarget(target, in: snapshot).map { $0.frame.midY < snapshot.frame.minY + 100 } ?? false
-                } ?? false
-                if above { app.swipeDown() } else { app.swipeUp() }
+                // A full-window fling can move this error action from behind the tab bar to
+                // behind the navigation bar and back. Move a bounded distance toward the
+                // content's centre, then hold the finger still to avoid that momentum.
+                guard let snapshot = try? window.snapshot() else { return false }
+                let viewport = hitViewport(for: target, in: snapshot)
+                guard !viewport.isNull, !viewport.isInfinite, !viewport.isEmpty else { return false }
+                let targetY = hitTarget(target, in: snapshot)?.frame.midY ?? viewport.maxY
+                guard targetY.isFinite else { return false }
+                let limit = viewport.height * 0.35
+                let delta = min(limit, max(-limit, viewport.midY - targetY))
+                // If geometry is already centred but hittability has not arrived, keep
+                // waiting. A zero-length press could activate the action instead of scroll.
+                guard abs(delta) >= 12 else { continue }
+                let origin = window.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: viewport.midX - snapshot.frame.minX,
+                                                       dy: viewport.midY - snapshot.frame.minY))
+                let end = start.withOffset(CGVector(dx: 0, dy: delta))
+                start.press(forDuration: 0.05, thenDragTo: end,
+                            withVelocity: .slow, thenHoldForDuration: 0.3)
                 RunLoop.current.run(until: Date().addingTimeInterval(0.25))
             }
         }
@@ -1197,6 +1210,39 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             if let found = hitTarget(target, in: child) { return found }
         }
         return nil
+    }
+
+    /// XCTest can report a Form row hittable while its native tap point is behind chrome.
+    /// In run 39422860211, Try Again's centre was (201, 60.7), above the navigation bar's
+    /// bottom at 116. Use the bars from this same snapshot for ordinary proofs and tours.
+    @MainActor
+    private func hitViewport(for target: HitTarget, in snapshot: XCUIElementSnapshot) -> CGRect {
+        var top = snapshot.frame.minY + 16
+        var bottom = snapshot.frame.maxY - 24
+        let targetFrame = hitTarget(target, in: snapshot)?.frame
+        var nativeTargetViewport: CGRect?
+        var pending = snapshot.children
+        while let node = pending.popLast() {
+            let frame = node.frame
+            if !frame.isNull && !frame.isInfinite && !frame.isEmpty
+                && frame.intersects(snapshot.frame) {
+                if (node.elementType == .navigationBar || node.elementType == .tabBar),
+                   let nativeTarget = hitTarget(target, in: node), nativeTarget.frame == targetFrame {
+                    nativeTargetViewport = frame.intersection(snapshot.frame)
+                }
+                switch node.elementType {
+                case .navigationBar:
+                    top = max(top, frame.maxY + 12)
+                case .tabBar, .keyboard:
+                    bottom = min(bottom, frame.minY - 8)
+                default: break
+                }
+            }
+            pending.append(contentsOf: node.children)
+        }
+        // Library itself is a native tab target in the artwork proof, not a covered Form row.
+        return nativeTargetViewport ?? CGRect(x: snapshot.frame.minX, y: top, width: snapshot.frame.width,
+                                              height: max(0, bottom - top))
     }
 
     /// One window snapshot supplies both frames and target presence for a poll. Live element
@@ -1236,20 +1282,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             slowestSnapshot = max(slowestSnapshot, now - beforeSnapshot)
             guard inBudget(now) else { break }
             let frame = hitTarget(target, in: snapshot)?.frame ?? .null
-            var visibleFrame = snapshot.frame
-            if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
-                // The tab bar overlays the form. At large text a button's midpoint can be in
-                // the window but underneath that bar, and XCTest still calls it hittable.
-                func tabBar(in node: XCUIElementSnapshot) -> CGRect? {
-                    if node.elementType == .tabBar { return node.frame }
-                    return node.children.lazy.compactMap { tabBar(in: $0) }.first
-                }
-                let bottom = min(snapshot.frame.maxY - 24, (tabBar(in: snapshot)?.minY ?? snapshot.frame.maxY) - 16)
-                visibleFrame = CGRect(x: snapshot.frame.minX, y: snapshot.frame.minY + 100,
-                                      width: snapshot.frame.width, height: max(0, bottom - snapshot.frame.minY - 100))
-            }
-            let visible = !frame.isNull && !frame.isEmpty
-                && visibleFrame.contains(CGPoint(x: frame.midX, y: frame.midY))
+            let visibleFrame = hitViewport(for: target, in: snapshot)
+            let visible = !frame.isNull && !frame.isInfinite && !frame.isEmpty
+                && visibleFrame.contains(frame)
             // An offscreen frame needs a swipe, not five seconds of identical snapshots.
             if !frame.isNull && !visible { return false }
             if !visible || frame != previous || snapshot.frame != previousWindow {

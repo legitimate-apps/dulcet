@@ -311,3 +311,30 @@ with strict individual-result guards. Both markers report the real English curre
 plain lyrics, the empty state, one failed read and one successful retry; preference restoration
 also passes. All seven Apple integration schemes pass build-for-testing. These are local
 fixture checks; the new final commit still requires its full Apple CI run.
+
+## Account-state tap target during final-head CI
+
+OBSERVED in full run 39422860211 on `82e9f63e`: iPhone passes My Library 7/7,
+Settings persistence 1/1 and the complete corrected lyrics selector before a later account-state
+test fails. The form contains the correct HTTP address and the local-HTTP consent reads off.
+The recorded Try Again event taps (201.0, 60.6667), with the button at y=29.7–91.7 and the
+Connection navigation bar at y=62–116. The recording shows the button under that chrome; the
+preceding invalid-address error remains after the tap. This is an observed covered test target,
+not evidence that the production HTTP-consent policy accepted an insecure connection.
+
+The account helper previously treated the entire window as a hit area outside design-tour mode.
+Its correction requires the whole control to fit inside the actual unobscured viewport and
+moves toward its centre with bounded slow drags and a stationary hold. Recording of a local
+check showed full-window flings overshooting between the navigation and tab bars; those drags
+address that observed oscillation. Native bar controls retain their own bar viewport, and a
+short-drag guard prevents a stationary press becoming an unintended action. The helper preserves
+a single real action tap and all account-state assertions, including the consent error. Local whole-selector checks and final-head CI remain
+separate evidence requirements.
+
+OBSERVED after the viewport correction on its final guarded source: the whole iPhone
+account-state selector passes 1/1 in 242.411 seconds and the whole iPad selector passes 1/1
+in 272.228 seconds, each with a strict named-result guard and all 12 state markers. The
+HTTP-consent error, cancellation, connection, saved offline recovery and persistence error
+assertions all execute. All seven Apple integration schemes pass build-for-testing. These
+local results establish the corrected test interaction; the final branch head requires its
+own full Apple workflow. No production playback, Kotlin policy or CI files change.
