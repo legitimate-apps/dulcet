@@ -796,7 +796,7 @@ class AndroidPlaybackControllerTest {
         }
     }
 
-    @Test fun anotherAccountsQueueIsRefusedAtEveryEntryPointBeforeAnyRequest() {
+    @Test fun anotherSavedAccountsQueueStaysUntouchedWhenStartupSelectsAnEmptyOwnQueue() {
         val loaded = mutableListOf<String>()
         Fixture(savedOwner = "different-account", savedSongs = listOf("x", "y", "z"),
             loadSong = { id -> loaded += id; song(id) }).use { f ->
@@ -805,12 +805,15 @@ class AndroidPlaybackControllerTest {
             f.controller.play(); f.controller.next(); f.controller.previous(); f.controller.skipToPrevious()
             f.controller.jumpTo(entry); f.controller.setShuffle(true); f.controller.cycleRepeatMode()
             assertFalse(f.controller.moveEntry(entry, 0)); assertFalse(f.controller.removeEntry(entry))
-            assertFalse(f.controller.clearUpcoming())
+            assertTrue(f.controller.clearUpcoming(), "Clearing our selected empty queue is a successful no-op")
             f.controller.sessionPlayer.seekToNext(); f.controller.sessionPlayer.play()
             assertTrue(loaded.isEmpty(), "No request may be made for another account's queue")
             assertTrue(f.prepared.isEmpty())
             assertFalse(f.probe.requested)
-            assertEquals(DomainError.Auth.Forbidden, f.controller.state.value.error)
+            assertEquals(ServerId(OWNER), PersistentQueueStore(f.store.database).activeServerId(),
+                "Startup selects the saved account instead of exposing the other saved server's queue")
+            assertTrue(f.controller.state.value.queue.isEmpty(), "The selected account has no saved queue")
+            assertNull(f.controller.state.value.error)
             assertNull(f.controller.state.value.playbackSessionId, "The foreign queue must not become a session")
             assertEquals(foreign, PersistentQueueStore(f.store.database).load(ServerId("different-account")),
                 "The other account's queue must be left exactly as it was")
