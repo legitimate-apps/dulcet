@@ -766,32 +766,34 @@ class AndroidDownloadControllerTest {
     }
 
     @Test fun anIdentityRejectionDuringTransferPreservesItsPartialAndPreventsPromotion() = runBlocking {
-        val reached = CountDownLatch(1)
-        val release = CountDownLatch(1)
-        WireServer { WireReply(200, AUDIO, pauseAfter = STOP_AT, pause = {
-            reached.countDown()
-            check(release.await(10, TimeUnit.SECONDS))
-        }) }.use { server ->
-            val accountId = "identity-inflight:${java.util.UUID.randomUUID()}"
-            val tasks = RecordingTasks()
-            val controller = controller(server, tasks, serverId = accountId)
-            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
-            val task = tasks.started.single()
-            val running = async(Dispatchers.IO) { runCatching { controller.runTask(task) } }
-            try {
-                assertTrue(reached.await(10, TimeUnit.SECONDS), "The original stream reached its held body")
-                val partial = File(controller.temporaryPathForTest(task))
-                withTimeout(10_000) { while (partial.length() < STOP_AT) delay(10) }
-                val prefix = partial.readBytes()
-                AndroidServerIdentity.validate(accountId) { DomainError.Protocol.ServerIdentityChanged }
-                release.countDown()
-                val result = running.await()
-                assertTrue(result.exceptionOrNull() is CancellationException || result.getOrNull() == AndroidDownloadRunOutcome.NotRunnable,
-                    "A rejected server cannot finish a previously opened transfer: $result")
-                assertContentEquals(prefix, partial.readBytes(), "Existing partial bytes are retained, without accepting more bytes")
-                assertNull(controller.localPlan(RAW_ID), "The rejected body must never become playable local media")
-                assertEquals("downloading", inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsOne().state)
-            } finally { release.countDown() }
+        for (resetConnection in listOf(false, true)) {
+            val reached = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            WireServer { WireReply(200, AUDIO, pauseAfter = STOP_AT, pause = {
+                reached.countDown()
+                check(release.await(10, TimeUnit.SECONDS))
+            }, resetAfterPause = resetConnection) }.use { server ->
+                val accountId = "identity-inflight:${java.util.UUID.randomUUID()}"
+                val tasks = RecordingTasks()
+                val controller = controller(server, tasks, serverId = accountId)
+                controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+                val task = tasks.started.single()
+                val running = async(Dispatchers.IO) { runCatching { controller.runTask(task) } }
+                try {
+                    assertTrue(reached.await(10, TimeUnit.SECONDS), "The original stream reached its held body")
+                    val partial = File(controller.temporaryPathForTest(task))
+                    withTimeout(10_000) { while (partial.length() < STOP_AT) delay(10) }
+                    val prefix = partial.readBytes()
+                    AndroidServerIdentity.validate(accountId) { DomainError.Protocol.ServerIdentityChanged }
+                    release.countDown()
+                    val result = running.await()
+                    assertTrue(result.exceptionOrNull() is CancellationException || result.getOrNull() == AndroidDownloadRunOutcome.NotRunnable,
+                        "A rejected server cannot finish a previously opened transfer: $result")
+                    assertContentEquals(prefix, partial.readBytes(), "Existing partial bytes are retained, without accepting more bytes")
+                    assertNull(controller.localPlan(RAW_ID), "The rejected body must never become playable local media")
+                    assertEquals("downloading", inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsOne().state)
+                } finally { release.countDown() }
+            }
         }
     }
 

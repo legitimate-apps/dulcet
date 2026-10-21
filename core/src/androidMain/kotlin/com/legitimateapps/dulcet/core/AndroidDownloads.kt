@@ -478,7 +478,8 @@ public class AndroidDownloadController internal constructor(
                 ?: DomainError.Transport.Unreachable
             // The recording must happen even when the task's own job is being torn down around it.
             withContext(database + NonCancellable) {
-                if (closed || !engine.isMediaBindingCurrent()) return@withContext AndroidDownloadRunOutcome.NotRunnable
+                if (closed || AndroidServerIdentity.isRejected(account.providerInstanceId) || !engine.isMediaBindingCurrent())
+                    return@withContext AndroidDownloadRunOutcome.NotRunnable
                 if (!failure.keepsPartialFile()) temporary.delete()
                 if (engine.record(id) != null) {
                     engine.recordFailure(id, error, wall())
