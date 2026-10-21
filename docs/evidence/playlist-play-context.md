@@ -16,6 +16,12 @@ null, provider isolation, valid absence, unsupported discovery versions/endpoint
 authentication failure retry, serialized discovery and reconnect invalidation. Existing scrobble
 outbox and delivery suites continue to check the surrounding delivery policy.
 
+OBSERVED 2026-10-21: the focused JVM run passed 8 context, 27 outbox and 5 delivery cases,
+with no failures, errors or skips. Removing the queue's context snapshot made the context test
+fail with the expected playlist ID versus null. After restoring production code, 83 queue,
+session, retry and context cases passed. The migration gate passed all 12 schema fixtures and
+29 destructive controls, including erasing a populated playlist context from a pending play.
+
 These shared checks establish core behavior. They do not alone establish any platform's UI,
 engine playback, process-death behavior or rendered Home result. Platform observations and test
 counts are recorded below only when the corresponding runtime has executed.

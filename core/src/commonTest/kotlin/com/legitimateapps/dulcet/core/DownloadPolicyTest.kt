@@ -535,7 +535,7 @@ class DownloadPolicyTest {
         val statements = listOf(
             "INSERT INTO mutation_outbox VALUES ('$SERVER_ID', 'target', 'starred', 'true', 1, $NOW)",
             "INSERT INTO resume_position VALUES ('$SERVER_ID', 'resume', 41)",
-            "INSERT INTO scrobble_outbox VALUES ('$SERVER_ID', 'scrobble', $NOW, $NOW, 0)",
+            "INSERT INTO scrobble_outbox(server_id, raw_id, session_start_wall_clock, created_at_wall_clock, attempt_count) VALUES ('$SERVER_ID', 'scrobble', $NOW, $NOW, 0)",
             "INSERT INTO queue_state VALUES ('$SERVER_ID', NULL, 'off', 0)",
             "INSERT INTO active_queue VALUES (1, '$SERVER_ID')",
             "INSERT INTO queue_entry VALUES ('$SERVER_ID', 'entry', 'track', 'library', NULL, 'Library', 'play_now', 0, 0)",
