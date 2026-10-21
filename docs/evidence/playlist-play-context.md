@@ -25,6 +25,16 @@ The existing DownloadPolicy suite passes 18 JVM cases after its positional outbo
 changed to explicit columns. The interrupted-migration fixture now includes the actual released
 version-2 outbox table; all four driver-factory JVM cases pass, including transactional rollback.
 
+OBSERVED reconnect regression: the Android real-socket controller test and native Apple
+installed-sender test both fail before the availability binding is fixed (expected no context
+after reconnect, received the stale playlist context). After the fix, all 66 Android controller,
+21 Apple facade and 8 native playlist-context cases pass with zero failures, errors or skips.
+The regressions change positive advertisement to valid absence and back to positive across
+availability reports, including a reachable report without a preceding outage. They also check
+that ordinary plays reuse the answer; the Android proof preserves session/attempt identities
+and keeps now-playing context-free. These are controller/facade binding observations, separate
+from the platform Home UI observations below.
+
 These shared checks establish core behavior. They do not alone establish any platform's UI,
 engine playback, process-death behavior or rendered Home result. Platform observations and test
 counts are recorded below only when the corresponding runtime has executed.
@@ -85,7 +95,7 @@ soak runner. Every linked run ends with the exact line `SOAK RESULT passed=20 fa
 
 Mac and tvOS offline queued-play delivery across process relaunch remains unobserved. Their
 shipped Home cells claim the observed live chain. The Mac proof required temporary internal
-staging of runnable products/frameworks after an X8 dynamic-loader stall before main; build
+staging of runnable products/frameworks after an external-volume dynamic-loader stall before main; build
 outputs and caches stayed on the external volume. A later fixture-navigation assertion was
 corrected by waiting for the advertised Browse catalog before selecting Playlists.
 

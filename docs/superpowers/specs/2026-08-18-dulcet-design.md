@@ -7913,6 +7913,17 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-21 — Bind playlist capability invalidation to playback availability.**
+A reachable/revalidated playback availability report invalidates the installed scrobble sender's
+cached `dulcetHome` answer, even when the previous report was also reachable (foreground
+revalidation). Both a positive advertisement and valid absence must be discovered again before
+the next context-bearing submission. The callback does not replace the current entry, session
+or attempt and performs no eager request. Android handles the availability report on the delivery
+owner's main dispatcher so invalidation and suspended discovery share the same ordering. The
+account-refresh/replacement paths continue to invalidate or replace the sender too. This corrects
+the platform binding to the existing reconnect contract; it does not change `/rest` fields or the
+submitted-play threshold.
+
 **2026-10-21 — Persist and negotiate each submitted play's playlist provenance.**
 The shared queue snapshots a real playlist source into its playback session, including restored
 queues, repeat and preloaded entries. A submitted play retains that nullable provider-scoped

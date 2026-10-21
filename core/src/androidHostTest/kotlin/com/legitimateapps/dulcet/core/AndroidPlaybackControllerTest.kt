@@ -1893,11 +1893,60 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun networkReconnectRediscoversPositiveAndNegativePlaylistContextWithoutReplacingPlayback() {
+        ScrobbleReceiver().use { receiver ->
+            Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
+                fun play(rawId: String, expectedContext: String?) {
+                    f.probe.position = 0
+                    f.controller.playQueue(album(rawId), 0, AndroidQueueSource.Playlist, "Mix", "playlist-id")
+                    f.probe.state = androidx.media3.common.Player.STATE_READY
+                    f.probe.events()
+                    repeat(46) {
+                        f.probe.position += 500
+                        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+                    }
+                    val outbox = PersistentScrobbleOutbox(f.store.database, OutboxWallClock { System.currentTimeMillis() })
+                    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                    while ((receiver.requests.none { it["id"] == rawId && it["submission"] == "true" } ||
+                            outbox.pending(ServerId(OWNER)).isNotEmpty()) && System.nanoTime() < deadline) {
+                        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100))
+                        Thread.sleep(10)
+                    }
+                    val sent = receiver.requests.single { it["id"] == rawId && it["submission"] == "true" }
+                    assertEquals(expectedContext, sent["dulcetContextId"])
+                    assertEquals(if (expectedContext == null) null else "playlist", sent["dulcetContextType"])
+                    assertTrue(outbox.pending(ServerId(OWNER)).isEmpty())
+                }
+                receiver.advertiseContext = true
+                play("positive", "playlist-id")
+                assertEquals(1, receiver.extensionRequests.get())
+                val playing = f.controller.state.value
+                receiver.advertiseContext = false
+                f.controller.setNetworkAvailable(false)
+                f.controller.setNetworkAvailable(true)
+                assertEquals(playing.playbackSessionId, f.controller.state.value.playbackSessionId)
+                assertEquals(playing.attemptId, f.controller.state.value.attemptId)
+                play("negative", null)
+                assertEquals(2, receiver.extensionRequests.get(), "Reconnect must discard a positive advertisement")
+                receiver.advertiseContext = true
+                // A foreground/revalidated connection can report true without a preceding outage.
+                f.controller.setNetworkAvailable(true)
+                play("renewed", "playlist-id")
+                assertEquals(3, receiver.extensionRequests.get(), "Reconnect must discard valid absence too")
+                play("cached", "playlist-id")
+                assertEquals(3, receiver.extensionRequests.get(), "Ordinary plays still share the connection's answer")
+                assertTrue(receiver.requests.filter { it["submission"] == "false" }.all { it["dulcetContextId"] == null })
+            }
+        }
+    }
+
     /** Receives real HTTP from the production sender. No controller handoff or sender is replaced. */
     private class ScrobbleReceiver(
         private val refuseFirstSubmissions: Int = 0,
         private val goneId: String? = null,
     ) : AutoCloseable {
+        @Volatile var advertiseContext = false
+        val extensionRequests = java.util.concurrent.atomic.AtomicInteger()
         private val refused = java.util.concurrent.atomic.AtomicInteger()
         private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${socket.localPort}"
@@ -1914,16 +1963,18 @@ class AndroidPlaybackControllerTest {
                             val line = assertNotNull(reader.readLine()).split(' ')
                             val uri = java.net.URI(line[1])
                             assertEquals("GET", line[0])
-                            assertEquals("/rest/scrobble.view", uri.path)
+                            val extensions = uri.path == "/rest/getOpenSubsonicExtensions.view"
+                            assertTrue(extensions || uri.path == "/rest/scrobble.view")
                             while (!reader.readLine().isNullOrEmpty()) { /* drain request headers */ }
                             val query = uri.rawQuery.split('&').associate {
                                 val pair = it.split('=', limit = 2)
                                 java.net.URLDecoder.decode(pair[0], "UTF-8") to java.net.URLDecoder.decode(pair[1], "UTF-8")
                             }
-                            requests += query
+                            if (extensions) extensionRequests.incrementAndGet() else requests += query
                             val refuse = query["submission"] == "true" && refused.getAndIncrement() < refuseFirstSubmissions
                             val gone = query["submission"] == "true" && query["id"] == goneId
-                            val body = (if (gone) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Song not found"}}}"""
+                            val body = (if (extensions) """{"subsonic-response":{"status":"ok","openSubsonicExtensions":${if (advertiseContext) """[{"name":"dulcetHome","versions":[1]}]""" else "[]"}}}"""
+                                else if (gone) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Song not found"}}}"""
                                 else if (refuse) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"unavailable"}}}"""
                                 else """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""").toByteArray()
                             client.getOutputStream().apply {

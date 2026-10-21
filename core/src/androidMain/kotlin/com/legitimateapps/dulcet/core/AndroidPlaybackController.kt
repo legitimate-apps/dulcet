@@ -547,7 +547,14 @@ public class AndroidPlaybackController internal constructor(
 
     /** What the current network costs, as the service reads it from the OS. */
     /** Platform reachability for the shared queue's offline continuation policy. */
-    public fun setNetworkAvailable(available: Boolean) { networkAvailable = available }
+    public fun setNetworkAvailable(available: Boolean) {
+        // Connectivity callbacks arrive off-main; serialize capability generations with delivery.
+        scope.launch {
+            if (closed) return@launch
+            if (available) sender.invalidateCapabilities()
+            networkAvailable = available
+        }
+    }
 
     public fun setNetworkCostClass(network: NetworkCostClass) {
         streamingQuality.setNetwork(network)
