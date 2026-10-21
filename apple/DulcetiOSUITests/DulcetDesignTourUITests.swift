@@ -676,7 +676,9 @@ final class DulcetDesignTourUITests: XCTestCase {
 
     @MainActor
     private func openPlaylists(in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
+        let hasBrowse = compact ? app.tabBars.buttons["Browse"].firstMatch.exists
+            : app.staticTexts["dulcet.sidebar.browse"].firstMatch.exists
+        guard openDestination(hasBrowse ? "Browse" : "Library", sidebar: hasBrowse ? "dulcet.sidebar.browse" : "dulcet.sidebar.library", in: app, compact: compact) else { return false }
         if !compact { return tapSidebarSection("playlists", in: app) }
         let link = app.buttons["dulcet.reader.section.playlists"].firstMatch
         guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else { return false }

@@ -410,8 +410,8 @@ extension DulcetPresentationStore {
             self?.playReaderTracks(
                 tracks,
                 shuffle: shuffle,
-                sourceKind: item.kind == .playlist ? .playlist : .album,
-                sourceID: item.id,
+                sourceKind: item.playbackSourceKind,
+                sourceID: item.playbackSourceID,
                 sourceName: window.header?.displayTitle ?? item.displayTitle
             )
         }
@@ -427,8 +427,8 @@ extension DulcetPresentationStore {
         guard let query = item.trackListQuery else { return }
         resolveReaderAddition(
             query: query,
-            kind: item.kind == .playlist ? .playlist : .album,
-            id: item.id,
+            kind: item.playbackSourceKind,
+            id: item.playbackSourceID,
             title: item.displayTitle,
             completion: completion
         )
@@ -437,7 +437,7 @@ extension DulcetPresentationStore {
     func resolveReaderAddition(
         query: DulcetLibraryQuery,
         kind: DulcetPlaybackQueueSourceKind,
-        id: DulcetProviderItemID,
+        id: DulcetProviderItemID?,
         title: String,
         completion: @escaping @MainActor (DulcetQueueAddition?) -> Void
     ) {

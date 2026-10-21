@@ -171,12 +171,12 @@ private struct DulcetPlaylistPageContent: View {
                             isEnabled: !playable.isEmpty,
                             fillsWidth: true
                         ) {
-                            store.playReaderTracks(playable, sourceKind: .playlist, sourceID: id, sourceName: item?.displayTitle ?? "")
+                            store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
                         }
                         .accessibilityIdentifier("dulcet.playlist.play")
                     } secondary: {
                         Button {
-                            store.playReaderTracks(playable, shuffle: true, sourceKind: .playlist, sourceID: id, sourceName: item?.displayTitle ?? "")
+                            store.playReaderTracks(playable, shuffle: true, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
                         } label: {
                             Label(DulcetStrings.shuffle, systemImage: "shuffle")
                                 .lineLimit(1)
@@ -304,6 +304,14 @@ private struct DulcetPlaylistPageContent: View {
         }
     }
 
+    private func playlistSourceKind(_ window: DulcetLibraryWindow) -> DulcetPlaybackQueueSourceKind {
+        window.header?.isLocalPlaylist == true ? .library : .playlist
+    }
+
+    private func playlistSourceID(_ window: DulcetLibraryWindow) -> DulcetProviderItemID? {
+        window.header?.isLocalPlaylist == true ? nil : id
+    }
+
     // MARK: Tracks
 
     @ViewBuilder
@@ -316,15 +324,15 @@ private struct DulcetPlaylistPageContent: View {
                     item: item, index: window.leadingOffset + index + 1,
                     showsIndex: false, prominentTVFocus: true,
                     queueAddition: item.playableTrack.map {
-                        DulcetQueueAddition(tracks: [$0], sourceKind: .playlist,
-                                            sourceID: id, sourceDisplayName: window.header?.displayTitle ?? "")
+                        DulcetQueueAddition(tracks: [$0], sourceKind: playlistSourceKind(window),
+                                            sourceID: playlistSourceID(window), sourceDisplayName: window.header?.displayTitle ?? "")
                     }
                 ) { track in
                     store.playReaderTracks(
                         playable,
                         startingAt: track,
-                        sourceKind: .playlist,
-                        sourceID: id,
+                        sourceKind: playlistSourceKind(window),
+                        sourceID: playlistSourceID(window),
                         sourceName: window.header?.displayTitle ?? ""
                     )
                 }

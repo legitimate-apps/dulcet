@@ -123,6 +123,16 @@ private func playlistWindow(
 
 private let playlistID = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "p1")
 
+@Test
+func pendingPlaylistCreatesNeverUseTheirCacheIdentityAsPlaybackContext() {
+    let local = playlistItem("device-cache-id", pending: true, local: true)
+    #expect(local.playbackSourceID == nil)
+    #expect(local.playbackSourceKind == .library)
+    let server = playlistItem("server-id/opaque:?", pending: true, local: false)
+    #expect(server.playbackSourceKind == .playlist)
+    #expect(server.playbackSourceID == server.id, "Pending membership edits keep the real server playlist identity")
+}
+
 // MARK: - Records and outcomes
 
 @Test
