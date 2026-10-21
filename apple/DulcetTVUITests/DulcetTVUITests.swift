@@ -58,7 +58,7 @@ final class DulcetTVUITests: XCTestCase {
             return (home?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlist.id }
         }
         XCTAssertFalse(historyContainsPlaylist(), "Creation must not record a playlist play")
-        try openLibraryPlaylistsByRemote(app)
+        try openLibraryPlaylistsByRemote(app, section: "browse")
         try openPlaylistByRemote(app, named: name)
         let play = app.buttons["dulcet.playlist.play"].firstMatch
         XCTAssertTrue(play.waitForExistence(timeout: 20))
@@ -1993,8 +1993,8 @@ final class DulcetTVUITests: XCTestCase {
     /// Library > Playlists by remote, from wherever the app is: the section bar, down into the
     /// Library, back to a section's root, Up to its bar, across to Playlists.
     @MainActor
-    private func openLibraryPlaylistsByRemote(_ app: XCUIApplication) throws {
-        XCTAssertTrue(selectSection(app, "library"), "The section bar must reach Library: " + app.debugDescription)
+    private func openLibraryPlaylistsByRemote(_ app: XCUIApplication, section: String = "library") throws {
+        XCTAssertTrue(selectSection(app, section), "The section bar must reach Library: " + app.debugDescription)
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { !$0.id.hasPrefix("dulcet.tab.") },
             "Down from the section bar must reach the Library: " + app.debugDescription)
         try returnToLibrarySectionRoot(app)
@@ -2974,7 +2974,7 @@ final class DulcetTVUITests: XCTestCase {
     /// a section's own content.
     @MainActor
     private func focusedSection(_ app: XCUIApplication) -> String? {
-        Self.sections.first { section in
+        ["listenNow", "library", "browse", "search", "nowPlaying", "settings"].first { section in
             let control = app.buttons["dulcet.tab.\(section)"].firstMatch
             return control.exists && control.hasFocus
         }
@@ -3049,7 +3049,10 @@ final class DulcetTVUITests: XCTestCase {
     /// Up-navigation, walk to the section's own control, press it.
     @MainActor
     private func selectSection(_ app: XCUIApplication, _ section: String) -> Bool {
-        guard let target = Self.sections.firstIndex(of: section) else { return false }
+        let sections = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"].filter {
+            app.buttons["dulcet.tab.\($0)"].firstMatch.exists
+        }
+        guard let target = sections.firstIndex(of: section) else { return false }
         guard let presses = focusSectionBarViaUpNavigation(app) else {
             print(
                 "DULCET TV FOCUS-BAR mechanism=up-navigation outcome=not-reached"
@@ -3058,9 +3061,9 @@ final class DulcetTVUITests: XCTestCase {
             return false
         }
         print("DULCET TV FOCUS-BAR mechanism=up-navigation outcome=reached presses=\(presses) target=\(section)")
-        for _ in 0...Self.sections.count {
+        for _ in 0...sections.count {
             guard let current = focusedSection(app),
-                  let index = Self.sections.firstIndex(of: current) else { return false }
+                  let index = sections.firstIndex(of: current) else { return false }
             if index == target { break }
             XCUIRemote.shared.press(index > target ? .left : .right)
         }
