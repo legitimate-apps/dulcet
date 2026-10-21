@@ -36,6 +36,12 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
         )
         let engine = DulcetAVPlayerEngine()
         let loaderTrace = PlaybackLoaderTraceRecorder()
+        // Keep request diagnostics even when the lifecycle wait throws.
+        defer {
+            print("PRODUCTION LOADER LIFECYCLE TRACE \(loaderTrace.summary)")
+            print("PRODUCTION LOADER REQUEST TRACE \(loaderTrace.requestDiagnostics)")
+            print("PRODUCTION LOADER EVENT TRACE \(loaderTrace.eventDiagnostics)")
+        }
         engine.setResourceLoaderTraceHandlerForTesting { loaderTrace.append($0) }
         let ready = expectation(description: "production resource reached Ready")
         let progressing = expectation(description: "production resource advanced media time")
@@ -75,9 +81,6 @@ final class DulcetPlaybackIntegrationTests: XCTestCase {
             loaderTrace.summary.active == 0
         }
         let loaderSummary = loaderTrace.summary
-        print("PRODUCTION LOADER LIFECYCLE TRACE \(loaderSummary)")
-        print("PRODUCTION LOADER REQUEST TRACE \(loaderTrace.requestDiagnostics)")
-        print("PRODUCTION LOADER EVENT TRACE \(loaderTrace.eventDiagnostics)")
         XCTAssertGreaterThan(loaderSummary.started, 0)
         XCTAssertEqual(loaderSummary.contentInformationPublished, loaderSummary.started)
         XCTAssertEqual(loaderSummary.failed, 0)
