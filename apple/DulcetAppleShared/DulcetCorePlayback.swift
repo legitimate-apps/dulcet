@@ -33,7 +33,7 @@ final class DulcetCorePlaybackWireSource: @unchecked Sendable {
     private let lock = NSLock()
     private var current: DulcetCorePlaybackWireLifetime?
     private var revoked = false
-    private let binding: PlaybackEndpointAccount?
+    private var binding: PlaybackEndpointAccount?
 
     /// Standalone factory callers retain one immutable client and cannot rotate its account.
     init(client: ApplePlaybackWireClient) {
@@ -54,19 +54,41 @@ final class DulcetCorePlaybackWireSource: @unchecked Sendable {
 
     @discardableResult
     func replace(account: PlaybackEndpointAccount) -> Bool {
+        lock.lock()
+        let binding = binding
+        lock.unlock()
         guard let binding, MediaBindingIdentity.shared.sameAccount(first: binding, second: account) else {
             revoke()
             return false
         }
         let replacement = DulcetCorePlaybackWireLifetime(client: ApplePlaybackWireClient(account: account))
         lock.lock()
-        guard !revoked else { lock.unlock(); return false }
+        guard !revoked, self.binding === binding else { lock.unlock(); return false }
         let previous = current
         current = replacement
         lock.unlock()
         // Release outside the lock: close can complete a cancelled request synchronously.
         withExtendedLifetime(previous) {}
         return true
+    }
+
+    /// Authentication has already committed an alias in this binding's durable epoch.
+    /// Existing opens keep their selected client; subsequent opens use the confirmed spelling.
+    func adoptAuthenticatedAccount(previous: PlaybackEndpointAccount, confirmed: PlaybackEndpointAccount) -> Bool {
+        let identity = MediaBindingIdentity.shared
+        guard identity.isValidAccount(account: confirmed),
+            previous.providerInstanceId == confirmed.providerInstanceId,
+            identity.canonicalServerUrl(normalizedBaseUrl: previous.normalizedBaseUrl) ==
+                identity.canonicalServerUrl(normalizedBaseUrl: confirmed.normalizedBaseUrl)
+        else { return false }
+        lock.lock()
+        guard !revoked, let binding, identity.sameAccount(first: binding, second: previous) else {
+            lock.unlock()
+            return false
+        }
+        self.binding = confirmed
+        lock.unlock()
+        return replace(account: confirmed)
     }
 
     func revoke() {

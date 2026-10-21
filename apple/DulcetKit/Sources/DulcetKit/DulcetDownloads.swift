@@ -40,7 +40,18 @@ public protocol DulcetDownloadControlling: AnyObject {
     )
     /// Invoked synchronously before an actual binding change can remove media.
     func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void)
+    /// Forced replacement also retires a previously authenticated alias.
+    func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void)
     func configure(account: DulcetPlaybackAccount)
+    /// Authenticated saved-credential continuity, committed before saving its canonical name.
+    /// False means another provider/endpoint; a failed eligible adoption throws without purging.
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool
+    /// A different, unproven login must retire old media even if its spelling was an alias.
+    func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws
+    /// True only when both exact usernames own the current durable media epoch.
+    func isSameMediaBinding(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool
+    /// Shared canonical provider/endpoint comparison; no ownership or authentication is implied.
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool
     /// New automatic library intent may contact the server only after account negotiation.
     /// Existing durable downloads retain their saved-launch recovery exception.
     func setAutomaticDownloadContactPermitted(_ permitted: Bool)
@@ -56,7 +67,12 @@ public protocol DulcetDownloadControlling: AnyObject {
 }
 
 public extension DulcetDownloadControlling {
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool { false }
+    func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {}
+    func isSameMediaBinding(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool { false }
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool { false }
     func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {}
+    func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void) {}
     func setAutomaticDownloadContactPermitted(_ permitted: Bool) {}
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {}
 }

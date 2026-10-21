@@ -1682,6 +1682,50 @@ func unentitledKeychainWriteFailsClosedWithoutLegacyFallback() throws {
 }
 
 // Keep the published test identity while reversing its expectation with the contract.
+@Test(arguments: ["saved", "typed", "password", "endpoint", "superseded"]) @MainActor
+func onlyAuthenticatedUnchangedSavedCredentialsMayAdoptServerUsernameSpelling(scenario: String) throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "Alice",
+        password: "saved-password", allowLocalHTTP: false)
+    let credentials = InstanceCredentialStore(persisted: request, providerInstanceID: "canonical-proof-provider")
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        downloadController: downloads, providerInstanceIDFactory: { "canonical-proof-provider" })
+    let store = DulcetPresentationStore(source: source)
+    #expect(connector.requests == [request])
+    if scenario == "typed" || scenario == "password" || scenario == "endpoint" {
+        store.cancelAccountConnection()
+        if scenario == "typed" { store.accountUsername = "alice" }
+        if scenario == "password" { store.accountPassword = "typed-other-password" }
+        if scenario == "endpoint" { store.accountServerURL = "https://other.example.invalid" }
+        store.submitAccountConnection()
+    }
+    if scenario == "superseded" {
+        try credentials.save(.init(serverURL: request.serverURL, username: "different-principal",
+            password: "other-secret", allowLocalHTTP: false))
+    }
+    let endpoint = scenario == "endpoint" ? "https://other.example.invalid" : request.serverURL
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: endpoint, canonicalUsername: "alice")))
+    #expect(downloads.authenticatedAdoptions.count == (scenario == "saved" ? 1 : 0))
+    #expect(downloads.unconfirmedReplacements.count == (["typed", "password", "endpoint"].contains(scenario) ? 1 : 0))
+    if scenario == "saved", let adoption = downloads.authenticatedAdoptions.first {
+        #expect(adoption.0.username == "Alice")
+        #expect(adoption.1.username == "alice")
+        #expect(adoption.0.password == request.password)
+        #expect(adoption.0.providerInstanceID == adoption.1.providerInstanceID)
+        #expect(try credentials.load()?.username == "alice")
+        store.accountUsername = "Alice"
+        store.submitAccountConnection()
+        connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL, canonicalUsername: "Alice")))
+        #expect(downloads.authenticatedAdoptions.count == 1, "Typed alias is not saved-credential authentication")
+        #expect(downloads.unconfirmedReplacements.count == 1)
+        #expect(downloads.unconfirmedReplacements.first?.0.username == "alice")
+        #expect(downloads.unconfirmedReplacements.first?.1.username == "Alice")
+        #expect(try credentials.load()?.username == "Alice")
+    }
+    if scenario == "superseded" { #expect(try credentials.load()?.username == "different-principal") }
+}
+
 @Test("Saved credentials reconnect without a tap") @MainActor
 func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     let persisted = DulcetAccountConnectRequest(
@@ -2161,6 +2205,20 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
 
 @MainActor
 private final class ControlledDownloadController: DulcetDownloadControlling, DulcetOfflineLibraryControlling {
+    private(set) var authenticatedAdoptions: [(DulcetPlaybackAccount, DulcetPlaybackAccount)] = []
+    private(set) var unconfirmedReplacements: [(DulcetPlaybackAccount, DulcetPlaybackAccount)] = []
+    func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {
+        unconfirmedReplacements.append((previous, confirmed))
+    }
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        first.providerInstanceID == second.providerInstanceID && first.normalizedServerURL == second.normalizedServerURL
+    }
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool {
+        guard previous.providerInstanceID == confirmed.providerInstanceID,
+            previous.normalizedServerURL == confirmed.normalizedServerURL else { return false }
+        authenticatedAdoptions.append((previous, confirmed))
+        return true
+    }
     private(set) var automaticContactPermitted = false
     func setAutomaticDownloadContactPermitted(_ permitted: Bool) { automaticContactPermitted = permitted }
     var offlineLibraryStorage = DulcetOfflineLibraryStorage(automaticDownloadsEnabled: true,

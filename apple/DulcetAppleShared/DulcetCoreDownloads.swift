@@ -27,6 +27,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
     private var stateRefreshHandler: (@MainActor () -> Void)?
     private var mediaBindingWillChangeHandler: (@MainActor (DulcetPlaybackAccount) -> Void)?
+    private var mediaBindingWillBeReplacedHandler: (@MainActor () -> Void)?
     private var prepareOperations: [DulcetProviderItemID: any AppleDownloadOperation] = [:]
     private var pendingTracks: [DulcetTrack] = []
     // Like pending tracks, a preference belongs to the configured URL/user binding. Repeated
@@ -145,7 +146,103 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         mediaBindingWillChangeHandler = handler
     }
 
+    func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void) {
+        mediaBindingWillBeReplacedHandler = handler
+    }
+
+    private func endpointAccount(_ value: DulcetPlaybackAccount) -> PlaybackEndpointAccount {
+        PlaybackEndpointAccount(providerInstanceId: value.providerInstanceID,
+            normalizedBaseUrl: value.normalizedServerURL, username: value.username,
+            password: value.password, allowLocalHttp: value.allowLocalHTTP)
+    }
+
+    func isSameMediaBinding(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        guard MediaBindingIdentity.shared.isValidBinding(providerInstanceId: first.providerInstanceID,
+            normalizedBaseUrl: first.normalizedServerURL, username: first.username),
+            MediaBindingIdentity.shared.isValidBinding(providerInstanceId: second.providerInstanceID,
+            normalizedBaseUrl: second.normalizedServerURL, username: second.username)
+        else { return false }
+        let first = endpointAccount(first)
+        let second = endpointAccount(second)
+        if let client { return client.isSameMediaBinding(first: first, second: second) }
+        return AppleMediaBindingClient.shared.isSameMediaBinding(databaseName: databaseName,
+            downloadRootPath: downloadRootURL.path, first: first, second: second)
+    }
+
+    private enum AdoptionFailure: Error { case persistence }
+
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        let identity = MediaBindingIdentity.shared
+        return identity.isValidBinding(providerInstanceId: first.providerInstanceID,
+            normalizedBaseUrl: first.normalizedServerURL, username: first.username) &&
+            identity.isValidBinding(providerInstanceId: second.providerInstanceID,
+            normalizedBaseUrl: second.normalizedServerURL, username: second.username) &&
+            first.providerInstanceID == second.providerInstanceID &&
+            identity.canonicalServerUrl(normalizedBaseUrl: first.normalizedServerURL) ==
+                identity.canonicalServerUrl(normalizedBaseUrl: second.normalizedServerURL)
+    }
+
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool {
+        guard hasSameMediaOrigin(first: previous, second: confirmed) else { return false }
+        let old = endpointAccount(previous)
+        let new = endpointAccount(confirmed)
+        let adopted: Bool
+        if let client {
+            adopted = client.adoptAuthenticatedAccount(previous: old, confirmed: new)
+        } else {
+            adopted = AppleMediaBindingClient.shared.adoptAuthenticatedAccount(databaseName: databaseName,
+                downloadRootPath: downloadRootURL.path, previous: old, confirmed: new)
+        }
+        guard adopted else { throw AdoptionFailure.persistence }
+        return true
+    }
+
+    func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {
+        guard MediaBindingIdentity.shared.isValidBinding(providerInstanceId: confirmed.providerInstanceID,
+            normalizedBaseUrl: confirmed.normalizedServerURL, username: confirmed.username)
+        else { throw AdoptionFailure.persistence }
+        // This authenticated login did not prove continuity with saved credentials. Its name
+        // may be an alias from an earlier login, so retirement cannot use alias equality.
+        mediaBindingWillBeReplacedHandler?()
+        automaticDownloadContactPermitted = false
+        reconciliationGeneration += 1
+        reconciled = false
+        pendingAutomaticDownloadsEnabled = nil
+        cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
+        cacheWrites = [:]
+        protectedPlayback = [:]
+        updatePlaybackProtection()
+        pendingTracks = []
+        prepareOperations.values.forEach { $0.cancel() }
+        prepareOperations = [:]
+        queuePrepareOperation?.cancel()
+        queuePrepareOperation = nil
+        cancelRetry()
+        let taskIDs = Set(knownTaskIdentifiers.keys)
+        let downloadIDs = Set(knownTaskIdentifiers.values)
+        removedTaskIdentifiers.formUnion(taskIDs)
+        // URLSession enumeration is asynchronous. Capture only the retired tasks, so a late
+        // cancellation cannot affect a new binding; the closed client also rejects callbacks.
+        session.getAllTasks { tasks in
+            for task in tasks where taskIDs.contains(task.taskIdentifier) ||
+                task.taskDescription.map(downloadIDs.contains) == true { task.cancel() }
+        }
+        client?.close()
+        client = nil
+        account = nil
+        guard AppleMediaBindingClient.shared.replaceUnconfirmedAccount(databaseName: databaseName,
+            downloadRootPath: downloadRootURL.path, confirmed: endpointAccount(confirmed))
+        else { throw AdoptionFailure.persistence }
+        account = confirmed
+        stateRefreshHandler?()
+    }
+
     func configure(account: DulcetPlaybackAccount) {
+        guard MediaBindingIdentity.shared.isValidBinding(
+            providerInstanceId: account.providerInstanceID,
+            normalizedBaseUrl: account.normalizedServerURL,
+            username: account.username
+        ) else { return }
         automaticDownloadContactPermitted = false
         let sameAccount = self.account.map { previous in
             MediaBindingIdentity.shared.sameBinding(
@@ -155,7 +252,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                 secondProviderInstanceId: account.providerInstanceID,
                 secondNormalizedBaseUrl: account.normalizedServerURL,
                 secondUsername: account.username
-            )
+            ) || isSameMediaBinding(first: previous, second: account)
         } ?? false
         if !sameAccount {
             // This also covers downloads-first configuration: the engine must relinquish its

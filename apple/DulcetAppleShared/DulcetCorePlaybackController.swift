@@ -88,6 +88,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private var resolveOperation: (any ApplePlaybackWireOperation)?
     private var account: PlaybackEndpointAccount?
     private var presentationAccount: DulcetPlaybackAccount?
+    /// tvOS has no download owner; retain only aliases authenticated during this playback binding.
+    private var authenticatedUsernameAliases: Set<String> = []
     private var catalog: [DulcetProviderItemID: DulcetTrack] = [:]
     private var progressingSessions: Set<String> = []
     private var restoredPausedSessions: Set<String> = []
@@ -159,6 +161,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             guard let self, !hasSameMediaBinding(as: nextAccount) else { return }
             invalidatePlaybackForMediaBindingChange()
         }
+        downloadController?.setMediaBindingWillBeReplacedHandler { [weak self] in
+            self?.invalidatePlaybackForMediaBindingChange()
+        }
     }
 
     private func installEngineListener() {
@@ -173,14 +178,23 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
 
     private func hasSameMediaBinding(as next: DulcetPlaybackAccount) -> Bool {
         guard let account else { return false }
-        return MediaBindingIdentity.shared.sameBinding(
+        let identity = MediaBindingIdentity.shared
+        if identity.sameBinding(
             firstProviderInstanceId: account.providerInstanceId,
             firstNormalizedBaseUrl: account.normalizedBaseUrl,
             firstUsername: account.username,
             secondProviderInstanceId: next.providerInstanceID,
             secondNormalizedBaseUrl: next.normalizedServerURL,
             secondUsername: next.username
-        )
+        ) { return true }
+        if let presentationAccount, let downloadController {
+            return downloadController.isSameMediaBinding(first: presentationAccount, second: next)
+        }
+        return downloadController == nil && account.providerInstanceId == next.providerInstanceID &&
+            authenticatedUsernameAliases.contains(account.username) &&
+            authenticatedUsernameAliases.contains(next.username) &&
+            identity.canonicalServerUrl(normalizedBaseUrl: account.normalizedBaseUrl) ==
+                identity.canonicalServerUrl(normalizedBaseUrl: next.normalizedServerURL)
     }
 
     /// Must finish in the caller's MainActor turn, before the download adapter opens a new
@@ -210,6 +224,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         wireAccessEnabled = false
         account = nil
         presentationAccount = nil
+        authenticatedUsernameAliases = []
         catalog = [:]
         progressingSessions = []
         restoredPausedSessions = []
@@ -295,7 +310,38 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         configure(account: presentationAccount, allowsServerAccess: false)
     }
 
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        let identity = MediaBindingIdentity.shared
+        return identity.isValidBinding(providerInstanceId: first.providerInstanceID,
+            normalizedBaseUrl: first.normalizedServerURL, username: first.username) &&
+            identity.isValidBinding(providerInstanceId: second.providerInstanceID,
+            normalizedBaseUrl: second.normalizedServerURL, username: second.username) &&
+            first.providerInstanceID == second.providerInstanceID &&
+            identity.canonicalServerUrl(normalizedBaseUrl: first.normalizedServerURL) ==
+                identity.canonicalServerUrl(normalizedBaseUrl: second.normalizedServerURL)
+    }
+
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) -> Bool {
+        guard hasSameMediaOrigin(first: previous, second: confirmed),
+            hasSameMediaBinding(as: previous), let current = account
+        else { return false }
+        let confirmedAccount = PlaybackEndpointAccount(providerInstanceId: confirmed.providerInstanceID,
+            normalizedBaseUrl: confirmed.normalizedServerURL, username: confirmed.username,
+            password: confirmed.password, allowLocalHttp: confirmed.allowLocalHTTP)
+        if let wireSource,
+           !wireSource.adoptAuthenticatedAccount(previous: current, confirmed: confirmedAccount) { return false }
+        account = confirmedAccount
+        presentationAccount = confirmed
+        authenticatedUsernameAliases.formUnion([previous.username, confirmed.username])
+        return true
+    }
+
     private func configure(account presentationAccount: DulcetPlaybackAccount, allowsServerAccess: Bool) {
+        guard MediaBindingIdentity.shared.isValidBinding(
+            providerInstanceId: presentationAccount.providerInstanceID,
+            normalizedBaseUrl: presentationAccount.normalizedServerURL,
+            username: presentationAccount.username
+        ) else { return }
         let sameBinding = hasSameMediaBinding(as: presentationAccount)
         if account != nil, !sameBinding {
             invalidatePlaybackForMediaBindingChange()
@@ -336,8 +382,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             password: presentationAccount.password,
             allowLocalHttp: presentationAccount.allowLocalHTTP
         )
+        if sameBinding, let account, account.username != coreAccount.username {
+            _ = wireSource?.adoptAuthenticatedAccount(previous: account, confirmed: coreAccount)
+        }
         account = coreAccount
         self.presentationAccount = presentationAccount
+        if !sameBinding { authenticatedUsernameAliases = [presentationAccount.username] }
         serverAvailable = allowsServerAccess
         if allowsServerAccess {
             // Installed resources share this source and select refreshed credentials on their

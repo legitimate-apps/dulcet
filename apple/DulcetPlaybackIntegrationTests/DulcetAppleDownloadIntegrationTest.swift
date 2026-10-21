@@ -2,6 +2,7 @@ import DulcetCore
 @testable import DulcetKit
 import AVFoundation
 import Foundation
+import SQLite3
 import XCTest
 #if os(iOS)
 import UIKit
@@ -192,11 +193,11 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
     /// The forwarding protocol witness runs INSIDE the real adapter's binding-change callback:
     /// files must still exist there, while native items have already been invalidated.
     func testLocalPlaybackStopsBeforeARealBindingPurgeAndEquivalentRefreshKeepsIt() async throws {
-        for change in ["endpoint", "username", "password", "equivalent"] {
+        for change in ["endpoint", "username", "password", "equivalent", "invalid", "authenticated"] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-live-rebind-\(UUID())")
             let databaseName = "dulcet-live-rebind-\(UUID()).db"
             let account = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
-                normalizedServerURL: "https://media.example.invalid/base", username: "first", password: "fixture",
+                normalizedServerURL: "https://media.example.invalid/base", username: change == "authenticated" ? "Alice" : "first", password: "fixture",
                 allowLocalHTTP: false, credentialGeneration: 1)
             let bytes = bindingPCMWave(seconds: 30)
             let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
@@ -213,6 +214,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 paths.append(try XCTUnwrap(seed.localPlaybackPlan(rawId: raw).plan?.filePath))
             }
             seed.close()
+            if change == "authenticated" {
+                try makeCurrentBindingFixtureExplicit(databaseName)
+            }
             let downloads = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
                 sessionConfiguration: .ephemeral)
             let proxy = BindingBoundaryDownloads(downloads)
@@ -228,7 +232,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             downloads.configure(account: account)
             playback.configureOffline(account: account)
             try await waitUntil(timeout: .seconds(5), failureMessage: "local binding did not reconcile") {
-                downloads.offlineLibraryStorage.cacheBytes == Int64(bytes.count * 2)
+                downloads.offlineLibraryStorage.cacheBytes == Int64(bytes.count * (change == "authenticated" ? 1 : 2))
+                    && downloads.offlineLibraryStorage.downloadBytes == Int64(change == "authenticated" ? bytes.count : 0)
             }
             for (index, raw) in ["current", "incoming"].enumerated() {
                 let track = DulcetTrack(id: .init(providerInstanceID: providerInstanceID, rawID: raw),
@@ -270,12 +275,35 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             }
             let replacement = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
                 normalizedServerURL: change == "endpoint" ? "https://other.example.invalid/base"
-                    : change == "equivalent" ? "https://MEDIA.example.invalid:443/base/" : account.normalizedServerURL,
-                username: change == "username" ? "second" : account.username,
+                    : change == "equivalent" ? "https://MEDIA.example.invalid:443/base/"
+                    : change == "invalid" ? "not a server URL" : account.normalizedServerURL,
+                username: change == "username" ? "second" : change == "authenticated" ? "alice" : account.username,
                 password: change == "password" ? "replacement-password" : account.password,
                 allowLocalHTTP: false, credentialGeneration: 2)
-            // Downloads may be opened before any presentation/playback reconfiguration.
-            downloads.configure(account: replacement)
+            var savedPresentation: DulcetPresentationStore?
+            var savedConnector: BindingSavedConnector?
+            var savedCredentials: BindingSavedCredentials?
+            if change == "authenticated" {
+                let request = DulcetAccountConnectRequest(serverURL: account.normalizedServerURL,
+                    username: account.username, password: account.password, allowLocalHTTP: false)
+                let credentials = BindingSavedCredentials(provider: providerInstanceID, request: request)
+                let connector = BindingSavedConnector()
+                savedConnector = connector
+                savedCredentials = credentials
+                let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+                    playbackController: playback, downloadController: proxy)
+                savedPresentation = DulcetPresentationStore(source: source)
+                XCTAssertEqual(connector.requests, [request], "Automatic reconnect must authenticate the exact saved credentials")
+                connector.complete(.connected(.init(serverName: "Binding proof", normalizedServerURL: account.normalizedServerURL,
+                    canonicalUsername: "alice")))
+                XCTAssertEqual(try credentials.load()?.username, "alice")
+                XCTAssertEqual(credentials.providerInstanceID, providerInstanceID)
+                XCTAssertEqual(try? Data(contentsOf: URL(fileURLWithPath: paths[0])), bytes,
+                    "The legacy explicit payload must survive the real saved-account reconnect path")
+            } else {
+                // Downloads may be opened before any presentation/playback reconfiguration.
+                downloads.configure(account: replacement)
+            }
             if actualChange {
                 XCTAssertEqual(witnessedBeforePurge, 1, "real binding purge must pass the retirement barrier")
                 XCTAssertNil(nativePlayer.currentItem)
@@ -293,9 +321,40 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 XCTAssertTrue(nativePlayer.currentItem === current)
                 XCTAssertEqual(engine.preparedCrossfadeStateForTesting()?.itemIdentity, incoming.itemIdentity)
             }
+            if change == "authenticated", let presentation = savedPresentation,
+               let connector = savedConnector, let credentials = savedCredentials {
+                // The original spelling is an authorized crash-recovery alias, but a later
+                // manually typed login is not a reconnect using the current saved credentials.
+                presentation.accountUsername = "Alice"
+                presentation.submitAccountConnection()
+                XCTAssertEqual(connector.requests.last?.username, "Alice")
+                connector.complete(.connected(.init(serverName: "Binding proof", normalizedServerURL: account.normalizedServerURL,
+                    canonicalUsername: "Alice")))
+                XCTAssertEqual(try credentials.load()?.username, "Alice")
+                XCTAssertEqual(witnessedBeforePurge, 1, "Unproven typed alias must retire once before forced replacement")
+                XCTAssertNil(nativePlayer.currentItem)
+                XCTAssertNil(engine.preparedCrossfadeStateForTesting())
+                XCTAssertTrue(paths.allSatisfy { !FileManager.default.fileExists(atPath: $0) },
+                    "An old authenticated spelling cannot authorize retaining another typed login's files")
+                print("BINDING-ROUND4 unproven-typed-alias retired-before-purge=true")
+            }
             _ = await bindingExecute(engine, .release(commandID: .init("cleanup")))
             withExtendedLifetime(playback) {}
+            withExtendedLifetime(savedPresentation) {}
+            print("BINDING-ROUND4 case=\(change) preserved=\(!actualChange) explicit=\(change == "authenticated")")
         }
+    }
+
+    /// A legacy completed payload is explicit when retention says so. Seed that durable fixture
+    /// directly, after the real facade has validated and promoted the WAV, without another fetch.
+    private func makeCurrentBindingFixtureExplicit(_ name: String) throws {
+        let file = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(name)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(file.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        XCTAssertEqual(sqlite3_exec(db, "UPDATE offline_media_retention SET explicit_download=1 WHERE raw_id='current'", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_changes(db), 1, "The fixture must mark an existing payload explicit")
     }
 
     private func removeAdapterTestDatabase(_ name: String) {
@@ -1434,8 +1493,26 @@ private final class BindingBoundaryDownloads: DulcetDownloadControlling {
             self?.afterRetirement?()
         }
     }
+    func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void) {
+        base.setMediaBindingWillBeReplacedHandler { [weak self] in
+            handler()
+            self?.afterRetirement?()
+        }
+    }
+    func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {
+        try base.replaceUnconfirmedAccount(previous: previous, confirmed: confirmed)
+    }
     func setStatusHandler(_ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void) { base.setStatusHandler(handler) }
     func configure(account: DulcetPlaybackAccount) { base.configure(account: account) }
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool {
+        try base.adoptAuthenticatedAccount(previous: previous, confirmed: confirmed)
+    }
+    func isSameMediaBinding(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        base.isSameMediaBinding(first: first, second: second)
+    }
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        base.hasSameMediaOrigin(first: first, second: second)
+    }
     func setAutomaticDownloadContactPermitted(_ permitted: Bool) { base.setAutomaticDownloadContactPermitted(permitted) }
     func requestDownload(_ track: DulcetTrack) { base.requestDownload(track) }
     func status(for id: DulcetProviderItemID) -> DulcetDownloadState { base.status(for: id) }
@@ -1462,3 +1539,32 @@ private func bindingPCMWave(seconds: Int) -> Data {
     data.append(Data(repeating: 0, count: size))
     return data
 }
+
+@MainActor
+private final class BindingSavedCredentials: DulcetProviderInstanceCredentialStoring {
+    let providerInstanceID: String?
+    private var request: DulcetAccountConnectRequest?
+    init(provider: String, request: DulcetAccountConnectRequest) { providerInstanceID = provider; self.request = request }
+    func load() throws -> DulcetAccountConnectRequest? { request }
+    func save(_ request: DulcetAccountConnectRequest) throws { self.request = request }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        XCTAssertEqual(providerInstanceID, self.providerInstanceID)
+        self.request = request
+    }
+    func delete() throws { request = nil }
+}
+
+@MainActor
+private final class BindingSavedConnector: DulcetAccountConnecting {
+    var requests: [DulcetAccountConnectRequest] = []
+    private var completion: (@MainActor (DulcetAccountConnectOutcome) -> Void)?
+    func connect(_ request: DulcetAccountConnectRequest,
+                 completion: @escaping @MainActor (DulcetAccountConnectOutcome) -> Void) -> any DulcetAccountConnectOperation {
+        requests.append(request); self.completion = completion
+        return BindingSavedOperation()
+    }
+    func complete(_ outcome: DulcetAccountConnectOutcome) { completion?(outcome); completion = nil }
+}
+
+@MainActor
+private final class BindingSavedOperation: DulcetAccountConnectOperation { func cancel() {} }
