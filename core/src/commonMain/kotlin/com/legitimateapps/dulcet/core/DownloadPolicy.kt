@@ -200,11 +200,112 @@ public data class DownloadRetryDecision(
 
 internal class DownloadPolicyEngine(
     private val database: DulcetDatabase,
-    private val files: DownloadFileStore,
+    internal val files: DownloadFileStore,
     private val transcodeBudget: PlaybackTranscodeBudget = PlaybackTranscodeBudget(),
 ) {
     private val store = SqlDownloadStore(database)
     private var reconciled = false
+    private val mediaBindingEpochs = mutableMapOf<String, String?>()
+    private var explicitlyBound = false
+
+    /** Acquire once, synchronously at controller creation, before any media use/reconciliation. */
+    fun bindMedia(binding: DownloadMediaBinding, forceReplacement: Boolean = false): DownloadMediaBindingResult {
+        check(!reconciled && !explicitlyBound && mediaBindingEpochs.isEmpty()) { "media binding already acquired" }
+        val previous = storedMediaBinding(binding.serverId)
+        // An ordinary typed account change has no saved-credential continuity proof, even if
+        // its username was authenticated as an alias earlier in this ownership epoch.
+        val matches = !forceReplacement && matchesMediaBinding(previous, binding)
+        // Validate the replacement before unlinking anything: unsupported adapter input must not
+        // destroy the currently bound namespace and then fail to acquire its replacement.
+        val epoch = if (matches) requireNotNull(previous) else encodeMediaBinding(binding)
+        val removed = if (matches) emptyList() else store.forServer(binding.serverId)
+        // Keep durable rows until all named bytes are gone, so a failed purge is retryable.
+        removed.forEach { row -> files.deleteTemporary(row); files.deleteDestination(row) }
+        database.transaction {
+            if (!matches) {
+                removed.forEach { row ->
+                    store.delete(row.downloadId)
+                    database.seenCacheQueries.deletePin(binding.serverId, "track", row.identity.rawId, "download")
+                }
+                database.offlineLibraryQueries.deleteSourceSnapshots(binding.serverId)
+            }
+            database.libraryDepthQueries.putEntry(binding.serverId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY, epoch, 0)
+        }
+        mediaBindingEpochs[binding.serverId] = epoch
+        explicitlyBound = true
+        return DownloadMediaBindingResult(removed.mapTo(mutableSetOf()) { it.downloadId })
+    }
+
+    /** A cheap revocation check; a stale controller must never reacquire its former binding. */
+    fun isMediaBindingCurrent(): Boolean = mediaBindingEpochs.all { (serverId, epoch) ->
+        sameMediaBindingEpoch(epoch, storedMediaBinding(serverId))
+    }
+
+    /**
+     * Only the caller that authenticated the exact saved credentials may request this adoption.
+     * This operation precedes saving the confirmed username; neither step can strand the old
+     * saved spelling after a crash. It never binds an unowned namespace or deletes media.
+     */
+    fun adoptAuthenticatedAccount(previous: PlaybackEndpointAccount, confirmed: PlaybackEndpointAccount): Boolean = try {
+        if (!MediaBindingIdentity.isValidAccount(previous) || !MediaBindingIdentity.isValidAccount(confirmed) ||
+            previous.providerInstanceId != confirmed.providerInstanceId ||
+            !MediaBindingIdentity.sameEndpoint(previous.normalizedBaseUrl, confirmed.normalizedBaseUrl) ||
+            !ownsMediaServer(previous.providerInstanceId) || !isMediaBindingCurrent()
+        ) {
+            false
+        } else database.transactionWithResult {
+            val encoded = storedMediaBinding(previous.providerInstanceId)
+            if (!isMediaBindingCurrent()) false
+            // A new installation has no bytes to migrate. Do not establish a namespace here:
+            // normal configuration will bind after the saved credentials have been updated.
+            else if (encoded == null && store.forServer(previous.providerInstanceId).isEmpty()) true
+            else if (!matchesMediaBinding(encoded, DownloadMediaBinding(
+                    previous.providerInstanceId, previous.normalizedBaseUrl, previous.username,
+                ))
+            ) false
+            else {
+                val adopted = adoptingMediaBindingUsername(requireNotNull(encoded), confirmed.username)
+                if (adopted == null) false
+                else {
+                    if (adopted != encoded) database.libraryDepthQueries.putEntry(
+                        previous.providerInstanceId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY, adopted, 0,
+                    )
+                    true
+                }
+            }
+        }
+    } catch (_: Exception) { false }
+
+    /** Exact usernames compare equal here only when the current durable epoch authenticates both. */
+    fun isSameMediaBinding(first: PlaybackEndpointAccount, second: PlaybackEndpointAccount): Boolean = try {
+        if (!MediaBindingIdentity.isValidAccount(first) || !MediaBindingIdentity.isValidAccount(second) ||
+            first.providerInstanceId != second.providerInstanceId || !ownsMediaServer(first.providerInstanceId) ||
+            !MediaBindingIdentity.sameEndpoint(first.normalizedBaseUrl, second.normalizedBaseUrl) ||
+            !isMediaBindingCurrent()
+        ) false
+        else {
+            val encoded = storedMediaBinding(first.providerInstanceId)
+            matchesMediaBinding(encoded, DownloadMediaBinding(first.providerInstanceId, first.normalizedBaseUrl, first.username)) &&
+                matchesMediaBinding(encoded, DownloadMediaBinding(second.providerInstanceId, second.normalizedBaseUrl, second.username))
+        }
+    } catch (_: Exception) { false }
+
+    internal fun ownsMediaServer(serverId: String): Boolean = !explicitlyBound || serverId in mediaBindingEpochs
+
+    internal fun requireMediaBinding(serverId: String) {
+        check(!explicitlyBound || serverId in mediaBindingEpochs) { "media belongs to another account" }
+        if (!mediaBindingEpochs.containsKey(serverId)) mediaBindingEpochs[serverId] = storedMediaBinding(serverId)
+        check(isMediaBindingCurrent()) { "media binding was revoked" }
+    }
+
+    private fun storedMediaBinding(serverId: String): String? = database.libraryDepthQueries
+        .selectEntry(serverId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull()
+    internal var cachePressureHandler: ((serverId: String, requiredBytes: Long) -> Unit)? = null
+    internal var cacheReconciliationHandler: (() -> Unit)? = null
+        set(value) {
+            field = value
+            if (reconciled) value?.invoke()
+        }
 
     /**
      * Relaunch reconciliation (spec §14.5): matches the platform's outstanding tasks to rows, and
@@ -224,7 +325,10 @@ internal class DownloadPolicyEngine(
         require(currentCredentialGenerations.values.all { it >= 0 })
         files.ensureDirectories()
 
-        val rows = store.all()
+        currentCredentialGenerations.keys.forEach(::requireMediaBinding)
+        check(isMediaBindingCurrent()) { "media binding was revoked" }
+        val rows = store.all().filter { !explicitlyBound || it.identity.serverId in mediaBindingEpochs }
+        rows.forEach { requireMediaBinding(it.identity.serverId) }
         val rowsById = rows.associateBy(DownloadRecord::downloadId)
         val activeTaskIds = outstandingTasks.map(OutstandingDownloadTask::downloadId).toSet()
         val cancel = activeTaskIds.filterTo(mutableSetOf()) { it !in rowsById }
@@ -265,35 +369,71 @@ internal class DownloadPolicyEngine(
 
         val deletedTemps = files.deleteUnownedTemporaryFiles(activeTaskIds + resumable)
         reconciled = true
+        cacheReconciliationHandler?.invoke()
         return DownloadReconciliationResult(cancel, interrupted, recovered, deletedTemps)
     }
 
-    fun enqueue(request: DownloadRequest): DownloadRecord {
+    fun enqueue(request: DownloadRequest): DownloadRecord = enqueueRetained(request, explicit = true)
+
+    internal fun enqueueRetained(request: DownloadRequest, explicit: Boolean): DownloadRecord {
         requireReconciled()
-        store.byIdentity(request.identity)?.let { return it }
+        requireMediaBinding(request.identity.serverId)
+        store.byIdentity(request.identity)?.let {
+            pinMetadata(it.identity, request.wallClockMilliseconds)
+            if (explicit) markExplicitRetention(it)
+            return it
+        }
+        val source = database.offlineLibraryQueries.selectSourceSnapshot(request.identity.serverId,
+            request.identity.rawId).executeAsOneOrNull()
+        val knownRequest = request.copy(serverSnapshot = DownloadServerSnapshot(
+            request.serverSnapshot.durationMilliseconds ?: source?.duration_milliseconds,
+            request.serverSnapshot.sizeBytes ?: source?.size_bytes,
+        ))
         val downloadId = DownloadId("download:${secureRandomBytes(16).toLowerHex()}")
         val destination = "${downloadId.value}.${request.expectedContainer.fileExtension()}"
-        return store.insert(request, downloadId, destination)
+        return database.transactionWithResult {
+            val row = store.insert(knownRequest, downloadId, destination)
+            pinMetadata(row.identity, request.wallClockMilliseconds)
+            if (explicit) markExplicitRetention(row) else database.offlineLibraryQueries.upsertRetention(
+                row.identity.serverId, row.identity.rawId, row.identity.transcodeProfile,
+                0, 0, 0, request.wallClockMilliseconds,
+            )
+            row
+        }
     }
 
     fun schedule(context: DownloadSchedulingContext): DownloadScheduleResult {
         requireReconciled()
+        requireMediaBinding(context.serverId)
         val rows = store.forServer(context.serverId)
-        val eligible = rows.firstOrNull { row ->
+        val retentionByIdentity = database.offlineLibraryQueries.selectServerRetentions(context.serverId)
+            .executeAsList().associateBy { DownloadIdentity(it.server_id, it.raw_id, it.transcode_profile) }
+        val eligible = rows.sortedWith(compareBy<DownloadRecord> {
+            val retention = retentionByIdentity[it.identity]
+            if (retention == null || retention.explicit_download == 1L) 0 else 1
+        }.thenByDescending { retentionByIdentity[it.identity]?.added_rank ?: Long.MIN_VALUE }
+            .thenBy { it.enqueueSequence }).firstOrNull { row ->
+            val ownership = retentionByIdentity[row.identity]
+            (ownership == null || ownership.explicit_download == 1L || ownership.automatic_download == 1L) &&
             row.state in setOf(DownloadState.Queued, DownloadState.Interrupted) &&
                 (row.retryNotBeforeWallClock == null ||
                     row.retryNotBeforeWallClock <= context.wallClockMilliseconds)
         } ?: return DownloadScheduleResult.NothingQueued
 
-        val usedBytes = rows
+        var usedBytes = rows
             .filter { it.state == DownloadState.Complete || it.state == DownloadState.Stale }
             .sumOf(DownloadRecord::fileSizeBytes)
         val reservation = eligible.exactByteLength
             ?: eligible.serverSnapshot.sizeBytes
             ?: context.unknownLengthReservationBytes
-        val remainingBytes = (context.diskBudgetBytes - usedBytes).coerceAtLeast(0)
+        var remainingBytes = (context.diskBudgetBytes - usedBytes).coerceAtLeast(0)
         if (reservation > remainingBytes) {
-            return DownloadScheduleResult.DiskBudgetExceeded
+            cachePressureHandler?.invoke(context.serverId, reservation - remainingBytes)
+            usedBytes = store.forServer(context.serverId)
+                .filter { it.state == DownloadState.Complete || it.state == DownloadState.Stale }
+                .sumOf(DownloadRecord::fileSizeBytes)
+            remainingBytes = (context.diskBudgetBytes - usedBytes).coerceAtLeast(0)
+            if (reservation > remainingBytes) return DownloadScheduleResult.DiskBudgetExceeded
         }
         if (
             eligible.identity.isTranscoded &&
@@ -315,7 +455,7 @@ internal class DownloadPolicyEngine(
             return DownloadScheduleResult.TranscodeBudgetReservedForPlayback
         }
         store.markStarted(eligible.downloadId)
-        val started = requireNotNull(store.byId(eligible.downloadId))
+        val started = requireNotNull(ownedRecord(eligible.downloadId))
         return DownloadScheduleResult.Start(
             record = started,
             platformTaskIdentifier = started.downloadId.value,
@@ -325,6 +465,7 @@ internal class DownloadPolicyEngine(
 
     fun nextRetryNotBefore(serverId: String): Long? {
         requireReconciled()
+        requireMediaBinding(serverId)
         require(serverId.isNotBlank())
         return store.forServer(serverId)
             .asSequence()
@@ -336,35 +477,36 @@ internal class DownloadPolicyEngine(
 
     fun temporaryFilePath(downloadId: DownloadId): String {
         requireReconciled()
-        return store.byId(downloadId)?.let(files::temporaryPath)?.toString()
+        return ownedRecord(downloadId)?.let(files::temporaryPath)?.toString()
             ?: error("unknown download")
     }
 
     fun destinationExists(downloadId: DownloadId): Boolean {
         requireReconciled()
-        return store.byId(downloadId)?.let(files::destinationExists) ?: false
+        return ownedRecord(downloadId)?.let(files::destinationExists) ?: false
     }
 
     fun temporaryExists(downloadId: DownloadId): Boolean {
         requireReconciled()
-        return store.byId(downloadId)?.let(files::temporaryExists) ?: false
+        return ownedRecord(downloadId)?.let(files::temporaryExists) ?: false
     }
 
     fun writeCompletedTemporaryFile(downloadId: DownloadId, bytes: ByteArray) {
         requireReconciled()
-        val row = store.byId(downloadId) ?: error("unknown download")
+        val row = ownedRecord(downloadId) ?: error("unknown download")
         files.writeTemporary(row, bytes)
     }
 
     fun promote(
         downloadId: DownloadId,
         metadata: DownloadResponseMetadata,
+        acceptedContainers: List<AudioContainer>? = null,
     ): DownloadPromotionResult {
         requireReconciled()
-        val row = store.byId(downloadId) ?: return DownloadPromotionResult.UnknownDownload
+        val row = ownedRecord(downloadId) ?: return DownloadPromotionResult.UnknownDownload
         if (files.destinationExists(row)) {
             val recovered = recoverDestination(row)
-            val completed = store.byId(downloadId)
+            val completed = ownedRecord(downloadId)
             return if (recovered && completed != null) {
                 DownloadPromotionResult.AlreadyPromoted(completed)
             } else {
@@ -377,25 +519,27 @@ internal class DownloadPolicyEngine(
         // file's on-disk length is the terminal-body boundary for a response that declared no exact
         // length. Only a bounded prefix is read: a file is never loaded whole, whatever its size
         // (spec §14.5).
-        val validation = validateDownloadFile(
-            files = files,
-            path = files.temporaryPath(row),
-            container = row.expectedContainer,
-            contentType = metadata.contentType,
-            contentLength = metadata.contentLength,
-        )
+        val validations = (acceptedContainers ?: listOf(row.expectedContainer)).distinct().map { container ->
+            container to validateDownloadFile(files, files.temporaryPath(row), container,
+                metadata.contentType, metadata.contentLength)
+        }
+        val (container, validation) = validations.firstOrNull { it.second.result is PlaybackStreamValidationResult.Audio }
+            ?: validations.firstOrNull() ?: return DownloadPromotionResult.Rejected(DomainError.Protocol.UnexpectedBinary)
         if (validation.result is PlaybackStreamValidationResult.Failure) {
             return DownloadPromotionResult.Rejected(validation.result.error)
         }
 
         // This ordering is the integrity boundary: no destination can appear before validation.
+        database.downloadsQueries.updateDownloadExpectedContainer(container.databaseValue(),
+            row.identity.serverId, row.identity.rawId, row.identity.transcodeProfile)
         files.atomicPromote(row)
         store.markComplete(downloadId, validation.fileLength)
-        return DownloadPromotionResult.Promoted(requireNotNull(store.byId(downloadId)))
+        return DownloadPromotionResult.Promoted(requireNotNull(ownedRecord(downloadId)))
     }
 
     fun offlinePlaybackPlan(identity: DownloadIdentity): OfflinePlaybackPlanResult {
         requireReconciled()
+        requireMediaBinding(identity.serverId)
         val row = store.byIdentity(identity) ?: return OfflinePlaybackPlanResult.NotDownloaded
         if (row.state != DownloadState.Complete && row.state != DownloadState.Stale) {
             return OfflinePlaybackPlanResult.NotDownloaded
@@ -419,6 +563,7 @@ internal class DownloadPolicyEngine(
      */
     fun verifyOffline(plan: LocalPlaybackPlan): OfflinePlaybackVerification {
         requireReconciled()
+        requireMediaBinding(plan.identity.serverId)
         val path = plan.absolutePath.toPath()
         if (!files.exists(path)) return OfflinePlaybackVerification.MissingFile
         val validation = validateDownloadFile(
@@ -454,7 +599,7 @@ internal class DownloadPolicyEngine(
         wallClockMilliseconds: Long,
     ): DownloadRetryDecision? {
         requireReconciled()
-        val row = store.byId(downloadId) ?: return null
+        val row = ownedRecord(downloadId) ?: return null
         val nextAttempt = row.retryAttempt + 1
         val retryDelay = when (error) {
             DomainError.Auth.InvalidCredentials,
@@ -479,12 +624,13 @@ internal class DownloadPolicyEngine(
     fun recordResumeData(downloadId: DownloadId, data: ByteArray, wallClockMilliseconds: Long) {
         requireReconciled()
         require(data.isNotEmpty())
+        ownedRecord(downloadId) ?: return
         store.updateResumeData(downloadId, data, wallClockMilliseconds)
     }
 
     fun resumeDecision(downloadId: DownloadId, wallClockMilliseconds: Long): DownloadResumeDecision {
         requireReconciled()
-        val row = store.byId(downloadId) ?: return DownloadResumeDecision.RestartFromZero
+        val row = ownedRecord(downloadId) ?: return DownloadResumeDecision.RestartFromZero
         val data = row.platformResumeData
         val created = row.resumeDataCreatedAtWallClock
         if (
@@ -501,11 +647,13 @@ internal class DownloadPolicyEngine(
     /** Forgets [downloadId]'s resume data without changing its state. */
     fun clearResumeData(downloadId: DownloadId) {
         requireReconciled()
+        ownedRecord(downloadId) ?: return
         store.clearResumeData(downloadId)
     }
 
     fun rejectResumeData(downloadId: DownloadId) {
         requireReconciled()
+        ownedRecord(downloadId) ?: return
         store.clearResumeData(downloadId)
         store.markQueued(downloadId)
     }
@@ -516,6 +664,7 @@ internal class DownloadPolicyEngine(
         wallClockMilliseconds: Long,
     ): DownloadRecord? {
         requireReconciled()
+        requireMediaBinding(identity.serverId)
         val row = store.byIdentity(identity) ?: return null
         val changed = listOf(
             row.serverSnapshot.durationMilliseconds to snapshot.durationMilliseconds,
@@ -525,13 +674,13 @@ internal class DownloadPolicyEngine(
             store.markStale(row.downloadId)
         }
         store.updateServerSnapshot(row, snapshot, wallClockMilliseconds)
-        return store.byId(row.downloadId)
+        return ownedRecord(row.downloadId)
     }
 
     fun evictAbandonedPartials(wallClockMilliseconds: Long): Set<DownloadId> {
         requireReconciled()
         val evicted = mutableSetOf<DownloadId>()
-        store.all().forEach { row ->
+        store.all().filter { ownsMediaServer(it.identity.serverId) }.forEach { row ->
             if (
                 row.state == DownloadState.Interrupted &&
                 wallClockMilliseconds - row.updatedAtWallClock >
@@ -554,6 +703,7 @@ internal class DownloadPolicyEngine(
      */
     fun removeAccountData(serverId: String) {
         require(serverId.isNotBlank())
+        requireMediaBinding(serverId)
         val rows = store.forServer(serverId)
         rows.forEach { row ->
             files.deleteTemporary(row)
@@ -561,6 +711,9 @@ internal class DownloadPolicyEngine(
         }
         val queries = database.serverDataQueries
         database.transaction {
+            database.libraryDepthQueries.deleteCategory(serverId, MEDIA_BINDING_CATEGORY)
+            database.offlineLibraryQueries.deleteSettings(serverId)
+            database.offlineLibraryQueries.deleteSourceSnapshots(serverId)
             queries.deleteMutationOutboxForServer(serverId)
             queries.deleteDownloadsForServer(serverId)
             queries.deleteResumePositionsForServer(serverId)
@@ -596,28 +749,79 @@ internal class DownloadPolicyEngine(
      */
     fun remove(identity: DownloadIdentity): DownloadRecord? {
         requireReconciled()
+        requireMediaBinding(identity.serverId)
         val row = store.byIdentity(identity) ?: return null
         files.deleteTemporary(row)
         files.deleteDestination(row)
         store.delete(row.downloadId)
+        if (store.forItem(identity.serverId, identity.rawId).isEmpty()) {
+            database.seenCacheQueries.deletePin(identity.serverId, "track", identity.rawId, "download")
+        }
         return row
+    }
+
+    /** A user releases explicit retention; My Library's automatic owner keeps its file/task. */
+    fun releaseExplicitDownload(identity: DownloadIdentity): DownloadRecord? {
+        requireReconciled()
+        val old = retention(identity)
+        if (old?.automatic_download == 1L) {
+            database.offlineLibraryQueries.upsertRetention(identity.serverId, identity.rawId,
+                identity.transcodeProfile, 0, 1, old.added_rank, old.last_access_wall)
+            return null
+        }
+        return remove(identity)
     }
 
     /** Every row of one server, in enqueue order. */
     fun records(serverId: String): List<DownloadRecord> {
         requireReconciled()
+        requireMediaBinding(serverId)
         require(serverId.isNotBlank())
         return store.forServer(serverId)
     }
 
+    fun recordsForItem(serverId: String, rawId: String): List<DownloadRecord> {
+        requireReconciled()
+        requireMediaBinding(serverId)
+        return store.forItem(serverId, rawId)
+    }
+
     fun record(downloadId: DownloadId): DownloadRecord? {
         requireReconciled()
-        return store.byId(downloadId)
+        return ownedRecord(downloadId)
     }
 
     fun record(identity: DownloadIdentity): DownloadRecord? {
         requireReconciled()
+        requireMediaBinding(identity.serverId)
         return store.byIdentity(identity)
+    }
+
+    private fun ownedRecord(id: DownloadId): DownloadRecord? = store.byId(id)?.also {
+        requireMediaBinding(it.identity.serverId)
+    }
+
+    private fun pinMetadata(identity: DownloadIdentity, wallClockMilliseconds: Long) {
+        database.transaction {
+            database.seenCacheQueries.insertIdentityOnlyTrack(identity.serverId, identity.rawId, wallClockMilliseconds)
+            database.seenCacheQueries.insertPin(identity.serverId, "track", identity.rawId, "download")
+        }
+    }
+
+    internal fun retention(identity: DownloadIdentity): com.legitimateapps.dulcet.database.Offline_media_retention? {
+        requireMediaBinding(identity.serverId)
+        return database.offlineLibraryQueries.selectRetention(
+            identity.serverId, identity.rawId, identity.transcodeProfile,
+        ).executeAsOneOrNull()
+    }
+
+    private fun markExplicitRetention(row: DownloadRecord) {
+        val old = retention(row.identity)
+        database.offlineLibraryQueries.upsertRetention(
+            row.identity.serverId, row.identity.rawId, row.identity.transcodeProfile,
+            1, old?.automatic_download ?: 0, old?.added_rank ?: 0,
+            old?.last_access_wall ?: row.updatedAtWallClock,
+        )
     }
 
     private fun recoverDestination(row: DownloadRecord): Boolean {
@@ -630,6 +834,7 @@ internal class DownloadPolicyEngine(
         )
         return if (validation.result is PlaybackStreamValidationResult.Audio) {
             store.markComplete(row.downloadId, validation.fileLength)
+            if (row.state == DownloadState.Stale) store.markStale(row.downloadId)
             true
         } else {
             files.deleteDestination(row)
@@ -640,6 +845,7 @@ internal class DownloadPolicyEngine(
 
     private fun requireReconciled() {
         check(reconciled) { "download reconciliation must run before subsystem use" }
+        check(isMediaBindingCurrent()) { "media binding was revoked" }
     }
 
     private companion object {
@@ -668,6 +874,8 @@ internal class DownloadFileStore(
     fun writeTemporary(row: DownloadRecord, bytes: ByteArray) {
         fileSystem.write(temporaryPath(row)) { write(bytes) }
     }
+
+    fun openTemporaryHandle(row: DownloadRecord): okio.FileHandle = fileSystem.openReadWrite(temporaryPath(row))
 
     fun exists(path: Path): Boolean = fileSystem.exists(path)
 
@@ -781,6 +989,9 @@ private class SqlDownloadStore(private val database: DulcetDatabase) {
 
     fun forServer(serverId: String): List<DownloadRecord> =
         queries.selectDownloadsForServer(serverId, mapper = ::downloadRecord).executeAsList()
+
+    fun forItem(serverId: String, rawId: String): List<DownloadRecord> =
+        queries.selectDownloadsForItem(serverId, rawId, mapper = ::downloadRecord).executeAsList()
 
     fun all(): List<DownloadRecord> = queries.selectAllDownloads(mapper = ::downloadRecord)
         .executeAsList()

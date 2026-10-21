@@ -6,6 +6,13 @@ import androidx.work.WorkManager
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.CoreAccountDataGateway
 import com.legitimateapps.dulcet.StoredAccount
+import com.legitimateapps.dulcet.AccountConnectOutcome
+import com.legitimateapps.dulcet.connectAndSaveAccount
+import com.legitimateapps.dulcet.core.AccountConnectionRequest
+import com.legitimateapps.dulcet.core.AccountConnectionResult
+import com.legitimateapps.dulcet.core.ConnectedAccount
+import com.legitimateapps.dulcet.core.CapabilitySet
+import com.legitimateapps.dulcet.core.UserPermissions
 import com.legitimateapps.dulcet.core.AndroidDownloadController
 import com.legitimateapps.dulcet.core.AndroidDownloadItem
 import com.legitimateapps.dulcet.core.AndroidDownloadState
@@ -55,8 +62,42 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
     fun conf52(startPlayback: (StoredAccount, String) -> AutoCloseable) =
         session { controller, account, rawId, container, duration, original, relay ->
             proveDownload(controller, rawId, container, duration, original)
-            println("ANDROID DOWNLOAD CONF-52 OBSERVED " + proveOfflinePlayback(account, rawId, original, relay, startPlayback))
+            val confirmed = proveAuthenticatedSavedSpelling(account, rawId, original)
+            println("ANDROID DOWNLOAD CONF-52 OBSERVED " + proveOfflinePlayback(confirmed, rawId, original, relay, startPlayback))
         }
+
+    /** Review B2: real secure storage/download adapters, with only authentication's result controlled.
+     * The subsequent CONF-52 cut and production Media3 entry must play these retained explicit bytes. */
+    private fun proveAuthenticatedSavedSpelling(account: StoredAccount, rawId: String, original: ByteArray): StoredAccount {
+        val confirmedUsername = account.username.uppercase()
+        check(confirmedUsername != account.username) { "The fixture must change the saved username spelling" }
+        val credentials = AndroidAccountCredentialStore(context)
+        val outcome = runBlocking {
+            connectAndSaveAccount(AccountConnectionRequest(account.serverUrl, account.username,
+                account.password, account.allowLocalHttp), { request ->
+                check(request.username == account.username && request.password == account.password) {
+                    "Continuity must authenticate the exact saved credentials"
+                }
+                AccountConnectionResult.Connected(ConnectedAccount(account.serverUrl, account.allowLocalHttp,
+                    "1.16.1", false, "controlled-saved-auth", "1",
+                    CapabilitySet(emptyMap(), UserPermissions(true, true, false, false, false), true),
+                    emptyList(), confirmedUsername))
+            }, credentials)
+        }
+        check(outcome is AccountConnectOutcome.Connected) { "Authenticated spelling continuation failed: $outcome" }
+        val confirmed = checkNotNull(credentials.load())
+        check(confirmed.id == account.id && confirmed.username == confirmedUsername) {
+            "Authenticated spelling adoption must retain the provider instance and save the exact confirmed name"
+        }
+        val reopened = checkNotNull(AndroidDownloads.controller(context))
+        check(runBlocking { reopened.awaitReconciled() })
+        val plan = checkNotNull(runBlocking { reopened.localPlan(rawId) }) { "The retained explicit file has no local plan" }
+        check(plan.exactByteLength == original.size.toLong()) { "The retained local plan length changed" }
+        val retained = root.walkTopDown().single { it.isFile }
+        check(retained.readBytes().contentEquals(original)) { "The retained explicit bytes changed" }
+        println("ANDROID BINDING ROUND4 saved-canonical controlled-auth=true same-provider=true explicit-bytes-kept=true")
+        return confirmed
+    }
 
     /**
      * Connects the saved account, runs [proof] on its download controller, then removes the account
@@ -84,6 +125,9 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
         try {
             val controller = checkNotNull(AndroidDownloads.controller(context)) { "No download controller for the saved account" }
             check(runBlocking { controller.awaitReconciled() }) { "Download reconciliation did not run" }
+            // This proof owns exactly one explicit original, independently of library retention
+            // and ordinary streaming cache. Its outer finally verifies account file/task cleanup.
+            runBlocking { controller.setAutomaticDownloadsEnabled(false); controller.setCacheBudgetBytes(0) }
             proof(controller, account, rawId, container, song.optLong("duration") * 1000, original, relay)
         } finally {
             relay.close()
@@ -136,7 +180,7 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
         check(runCatching { probe.call("ping") }.isSuccess) { "The disposable server itself stopped answering" }
         val forwardedAtCut = relay.forwardedBytes.get()
         val refusedBefore = relay.refusedConnections.get()
-        PlaybackObserver(context).use { observer ->
+        PlaybackObserver(context, removeAccountDataOnClose = false).use { observer ->
             startPlayback(account, rawId).use {
                 observer.bind()
                 val position = requireMediaTimeAdvances(observer, "offline")

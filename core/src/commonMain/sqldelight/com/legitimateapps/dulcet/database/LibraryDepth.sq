@@ -27,7 +27,7 @@ SELECT raw_id FROM cache_track WHERE server_id = ? AND metadata_missing = 0 AND 
 
 selectUserEntries:
 SELECT category, raw_id, value, issue_seq FROM library_depth_entry
-WHERE server_id = ? AND category != 'albumMetadata' ORDER BY issue_seq DESC, raw_id;
+WHERE server_id = ? AND category NOT IN ('albumMetadata', 'download.mediaBinding') ORDER BY issue_seq DESC, raw_id;
 
 selectAlbumMetadata:
 SELECT raw_id, value FROM library_depth_entry WHERE server_id = ? AND category = 'albumMetadata';

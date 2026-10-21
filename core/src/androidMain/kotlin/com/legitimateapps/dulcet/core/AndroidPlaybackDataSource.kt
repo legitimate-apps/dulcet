@@ -232,11 +232,16 @@ internal class AndroidHttpPlaybackResource(
     private val account: PlaybackEndpointAccount,
     private val plan: RemotePlaybackWirePlan,
     private val authorizer: AuthenticatedEndpointClient,
+    private val currentAuthorizer: (() -> AuthenticatedEndpointClient?)? = null,
 ) : AndroidPlaybackResource {
     override fun open(position: Long, length: Long): AndroidPlaybackResponse = try {
         val range = if (position > 0 || length >= 0) "bytes=$position-" +
             if (length >= 0) Math.addExact(position, length - 1).toString() else "" else null
-        val prepared = runBlocking { authorizer.prepareGetRequest(plan.endpoint, plan.parameters,
+        // Select once per HTTP open. A seek can use refreshed same-account credentials without
+        // replacing its installed resource or disturbing any response already being consumed.
+        val selectedAuthorizer = if (currentAuthorizer == null) authorizer
+            else currentAuthorizer.invoke() ?: throw AndroidPlaybackIOException(DomainError.Transport.Cancelled)
+        val prepared = runBlocking { selectedAuthorizer.prepareGetRequest(plan.endpoint, plan.parameters,
             AuthenticatedEndpointRequestOptions(range = range)) }
         var url = prepared.url
         var hostHeader = prepared.hostHeader

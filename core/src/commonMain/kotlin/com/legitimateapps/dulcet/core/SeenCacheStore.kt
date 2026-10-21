@@ -60,10 +60,18 @@ internal class SeenCacheStore(
         val purged = database.transactionWithResult {
             val queries = database.seenCacheQueries
             val stored = queries.selectBinding(binding.serverId).executeAsOneOrNull()
+            val mediaEpoch = database.libraryDepthQueries
+                .selectEntry(binding.serverId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull()
+            val authenticatedUsernameContinuity = stored != null &&
+                matchesMediaBinding(mediaEpoch, DownloadMediaBinding(
+                    binding.serverId, stored.normalized_base_url, stored.username,
+                )) && matchesMediaBinding(mediaEpoch, DownloadMediaBinding(
+                    binding.serverId, binding.normalizedBaseUrl, binding.username,
+                ))
             val matches = stored != null &&
-                stored.normalized_base_url == binding.normalizedBaseUrl &&
-                stored.username == binding.username
-            if (stored != null && stored.username != binding.username) {
+                MediaBindingIdentity.sameEndpoint(stored.normalized_base_url, binding.normalizedBaseUrl) &&
+                (stored.username == binding.username || authenticatedUsernameContinuity)
+            if (stored != null && stored.username != binding.username && !authenticatedUsernameContinuity) {
                 // Changes queued as another user must never be sent as this one (§16.10, §14.7).
                 // A server-address change for the same username keeps them.
                 val outbox = database.protectedReservedDataQueries
@@ -279,6 +287,8 @@ internal data class CacheTrackRecord(
     val sourceContainer: AudioContainer? = null,
     val artworkKey: String? = null,
     val userState: CacheUserState = CacheUserState(),
+    /** Source bytes observed live; used to reconcile retained media, never a stream length. */
+    val sourceSizeBytes: Long? = null,
 )
 
 internal data class CachePlaylistRecord(
@@ -686,6 +696,14 @@ internal class BoundSeenCache internal constructor(
                 raw_id = track.rawId,
             )
         }
+        val previousSource = database.offlineLibraryQueries.selectSourceSnapshot(serverId, track.rawId).executeAsOneOrNull()
+        database.offlineLibraryQueries.upsertSourceSnapshot(serverId, track.rawId,
+            track.durationMilliseconds ?: previousSource?.duration_milliseconds,
+            track.sourceSizeBytes ?: previousSource?.size_bytes)
+        database.offlineLibraryQueries.markChangedSourceStale(serverId, track.rawId,
+            track.durationMilliseconds, track.sourceSizeBytes)
+        database.offlineLibraryQueries.adoptLiveSourceSnapshot(track.durationMilliseconds,
+            track.sourceSizeBytes, serverId, track.rawId)
         replaceCredits("track", track.rawId, track.credits)
         return true
     }
@@ -1388,7 +1406,7 @@ internal fun AudioContainer.cacheWireName(): String = when (this) {
     AudioContainer.AdtsAac -> "adts_aac"
 }
 
-private fun audioContainerFromCacheWireName(value: String): AudioContainer? =
+internal fun audioContainerFromCacheWireName(value: String): AudioContainer? =
     AudioContainer.entries.firstOrNull { it.cacheWireName() == value }
 
 /**

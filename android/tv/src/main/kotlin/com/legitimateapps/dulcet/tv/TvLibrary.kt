@@ -555,6 +555,7 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
         item { TvSignOutEntry() }
         // Below Sign out, so the screen still opens on Back with Sign out one step down (§14.7).
         item { TvStreamingQuality() }
+        item { TvOfflineStorage() }
     }
 }
 

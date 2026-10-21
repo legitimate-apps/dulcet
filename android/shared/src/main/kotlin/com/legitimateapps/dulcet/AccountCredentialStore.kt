@@ -35,6 +35,9 @@ public interface AccountCredentialStore {
         password: String,
         allowLocalHttp: Boolean,
     ): StoredAccount
+    /** A successful connect using the exact saved credentials may retain its provider identity.
+     * Stores without in-place continuation support return null and use ordinary save semantics. */
+    fun saveAuthenticatedContinuation(expected: StoredAccount, confirmed: StoredAccount): StoredAccount? = null
     fun delete()
 
     /**
@@ -81,6 +84,7 @@ public class AndroidAccountCredentialStore public constructor(
 ) : AccountCredentialStore {
     constructor(context: Context) : this(context, AndroidKeystoreAccountCredentialCipher())
 
+    private val applicationContext = context.applicationContext
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     override fun load(): StoredAccount? {
@@ -156,6 +160,38 @@ public class AndroidAccountCredentialStore public constructor(
             if (failure is CredentialStoreException) throw failure
             throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed, failure)
         }
+    }
+
+    override fun saveAuthenticatedContinuation(expected: StoredAccount, confirmed: StoredAccount): StoredAccount? {
+        fun endpoint(value: StoredAccount) = com.legitimateapps.dulcet.core.PlaybackEndpointAccount(
+            value.id, value.serverUrl, value.username, value.password, value.allowLocalHttp,
+        )
+        val identity = com.legitimateapps.dulcet.core.MediaBindingIdentity
+        if (load() != expected) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
+        if (confirmed.id != expected.id || confirmed.password != expected.password ||
+            !identity.isValidBinding(expected.id, expected.serverUrl, expected.username) ||
+            !identity.isValidBinding(confirmed.id, confirmed.serverUrl, confirmed.username) ||
+            identity.canonicalServerUrl(expected.serverUrl) != identity.canonicalServerUrl(confirmed.serverUrl)
+        ) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
+        // The caller authenticated the exact saved request. Adopt before committing credentials:
+        // either spelling remains valid if secure storage fails or the process exits between them.
+        if (!com.legitimateapps.dulcet.core.AndroidMediaBindingIdentity.adoptAuthenticatedAccount(
+                applicationContext, endpoint(expected), endpoint(confirmed),
+            )) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
+        val previousPayload = preferences.getString(payloadKey(expected.id), null)
+            ?: throw CredentialStoreException(CredentialStoreException.Reason.CorruptRecord)
+        val encoded = try {
+            Base64.encodeToString(cipher.encrypt(confirmed.id, CredentialCodec.encode(confirmed)), Base64.NO_WRAP)
+        } catch (failure: Exception) {
+            throw CredentialStoreException(CredentialStoreException.Reason.SecureStorageUnavailable, failure)
+        }
+        // Other account choices must not be overwritten by an old authentication result.
+        if (load() != expected) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
+        if (!preferences.edit().putString(payloadKey(confirmed.id), encoded).commit()) {
+            preferences.edit().putString(payloadKey(expected.id), previousPayload).commit()
+            throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
+        }
+        return confirmed
     }
 
     override fun activeAccountId(): String? = preferences.getString(ACTIVE_ACCOUNT_KEY, null)

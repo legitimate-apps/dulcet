@@ -211,8 +211,13 @@ public protocol DulcetPlaybackControlling: AnyObject {
         _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
     )
     func configure(account: DulcetPlaybackAccount)
+    /// Called only after successful saved-credential authentication and durable media adoption.
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) -> Bool
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool
     /// Configures local playback and durable plays, holding server requests until account negotiation succeeds.
     func configureOffline(account: DulcetPlaybackAccount)
+    func setNetworkAvailable(_ available: Bool)
+    func setServerAvailable(_ available: Bool)
     func restorePersistedQueue(
         with tracks: [DulcetTrack],
         catalogCoverage: DulcetLibraryCatalogCoverage
@@ -223,7 +228,11 @@ public protocol DulcetPlaybackControlling: AnyObject {
 }
 
 public extension DulcetPlaybackControlling {
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) -> Bool { false }
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool { false }
     func configureOffline(account: DulcetPlaybackAccount) {}
+    func setNetworkAvailable(_ available: Bool) {}
+    func setServerAvailable(_ available: Bool) {}
 }
 
 /// What starting playback does to the surface the person is looking at.

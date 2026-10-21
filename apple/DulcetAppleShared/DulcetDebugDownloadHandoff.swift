@@ -106,7 +106,6 @@ final class DulcetDebugDownloadHandoff {
                 if opened, let track = search.current?.rows
                     .compactMap({ $0.result.kind == .track && $0.result.title == title ? $0.result.playableTrack : nil })
                     .first {
-                    DulcetDownloadHandoffProbe.record("download-requested item=\(track.id.rawID)")
                     store.requestDownload(track)
                     return
                 }
@@ -125,10 +124,35 @@ final class DulcetDebugDownloadHandoff {
 
     /// The marker file in one line of `key=value` fields, which the proof reads:
     /// `launches`, `unattended-launches` (launches the harness did not make), `background-events`,
-    /// `outstanding` (`<download>@<pid>`, the first the system reported running), `exit` (the
-    /// pid that recorded it), `promoted` (`<download>@<pid>`), `item`, `state` (the promotion's
+    /// `requested` (the explicitly requested item), `outstanding` (`<download>@<pid>`, its first
+    /// running witness), `exit` (the pid that recorded it), `promoted` (`<download>@<pid>`), `item`, `state` (the promotion's
     /// answer), `row` (the durable row read back), `bytes`, `sha256` and `pid` (this process).
-    static func summarize(_ lines: [String], currentPID: Int32) -> String {
+    static func summarize(_ lines: [String], currentPID: Int32, requestedItem: String? = nil) -> String {
+        // Automatic downloads may start before the explicit request and finish after it. Bind
+        // every transfer witness to the requested item's task identity, rather than combining
+        // whichever running task and promoted artifact happen to appear first/last in the log.
+        let events: [(pid: String, name: String, values: [String: String])] = lines.compactMap { line in
+            let fields = line.split(separator: " ").map(String.init)
+            guard fields.count >= 3, fields[1].hasPrefix("pid=") else { return nil }
+            let values = Dictionary(
+                fields.dropFirst(3).compactMap { field -> (String, String)? in
+                    guard let equals = field.firstIndex(of: "=") else { return nil }
+                    return (String(field[..<equals]), String(field[field.index(after: equals)...]))
+                },
+                uniquingKeysWith: { first, _ in first }
+            )
+            return (String(fields[1].dropFirst(4)), fields[2], values)
+        }
+        let requested = events.first {
+            $0.name == "download-requested" && (requestedItem == nil || $0.values["item"] == requestedItem)
+        }?.values["item"]
+        let download: String?
+        if let requested {
+            download = events.first { $0.name == "task-started" && $0.values["item"] == requested }?.values["download"]
+        } else {
+            // Before an explicit request there is no transfer this proof can attribute to it.
+            download = nil
+        }
         var launches = 0
         var unattended = 0
         var backgroundEvents = 0
@@ -140,28 +164,22 @@ final class DulcetDebugDownloadHandoff {
         var row = "none"
         var bytes = "none"
         var digest = "none"
-        for line in lines {
-            let fields = line.split(separator: " ").map(String.init)
-            guard fields.count >= 3, fields[1].hasPrefix("pid=") else { continue }
-            let pid = String(fields[1].dropFirst(4))
-            let values = Dictionary(
-                fields.dropFirst(3).compactMap { field -> (String, String)? in
-                    guard let equals = field.firstIndex(of: "=") else { return nil }
-                    return (String(field[..<equals]), String(field[field.index(after: equals)...]))
-                },
-                uniquingKeysWith: { first, _ in first }
-            )
-            switch fields[2] {
+        for event in events {
+            let (pid, name, values) = event
+            switch name {
             case "launch":
                 launches += 1
                 if values["harness"] == "no" { unattended += 1 }
             case "background-events":
                 backgroundEvents += 1
             case "outstanding":
-                if outstanding == "none", let download = values["download"] { outstanding = "\(download)@\(pid)" }
+                if outstanding == "none", let download, values["download"] == download, values["state"] == "running" {
+                    outstanding = "\(download)@\(pid)"
+                }
             case "exit":
                 exitPID = pid
             case "promoted":
+                guard let download, values["download"] == download, values["item"] == requested else { continue }
                 promoted = "\(values["download"] ?? "none")@\(pid)"
                 item = values["item"] ?? "none"
                 state = values["state"] ?? "none"
@@ -174,7 +192,7 @@ final class DulcetDebugDownloadHandoff {
         }
         return [
             "launches=\(launches)", "unattended-launches=\(unattended)", "background-events=\(backgroundEvents)",
-            "outstanding=\(outstanding)", "exit=\(exitPID)", "promoted=\(promoted)", "item=\(item)",
+            "requested=\(requested ?? "none")", "outstanding=\(outstanding)", "exit=\(exitPID)", "promoted=\(promoted)", "item=\(item)",
             "state=\(state)", "row=\(row)", "bytes=\(bytes)", "sha256=\(digest)", "pid=\(currentPID)",
         ].joined(separator: " ")
     }

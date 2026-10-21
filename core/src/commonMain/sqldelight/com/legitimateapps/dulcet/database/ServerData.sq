@@ -3,6 +3,9 @@ SELECT sum(row_count) FROM (
   SELECT count(*) AS row_count FROM mutation_outbox WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM download WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM download_policy_state WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM offline_media_retention WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM offline_library_settings WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM offline_source_snapshot WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM resume_position WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM scrobble_outbox WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM queue_state WHERE server_id = :server_id
@@ -45,6 +48,9 @@ selectServerIdsWithRows:
 SELECT server_id FROM mutation_outbox
 UNION SELECT server_id FROM download
 UNION SELECT server_id FROM download_policy_state
+UNION SELECT server_id FROM offline_media_retention
+UNION SELECT server_id FROM offline_library_settings
+UNION SELECT server_id FROM offline_source_snapshot
 UNION SELECT server_id FROM resume_position
 UNION SELECT server_id FROM scrobble_outbox
 UNION SELECT server_id FROM queue_state

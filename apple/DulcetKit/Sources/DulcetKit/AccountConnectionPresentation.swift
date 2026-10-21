@@ -736,6 +736,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 if foreground && !self.reconnectForeground { self.reconnectRetryDelay = .seconds(2) }
                 self.reconnectForeground = foreground
                 self.reconnectReachable = reachable
+                self.playbackController?.setNetworkAvailable(reachable)
                 if !foreground || !reachable { self.cancelReconnectRetry() }
             }
             // The device library opens before any network work starts.
@@ -747,6 +748,17 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 ),
                 mode: .deviceOnly
             )
+        }
+        if restoredForReader == nil {
+            librarySession?.onConnectionEnvironmentChanged = { [weak self] foreground, reachable in
+                guard let self else { return }
+                self.reconnectForeground = foreground
+                self.reconnectReachable = reachable
+                self.playbackController?.setNetworkAvailable(reachable)
+            }
+        }
+        librarySession?.onServerConnectionChanged = { [weak self] available in
+            self?.playbackController?.setServerAvailable(available)
         }
         librarySession?.onTracksSeen = { [weak self] tracks in
             self?.restoreQueue(from: tracks)
@@ -989,6 +1001,85 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         publishSavedAccountOrIdle(form: currentSnapshot.accountForm)
     }
 
+    private struct SavedAuthentication {
+        let request: DulcetAccountConnectRequest
+        let submittedRequest: DulcetAccountConnectRequest
+        let providerInstanceID: String
+    }
+    private enum SavedAuthenticationFailure: Error { case superseded }
+
+    private func savedAuthentication(for request: DulcetAccountConnectRequest) -> SavedAuthentication? {
+        guard let providerInstanceID, let saved = try? credentialStore?.load(),
+            saved.username == request.username, saved.password == request.password
+        else { return nil }
+        return SavedAuthentication(request: saved, submittedRequest: request, providerInstanceID: providerInstanceID)
+    }
+
+    private func adoptAuthenticatedAccount(
+        _ proof: SavedAuthentication?,
+        account: DulcetConnectedAccountSummary,
+        request: DulcetAccountConnectRequest,
+        instanceID: String
+    ) throws -> Bool {
+        guard let proof else { return false }
+        guard proof.providerInstanceID == instanceID,
+            providerInstanceID == proof.providerInstanceID,
+            let credentialStore, try credentialStore.load() == proof.request
+        else { throw SavedAuthenticationFailure.superseded }
+        if let scoped = credentialStore as? any DulcetProviderInstanceCredentialStoring,
+           scoped.providerInstanceID != proof.providerInstanceID { throw SavedAuthenticationFailure.superseded }
+        let previous = DulcetPlaybackAccount(providerInstanceID: instanceID,
+            normalizedServerURL: proof.request.serverURL, username: proof.request.username,
+            password: proof.request.password, allowLocalHTTP: proof.request.allowLocalHTTP,
+            credentialGeneration: credentialStore.credentialGeneration)
+        let confirmed = DulcetPlaybackAccount(providerInstanceID: instanceID,
+            normalizedServerURL: account.normalizedServerURL, username: request.username,
+            password: request.password, allowLocalHTTP: request.allowLocalHTTP,
+            credentialGeneration: credentialStore.credentialGeneration)
+        let submitted = DulcetPlaybackAccount(providerInstanceID: instanceID,
+            normalizedServerURL: proof.submittedRequest.serverURL, username: proof.submittedRequest.username,
+            password: proof.submittedRequest.password, allowLocalHTTP: proof.submittedRequest.allowLocalHTTP,
+            credentialGeneration: credentialStore.credentialGeneration)
+        // The core commits aliases before Keychain replacement. Both spellings remain valid
+        // in this epoch if saving credentials is interrupted; a real rebind drops the aliases.
+        if let downloadController {
+            guard downloadController.hasSameMediaOrigin(first: previous, second: submitted),
+                downloadController.hasSameMediaOrigin(first: previous, second: confirmed)
+            else { return false }
+            guard try downloadController.adoptAuthenticatedAccount(previous: previous, confirmed: confirmed) else { return false }
+        } else {
+            guard playbackController?.hasSameMediaOrigin(first: previous, second: submitted) == true,
+                playbackController?.hasSameMediaOrigin(first: previous, second: confirmed) == true
+            else { return false }
+        }
+        _ = playbackController?.adoptAuthenticatedAccount(previous: previous, confirmed: confirmed)
+        return true
+    }
+
+    private func prepareMediaOwnership(
+        _ proof: SavedAuthentication?,
+        account: DulcetConnectedAccountSummary,
+        request: DulcetAccountConnectRequest,
+        instanceID: String
+    ) throws {
+        if try adoptAuthenticatedAccount(proof, account: account,
+            request: request, instanceID: instanceID) { return }
+        guard let saved = try credentialStore?.load(), saved.username != request.username else { return }
+        let previous = DulcetPlaybackAccount(providerInstanceID: instanceID,
+            normalizedServerURL: saved.serverURL, username: saved.username, password: saved.password,
+            allowLocalHTTP: saved.allowLocalHTTP,
+            credentialGeneration: credentialStore?.credentialGeneration ?? 0)
+        let confirmed = DulcetPlaybackAccount(providerInstanceID: instanceID,
+            normalizedServerURL: account.normalizedServerURL, username: request.username,
+            password: request.password, allowLocalHTTP: request.allowLocalHTTP,
+            credentialGeneration: credentialStore?.credentialGeneration ?? 0)
+        if let downloadController {
+            try downloadController.replaceUnconfirmedAccount(previous: previous, confirmed: confirmed)
+        } else {
+            playbackController?.disconnect()
+        }
+    }
+
     /// Connects with `request`. `inPlace` is a saved-account launch, a lifecycle retry, or a
     /// local-network grant: it
     /// never moves them, wherever they go before it lands: the account status says it is
@@ -1000,6 +1091,9 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         inPlace: Bool = false,
         automatic: Bool = false
     ) {
+        // Capture before publishing the submitted form or invoking a synchronous connector.
+        // Only these exact saved credentials can establish continuity with their media owner.
+        let savedAuthentication = savedAuthentication(for: request)
         cancelLibraryBrowse()
         cancelLibraryRefresh()
         // Whatever is held describes the connection being replaced, so it stops being an answer
@@ -1028,14 +1122,17 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             guard let self, self.generation == submissionGeneration else { return }
             self.activeOperation = nil
             if inPlace {
-                self.completeInPlace(outcome, request: request, automatic: automatic)
+                self.completeInPlace(outcome, request: request, automatic: automatic,
+                    savedAuthentication: savedAuthentication)
                 return
             }
             switch outcome {
             case let .connected(account):
                 do {
                     let instanceID = self.providerInstanceID ?? self.providerInstanceIDFactory()
-                    let saved = request.savingServerURL(account.normalizedServerURL)
+                    let saved = request.savingConnectedAccount(account)
+                    try self.prepareMediaOwnership(savedAuthentication,
+                        account: account, request: saved, instanceID: instanceID)
                     if let credentialStore = self.credentialStore
                         as? any DulcetProviderInstanceCredentialStoring {
                         try credentialStore.save(saved, providerInstanceID: instanceID)
@@ -1046,12 +1143,12 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                         self.savedServerName = account.serverName
                     }
                     self.providerInstanceID = instanceID
-                    self.configurePlayback(account: account, request: request)
-                    self.openConnectedReader(account: account, request: request)
+                    self.configurePlayback(account: account, request: saved)
+                    self.openConnectedReader(account: account, request: saved)
                     self.publish(
                         state: .accountConnected,
                         destination: .settings,
-                        form: request,
+                        form: saved,
                         status: .connected(account)
                     )
                     // A connection the person asked for lands on their library, from Connection as
@@ -1061,7 +1158,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                     // just established, so anything held is another session's.
                     if origin == .library || origin == .listenNow || origin == .settings {
                         if self.readerOwnsLibrary {
-                            self.publish(state: .libraryBrowse, destination: origin == .settings ? .listenNow : origin, form: request, status: .connected(account))
+                            self.publish(state: .libraryBrowse, destination: origin == .settings ? .listenNow : origin, form: saved, status: .connected(account))
                         } else { self.openLibrary(reason: .connected) }
                     }
                 } catch {
@@ -1113,13 +1210,16 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     private func completeInPlace(
         _ outcome: DulcetAccountConnectOutcome,
         request: DulcetAccountConnectRequest,
-        automatic: Bool
+        automatic: Bool,
+        savedAuthentication: SavedAuthentication?
     ) {
         switch outcome {
         case let .connected(account):
             do {
                 let instanceID = providerInstanceID ?? providerInstanceIDFactory()
-                let saved = request.savingServerURL(account.normalizedServerURL)
+                let saved = request.savingConnectedAccount(account)
+                try prepareMediaOwnership(savedAuthentication,
+                    account: account, request: saved, instanceID: instanceID)
                 if let credentialStore = credentialStore as? any DulcetProviderInstanceCredentialStoring {
                     try credentialStore.save(saved, providerInstanceID: instanceID)
                 } else {
@@ -1131,9 +1231,9 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 providerInstanceID = instanceID
                 reconnectRetryDelay = .seconds(2)
                 cancelReconnectRetry()
-                configurePlayback(account: account, request: request)
-                openConnectedReader(account: account, request: request)
-                publishInPlace(status: .connected(account), form: request)
+                configurePlayback(account: account, request: saved)
+                openConnectedReader(account: account, request: saved)
+                publishInPlace(status: .connected(account), form: saved)
                 switch currentSnapshot.selectedDestination {
                 case .listenNow:
                     break
@@ -2368,6 +2468,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             allowLocalHTTP: request.allowLocalHTTP,
             credentialGeneration: credentialStore?.credentialGeneration ?? 0
         ))
+        downloadController?.setAutomaticDownloadContactPermitted(true)
     }
 
     private func beginPlayback(_ intent: DulcetPlaybackQueueIntent) {
@@ -2782,6 +2883,16 @@ extension DulcetAccountDataSource: DulcetLibrarySessionProviding {
 }
 
 extension DulcetAccountConnectRequest {
+    /// Preserve the server-confirmed account name exactly; servers decide username identity.
+    func savingConnectedAccount(_ account: DulcetConnectedAccountSummary) -> DulcetAccountConnectRequest {
+        DulcetAccountConnectRequest(
+            serverURL: account.normalizedServerURL.isEmpty ? serverURL : account.normalizedServerURL,
+            username: account.canonicalUsername ?? username,
+            password: password,
+            allowLocalHTTP: allowLocalHTTP
+        )
+    }
+
     /// The request as saved: with the address the server was actually reached at, so the next
     /// launch opens the same cache namespace without having to reach the server first.
     func savingServerURL(_ normalizedServerURL: String) -> DulcetAccountConnectRequest {
@@ -2792,5 +2903,24 @@ extension DulcetAccountConnectRequest {
             password: password,
             allowLocalHTTP: allowLocalHTTP
         )
+    }
+}
+
+
+extension DulcetAccountDataSource: DulcetOfflineLibraryControlling {
+    public var offlineLibraryStorage: DulcetOfflineLibraryStorage {
+        (downloadController as? any DulcetOfflineLibraryControlling)?.offlineLibraryStorage ?? .init()
+    }
+    public func setAutomaticDownloadsEnabled(_ enabled: Bool) {
+        (downloadController as? any DulcetOfflineLibraryControlling)?.setAutomaticDownloadsEnabled(enabled)
+        downloadStateChangeHandler?()
+    }
+    public func setStreamingCacheBudgetBytes(_ bytes: Int64) {
+        (downloadController as? any DulcetOfflineLibraryControlling)?.setStreamingCacheBudgetBytes(bytes)
+        downloadStateChangeHandler?()
+    }
+    public func clearStreamingCache() {
+        (downloadController as? any DulcetOfflineLibraryControlling)?.clearStreamingCache()
+        downloadStateChangeHandler?()
     }
 }

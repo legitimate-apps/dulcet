@@ -70,6 +70,32 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertEqual(add.label, "Add to Library")
         activate(add)
         awaitLabel(add, "Remove from Library")
+#if !os(tvOS)
+        // The production reader expands the newly added album, and the existing executor
+        // downloads it without an explicit Download action. Cut only this account's HTTP
+        // route before playing, so the native engine must consume the retained local file.
+        let albumResponse = try rest("getAlbum", params: ["id": album.id])
+        let detail = try XCTUnwrap(albumResponse["album"] as? [String: Any])
+        let songs = try XCTUnwrap(detail["song"] as? [[String: Any]])
+        let songTitle = try XCTUnwrap(songs.first?["title"] as? String)
+        let song = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@",
+                                                    songTitle, "Current track, " + songTitle)).firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 20), app.debugDescription)
+        let downloaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "Downloaded"), object: song)
+        XCTAssertEqual(XCTWaiter.wait(for: [downloaded], timeout: 90), .completed,
+                       "Adding an album must automatically download its songs through the production reader")
+        try setOffline(true)
+        activate(song)
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        XCTAssertTrue(playPause.waitForExistence(timeout: 30), app.debugDescription)
+        awaitLabel(playPause, "Pause")
+        XCTAssertTrue(app.buttons["dulcet.mini-player.open"].firstMatch.label.contains(songTitle))
+        try capture("Offline-Automatic-Album-Playback")
+        print("OFFLINE-AUTO-UI account=\(user) trigger=album-add downloaded=true route=offline engine=playing")
+        app.terminate()
+        try setOffline(false)
+        try launch()
+#endif
         try select("library")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
@@ -452,8 +478,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // connection its tab can precede the Home landing and catalog publication;
             // tapping during that handoff can leave Home selected. Wait for actual reader
             // content, as the ordinary-server path does, before choosing another destination.
+            // A measured cold negotiation remained Connecting beyond 30 seconds under CI
+            // host contention, then published the actual album tiles; allow that cold path.
             let connected = app.buttons["dulcet.library.album"].firstMatch
-            if !connected.waitForExistence(timeout: 30) {
+            if !connected.waitForExistence(timeout: 90) {
                 let welcome = app.buttons["Connect a Server"]
                 if welcome.exists { welcome.tap() }
                 let copy = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ")
@@ -545,6 +573,24 @@ final class DulcetMyLibraryUITests: XCTestCase {
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
                            "The tab tap must select \(section): \(app.debugDescription)")
+        } else {
+            // A synthesized iPad label tap can finish without changing the sidebar selection.
+            // Retained failures show Listen Now still selected after a tap inside Library's
+            // correct bounds, at both default and accessibility text sizes. Observe selection
+            // before reading destination content; make at most one second real row tap.
+            let firstSelection = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
+            if XCTWaiter.wait(for: [firstSelection], timeout: 3) != .completed {
+                let row = app.cells.containing(.staticText, identifier: "dulcet.sidebar.\(section)").firstMatch
+                guard row.waitForExistence(timeout: 3) else {
+                    XCTFail("Missing native sidebar row for \(section): \(app.debugDescription)")
+                    return
+                }
+                print("MY LIBRARY IPAD unacknowledged-sidebar-tap target=\(section) retry=cell")
+                row.tap()
+            }
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
+                           "The sidebar tap must select \(section): \(app.debugDescription)")
         }
 #endif
 #if os(macOS)

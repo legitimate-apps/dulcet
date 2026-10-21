@@ -971,7 +971,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         return (element.value as? String) == expected
     }
 
-    /// Reveals a credential row and replaces its text. Tour-only scrolling and photography stay
+    /// Reveals a credential row and replaces its text. Form geometry and tour photography stay
     /// here so `replaceText` keeps the self-contained input protocol that
     /// `tools/test-account-connect-text-entry` compiles and replays on its own.
     @MainActor
@@ -993,27 +993,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 let observed = field.value as? String ?? ""
                 if secure ? observed.count == value.count : observed == value { return true }
             }
-            // Large text can put the next field behind the software keyboard. Scroll the form
-            // within its visible area before tapping, without changing the behavioural proofs.
-            for _ in 0..<8 {
-                let window = app.windows.firstMatch.frame
-                let keyboard = app.keyboards.firstMatch
-                let top = window.minY + 100
-                let bottom = min(window.maxY - 24, keyboard.exists ? keyboard.frame.minY - 16 : window.maxY - 24)
-                let middle = field.frame.midY
-                if field.isHittable, middle >= top, middle <= bottom { break }
-                guard bottom > top else {
-                    XCTFail("The tour needs a visible form area above the keyboard")
-                    return false
-                }
-                let lower = (top + (bottom - top) * 0.8 - window.minY) / window.height
-                let upper = (top + (bottom - top) * 0.25 - window.minY) / window.height
-                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: middle < top ? upper : lower))
-                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: middle < top ? lower : upper))
-                start.press(forDuration: 0.01, thenDragTo: end)
-            }
         }
-        let entered = replaceText(in: field, with: value, name: name, secure: secure, photographing: photographing) {
+        let entered = replaceText(in: field, with: value, name: name, secure: secure, photographing: photographing,
+                                 beforeFocusTap: {
+            // Revealing a lower error action can leave this existing field above the window.
+            // Recheck the whole field before every cursor tap, including after focus is lost.
+            guard scrollIntoView(field, matching: .credential(field.identifier), in: app) else {
+                XCTFail("The \(name) field must be reachable before taking keyboard focus")
+                return false
+            }
+            return true
+        }) {
             guard photographing else { return }
             print("DULCET DESIGN TOUR focus-failure field=\(name) frame=\(field.frame) keyboard=\(app.keyboards.firstMatch.frame) " + app.debugDescription)
             tourPhotograph("connection-focus-UNREACHED")
@@ -1024,7 +1014,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func replaceText(in field: XCUIElement, with value: String, name: String, secure: Bool = false,
-                             photographing: Bool = false, onFocusFailure: () -> Void = {}) -> Bool {
+                             photographing: Bool = false, beforeFocusTap: () -> Bool = { true },
+                             onFocusFailure: () -> Void = {}) -> Bool {
         guard field.waitForExistence(timeout: 5) else {
             XCTFail("The \(name) field must exist")
             return false
@@ -1042,6 +1033,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         func focusForTyping(retap: Bool = false) -> Bool {
             var focused = !retap && (field.value(forKey: "hasKeyboardFocus") as? Bool ?? false)
             for _ in 0..<4 where !focused {
+                guard beforeFocusTap() else { return false }
                 if photographing { field.tap() }
                 else { field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
                 let deadline = Date().addingTimeInterval(3)
@@ -1146,6 +1138,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     /// predicate evaluated remotely over every descendant on each poll.
     private enum HitTarget {
         case identifier(String)
+        case credential(String)
         case button(String)
         case staticText(String)
         case localHTTPConsent
@@ -1156,6 +1149,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             switch self {
             case .identifier(let identifier):
                 return snapshot.elementType == .button && snapshot.identifier == identifier
+            case .credential(let identifier):
+                return (snapshot.elementType == .textField || snapshot.elementType == .secureTextField)
+                    && snapshot.identifier == identifier
             case .button(let label):
                 return snapshot.elementType == .button && snapshot.label == label
             case .staticText(let label):
@@ -1170,7 +1166,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
     }
 
-    /// Scrolls until the element's midpoint is inside the window and hittable, at most six swipes.
+    /// Keeps the whole control clear of the native navigation and tab bars before a real tap.
     @MainActor
     private func scrollIntoView(_ element: XCUIElement, matching target: HitTarget, in app: XCUIApplication) -> Bool {
         let window = app.windows.firstMatch
@@ -1178,12 +1174,25 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             dismissPasswordSavePromptIfPresent()
             if waitForStableHitTarget(element, matching: target, in: window, timeout: 5) { return true }
             if swipe < 6 {
-                // Choose the direction from one window snapshot: live element geometry can
-                // wait on the animation idle that this scope exists to bypass.
-                let above = (try? window.snapshot()).map { snapshot in
-                    hitTarget(target, in: snapshot).map { $0.frame.midY < snapshot.frame.minY + 100 } ?? false
-                } ?? false
-                if above { app.swipeDown() } else { app.swipeUp() }
+                // A full-window fling can move this error action from behind the tab bar to
+                // behind the navigation bar and back. Move a bounded distance toward the
+                // content's centre, then hold the finger still to avoid that momentum.
+                guard let snapshot = try? window.snapshot() else { return false }
+                let viewport = hitViewport(for: target, in: snapshot)
+                guard !viewport.isNull, !viewport.isInfinite, !viewport.isEmpty else { return false }
+                let targetY = hitTarget(target, in: snapshot)?.frame.midY ?? viewport.maxY
+                guard targetY.isFinite else { return false }
+                let limit = viewport.height * 0.35
+                let delta = min(limit, max(-limit, viewport.midY - targetY))
+                // If geometry is already centred but hittability has not arrived, keep
+                // waiting. A zero-length press could activate the action instead of scroll.
+                guard abs(delta) >= 12 else { continue }
+                let origin = window.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: viewport.midX - snapshot.frame.minX,
+                                                       dy: viewport.midY - snapshot.frame.minY))
+                let end = start.withOffset(CGVector(dx: 0, dy: delta))
+                start.press(forDuration: 0.05, thenDragTo: end,
+                            withVelocity: .slow, thenHoldForDuration: 0.3)
                 RunLoop.current.run(until: Date().addingTimeInterval(0.25))
             }
         }
@@ -1197,6 +1206,39 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             if let found = hitTarget(target, in: child) { return found }
         }
         return nil
+    }
+
+    /// XCTest can report a Form row hittable while its native tap point is behind chrome.
+    /// In run 39422860211, Try Again's centre was (201, 60.7), above the navigation bar's
+    /// bottom at 116. Use the bars from this same snapshot for ordinary proofs and tours.
+    @MainActor
+    private func hitViewport(for target: HitTarget, in snapshot: XCUIElementSnapshot) -> CGRect {
+        var top = snapshot.frame.minY + 16
+        var bottom = snapshot.frame.maxY - 24
+        let targetFrame = hitTarget(target, in: snapshot)?.frame
+        var nativeTargetViewport: CGRect?
+        var pending = snapshot.children
+        while let node = pending.popLast() {
+            let frame = node.frame
+            if !frame.isNull && !frame.isInfinite && !frame.isEmpty
+                && frame.intersects(snapshot.frame) {
+                if (node.elementType == .navigationBar || node.elementType == .tabBar),
+                   let nativeTarget = hitTarget(target, in: node), nativeTarget.frame == targetFrame {
+                    nativeTargetViewport = frame.intersection(snapshot.frame)
+                }
+                switch node.elementType {
+                case .navigationBar:
+                    top = max(top, frame.maxY + 12)
+                case .tabBar, .keyboard:
+                    bottom = min(bottom, frame.minY - 8)
+                default: break
+                }
+            }
+            pending.append(contentsOf: node.children)
+        }
+        // Library itself is a native tab target in the artwork proof, not a covered Form row.
+        return nativeTargetViewport ?? CGRect(x: snapshot.frame.minX, y: top, width: snapshot.frame.width,
+                                              height: max(0, bottom - top))
     }
 
     /// One window snapshot supplies both frames and target presence for a poll. Live element
@@ -1236,20 +1278,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             slowestSnapshot = max(slowestSnapshot, now - beforeSnapshot)
             guard inBudget(now) else { break }
             let frame = hitTarget(target, in: snapshot)?.frame ?? .null
-            var visibleFrame = snapshot.frame
-            if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
-                // The tab bar overlays the form. At large text a button's midpoint can be in
-                // the window but underneath that bar, and XCTest still calls it hittable.
-                func tabBar(in node: XCUIElementSnapshot) -> CGRect? {
-                    if node.elementType == .tabBar { return node.frame }
-                    return node.children.lazy.compactMap { tabBar(in: $0) }.first
-                }
-                let bottom = min(snapshot.frame.maxY - 24, (tabBar(in: snapshot)?.minY ?? snapshot.frame.maxY) - 16)
-                visibleFrame = CGRect(x: snapshot.frame.minX, y: snapshot.frame.minY + 100,
-                                      width: snapshot.frame.width, height: max(0, bottom - snapshot.frame.minY - 100))
-            }
-            let visible = !frame.isNull && !frame.isEmpty
-                && visibleFrame.contains(CGPoint(x: frame.midX, y: frame.midY))
+            let visibleFrame = hitViewport(for: target, in: snapshot)
+            let visible = !frame.isNull && !frame.isInfinite && !frame.isEmpty
+                && visibleFrame.contains(frame)
             // An offscreen frame needs a swipe, not five seconds of identical snapshots.
             if !frame.isNull && !visible { return false }
             if !visible || frame != previous || snapshot.frame != previousWindow {

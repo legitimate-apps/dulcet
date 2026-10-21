@@ -17,7 +17,9 @@ jobs:
   parity-gate:
     name: parity-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 2026-10-19: both attempts of run39300490385 passed every test step, then the
+    # five-minute deadline cancelled cleanup (5m03s/5m01s). Keep completion headroom.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

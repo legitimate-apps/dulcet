@@ -598,6 +598,29 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun offlineShuffleSkipsUnavailableFirstInputBeforeMetadataAndExplicitUnavailablePreservesQueue() {
+        val songReads = mutableListOf<String>()
+        val file = java.io.File.createTempFile("dulcet-offline", ".wav")
+        try {
+            Fixture(loadSong = { id -> songReads += id; song(id) }, localPlans = { rawId ->
+                if (rawId != "down") null else LocalPlaybackPlan(DownloadId("download:down"),
+                    DownloadIdentity(OWNER, "down", DownloadIdentity.ORIGINAL_PROFILE), AudioContainer.Wav, 44, file.path)
+            }).use { f ->
+                f.controller.setNetworkAvailable(false)
+                f.controller.playQueue(album("net", "down"), 0, AndroidQueueSource.Library, "My Library", shuffle = true)
+                assertEquals(listOf("down"), f.preparedLocal.map { it.itemId.rawId })
+                assertTrue(songReads.isEmpty(), "offline shuffle cannot resolve its unavailable first input")
+                assertEquals(listOf("down"), f.controller.state.value.queue.map { it.track.rawId })
+                val before = f.controller.state.value
+                f.controller.playQueue(album("net"), 0, AndroidQueueSource.Library, "My Library")
+                assertEquals(before.queue, f.controller.state.value.queue, "refusing a stale offline selection preserves the old playable queue")
+                assertEquals(before.playbackSessionId, f.controller.state.value.playbackSessionId)
+                assertEquals(before.playWhenReady, f.controller.state.value.playWhenReady)
+                assertTrue(songReads.isEmpty())
+            }
+        } finally { file.delete() }
+    }
+
     /**
      * Spec §16.13: a restored queue's downloaded entry is named from what its download kept. Offline,
      * the song's own read fails; it is never asked for the downloaded entry, which still has its title,
@@ -908,6 +931,118 @@ class AndroidPlaybackControllerTest {
                 assertEquals(0, retried.currentIndex, "$path: the same entry")
                 assertEquals(emptyList(), f.probe.seekCommands, "$path: a failure before any progress saved no position to resume")
             }
+        }
+    }
+
+    @Test fun retryingTheNowCachedCurrentSongPreservesTheOutageForPreloadNextAndNaturalEnd() {
+        for (continuation in listOf("preload", "next", "natural end")) {
+            val available = mutableSetOf<String>()
+            val reads = mutableListOf<String>()
+            val resolves = mutableListOf<String>()
+            val file = java.io.File.createTempFile("dulcet-retry-local", ".wav")
+            val incoming = PlayerProbe()
+            try {
+                Fixture(localPlans = { rawId ->
+                    if (rawId !in available) null else LocalPlaybackPlan(DownloadId("cache:$rawId"),
+                        DownloadIdentity(OWNER, rawId, "stream:wav"), AudioContainer.Wav, 44, file.path)
+                }, loadSong = { id -> reads += id; song(id) }, resolve = { request ->
+                    resolves += request.itemId.rawId; resolved(request)
+                }, overlapPlayer = if (continuation == "preload") ({ incoming.player }) else null).use { f ->
+                    f.controller.setAutoplay(false)
+                    f.controller.setCrossfade(if (continuation == "preload") 5 else 0)
+                    f.controller.playQueue(album("a", "b", "c"), 0, AndroidQueueSource.Search, "Search")
+                    assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId }, "$continuation: control starts remotely")
+                    val original = f.prepared.single()
+                    // Streaming just completed a; c was streamed earlier. Wi-Fi remains online.
+                    available += listOf("a", "c")
+                    failConnection(f)
+                    assertEquals("a", f.controller.state.value.queue[f.controller.state.value.currentIndex!!].track.rawId)
+                    assertEquals(DomainError.Transport.Unreachable, f.controller.state.value.error)
+                    play(f)
+                    val retried = f.preparedLocal.single()
+                    assertEquals(original.playbackSessionId, retried.playbackSessionId, "retry remains the same listen")
+                    assertNotEquals(original.attemptId, retried.attemptId, "retry is a new attempt")
+                    ready(f)
+                    progress(f, 0, 1_000)
+                    when (continuation) {
+                        "next" -> f.controller.next()
+                        "natural end" -> {
+                            f.probe.position = 40_000
+                            f.probe.state = androidx.media3.common.Player.STATE_ENDED
+                            f.probe.events()
+                        }
+                    }
+                    assertEquals(listOf("a", "c"), f.preparedLocal.map { it.itemId.rawId },
+                        "$continuation must choose the next local song, including overlap preparation")
+                    assertEquals(listOf("a"), reads, "$continuation must never read remote-only b")
+                    assertEquals(listOf("a"), resolves, "$continuation must never resolve remote-only b")
+                    assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId }, "$continuation must never prepare remote-only b")
+                }
+            } finally { file.delete() }
+        }
+    }
+
+    @Test fun aStaleLocalAvailabilityRowAllowsARemoteRetryButOnlyRemoteProgressRestoresContinuation() {
+        for (progresses in listOf(false, true)) {
+            val reads = mutableListOf<String>()
+            val available = mutableSetOf<String>()
+            val file = java.io.File.createTempFile("dulcet-retry-fallback", ".wav")
+            val source = object : AndroidLocalPlaybackSource {
+                override fun isLocallyPlayable(rawId: String) = rawId in available
+                override suspend fun localPlan(rawId: String) = if (rawId != "c" || rawId !in available) null else
+                    LocalPlaybackPlan(DownloadId("cache:c"), DownloadIdentity(OWNER, "c", "stream:wav"), AudioContainer.Wav, 44, file.path)
+            }
+            try {
+                Fixture(localPlans = source, loadSong = { id -> reads += id; song(id) }).use { f ->
+                    f.controller.setAutoplay(false)
+                    f.controller.setCrossfade(0)
+                    f.controller.playQueue(album("a", "b", "c"), 0, AndroidQueueSource.Search, "Search")
+                    // a still has a published row, but validation finds its file gone.
+                    available += listOf("a", "c")
+                    failConnection(f)
+                    play(f)
+                    assertEquals(listOf("a", "a"), f.prepared.map { it.itemId.rawId }, "explicit retry may probe the wire after local validation fails")
+                    ready(f)
+                    if (progresses) progress(f, 0, 1_000)
+                    f.controller.next()
+                    if (progresses) {
+                        assertEquals(listOf("a", "a", "b"), f.prepared.map { it.itemId.rawId }, "current remote progress establishes recovery")
+                        assertEquals(listOf("a", "a", "b"), reads)
+                    } else {
+                        assertEquals(listOf("c"), f.preparedLocal.map { it.itemId.rawId }, "URL resolution and Ready do not establish recovery")
+                        assertEquals(listOf("a", "a"), reads)
+                    }
+                }
+            } finally { file.delete() }
+        }
+    }
+
+    @Test fun aStaleLocalRetryCannotProbeTheWireAfterOsLossOrClosedContact() {
+        for (guard in listOf("OS offline", "contact closed")) {
+          for (staleRow in listOf(false, true)) {
+            val available = mutableSetOf<String>()
+            val reads = mutableListOf<String>()
+            val contact = ChosenContact().apply { open.value = true }
+            val source = object : AndroidLocalPlaybackSource {
+                override fun isLocallyPlayable(rawId: String) = rawId in available
+                override suspend fun localPlan(rawId: String): LocalPlaybackPlan? = null
+            }
+            Fixture(localPlans = source, serverContact = contact, loadSong = { id -> reads += id; song(id) }).use { f ->
+                f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Search, "Search")
+                if (staleRow) available += "a"
+                failConnection(f)
+                val failed = f.controller.state.value
+                if (guard == "OS offline") f.controller.setNetworkAvailable(false) else contact.open.value = false
+                play(f)
+                assertEquals(listOf("a"), reads, "$guard must refuse the remote fallback after local validation fails")
+                assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId })
+                assertFalse(f.controller.state.value.playWhenReady)
+                if (!staleRow) {
+                    assertEquals(failed.playbackSessionId, f.controller.state.value.playbackSessionId)
+                    assertEquals(failed.attemptId, f.controller.state.value.attemptId, "a refused retry leaves the failed attempt selected")
+                }
+            }
+          }
         }
     }
 
@@ -1815,6 +1950,7 @@ class AndroidPlaybackControllerTest {
         /** Plays left in the outbox by an earlier run, by raw id, before the controller exists. */
         pendingPlays: List<String> = emptyList(),
         serverContact: AndroidServerContact? = null,
+        overlapPlayer: (() -> androidx.media3.common.Player)? = null,
     ) : AutoCloseable {
         private val context = RuntimeEnvironment.getApplication()
         private val databaseName = "playback-controller-${java.util.UUID.randomUUID()}.db"
@@ -1843,7 +1979,8 @@ class AndroidPlaybackControllerTest {
                     if (realPlayer) null else { plan -> prepared += plan }, loadSong, resolve,
                     onDelivery?.let { callback -> { event -> callback(this, event) } },
                     localPlans = localPlans,
-                    prepareLocalSource = if (realPlayer) null else { plan -> preparedLocal += plan }),
+                    prepareLocalSource = if (realPlayer) null else { plan -> preparedLocal += plan },
+                    overlapPlayer = overlapPlayer),
                 serverContact = serverContact)
         }
         override fun close() {

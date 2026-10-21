@@ -56,6 +56,26 @@ class AndroidLibraryReaderTest {
         initiallyForeground = false,
     ).also { readers += it }
 
+    @Test
+    fun pendingSavedAccountContactIsNeutralButObservedNetworkLossGatesPlaybackUntilReconnect() {
+        val reader = reader()
+        fun barrier() {
+            val read = CountDownLatch(1)
+            reader.libraryDepthState { read.countDown() }
+            assertTrue(read.await(30, TimeUnit.SECONDS))
+        }
+        // This is the actual saved-account LibrarySession startup call, before its host starts.
+        reader.setOnline(false, serverUnavailable = false)
+        barrier()
+        assertTrue(reader.serverAvailableForPlayback, "pending contact must preserve a remote Play request")
+        assertTrue(server.log.isEmpty(), "pending contact paints device data without a network read")
+        reader.setOnline(false)
+        barrier()
+        assertFalse(reader.serverAvailableForPlayback, "an observed network loss requires local playback")
+        reconnect(reader)
+        assertTrue(reader.serverAvailableForPlayback, "a real successful reconnect restores streaming eligibility")
+    }
+
     /** A main thread that runs nothing until the test drains it: a publication can be caught queued. */
     private class QueuedMain : CoroutineDispatcher() {
         val queue = LinkedBlockingQueue<Runnable>()

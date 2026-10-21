@@ -687,7 +687,7 @@ internal class MyLibrary(
             },
             songs = reader.applyMyLibraryCategory(songs.sortedWith(order(sort, { it.rank }, { it.record.title }, { it.record.rawId })), "myLibrary.songs", { it.record.rawId }, { it.rank }, if (sort == MyLibrarySort.RecentlyAdded) "recentlyAdded" else "title") { entry ->
                 val r = entry.record
-                LibraryItem.Track(r.rawId, r.title, r.albumRawId, r.albumTitle, r.credits.firstOrNull()?.name, r.credits.firstOrNull()?.artistRawId, r.discNumber, r.trackNumber, r.durationMilliseconds, r.sourceContainer, r.artworkKey, r.userState.starred, r.userState.userRating, r.userState.playCount, reader.trackPlayability(r.rawId, reader.downloads.downloadedTrackRawIds(cache.serverId)), false)
+                LibraryItem.Track(r.rawId, r.title, r.albumRawId, r.albumTitle, r.credits.firstOrNull()?.name, r.credits.firstOrNull()?.artistRawId, r.discNumber, r.trackNumber, r.durationMilliseconds, r.sourceContainer, r.artworkKey, r.userState.starred, r.userState.userRating, r.userState.playCount, reader.trackPlayability(r.rawId, reader.downloads.localTrackRawIds(cache.serverId)), false)
             },
             memberIds = members,
             albumsWithMemberSongs = memberTrackAlbums,

@@ -75,6 +75,7 @@ public data class MyLibrarySong(
     val durationMilliseconds: Long,
     val artworkKey: String?,
     val pending: Boolean,
+    val playability: AndroidLibraryPlayability = AndroidLibraryPlayability.Streamable,
 )
 
 public data class MyLibraryPublication(
@@ -266,7 +267,7 @@ public fun MyLibrarySong.toTrack(): AndroidLibraryItem.Track = AndroidLibraryIte
     favourite = null,
     rating = null,
     playCount = null,
-    playability = AndroidLibraryPlayability.Streamable,
+    playability = playability,
     metadataMissing = false,
 )
 
@@ -335,7 +336,7 @@ private fun AndroidMyLibraryPublication.toShell(): MyLibraryPublication = MyLibr
     },
     songs = songs.map {
         MyLibrarySong(it.rawId, it.title, it.albumRawId, it.albumTitle, it.artistName,
-            it.durationMilliseconds ?: -1, it.artworkKey, it.pending)
+            it.durationMilliseconds ?: -1, it.artworkKey, it.pending, it.playability)
     },
     // The core's membership covers items the lists leave out (held but never listed here).
     resolver = { target -> membership(target).toShell() },

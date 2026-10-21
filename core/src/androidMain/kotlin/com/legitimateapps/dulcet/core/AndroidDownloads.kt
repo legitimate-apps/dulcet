@@ -5,6 +5,7 @@ import android.os.StatFs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
@@ -18,12 +19,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.UUID
+import kotlin.coroutines.CoroutineContext
 
 /** What a person sees of one download. `Stale` still plays; the server's copy changed since. */
 public enum class AndroidDownloadState { Queued, Downloading, Interrupted, Downloaded, Stale }
@@ -41,6 +44,7 @@ public data class AndroidDownloadStatus(
     val totalBytes: Long? = null,
     val retryNotBeforeWallClock: Long? = null,
     val needsAttention: Boolean = false,
+    val cached: Boolean = false,
 ) {
     val playsOffline: Boolean get() = state == AndroidDownloadState.Downloaded || state == AndroidDownloadState.Stale
 }
@@ -113,7 +117,7 @@ public enum class AndroidDownloadRunOutcome {
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 public class AndroidDownloadController internal constructor(
-    private val account: PlaybackEndpointAccount,
+    @Volatile private var account: PlaybackEndpointAccount,
     openStore: () -> DulcetDatabaseStore,
     private val downloadRoot: File,
     private val tasks: AndroidDownloadTasks,
@@ -126,7 +130,10 @@ public class AndroidDownloadController internal constructor(
     private val onDownloadedChanged: (Set<String>) -> Unit,
     /** The file system the download directory lives on; a test substitutes one that faults. */
     fileSystem: okio.FileSystem = okio.FileSystem.SYSTEM,
+    private var artworkRoot: File? = null,
 ) : AutoCloseable {
+    init { require(MediaBindingIdentity.isValidAccount(account)) { "Invalid media binding" } }
+
     public constructor(context: Context, account: PlaybackEndpointAccount, tasks: AndroidDownloadTasks) : this(
         account = account,
         openStore = { DulcetDriverFactory(context.applicationContext).openDulcetDatabase() },
@@ -136,20 +143,85 @@ public class AndroidDownloadController internal constructor(
         diskBudgetBytes = { used -> productionDiskBudget(AndroidAccountData.downloadRootFor(context.applicationContext), used) },
         openTransfer = null,
         onDownloadedChanged = { rawIds -> AndroidLibraryReader.notifyDownloadsChanged(rawIds) },
+        artworkRoot = AndroidAccountData.artworkRootFor(context.applicationContext, account.providerInstanceId),
     )
 
     public val providerInstanceId: String get() = account.providerInstanceId
 
+    @Volatile private var acceptedMediaAccounts = listOf(account)
+
+    /** Queue eligibility calls this for every candidate: no database or file work here. */
+    public fun matchesAccount(expected: PlaybackEndpointAccount): Boolean =
+        !closed && acceptedMediaAccounts.any { MediaBindingIdentity.sameAccount(it, expected) }
+
+    /** Database executor only; learn an authenticated alias at an explicit ownership boundary. */
+    private fun acceptMediaAccount(expected: PlaybackEndpointAccount): Boolean {
+        if (closed || !engine.isMediaBindingCurrent() ||
+            !engine.isSameMediaBinding(account, expected)) return false
+        rememberMediaAccount(expected)
+        return true
+    }
+
+    private fun rememberMediaAccount(expected: PlaybackEndpointAccount) {
+        if (acceptedMediaAccounts.none { MediaBindingIdentity.sameAccount(it, expected) }) {
+            acceptedMediaAccounts = acceptedMediaAccounts + expected
+        }
+    }
+
+    /** Same media namespace: keep leases/tasks and use refreshed credentials for future requests. */
+    public fun refreshAccount(expected: PlaybackEndpointAccount): Boolean {
+        if (!MediaBindingIdentity.isValidAccount(expected) ||
+            !runBlocking(database) { acceptMediaAccount(expected) }) return false
+        AndroidPlaybackController.prepareForMediaBinding(expected)
+        return runBlocking(database) {
+            if (!acceptMediaAccount(expected)) return@runBlocking false
+            if (account == expected) return@runBlocking true
+            wire?.let { old -> retiredNetworkClients += old::close }
+            requests?.let { old -> retiredNetworkClients += old::close }
+            account = expected
+            wire = PlaybackWireClient(expected)
+            requests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
+                expected.normalizedBaseUrl, expected.username, expected.password, expected.allowLocalHttp), "download.android")
+            true
+        }
+    }
+
     /** True once [close] has run; a closed controller runs and schedules nothing. */
     public val isClosed: Boolean get() = closed
 
-    private val database = Dispatchers.IO.limitedParallelism(1)
+    // Controllers can overlap during an account rebind. Epoch acquisition, old callbacks and
+    // eviction all use the same executor, not independent per-controller serial queues.
+    private val database = databaseDispatcher
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val store: DulcetDatabaseStore = openStore()
     private val engine = DownloadPolicyEngine(
         store.database,
         DownloadFileStore(downloadRoot.path, fileSystem),
     )
+    private val mediaBinding = run {
+        // Release on Main before entering the database executor: lease release reenters it.
+        AndroidPlaybackController.prepareForMediaBinding(account)
+        runBlocking(database) {
+            // Retire a different binding before acquiring its epoch, including direct constructors.
+            instances.filter { it.providerInstanceId == account.providerInstanceId &&
+                it.downloadRoot.absolutePath == downloadRoot.absolutePath }.forEach { previous ->
+                if (previous.acceptMediaAccount(account)) rememberMediaAccount(previous.account)
+                else previous.close()
+            }
+            engine.bindMedia(DownloadMediaBinding(account.providerInstanceId, account.normalizedBaseUrl, account.username))
+        }
+    }
+    private val offline = OfflineLibraryPolicy(store.database, engine)
+    private val mutableOfflineSettings = MutableStateFlow(OfflineLibrarySettings(false, 1024L * 1024 * 1024))
+    private val mutableOfflineStats = MutableStateFlow(OfflineLibraryStats(0, 0, 0, 0))
+    public val offlineSettings: StateFlow<OfflineLibrarySettings> = mutableOfflineSettings
+    public val offlineStats: StateFlow<OfflineLibraryStats> = mutableOfflineStats
+    @Volatile private var protectedRawIds = emptySet<String>()
+    /** Database-thread confined; each resolving/current/preloaded attempt owns one entry. */
+    private val localLeases = mutableMapOf<String, DownloadIdentity>()
+    private var policyReady = false
+    private val retiredNetworkClients = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
+    private val expansionRunning = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile private var wire: PlaybackWireClient? = PlaybackWireClient(account)
     @Volatile private var requests: AuthenticatedEndpointClient? = AuthenticatedEndpointClient(
         AuthenticatedEndpointCredentials(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp),
@@ -161,6 +233,7 @@ public class AndroidDownloadController internal constructor(
     private val progress = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Long?>>()
     private val mutableStatuses = MutableStateFlow<Map<String, AndroidDownloadStatus>>(emptyMap())
     @Volatile private var closed = false
+    private val publicationLock = Any()
     private val runningTasks = MutableStateFlow(0)
     /**
      * Held from a scheduling decision until its task is started, so a scheduling pass never returns
@@ -173,15 +246,25 @@ public class AndroidDownloadController internal constructor(
     /** Every download of the account, by raw id, with the transfer under way's progress. */
     public val statuses: StateFlow<Map<String, AndroidDownloadStatus>> = mutableStatuses
 
+    @Volatile private var playableRawIds: Set<String> = emptySet()
+
+    /** Availability only: queue scans never open files or refresh streaming-cache LRU. */
+    public fun isLocallyPlayable(rawId: String): Boolean = !closed && rawId in playableRawIds
+
     init {
+        // Project only the new binding's My Library. Waiting until the first metadata lookup
+        // would let startup automation consume the previous endpoint/user's seen membership.
+        runBlocking(database) { cache() }
+        instances += this
+        mediaBinding.purgedDownloadIds.forEach { tasks.cancel(it.value) }
         scope.launch {
             val outcome = try {
                 val outstanding = tasks.outstanding()
                 val result = withContext(database) {
                     engine.reconcile(
                         outstanding.filter(String::isNotBlank).distinct().map { OutstandingDownloadTask(DownloadId(it)) },
-                        // Account ids are never reused and an account's credentials never change
-                        // under its id on Android, so its generation is constant.
+                        // The binding epoch already isolates endpoint/username changes; password
+                        // refreshes retain that namespace and its live controller/leases.
                         mapOf(account.providerInstanceId to CREDENTIAL_GENERATION),
                         // A row of this account holding Range resume data — the exact length its
                         // first response declared — has a partial file the next run continues with
@@ -192,7 +275,7 @@ public class AndroidDownloadController internal constructor(
                             row.identity.serverId == account.providerInstanceId &&
                                 row.platformResumeData?.let(::decodeRangeResume) != null
                         },
-                    )
+                    ).also { policyReady = true; refreshProtection() }
                 }
                 result.taskIdsToCancel.forEach { tasks.cancel(it.value) }
                 true
@@ -203,6 +286,7 @@ public class AndroidDownloadController internal constructor(
             }
             reconciled.complete(outcome)
             if (outcome) {
+                reconcileMyLibrary()
                 publish()
                 scheduleNext()
             }
@@ -232,7 +316,6 @@ public class AndroidDownloadController internal constructor(
             for (item in items) {
                 val identity = identity(item.rawId)
                 val existing = engine.record(identity)
-                if (existing != null && existing.state != DownloadState.Interrupted) continue
                 store.database.transaction {
                     engine.enqueue(DownloadRequest(
                         identity = identity,
@@ -264,9 +347,7 @@ public class AndroidDownloadController internal constructor(
         if (rawIds.isEmpty() || !awaitReconciled()) return
         val removed = withContext(database) {
             rawIds.mapNotNull { rawId ->
-                engine.remove(identity(rawId))?.also {
-                    store.database.seenCacheQueries.deletePin(account.providerInstanceId, "track", rawId, "download")
-                }
+                engine.releaseExplicitDownload(identity(rawId))
             }
         }
         removed.forEach { row ->
@@ -352,6 +433,7 @@ public class AndroidDownloadController internal constructor(
         val outcome = try {
             val metadata = transfer(row, temporary)
             withContext(database) {
+                if (closed || !engine.isMediaBindingCurrent()) return@withContext AndroidDownloadRunOutcome.NotRunnable
                 when (val promoted = engine.promote(id, metadata)) {
                     is DownloadPromotionResult.Promoted, is DownloadPromotionResult.AlreadyPromoted -> AndroidDownloadRunOutcome.Downloaded
                     is DownloadPromotionResult.Rejected -> {
@@ -376,6 +458,7 @@ public class AndroidDownloadController internal constructor(
                 ?: DomainError.Transport.Unreachable
             // The recording must happen even when the task's own job is being torn down around it.
             withContext(database + NonCancellable) {
+                if (closed || !engine.isMediaBindingCurrent()) return@withContext AndroidDownloadRunOutcome.NotRunnable
                 if (!failure.keepsPartialFile()) temporary.delete()
                 if (engine.record(id) != null) {
                     engine.recordFailure(id, error, wall())
@@ -398,9 +481,39 @@ public class AndroidDownloadController internal constructor(
      * this reads nothing but the row and the file's presence.
      */
     public suspend fun localPlan(rawId: String): LocalPlaybackPlan? {
-        if (!awaitReconciled()) return null
+        if (closed || !awaitReconciled()) return null
         return withContext(database) {
-            (engine.offlinePlaybackPlan(identity(rawId)) as? OfflinePlaybackPlanResult.Available)?.plan
+            if (closed || !engine.isMediaBindingCurrent()) return@withContext null
+            (offline.offlinePlaybackPlan(account.providerInstanceId, rawId, wall()) as? OfflinePlaybackPlanResult.Available)?.plan
+        }
+    }
+
+    /** Lookup and eviction protection are one serialized operation; ordinary probes do not pin. */
+    public suspend fun acquireLocalPlan(rawId: String): AndroidLocalPlaybackLease? {
+        if (closed || !awaitReconciled()) return null
+        var acquired: AndroidLocalPlaybackLease? = null
+        try {
+            return withContext(database) {
+                if (closed || !engine.isMediaBindingCurrent()) return@withContext null
+                val plan = (offline.offlinePlaybackPlan(account.providerInstanceId, rawId, wall()) as? OfflinePlaybackPlanResult.Available)?.plan
+                    ?: return@withContext null
+                val token = UUID.randomUUID().toString()
+                localLeases[token] = plan.identity
+                refreshProtection()
+                object : AndroidLocalPlaybackLease {
+                    override val plan = plan
+                    private val released = java.util.concurrent.atomic.AtomicBoolean(false)
+                    override fun close() {
+                        if (!released.compareAndSet(false, true) || closed) return
+                        runBlocking(database) { if (!closed && engine.isMediaBindingCurrent()) { localLeases.remove(token); refreshProtection() } }
+                        scope.launch { reconcileMyLibrary(allowExpansion = false) }
+                    }
+                }.also { acquired = it }
+            }
+        } catch (cancelled: CancellationException) {
+            // withContext can discard a successfully acquired result at its cancellation boundary.
+            acquired?.close()
+            throw cancelled
         }
     }
 
@@ -412,7 +525,7 @@ public class AndroidDownloadController internal constructor(
     public suspend fun localTrack(rawId: String): AndroidTrack? {
         if (!awaitReconciled()) return null
         return withContext(database) {
-            if (closed || engine.record(identity(rawId)) == null) return@withContext null
+            if (closed || !engine.isMediaBindingCurrent() || engine.records(account.providerInstanceId).none { it.identity.rawId == rawId }) return@withContext null
             val record = cache().track(rawId)?.record?.takeIf { it.title.isNotBlank() } ?: return@withContext null
             AndroidTrack(account.providerInstanceId, rawId, record.title, record.credits.firstOrNull()?.name,
                 record.albumTitle, record.durationMilliseconds, record.artworkKey)
@@ -421,27 +534,40 @@ public class AndroidDownloadController internal constructor(
 
     /** The raw ids whose downloads are complete and present, for the library's playability (§16.14). */
     public fun downloadedRawIds(): Set<String> =
-        statuses.value.values.filter(AndroidDownloadStatus::playsOffline).mapTo(mutableSetOf(), AndroidDownloadStatus::rawId)
+        playableRawIds
 
     /** Closes every network client, keeping the durable policy and local files usable. */
     public fun closeNetworkAccess() {
         requests?.close(); requests = null
         wire?.close(); wire = null
+        while (true) (retiredNetworkClients.poll() ?: break).invoke()
     }
 
     override fun close() {
-        if (closed) return
-        closed = true
+        synchronized(publicationLock) {
+            if (closed) return
+            closed = true
+            playableRawIds = emptySet()
+            mutableStatuses.value = emptyMap()
+        }
+        instances -= this
         scope.cancel()
         closeNetworkAccess()
         // The store is released on the database thread, after anything already queued there.
-        CoroutineScope(database).launch { store.close() }
+        CoroutineScope(database).launch {
+            localLeases.clear()
+            refreshProtection()
+            offline.close(); store.close()
+        }
     }
 
-    /** Database thread only. The reader binds the same account's identity, so this never purges. */
-    private fun cache(): BoundSeenCache = boundCache ?: SeenCacheStore(store, SeenCacheWallClock { wall() })
-        .bind(CacheBinding(account.providerInstanceId, account.normalizedBaseUrl, account.username))
-        .also { boundCache = it }
+    /** Database thread only; revoked callbacks must not bind or republish the former namespace. */
+    private fun cache(): BoundSeenCache {
+        check(!closed && engine.isMediaBindingCurrent()) { "media binding was revoked" }
+        return boundCache ?: SeenCacheStore(store, SeenCacheWallClock { wall() })
+            .bind(CacheBinding(account.providerInstanceId, account.normalizedBaseUrl, account.username))
+            .also { boundCache = it }
+    }
 
     /**
      * Reads [rawId]'s own metadata with `getSong` when the seen-cache holds none (spec §16.13), and
@@ -483,8 +609,12 @@ public class AndroidDownloadController internal constructor(
             is PlaybackResolutionResult.Failed -> throw AndroidDownloadTransferFailure(resolved.error)
             is PlaybackResolutionResult.Resolved -> resolved.plan.asOriginalFileDownload()
         }
+        val resourceAccount = account
         val resource = openTransfer?.invoke(plan)
-            ?: AndroidHttpPlaybackResource(account, plan, requests ?: throw AndroidDownloadTransferFailure(DomainError.Transport.Cancelled))
+            ?: AndroidHttpPlaybackResource(resourceAccount, plan,
+                requests ?: throw AndroidDownloadTransferFailure(DomainError.Transport.Cancelled)) {
+                if (!closed && AndroidMediaBindingIdentity.sameAccount(store, resourceAccount, account)) requests else null
+            }
         val resumable = withContext(database) {
             (engine.resumeDecision(row.downloadId, wall()) as? DownloadResumeDecision.Resume)?.data
         }?.let(::decodeRangeResume)
@@ -530,8 +660,14 @@ public class AndroidDownloadController internal constructor(
                 var reported = written
                 progress[row.identity.rawId] = written to exact
                 publish()
-                temporary.parentFile?.mkdirs()
-                FileOutputStream(temporary, continuing).use { output ->
+                // Opening a path is serialized with binding replacement too: an old response
+                // returning late must not recreate a purged partial after the new epoch starts.
+                val output = withContext(NonCancellable) { withContext(database) {
+                    if (closed || !engine.isMediaBindingCurrent()) throw CancellationException("download controller closed")
+                    temporary.parentFile?.mkdirs()
+                    FileOutputStream(temporary, continuing)
+                } }
+                output.use {
                     try {
                         val buffer = ByteArray(64 * 1024)
                         while (true) {
@@ -540,6 +676,7 @@ public class AndroidDownloadController internal constructor(
                             if (closed) throw CancellationException("download controller closed")
                             val count = response.input.read(buffer)
                             if (count < 0) break
+                            if (closed) throw CancellationException("download controller closed")
                             output.write(buffer, 0, count)
                             written += count
                             if (written - reported >= PROGRESS_STEP_BYTES) {
@@ -567,34 +704,198 @@ public class AndroidDownloadController internal constructor(
 
     private suspend fun publish() {
         if (closed) return
-        val rows = try {
-            withContext(database) { engine.records(account.providerInstanceId) }
+        try {
+            withContext(database) {
+                if (closed || !engine.isMediaBindingCurrent()) return@withContext
+                val rows = engine.records(account.providerInstanceId)
+                synchronized(publicationLock) {
+                    if (closed || !engine.isMediaBindingCurrent()) return@synchronized
+                    mutableOfflineSettings.value = offline.settings(account.providerInstanceId)
+                    mutableOfflineStats.value = offline.stats(account.providerInstanceId)
+                    playableRawIds = rows.filter { it.state == DownloadState.Complete || it.state == DownloadState.Stale }
+                        .mapTo(mutableSetOf()) { it.identity.rawId }
+                    mutableStatuses.value = rows.sortedBy { it.identity.transcodeProfile == DownloadIdentity.ORIGINAL_PROFILE }.associate { row ->
+                        val transfer = progress[row.identity.rawId]
+                        row.identity.rawId to AndroidDownloadStatus(
+                            rawId = row.identity.rawId,
+                            state = when (row.state) {
+                                DownloadState.Queued -> AndroidDownloadState.Queued
+                                DownloadState.Downloading -> AndroidDownloadState.Downloading
+                                DownloadState.Interrupted -> AndroidDownloadState.Interrupted
+                                DownloadState.Complete -> AndroidDownloadState.Downloaded
+                                DownloadState.Stale -> AndroidDownloadState.Stale
+                            },
+                            bytesWritten = if (row.state == DownloadState.Downloading) transfer?.first ?: 0 else row.fileSizeBytes,
+                            totalBytes = if (row.state == DownloadState.Downloading) transfer?.second else row.exactByteLength,
+                            retryNotBeforeWallClock = row.retryNotBeforeWallClock,
+                            needsAttention = row.retryNotBeforeWallClock == Long.MAX_VALUE,
+                            cached = row.identity.transcodeProfile.startsWith("stream:"),
+                        )
+                    }
+                }
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            return
+            // A revoked binding or closed store publishes no former account's rows.
         }
-        mutableStatuses.value = rows.associate { row ->
-            val transfer = progress[row.identity.rawId]
-            row.identity.rawId to AndroidDownloadStatus(
-                rawId = row.identity.rawId,
-                state = when (row.state) {
-                    DownloadState.Queued -> AndroidDownloadState.Queued
-                    DownloadState.Downloading -> AndroidDownloadState.Downloading
-                    DownloadState.Interrupted -> AndroidDownloadState.Interrupted
-                    DownloadState.Complete -> AndroidDownloadState.Downloaded
-                    DownloadState.Stale -> AndroidDownloadState.Stale
-                },
-                bytesWritten = if (row.state == DownloadState.Downloading) transfer?.first ?: 0 else row.fileSizeBytes,
-                totalBytes = if (row.state == DownloadState.Downloading) transfer?.second else row.exactByteLength,
-                retryNotBeforeWallClock = row.retryNotBeforeWallClock,
-                needsAttention = row.retryNotBeforeWallClock == Long.MAX_VALUE,
+    }
+
+    /** Reuses the durable download policy and worker queue; membership expansion is common policy. */
+    public suspend fun reconcileMyLibrary(allowExpansion: Boolean = true) {
+        if (closed || !awaitReconciled()) return
+        val result = withContext(database) {
+            offline.reconcileFromSeenCache(account.providerInstanceId, CREDENTIAL_GENERATION, wall(),
+                allowNewDownloads = AndroidLibraryReader.currentFor(account.providerInstanceId)?.automaticDownloadsMayStart == true).also { changes ->
+                changes.queued.forEach { cache().pin(CacheItemKind.Track, it.identity.rawId, CachePinReason.Download) }
+            }
+        }
+        result.removed.forEach { tasks.cancel(it.downloadId.value) }
+        publish()
+        if (result.removed.isNotEmpty()) onDownloadedChanged(result.removed.mapTo(mutableSetOf()) { it.identity.rawId })
+        scheduleNext()
+        if (allowExpansion && mutableOfflineSettings.value.automaticDownloadsEnabled && expansionRunning.compareAndSet(false, true)) {
+            scope.launch {
+                try { expandAutomaticDetails() } finally { expansionRunning.set(false) }
+            }
+        }
+    }
+
+    private suspend fun expandAutomaticDetails() {
+        val reader = AndroidLibraryReader.currentFor(account.providerInstanceId) ?: return
+        val done = CompletableDeferred<Unit>()
+        reader.operation(completion = { done.complete(Unit) }, failed = { Unit }) { session ->
+            if (session.reader.online) {
+                // The reader owns credentials, online checks, issue order and writes, as for a visible screen.
+                if (withContext(database) { offline.needsAutomaticPlaylistIndex(account.providerInstanceId) })
+                    session.reader.rereadList(LibraryQuery.Playlists)
+                val albums = withContext(database) { offline.missingAutomaticDownloadAlbumIds(account.providerInstanceId) }
+                for (album in albums) session.reader.readAlbumDetail(album)
+                val playlists = withContext(database) { offline.missingAutomaticDownloadPlaylistIds(account.providerInstanceId) }
+                for (playlist in playlists) session.reader.readPlaylistDetail(playlist, session.reader.sessionEpoch)
+                val tracks = withContext(database) { offline.missingAutomaticDownloadTrackIds(account.providerInstanceId) }
+                for (track in tracks) ensureTrackMetadata(track)
+            }
+        }
+        done.await()
+        reconcileMyLibrary(allowExpansion = false)
+    }
+
+    public suspend fun setAutomaticDownloadsEnabled(enabled: Boolean) {
+        if (!awaitReconciled() || closed) return
+        val result = withContext(database) {
+            offline.setAutomaticDownloadsEnabled(account.providerInstanceId, enabled)
+        }
+        result.removed.forEach { tasks.cancel(it.downloadId.value) }
+        if (enabled) reconcileMyLibrary() else {
+            publish()
+            onDownloadedChanged(result.removed.mapTo(mutableSetOf()) { it.identity.rawId })
+        }
+    }
+
+    public suspend fun setCacheBudgetBytes(bytes: Long) {
+        if (!awaitReconciled() || closed) return
+        val removed = withContext(database) {
+            trimArtworkBeforeWrite(budgetBytesOverride = bytes)
+            offline.setCacheBudgetBytes(account.providerInstanceId, bytes)
+        }
+        publish()
+        onDownloadedChanged(removed.mapTo(mutableSetOf()) { it.identity.rawId })
+    }
+
+    public suspend fun clearStreamCache() {
+        if (!awaitReconciled() || closed) return
+        val removed = withContext(database) {
+            trimArtworkBeforeWrite(clear = true)
+            offline.clearCache(account.providerInstanceId)
+        }
+        publish()
+        onDownloadedChanged(removed.mapTo(mutableSetOf()) { it.identity.rawId })
+    }
+
+    /** Protect current and next prepared files from cache eviction or Clear Cache. */
+    public fun setProtectedRawIds(rawIds: Set<String>) {
+        if (closed || rawIds == protectedRawIds) return
+        val released = protectedRawIds - rawIds
+        runBlocking(database) {
+            protectedRawIds = rawIds.toSet()
+            refreshProtection()
+        }
+        if (released.isNotEmpty()) scope.launch { reconcileMyLibrary(allowExpansion = false) }
+    }
+
+    /** Database thread only, shared by lookup leases and current/preload raw-id protection. */
+    private fun refreshProtection() {
+        val peers = instances.filter { !it.closed && it.policyReady &&
+            it.downloadRoot.absolutePath == downloadRoot.absolutePath && it.matchesAccount(account) &&
+            it.engine.isMediaBindingCurrent() }
+        val targets = peers.toMutableList()
+        if (policyReady && engine.isMediaBindingCurrent() && this !in targets) targets += this
+        val source = targets.firstOrNull() ?: return
+        val rawIds = peers.flatMapTo(mutableSetOf()) { it.protectedRawIds }
+        val identities = peers.flatMapTo(mutableSetOf()) { it.localLeases.values }
+        source.engine.records(account.providerInstanceId).filter { it.identity.rawId in rawIds }
+            .mapTo(identities) { it.identity }
+        // A second same-binding controller may be opened by a task while playback still owns
+        // leases from the first. Neither policy may evict the other's resolving/prepared files.
+        targets.forEach { it.offline.setProtectedIdentities(identities) }
+    }
+
+    public fun beginStreamCacheWrite(
+        plan: RemotePlaybackWirePlan, status: Int, contentType: String?, exactLength: Long?, position: Long,
+    ): AndroidStreamCacheWrite? {
+        if (closed || plan.itemId.providerInstanceId != account.providerInstanceId ||
+            plan.resolutionRequest.legacyTimeOffset?.isPositive() == true) return null
+        return runBlocking(database) {
+            if (!awaitReconciled() || closed || !engine.isMediaBindingCurrent()) return@runBlocking null
+            trimArtworkBeforeWrite(exactLength ?: 0)
+            val request = DownloadRequest(
+                DownloadIdentity(account.providerInstanceId, plan.itemId.rawId, "stream:${plan.expectedContainer}"),
+                plan.expectedContainer, exactLength?.let(PlaybackContentLength::Exact),
+                DownloadServerSnapshot(cache().track(plan.itemId.rawId)?.record?.durationMilliseconds, null), CREDENTIAL_GENERATION, wall(),
             )
+            val previouslyPlayable = engine.records(account.providerInstanceId).mapTo(mutableSetOf()) { it.identity.rawId }
+            val write = offline.beginCacheWrite(request, status, position, plan.acceptedContainers()) ?: return@runBlocking null
+            cache().pin(CacheItemKind.Track, plan.itemId.rawId, CachePinReason.Download)
+            scope.launch { ensureTrackMetadata(plan.itemId.rawId) }
+            if (plan.itemId.rawId in protectedRawIds) refreshProtection()
+            object : AndroidStreamCacheWrite {
+                private var writtenOffset = position
+                override fun append(bytes: ByteArray, offset: Int, length: Int) = appendAt(bytes, offset, length, writtenOffset)
+                override fun appendAt(bytes: ByteArray, offset: Int, length: Int, resourceOffset: Long) = runBlocking(database) {
+                    if (exactLength == null) trimArtworkBeforeWrite(length.toLong())
+                    check(!closed && offline.appendCacheWrite(write.writeId, bytes.copyOfRange(offset, offset + length), resourceOffset))
+                    writtenOffset = resourceOffset + length
+                }
+                override fun isComplete() = runBlocking(database) { !closed && offline.isCacheWriteComplete(write.writeId) }
+                override fun finish() {
+                    runBlocking(database) {
+                        if (closed || !engine.isMediaBindingCurrent()) {
+                            offline.abortCacheWrite(write.writeId)
+                            return@runBlocking
+                        }
+                        offline.finishCacheWrite(write.writeId, DownloadResponseMetadata(contentType,
+                            exactLength?.let(PlaybackContentLength::Exact)), wall())
+                    }
+                    scope.launch { publish(); onDownloadedChanged(previouslyPlayable + plan.itemId.rawId) }
+                }
+                override fun abort() {
+                    runBlocking(database) { offline.abortCacheWrite(write.writeId) }
+                    scope.launch { publish(); onDownloadedChanged(previouslyPlayable + plan.itemId.rawId) }
+                }
+            }
         }
     }
 
     private fun identity(rawId: String) =
         DownloadIdentity(account.providerInstanceId, rawId, DownloadIdentity.ORIGINAL_PROFILE)
+
+    private fun trimArtworkBeforeWrite(reservationBytes: Long = 0, budgetBytesOverride: Long? = null, clear: Boolean = false) {
+        artworkRoot?.let { root -> AndroidArtworkRepository.trimForPolicy(root, reservationBytes) { evictable, pinned, reservation ->
+            if (clear) offline.planClearCache(account.providerInstanceId, evictable, pinned)
+            else offline.planArtworkCache(account.providerInstanceId, evictable, pinned, reservation, budgetBytesOverride)
+        } }
+    }
 
     private sealed interface Schedule {
         data class Start(val downloadId: String) : Schedule
@@ -602,6 +903,37 @@ public class AndroidDownloadController internal constructor(
     }
 
     internal companion object {
+        internal val databaseDispatcher = object : CoroutineDispatcher() {
+            private val serial = Dispatchers.IO.limitedParallelism(1)
+            // Unconfined/main-immediate continuations may return inline from database work.
+            // Synchronous lease/tee callbacks reenter that same serial turn instead of waiting
+            // for themselves; calls arriving from any other thread remain queued.
+            private val executing = ThreadLocal<Boolean>()
+            override fun isDispatchNeeded(context: CoroutineContext): Boolean = executing.get() != true
+            override fun dispatch(context: CoroutineContext, block: Runnable) {
+                serial.dispatch(context) {
+                    executing.set(true)
+                    try { block.run() } finally { executing.remove() }
+                }
+            }
+        }
+        private val instances = java.util.concurrent.CopyOnWriteArraySet<AndroidDownloadController>()
+        internal fun trimArtwork(serverId: String, root: File): Boolean {
+            val controller = instances.firstOrNull { it.providerInstanceId == serverId && !it.closed } ?: return false
+            runBlocking(controller.database) {
+                if (controller.awaitReconciled()) {
+                    controller.artworkRoot = root
+                    controller.trimArtworkBeforeWrite()
+                }
+            }
+            controller.scope.launch { controller.publish() }
+            return true
+        }
+        internal fun notifyMyLibraryChanged(serverId: String) {
+            instances.filter { it.providerInstanceId == serverId && !it.closed }.forEach { controller ->
+                controller.scope.launch { controller.reconcileMyLibrary() }
+            }
+        }
         const val CREDENTIAL_GENERATION = 1L
         const val UNKNOWN_LENGTH_RESERVATION_BYTES = 512L * 1024 * 1024
         const val DISK_BUDGET_CEILING_BYTES = 10L * 1024 * 1024 * 1024

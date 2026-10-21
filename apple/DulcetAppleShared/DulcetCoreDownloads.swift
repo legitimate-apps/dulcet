@@ -7,7 +7,15 @@ import DulcetKit
 import Foundation
 
 @MainActor
-final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
+final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, DulcetOfflineLibraryControlling {
+    private var cacheWrites: [UUID: CacheWrite] = [:]
+    private var protectedPlayback: [UUID: String] = [:]
+    private struct CacheWrite {
+        let identifier: String
+        let totalLength: Int64
+        let container: DulcetAudioContainer
+    }
+    var reconcileArtworkCache: (@MainActor (String, DulcetArtworkCacheIntent) async -> Void)?
     private let databaseName: String
     private let downloadRootURL: URL
     private let sessionConfiguration: URLSessionConfiguration
@@ -18,11 +26,18 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     private var statusHandler:
         (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
     private var stateRefreshHandler: (@MainActor () -> Void)?
+    private var mediaBindingWillChangeHandler: (@MainActor (DulcetPlaybackAccount) -> Void)?
+    private var mediaBindingWillBeReplacedHandler: (@MainActor () -> Void)?
     private var prepareOperations: [DulcetProviderItemID: any AppleDownloadOperation] = [:]
     private var pendingTracks: [DulcetTrack] = []
+    // Like pending tracks, a preference belongs to the configured URL/user binding. Repeated
+    // same-binding reconciliation must not discard the listener's latest choice.
+    private var pendingAutomaticDownloadsEnabled: Bool?
     private var completedTaskIdentifiers: Set<Int> = []
     private var resumedTaskIdentifiers: Set<Int> = []
     private var removedTaskIdentifiers: Set<Int> = []
+    // Includes restored tasks before any membership change can schedule cancellation.
+    private var knownTaskIdentifiers: [Int: String] = [:]
     private var redirectsByTaskIdentifier: [Int: Int] = [:]
     private var queuePrepareOperation: (any AppleDownloadOperation)?
     private var retryTask: Task<Void, Never>?
@@ -31,6 +46,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     private var backgroundEventsFinishedBeforeWait = false
     private var reconciliationGeneration = 0
     private var reconciled = false
+    private var automaticDownloadContactPermitted = false
+    private var cacheBudgetRevision = 0
 
     private var credentialGeneration: Int64 {
         account?.credentialGeneration ?? 0
@@ -125,7 +142,127 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         stateRefreshHandler = handler
     }
 
+    func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {
+        mediaBindingWillChangeHandler = handler
+    }
+
+    func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void) {
+        mediaBindingWillBeReplacedHandler = handler
+    }
+
+    private func endpointAccount(_ value: DulcetPlaybackAccount) -> PlaybackEndpointAccount {
+        PlaybackEndpointAccount(providerInstanceId: value.providerInstanceID,
+            normalizedBaseUrl: value.normalizedServerURL, username: value.username,
+            password: value.password, allowLocalHttp: value.allowLocalHTTP)
+    }
+
+    func isSameMediaBinding(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        guard MediaBindingIdentity.shared.isValidBinding(providerInstanceId: first.providerInstanceID,
+            normalizedBaseUrl: first.normalizedServerURL, username: first.username),
+            MediaBindingIdentity.shared.isValidBinding(providerInstanceId: second.providerInstanceID,
+            normalizedBaseUrl: second.normalizedServerURL, username: second.username)
+        else { return false }
+        let first = endpointAccount(first)
+        let second = endpointAccount(second)
+        if let client { return client.isSameMediaBinding(first: first, second: second) }
+        return AppleMediaBindingClient.shared.isSameMediaBinding(databaseName: databaseName,
+            downloadRootPath: downloadRootURL.path, first: first, second: second)
+    }
+
+    private enum AdoptionFailure: Error { case persistence }
+
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        let identity = MediaBindingIdentity.shared
+        return identity.isValidBinding(providerInstanceId: first.providerInstanceID,
+            normalizedBaseUrl: first.normalizedServerURL, username: first.username) &&
+            identity.isValidBinding(providerInstanceId: second.providerInstanceID,
+            normalizedBaseUrl: second.normalizedServerURL, username: second.username) &&
+            first.providerInstanceID == second.providerInstanceID &&
+            identity.canonicalServerUrl(normalizedBaseUrl: first.normalizedServerURL) ==
+                identity.canonicalServerUrl(normalizedBaseUrl: second.normalizedServerURL)
+    }
+
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool {
+        guard hasSameMediaOrigin(first: previous, second: confirmed) else { return false }
+        let old = endpointAccount(previous)
+        let new = endpointAccount(confirmed)
+        let adopted: Bool
+        if let client {
+            adopted = client.adoptAuthenticatedAccount(previous: old, confirmed: new)
+        } else {
+            adopted = AppleMediaBindingClient.shared.adoptAuthenticatedAccount(databaseName: databaseName,
+                downloadRootPath: downloadRootURL.path, previous: old, confirmed: new)
+        }
+        guard adopted else { throw AdoptionFailure.persistence }
+        return true
+    }
+
+    func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {
+        guard MediaBindingIdentity.shared.isValidBinding(providerInstanceId: confirmed.providerInstanceID,
+            normalizedBaseUrl: confirmed.normalizedServerURL, username: confirmed.username)
+        else { throw AdoptionFailure.persistence }
+        // This authenticated login did not prove continuity with saved credentials. Its name
+        // may be an alias from an earlier login, so retirement cannot use alias equality.
+        mediaBindingWillBeReplacedHandler?()
+        automaticDownloadContactPermitted = false
+        reconciliationGeneration += 1
+        reconciled = false
+        pendingAutomaticDownloadsEnabled = nil
+        cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
+        cacheWrites = [:]
+        protectedPlayback = [:]
+        updatePlaybackProtection()
+        pendingTracks = []
+        prepareOperations.values.forEach { $0.cancel() }
+        prepareOperations = [:]
+        queuePrepareOperation?.cancel()
+        queuePrepareOperation = nil
+        cancelRetry()
+        let taskIDs = Set(knownTaskIdentifiers.keys)
+        let downloadIDs = Set(knownTaskIdentifiers.values)
+        removedTaskIdentifiers.formUnion(taskIDs)
+        // URLSession enumeration is asynchronous. Capture only the retired tasks, so a late
+        // cancellation cannot affect a new binding; the closed client also rejects callbacks.
+        session.getAllTasks { tasks in
+            for task in tasks where taskIDs.contains(task.taskIdentifier) ||
+                task.taskDescription.map(downloadIDs.contains) == true { task.cancel() }
+        }
+        client?.close()
+        client = nil
+        account = nil
+        guard AppleMediaBindingClient.shared.replaceUnconfirmedAccount(databaseName: databaseName,
+            downloadRootPath: downloadRootURL.path, confirmed: endpointAccount(confirmed))
+        else { throw AdoptionFailure.persistence }
+        account = confirmed
+        stateRefreshHandler?()
+    }
+
     func configure(account: DulcetPlaybackAccount) {
+        guard MediaBindingIdentity.shared.isValidBinding(
+            providerInstanceId: account.providerInstanceID,
+            normalizedBaseUrl: account.normalizedServerURL,
+            username: account.username
+        ) else { return }
+        automaticDownloadContactPermitted = false
+        let sameAccount = self.account.map { previous in
+            MediaBindingIdentity.shared.sameBinding(
+                firstProviderInstanceId: previous.providerInstanceID,
+                firstNormalizedBaseUrl: previous.normalizedServerURL,
+                firstUsername: previous.username,
+                secondProviderInstanceId: account.providerInstanceID,
+                secondNormalizedBaseUrl: account.normalizedServerURL,
+                secondUsername: account.username
+            ) || isSameMediaBinding(first: previous, second: account)
+        } ?? false
+        if !sameAccount {
+            // This also covers downloads-first configuration: the engine must relinquish its
+            // current and prepared items before the new client's eager bind can purge files.
+            mediaBindingWillChangeHandler?(account)
+            cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
+            cacheWrites = [:]
+            protectedPlayback = [:]
+            updatePlaybackProtection()
+        }
         reconciliationGeneration += 1
         let generation = reconciliationGeneration
         reconciled = false
@@ -135,6 +272,13 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         queuePrepareOperation = nil
         cancelRetry()
         client?.close()
+        cacheWrites = [:]
+        if !sameAccount {
+            pendingAutomaticDownloadsEnabled = nil
+            protectedPlayback = [:]
+            pendingTracks = []
+            removedTaskIdentifiers.formUnion(knownTaskIdentifiers.keys)
+        }
         self.account = account
         client = AppleDownloadClient(
             account: PlaybackEndpointAccount(
@@ -158,6 +302,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     func requestDownload(_ track: DulcetTrack) {
         guard downloadsEnabled, track.availability == .playable else { return }
         guard let account, track.id.providerInstanceID == account.providerInstanceID else { return }
+        // DEBUG proof witness shared by row actions and the Mac launch-argument driver.
+        // Automatic membership reconciliation does not enter this explicit-request path.
+        probe("download-requested item=\(track.id.rawID)")
         guard reconciled else {
             if !pendingTracks.contains(where: { $0.id == track.id }) {
                 pendingTracks.append(track)
@@ -172,6 +319,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             return
         }
         publish(.queued, for: track.id)
+        let generation = reconciliationGeneration
         let operation = client.startPrepareOriginalDownload(
             rawId: track.id.rawID,
             sourceContainer: sourceContainer,
@@ -182,7 +330,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             unknownLengthReservationBytes: unknownLengthReservationBytes
         ) { [weak self] outcome in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, generation == reconciliationGeneration else { return }
                 prepareOperations[track.id] = nil
                 handlePreparationOutcome(outcome, fallbackItemID: track.id)
             }
@@ -215,20 +363,215 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         return DulcetOfflinePlaybackAsset(
             expectedContainer: container,
             exactByteLength: plan.exactByteLength,
-            resource: resource
+            resource: cachingResource(resource, track: track, expectedContainer: container, cacheRemoteResponses: false)
         )
     }
 
+    var offlineLibraryStorage: DulcetOfflineLibraryStorage {
+        guard reconciled, let value = client?.offlineLibraryStorage(), value.errorKind == nil else { return .init() }
+        return .init(automaticDownloadsEnabled: value.automaticDownloadsEnabled,
+                     cacheBudgetBytes: value.cacheBudgetBytes, downloadBytes: value.downloadBytes,
+                     cacheBytes: value.cacheBytes, artworkBytes: value.artworkBytes, queuedAutomaticCount: Int(value.queuedAutomaticCount),
+                     completedAutomaticCount: Int(value.completedAutomaticCount))
+    }
+
+    func setAutomaticDownloadsEnabled(_ enabled: Bool) {
+        guard account != nil else { return }
+        pendingAutomaticDownloadsEnabled = enabled
+        _ = flushPendingAutomaticDownloadsSetting(
+            allowNewDownloads: automaticDownloadContactPermitted, scheduleDownloads: true)
+    }
+
+    @discardableResult
+    private func flushPendingAutomaticDownloadsSetting(allowNewDownloads: Bool, scheduleDownloads: Bool) -> Bool {
+        guard let enabled = pendingAutomaticDownloadsEnabled else { return true }
+        guard reconciled, let client else { return false }
+        let outcome = client.setAutomaticDownloadsEnabled(enabled: enabled, allowNewDownloads: allowNewDownloads,
+            credentialGeneration: credentialGeneration,
+            wallClockMilliseconds: Date().downloadWallClockMilliseconds)
+        // Keep the latest intent after a persistence/binding failure. A later same-binding
+        // reconciliation or setting action retries it without starting automatic work first.
+        guard outcome.errorKind == nil else { return false }
+        pendingAutomaticDownloadsEnabled = nil
+        applyOfflineChange(outcome, scheduleDownloads: scheduleDownloads)
+        return true
+    }
+    func setStreamingCacheBudgetBytes(_ bytes: Int64) {
+        guard bytes >= 0, reconciled, let serverID = account?.providerInstanceID else { return }
+        cacheBudgetRevision += 1
+        let revision = cacheBudgetRevision
+        let generation = reconciliationGeneration
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await reconcileArtworkCache?(serverID, .reconcile(reservationBytes: 0, budgetBytesOverride: bytes))
+            guard generation == reconciliationGeneration, revision == cacheBudgetRevision,
+                  serverID == account?.providerInstanceID,
+                  client?.setCacheBudgetBytes(bytes: bytes) == true else { return }
+            stateRefreshHandler?()
+        }
+    }
+    func clearStreamingCache() {
+        guard reconciled, let serverID = account?.providerInstanceID else { return }
+        let generation = reconciliationGeneration
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await reconcileArtworkCache?(serverID, .clear)
+            guard generation == reconciliationGeneration, serverID == account?.providerInstanceID,
+                  client?.clearStreamingCache() == true else { return }
+            stateRefreshHandler?()
+        }
+    }
+    func missingAutomaticDownloadDetails() -> AppleOfflineLibraryHydrationDto? {
+        guard reconciled, automaticDownloadContactPermitted else { return nil }
+        return client?.missingAutomaticDownloadDetails()
+    }
+    func reconcileMyLibrary() {
+        guard reconciled, let client,
+              flushPendingAutomaticDownloadsSetting(
+                allowNewDownloads: automaticDownloadContactPermitted, scheduleDownloads: false) else { return }
+        applyOfflineChange(client.reconcileMyLibrary(allowNewDownloads: automaticDownloadContactPermitted,
+            credentialGeneration: credentialGeneration,
+            wallClockMilliseconds: Date().downloadWallClockMilliseconds))
+    }
+    func setAutomaticDownloadContactPermitted(_ permitted: Bool) {
+        automaticDownloadContactPermitted = permitted
+        if permitted { reconcileMyLibrary(); stateRefreshHandler?() }
+    }
+    private func applyOfflineChange(_ outcome: AppleOfflineLibraryChangeDto, scheduleDownloads: Bool = true) {
+        guard outcome.errorKind == nil else { return }
+        let cancelled = Set(outcome.taskIdentifiersToCancel)
+        if !cancelled.isEmpty {
+            // Mark known tasks before URLSession's asynchronous enumeration. Completion may
+            // already be queued on the main actor when cancellation loses the race.
+            removedTaskIdentifiers.formUnion(knownTaskIdentifiers.compactMap { taskID, identifier in
+                cancelled.contains(identifier) ? taskID : nil
+            })
+            let generation = reconciliationGeneration
+            session.getAllTasks { [weak self] tasks in
+                Task { @MainActor [weak self] in
+                    guard let self, generation == reconciliationGeneration else { return }
+                    let removed = tasks.filter { $0.taskDescription.map(cancelled.contains) == true }
+                    removedTaskIdentifiers.formUnion(removed.map(\.taskIdentifier))
+                    removed.forEach { $0.cancel() }
+                }
+            }
+        }
+        if scheduleDownloads { scheduleNextDownload() }
+        if outcome.hasChanges { refreshArtworkBudget(); stateRefreshHandler?() }
+    }
+
+    /// A cache tap belongs to this playback resource, including preload/crossfade reuse. The
+    /// core protects every currently retained local profile for its item until the resource dies.
+    func cachingResource(_ resource: any DulcetPlaybackResourceLoading, track: DulcetTrack,
+                         expectedContainer: DulcetAudioContainer, cacheRemoteResponses: Bool = true) -> any DulcetPlaybackResourceLoading {
+        let token = UUID()
+        let generation = reconciliationGeneration
+        protectedPlayback[token] = track.id.rawID
+        updatePlaybackProtection()
+        return DulcetCachingPlaybackResource(source: resource, observe: { [weak self] request, data, information in
+            Task { @MainActor [weak self] in
+                guard let self, cacheRemoteResponses, generation == reconciliationGeneration else { return }
+                if cacheWrites[token] == nil {
+                    await reconcileArtworkCache?(track.id.providerInstanceID, .reconcile(reservationBytes: information.contentLength, budgetBytesOverride: nil))
+                }
+                guard generation == reconciliationGeneration else { return }
+                cacheValidatedBytes(token: token, track: track, expectedContainer: expectedContainer,
+                                         request: request, data: data, information: information)
+            }
+        }, release: { [weak self] in
+            Task { @MainActor [weak self] in
+                // A same-binding credential refresh may keep this resource playing. A
+                // rebind clears its unique token, so an old account cannot publish a release.
+                guard let self, protectedPlayback[token] == track.id.rawID else { return }
+                if let write = cacheWrites.removeValue(forKey: token) { client?.abortStreamingCache(writeId: write.identifier) }
+                protectedPlayback[token] = nil
+                updatePlaybackProtection()
+                reconcileMyLibrary()
+                if let budget = client?.offlineLibraryStorage().cacheBudgetBytes { _ = client?.setCacheBudgetBytes(bytes: budget) }
+            }
+        })
+    }
+    private func updatePlaybackProtection() {
+        client?.protectPlaybackItems(rawIds: Array(Set(protectedPlayback.values)))
+    }
+    private func cacheValidatedBytes(token: UUID, track: DulcetTrack, expectedContainer: DulcetAudioContainer,
+                                     request: DulcetPlaybackResourceLoadRequest, data: Data,
+                                     information: DulcetPlaybackContentInformation) {
+        guard reconciled, protectedPlayback[token] == track.id.rawID,
+              track.id.providerInstanceID == account?.providerInstanceID, let client else { return }
+        let container = information.container ?? expectedContainer
+        if cacheWrites[token] == nil {
+            guard let identifier = client.beginStreamingCache(rawId: track.id.rawID, container: container.coreContainer,
+                      totalLength: information.contentLength, durationMilliseconds: track.duration.downloadMilliseconds,
+                      rangeStart: request.range.start,
+                      credentialGeneration: credentialGeneration, wallClockMilliseconds: Date().downloadWallClockMilliseconds) else { return }
+            cacheWrites[token] = CacheWrite(identifier: identifier, totalLength: information.contentLength,
+                                          container: container)
+            updatePlaybackProtection()
+        }
+        guard let write = cacheWrites[token] else { return }
+        guard information.contentLength == write.totalLength, container == write.container else {
+            client.abortStreamingCache(writeId: write.identifier)
+            cacheWrites[token] = nil
+            return
+        }
+        // AVFoundation reads metadata tails and seeks out of order. The common disk writer
+        // merges absolute interval coverage, including overlaps, without issuing refill requests.
+        guard client.appendStreamingCache(writeId: write.identifier, bytes: data, offset: request.range.start) else {
+            cacheWrites[token] = nil
+            return
+        }
+        if client.isStreamingCacheWriteComplete(writeId: write.identifier) {
+            let promoted = client.finishStreamingCache(writeId: write.identifier, totalLength: write.totalLength,
+                                                       wallClockMilliseconds: Date().downloadWallClockMilliseconds)
+            cacheWrites[token] = nil
+            refreshArtworkBudget()
+            if promoted { stateRefreshHandler?() }
+        }
+    }
+
+    func artworkCachePlan(serverID: String, evictableBytes: Int64, pinnedBytes: Int64,
+                          intent: DulcetArtworkCacheIntent) -> ArtworkCacheBudgetPlan? {
+        guard reconciled, serverID == account?.providerInstanceID else { return nil }
+        switch intent {
+        case let .reconcile(reservationBytes, budgetBytesOverride):
+            if let budgetBytesOverride {
+                return client?.planArtworkCacheForBudget(evictableBytes: evictableBytes, pinnedBytes: pinnedBytes,
+                    reservationBytes: reservationBytes, budgetBytes: budgetBytesOverride)
+            }
+            return client?.planArtworkCache(evictableBytes: evictableBytes, pinnedBytes: pinnedBytes,
+                                            reservationBytes: reservationBytes)
+        case .clear:
+            return client?.planClearArtworkCache(evictableBytes: evictableBytes, pinnedBytes: pinnedBytes)
+        }
+    }
+    private func refreshArtworkBudget() {
+        guard let serverID = account?.providerInstanceID else { return }
+        Task { @MainActor [weak self] in await self?.reconcileArtworkCache?(serverID, .reconcile(reservationBytes: 0, budgetBytesOverride: nil)) }
+    }
+
     func disconnect() {
+        pendingAutomaticDownloadsEnabled = nil
         reconciliationGeneration += 1
         reconciled = false
+        cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
+        cacheWrites = [:]
+        protectedPlayback = [:]
         pendingTracks = []
         prepareOperations.values.forEach { $0.cancel() }
         prepareOperations = [:]
         queuePrepareOperation?.cancel()
         queuePrepareOperation = nil
         cancelRetry()
-        session.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
+        removedTaskIdentifiers.formUnion(knownTaskIdentifiers.keys)
+        let generation = reconciliationGeneration
+        session.getAllTasks { [weak self] tasks in
+            Task { @MainActor [weak self] in
+                guard let self, generation == reconciliationGeneration else { return }
+                removedTaskIdentifiers.formUnion(tasks.map(\.taskIdentifier))
+                tasks.forEach { $0.cancel() }
+            }
+        }
         client?.close()
         client = nil
         account = nil
@@ -237,9 +580,13 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
 
     func removeAccountData() async -> Bool {
         guard !Task.isCancelled else { return false }
+        pendingAutomaticDownloadsEnabled = nil
         reconciliationGeneration += 1
         let removalGeneration = reconciliationGeneration
         reconciled = false
+        cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
+        cacheWrites = [:]
+        protectedPlayback = [:]
         pendingTracks = []
         prepareOperations.values.forEach { $0.cancel() }
         prepareOperations = [:]
@@ -288,6 +635,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
 
     private func finishReconciliation(tasks: [URLSessionTask]) {
         guard let client else { return }
+        for task in tasks { knownTaskIdentifiers[task.taskIdentifier] = task.taskDescription }
         let identifiers = tasks.compactMap(\.taskDescription)
         let outcome = client.reconcile(
             outstandingTaskIdentifiers: identifiers,
@@ -299,14 +647,28 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             return
         }
         let cancel = Set(outcome.taskIdentifiersToCancel)
-        tasks.filter { task in
+        let removed = tasks.filter { task in
             guard let description = task.taskDescription else { return true }
             return cancel.contains(description)
-        }.forEach { $0.cancel() }
+        }
+        removedTaskIdentifiers.formUnion(removed.map(\.taskIdentifier))
+        removed.forEach { $0.cancel() }
         reconciled = true
+        updatePlaybackProtection()
+        // Apply a queued preference before membership can enqueue or schedule automatic work.
+        // Core still owns retention; suppress only new enqueueing until the inbox is reconciled.
+        guard flushPendingAutomaticDownloadsSetting(allowNewDownloads: false, scheduleDownloads: false) else {
+            pendingTracks.forEach { publish(.failed, for: $0.id) }
+            pendingTracks = []
+            stateRefreshHandler?()
+            return
+        }
+        refreshArtworkBudget()
+        // Remove orphaned secured deliveries before new membership can enqueue work.
+        processSecuredDownloads()
+        reconcileMyLibrary()
         probe("reconciled outstanding=\(identifiers.isEmpty ? "none" : identifiers.joined(separator: ",")) cancelled=\(cancel.count)")
         stateRefreshHandler?()
-        processSecuredDownloads()
         let queued = pendingTracks
         pendingTracks = []
         queued.forEach(requestDownload)
@@ -344,14 +706,16 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     }
 
     private func scheduleNextDownload() {
-        guard reconciled, queuePrepareOperation == nil, let client else { return }
+        guard reconciled, pendingAutomaticDownloadsEnabled == nil,
+              queuePrepareOperation == nil, let client else { return }
+        let generation = reconciliationGeneration
         let operation = client.startPrepareNextDownload(
             wallClockMilliseconds: Date().downloadWallClockMilliseconds,
             diskBudgetBytes: diskBudgetBytes,
             unknownLengthReservationBytes: unknownLengthReservationBytes
         ) { [weak self] outcome in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, generation == reconciliationGeneration else { return }
                 queuePrepareOperation = nil
                 handlePreparationOutcome(outcome, fallbackItemID: nil)
             }
@@ -402,6 +766,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             task = session.downloadTask(with: request)
         }
         task.taskDescription = prepared.downloadIdentifier
+        knownTaskIdentifiers[task.taskIdentifier] = prepared.downloadIdentifier
         publish(.downloading, for: itemID)
         task.resume()
         probe("task-started download=\(prepared.downloadIdentifier) item=\(itemID.rawID)")
@@ -411,7 +776,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         task: URLSessionDownloadTask,
         location: URL
     ) {
-        if removedTaskIdentifiers.remove(task.taskIdentifier) != nil {
+        if removedTaskIdentifiers.contains(task.taskIdentifier) {
             try? FileManager.default.removeItem(at: location)
             return
         }
@@ -426,9 +791,16 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
 
     @discardableResult
     private func processSecuredDownload(_ secured: DulcetSecuredDownload) -> Bool {
-        guard let downloadIdentifier = secured.downloadIdentifier,
-              let client else { return false }
+        guard UUID(uuidString: secured.identifier) != nil, let client else { return false }
+        guard let downloadIdentifier = secured.downloadIdentifier else {
+            return removeSecuredDownload(secured)
+        }
         let target = client.fileTarget(downloadIdentifier: downloadIdentifier)
+        if target.errorKind == "unknownDownload" {
+            // The durable row was removed (or belonged to a purged media binding). Only
+            // this secured delivery is unowned; persistence failures remain retryable.
+            return removeSecuredDownload(secured)
+        }
         guard target.errorKind == nil,
               let temporaryFilePath = target.temporaryFilePath,
               let rawID = target.rawId,
@@ -507,6 +879,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
 
     private func handleTaskCompletion(task: URLSessionTask, error: Error?) {
         redirectsByTaskIdentifier[task.taskIdentifier] = nil
+        knownTaskIdentifiers[task.taskIdentifier] = nil
         if removedTaskIdentifiers.remove(task.taskIdentifier) != nil {
             resumedTaskIdentifiers.remove(task.taskIdentifier)
             return
@@ -601,7 +974,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         ) else { return }
         for metadataURL in files where metadataURL.pathExtension == "json" {
             guard let data = try? Data(contentsOf: metadataURL),
-                  let secured = try? JSONDecoder().decode(DulcetSecuredDownload.self, from: data) else {
+                  let secured = try? JSONDecoder().decode(DulcetSecuredDownload.self, from: data),
+                  UUID(uuidString: secured.identifier) != nil,
+                  secured.metadataURL(in: downloadInboxURL).lastPathComponent == metadataURL.lastPathComponent else {
                 continue
             }
             guard FileManager.default.fileExists(
@@ -611,6 +986,21 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
                 continue
             }
             _ = processSecuredDownload(secured)
+        }
+    }
+
+    private func removeSecuredDownload(_ secured: DulcetSecuredDownload) -> Bool {
+        guard UUID(uuidString: secured.identifier) != nil else { return false }
+        do {
+            let payload = secured.payloadURL(in: downloadInboxURL)
+            if FileManager.default.fileExists(atPath: payload.path) {
+                try FileManager.default.removeItem(at: payload)
+            }
+            // Keep metadata if payload removal fails, so reconciliation can retry cleanup.
+            try FileManager.default.removeItem(at: secured.metadataURL(in: downloadInboxURL))
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -629,7 +1019,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     }
 
     private func publish(_ state: DulcetDownloadState, for id: DulcetProviderItemID) {
+        if state == .downloaded { refreshArtworkBudget() }
         statusHandler?(id, state)
+        stateRefreshHandler?()
     }
 
     /// One line in the handoff proof's marker file, in a DEBUG build with the proof's namespace

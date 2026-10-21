@@ -34,6 +34,8 @@ with tempfile.TemporaryDirectory(prefix="restoration-check-", dir=package / ".bu
         "-I", str(module_dir), "-F", str(args.framework_dir.resolve()),
         "-framework", "DulcetCore", "-lsqlite3",
         str(root / "apple/DulcetAppleShared/DulcetCorePlayback.swift"),
+        # Compile the controller's real download/cache collaborator, as the Apple app does.
+        str(root / "apple/DulcetAppleShared/DulcetCoreDownloads.swift"),
         str(root / "apple/DulcetAppleShared/DulcetCorePlaybackController.swift"),
         str(root / "tools/playback-restoration-check.swift"), str(temp / "sqlite.o"),
         *map(str, objects),

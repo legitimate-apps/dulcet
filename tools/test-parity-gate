@@ -1322,6 +1322,8 @@ passing_cases = """\
             name="testDesignTour" time="0.1" />
   <testcase classname="DulcetDesignTourUITests"
             name="testListenNowLaunchAlbumAndRelaunch" time="0.1" />
+  <testcase classname="DulcetDesignTourUITests"
+            name="testOfflineMusicSettingsPersistAcrossRelaunch" time="0.1" />
   <testcase classname="DulcetTVUITests"
             name="testListenNowLaunchAlbumAndRelaunch" time="0.1" />
   <testcase classname="ListenNowEmulatorProofTest"
@@ -1378,6 +1380,27 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory
         raise AssertionError(f"executed passing evidence rejected: {result.stdout}")
 
 execution_rejections = {
+    "offline settings observation did not execute": (
+        passing_report.replace(
+            'name="testOfflineMusicSettingsPersistAcrossRelaunch"',
+            'name="unrelatedSettingsTest"',
+        ),
+        "evidence test did not execute",
+    ),
+    "offline settings observation failed": (
+        passing_report.replace(
+            'name="testOfflineMusicSettingsPersistAcrossRelaunch" time="0.1" />',
+            'name="testOfflineMusicSettingsPersistAcrossRelaunch" time="0.1"><failure /></testcase>',
+        ),
+        "evidence test did not pass",
+    ),
+    "offline settings observation skipped": (
+        passing_report.replace(
+            'name="testOfflineMusicSettingsPersistAcrossRelaunch" time="0.1" />',
+            'name="testOfflineMusicSettingsPersistAcrossRelaunch" time="0.1"><skipped /></testcase>',
+        ),
+        "evidence test did not pass",
+    ),
     "iPad playback observation did not execute": (
         passing_report.replace(
             'name="testSimulatorPlaybackAdvancesPastScrobbleThreshold"',

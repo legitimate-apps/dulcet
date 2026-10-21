@@ -12,11 +12,16 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--source', type=Path, default=ROOT / 'apple/DulcetAppleShared/DulcetCoreDownloads.swift')
+parser.add_argument('--summary-source', type=Path, default=ROOT / 'apple/DulcetAppleShared/DulcetDebugDownloadHandoff.swift')
 args = parser.parse_args()
 source = args.source.read_text()
 start = source.index('enum DulcetDownloadHandoffProbe {')
 end = source.index('\n#endif', start)
 probe = source[start:end]
+summary_source = args.summary_source.read_text()
+start = summary_source.index('    static func summarize(')
+end = summary_source.index('    static func launchArgumentValue(', start)
+summary = 'enum HandoffSummary {\n' + summary_source[start:end] + '\n}\n'
 driver = r'''
 let caseName = CommandLine.arguments[1]
 let suite = "com.legitimateapps.dulcet.test.handoff-diagnostics." + UUID().uuidString
@@ -85,6 +90,71 @@ cases = {
     'clear': 'cleared=true stored=false',
     'dump-missing': 'DULCET HANDOFF marker 123 pid=42 task-failed download=opaque error=NSURLErrorDomain:-3000',
 }
+summary_driver = r'''
+func fields(_ summary: String) -> [String: String] {
+    Dictionary(uniqueKeysWithValues: summary.split(separator: " ").map {
+        let pair = $0.split(separator: "=", maxSplits: 1).map(String.init)
+        return (pair[0], pair[1])
+    })
+}
+let requested = "requested-song"
+let original = [
+    "1 pid=41 launch harness=yes",
+    "2 pid=41 task-started download=download:automatic item=automatic-song",
+    "3 pid=41 outstanding download=download:automatic state=running",
+    "4 pid=41 download-requested item=requested-song",
+    "5 pid=41 task-started download=download:explicit item=requested-song",
+    "6 pid=41 outstanding download=download:explicit state=running",
+    "7 pid=42 launch harness=no",
+    "8 pid=42 background-events",
+    "9 pid=42 promoted download=download:explicit item=requested-song state=downloaded row=downloaded bytes=24334 sha256=explicit-digest",
+    "10 pid=42 promoted download=download:automatic item=automatic-song state=downloaded row=downloaded bytes=24334 sha256=automatic-digest",
+]
+var trail = original
+switch CommandLine.arguments[1] {
+case "summary-concurrent":
+    let selected = fields(HandoffSummary.summarize(trail, currentPID: 42))
+    precondition(selected["requested"] == requested)
+    precondition(selected["outstanding"] == "download:explicit@41")
+    precondition(selected["promoted"] == "download:explicit@42")
+    precondition(selected["item"] == requested && selected["sha256"] == "explicit-digest")
+    precondition(selected["state"] == "downloaded" && selected["row"] == "downloaded" && selected["bytes"] == "24334")
+    precondition(selected["launches"] == "2" && selected["unattended-launches"] == "1" && selected["background-events"] == "1")
+case "summary-missing-request":
+    trail.removeAll { $0.contains("download-requested") }
+    let unselected = fields(HandoffSummary.summarize(trail, currentPID: 42))
+    precondition(unselected["outstanding"] == "none" && unselected["promoted"] == "none")
+    // Supplying the expected item cannot manufacture a missing explicit-request witness.
+    let selected = fields(HandoffSummary.summarize(trail, currentPID: 42, requestedItem: requested))
+    precondition(selected["outstanding"] == "none" && selected["promoted"] == "none")
+case "summary-missing-task":
+    trail.removeAll { $0.contains("task-started download=download:explicit") }
+    let selected = fields(HandoffSummary.summarize(trail, currentPID: 42))
+    precondition(selected["outstanding"] == "none" && selected["promoted"] == "none")
+case "summary-missing-running":
+    trail.removeAll { $0.contains("outstanding download=download:explicit") }
+    let selected = fields(HandoffSummary.summarize(trail, currentPID: 42))
+    precondition(selected["outstanding"] == "none")
+case "summary-wrong-promotion":
+    trail.removeAll { $0.contains("promoted download=download:explicit") }
+    trail.append("11 pid=42 promoted download=download:other item=requested-song state=downloaded row=downloaded bytes=24334 sha256=explicit-digest")
+    trail.append("12 pid=42 promoted download=download:explicit item=other-song state=downloaded row=downloaded bytes=24334 sha256=explicit-digest")
+    let selected = fields(HandoffSummary.summarize(trail, currentPID: 42))
+    precondition(selected["outstanding"] == "download:explicit@41" && selected["promoted"] == "none")
+case "summary-failed-promotion":
+    trail.append("11 pid=42 promoted download=download:explicit item=requested-song state=failed row=failed bytes=0 sha256=bad-digest")
+    let selected = fields(HandoffSummary.summarize(trail, currentPID: 42))
+    // Correlation must preserve failures for the proof's existing byte/state assertions.
+    precondition(selected["promoted"] == "download:explicit@42")
+    precondition(selected["state"] == "failed" && selected["row"] == "failed" && selected["bytes"] == "0" && selected["sha256"] == "bad-digest")
+default: fatalError("unknown summary control")
+}
+print("PASS \(CommandLine.arguments[1])")
+'''
+summary_cases = [
+    'summary-concurrent', 'summary-missing-request', 'summary-missing-task',
+    'summary-missing-running', 'summary-wrong-promotion', 'summary-failed-promotion',
+]
 with tempfile.TemporaryDirectory(prefix='dulcet-handoff-diagnostics-') as directory:
     directory = Path(directory)
     swift = directory / 'main.swift'
@@ -98,4 +168,10 @@ with tempfile.TemporaryDirectory(prefix='dulcet-handoff-diagnostics-') as direct
         for canary in ['diagnostic-path-canary', 'other-path-canary', 'INVALID NAMESPACE CANARY']:
             assert canary not in result.stderr, f'{name}: diagnostic exposed {canary}'
         print(f'PASS {name}: resolution/result evidence present; path and invalid-value canaries absent')
-print(f'DOWNLOAD HANDOFF DIAGNOSTICS passed={len(cases)} failed=0')
+    swift.write_text('import Foundation\n' + summary + '\n' + summary_driver)
+    subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', str(swift), '-o', str(binary)], check=True)
+    for name in summary_cases:
+        result = subprocess.run([str(binary), name], text=True, capture_output=True, check=True)
+        assert f'PASS {name}' in result.stdout, name
+        print(f'PASS {name}: requested transfer witnesses remain correlated amid concurrent automatic downloads')
+print(f'DOWNLOAD HANDOFF DIAGNOSTICS passed={len(cases) + len(summary_cases)} failed=0')

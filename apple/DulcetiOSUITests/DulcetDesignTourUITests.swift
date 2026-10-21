@@ -25,6 +25,61 @@ final class DulcetDesignTourUITests: XCTestCase {
     private var shotNumber = 0
 
     @MainActor
+    func testOfflineMusicSettingsPersistAcrossRelaunch() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DULCET_OFFLINE_PROOF"] == "1" else { throw XCTSkip("Requires the disposable offline-library fixture") }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: url)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        if let expected = environment["DULCET_OFFLINE_IDIOM"] {
+            XCTAssertEqual(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone", expected)
+        }
+        let compact = app.windows.firstMatch.frame.width < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
+        let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
+        let settingsForm = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+        XCTAssertTrue(settingsForm.waitForExistence(timeout: 20), app.debugDescription)
+        // Form rows are lazy: on iPhone this setting does not exist in accessibility
+        // until its owning Form has scrolled it into the viewport.
+        XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settingsForm))
+        XCTAssertTrue(automatic.waitForExistence(timeout: 20), app.debugDescription)
+        // SwiftUI exposes a row-sized switch wrapper and its native thumb. The wrapper's
+        // centre lies in the label's empty space on iPad; actuate the actual UISwitch.
+        let automaticControl = automatic.switches.firstMatch
+        XCTAssertTrue(automaticControl.exists, automatic.debugDescription)
+        XCTAssertTrue(automaticControl.isHittable, automatic.debugDescription)
+        if automatic.value as? String == "1" { automaticControl.tap() }
+        _ = waitFor(timeout: 5) { automatic.value as? String == "0" }
+        XCTAssertEqual(automatic.value as? String, "0")
+        shoot("offline-settings-automatic-off", app)
+        app.terminate()
+        app.launchArguments = []
+        launchInInteractionScope(app)
+        XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
+        XCTAssertTrue(settingsForm.waitForExistence(timeout: 20))
+        XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settingsForm))
+        XCTAssertTrue(automatic.waitForExistence(timeout: 20))
+        XCTAssertEqual(automatic.value as? String, "0", "The account setting must survive relaunch")
+        XCTAssertTrue(automaticControl.isHittable, automatic.debugDescription)
+        automaticControl.tap()
+        _ = waitFor(timeout: 5) { automatic.value as? String == "1" }
+        XCTAssertEqual(automatic.value as? String, "1")
+        let clear = app.buttons["dulcet.offline.clearCache"].firstMatch
+        XCTAssertTrue(scrollIntoView(clear, in: app, verticalMargin: 16, scrollContainer: settingsForm))
+        XCTAssertTrue(clear.waitForExistence(timeout: 10))
+        clear.tap()
+        shoot("offline-settings-controls", app)
+        print("OFFLINE-SETTINGS idiom=\(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone") automatic=off-relaunch-on clear=invoked")
+    }
+
+    @MainActor
     func testListenNowLaunchAlbumAndRelaunch() throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["DULCET_HOME_PROOF"] == "1" else { throw XCTSkip("Requires a disposable home fixture") }
@@ -40,12 +95,18 @@ final class DulcetDesignTourUITests: XCTestCase {
         if let expected = environment["DULCET_HOME_IDIOM"] {
             XCTAssertEqual(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone", expected)
         }
+        let compact = app.windows.firstMatch.frame.width < 700
+        // Saved Home can appear before reconnect completes. Wait for the real connection
+        // before choosing a tile, so a freshly published shelf cannot move it under the tap.
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
         let home = app.descendants(matching: .any)["dulcet.listenNow"].firstMatch
         XCTAssertTrue(home.waitForExistence(timeout: 40), app.debugDescription)
         let album = app.buttons["dulcet.library.album"].firstMatch
         XCTAssertTrue(album.waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(scrollIntoView(album, in: app), app.debugDescription)
         shoot("listen-now", app)
-        album.tap()
+        album.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
         XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20))
         shoot("listen-now-album", app)
         app.terminate()
@@ -54,7 +115,6 @@ final class DulcetDesignTourUITests: XCTestCase {
         XCTAssertTrue(home.waitForExistence(timeout: 20), app.debugDescription)
         XCTAssertTrue(album.waitForExistence(timeout: 20), "Cached home must survive relaunch")
         shoot("listen-now-relaunch", app)
-        let compact = app.windows.firstMatch.frame.width < 700
         XCTAssertTrue(openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact))
         XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
         XCTAssertTrue(home.waitForExistence(timeout: 10))
@@ -570,22 +630,24 @@ final class DulcetDesignTourUITests: XCTestCase {
     }
 
     @MainActor
-    private func scrollIntoView(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+    private func scrollIntoView(_ element: XCUIElement, in app: XCUIApplication,
+                                verticalMargin: CGFloat = 100, scrollContainer: XCUIElement? = nil) -> Bool {
         let window = app.windows.firstMatch
+        let scrolling = scrollContainer ?? app
         // Lazy grids can recycle a tile between `exists` and a separate frame query while a
         // swipe decelerates. A throwing snapshot gives one frame or lets the next swipe retry.
         func frame() -> CGRect? { (try? element.snapshot())?.frame }
         func visible(_ frame: CGRect?) -> Bool {
             guard let frame, !frame.isEmpty, element.isHittable else { return false }
             let bounds = window.frame
-            return frame.midY >= bounds.minY + 100 && frame.midY <= bounds.maxY - 100
+            return frame.midY >= bounds.minY + verticalMargin && frame.midY <= bounds.maxY - verticalMargin
                 && bounds.contains(CGPoint(x: frame.midX, y: frame.midY))
         }
         for _ in 0..<8 {
             let current = frame()
             if visible(current) { return true }
-            if let current, current.midY < window.frame.minY + 100 { app.swipeDown() }
-            else { app.swipeUp() }
+            if let current, current.midY < window.frame.minY + verticalMargin { scrolling.swipeDown() }
+            else { scrolling.swipeUp() }
             _ = settle(app, seconds: 0.6)
         }
         return visible(frame())

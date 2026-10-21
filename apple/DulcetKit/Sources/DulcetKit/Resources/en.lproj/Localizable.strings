@@ -462,3 +462,21 @@
 "libraryDepth.shuffleServer" = "Shuffle Server Songs";
 "libraryDepth.loadMore" = "Load More";
 "libraryDepth.loadedScope" = "Showing %ld loaded items. Scroll or choose Load More to continue.";
+
+// Offline library storage and retention
+"offline.music" = "Offline Music";
+"offline.automaticDownloads" = "Automatic Downloads";
+"offline.automaticHint" = "Keep songs, albums and playlists you add to My Library on this device. Artist membership keeps the artist in your library without downloading their music. Explicit downloads stay when you remove music or turn this off.";
+"offline.downloads" = "Completed Downloads";
+"offline.streamingCache" = "Completed Streaming Cache";
+"offline.artworkCache" = "Artwork Cache";
+"offline.cacheSize" = "Cache Size";
+"offline.cache.off" = "Off";
+"offline.cache.256mb" = "256 MB";
+"offline.cache.512mb" = "512 MB";
+"offline.cache.1gb" = "1 GB";
+"offline.cache.2gb" = "2 GB";
+"offline.cache.hint" = "Recently streamed songs stay available offline until the cache needs space. Downloads stay protected.";
+"offline.cache.clear" = "Clear Cache";
+"action.download.keep" = "Keep Download";
+"offline.downloadProgress" = "%1$@ downloaded · %2$@ remaining";

@@ -34,6 +34,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /** One owner for playback across both native shells, activity recreation and backgrounding. */
@@ -50,12 +51,21 @@ class PlaybackService : MediaLibraryService() {
 
     /** The default network's cost as last reported; null until the OS has reported one. */
     private var networkCost: NetworkCostClass? = null
+    private var networkAvailable = true
 
     /**
      * Follows the default network's cost into the controller (spec §12.5). Only capabilities are
      * read: a default network's arrival always reports them, and a change of metering does too.
      */
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            networkAvailable = true
+            playback?.setNetworkAvailable(true)
+        }
+        override fun onLost(network: Network) {
+            networkAvailable = getSystemService(ConnectivityManager::class.java)?.activeNetwork != null
+            playback?.setNetworkAvailable(networkAvailable)
+        }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
             val cost = capabilities.costClass()
             networkCost = cost
@@ -71,6 +81,7 @@ class PlaybackService : MediaLibraryService() {
         val connectivity = getSystemService(ConnectivityManager::class.java)
         // Read now, not only when the callback first reports: the callback is posted to the main
         // looper, so without this the first song resolves before any network is classified.
+        networkAvailable = connectivity?.activeNetwork != null
         networkCost = runCatching {
             connectivity?.let { it.getNetworkCapabilities(it.activeNetwork)?.costClass() }
         }.getOrNull()
@@ -85,6 +96,7 @@ class PlaybackService : MediaLibraryService() {
 
     /** The account [playback] was built for; its credentials are the controller's for its life. */
     private var playbackAccountId: String? = null
+    private var playbackEndpointAccount: PlaybackEndpointAccount? = null
     private var widgetJob: Job? = null
 
     /**
@@ -96,8 +108,8 @@ class PlaybackService : MediaLibraryService() {
      * sign-out releases it itself (spec §14.7), but an account can also be saved without one — on
      * the connect form shown when the saved record cannot be read, which is the only way to change
      * account on TV — and the new account must never be handed the old one's controller, which
-     * carries its credentials, queue and server. The saved account's id is read without decrypting
-     * its record, so this costs nothing on the usual path.
+     * carries its credentials, queue and server. Reuse compares the saved record too: a changed
+     * endpoint or username under the same persistent id must retire the former controller.
      *
      * Opted in to Media3's unstable API for the session's connection callback: accepting a trusted
      * controller with the player's own commands (`isTrusted`, `AcceptedResultBuilder`) is marked unstable.
@@ -106,36 +118,61 @@ class PlaybackService : MediaLibraryService() {
     fun ensurePlayback(): AndroidPlaybackController? {
         val store = AndroidAccountCredentialStore(this)
         val activeId = store.activeAccountId()
-        playback?.let { existing ->
-            if (activeId != null && activeId == playbackAccountId) return existing
-            releasePlayback()
-        }
         val account = try { store.load() }
         catch (_: CredentialStoreException) {
+            releasePlayback()
             unavailableReason = "Saved credentials are unavailable. Reconnect your account."
             return null
-        } ?: return null
+        } ?: run { releasePlayback(); return null }
+        if (!com.legitimateapps.dulcet.core.MediaBindingIdentity.isValidBinding(account.id, account.serverUrl, account.username)) {
+            unavailableReason = "Saved server details are invalid. Reconnect your account."
+            return null
+        }
+        if (activeId != account.id) { releasePlayback(); return null }
+        val endpoint = PlaybackEndpointAccount(account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp)
+        playback?.let { existing ->
+            if (activeId == account.id && existing.refreshAccount(endpoint)) {
+                // The local-source closure may retain this adapter without reopening the factory.
+                // Refresh its future streaming-cache/download requests as well as playback's wire.
+                AndroidDownloads.existingController(account.id)?.refreshAccount(endpoint)
+                playbackEndpointAccount = endpoint
+                return existing
+            }
+            releasePlayback()
+        }
         val service = applicationContext
         // A downloaded song plays from its file (spec §14.5), and only this account's downloads.
-        val controller = AndroidPlaybackController(this, PlaybackEndpointAccount(
-            account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp),
+        val controller = AndroidPlaybackController(this, endpoint,
             object : AndroidLocalPlaybackSource {
                 // Called from the player's main-thread callbacks: opening the controller reads the
                 // Keystore-backed account record and the database, so none of it runs on main.
-                private fun downloads() =
-                    AndroidDownloads.controller(service)?.takeIf { it.providerInstanceId == account.id }
+                @Volatile private var protectedItems = emptySet<String>()
+                @Volatile private var heldDownloads: com.legitimateapps.dulcet.core.AndroidDownloadController? = null
+                private fun downloads() = heldDownloads?.takeUnless { it.isClosed }
+                    ?.takeIf { it.matchesAccount(endpoint) }
+                    ?: AndroidDownloads.controller(service)?.takeIf { it.matchesAccount(endpoint) }?.also { heldDownloads = it; it.setProtectedRawIds(protectedItems) }
                 override suspend fun localPlan(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localPlan(rawId) }
+                override suspend fun acquireLocalPlan(rawId: String) = withContext(Dispatchers.IO) { downloads()?.acquireLocalPlan(rawId) }
                 // A downloaded song's title, artist and album, kept with its download (§16.13).
                 override suspend fun localTrack(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localTrack(rawId) }
+                override fun setProtectedRawIds(rawIds: Set<String>) { protectedItems = rawIds.toSet(); heldDownloads?.setProtectedRawIds(rawIds) }
+                override fun isLocallyPlayable(rawId: String) =
+                    (heldDownloads?.takeUnless { it.isClosed } ?: AndroidDownloads.existingController(account.id))
+                        ?.takeIf { it.matchesAccount(endpoint) }?.isLocallyPlayable(rawId) == true
+                override fun beginStreamCacheWrite(plan: com.legitimateapps.dulcet.core.RemotePlaybackWirePlan,
+                    status: Int, contentType: String?, exactLength: Long?, position: Long) =
+                    downloads()?.beginStreamCacheWrite(plan, status, contentType, exactLength, position)
             },
             // Restored playback waits for the foreground host to begin automatic reconnect:
             // the queue restores paused, downloads play, and plays wait in the outbox till then.
             SavedAccountConnection.contact(account.id))
         // The quality for the next item: the person's choice for the network last reported.
         controller.setStreamingQuality(StreamingQualitySettings.get(this).preference.value)
+        controller.setNetworkAvailable(networkAvailable)
         networkCost?.let(controller::setNetworkCostClass)
         playback = controller
         playbackAccountId = account.id
+        playbackEndpointAccount = endpoint
         widgetJob?.cancel()
         widgetJob = serviceScope.launch {
             controller.state.map { Triple(it.title, it.artist ?: it.album ?: "", it.playWhenReady) }
@@ -180,6 +217,7 @@ class PlaybackService : MediaLibraryService() {
         session = null
         playback = null
         playbackAccountId = null
+        playbackEndpointAccount = null
     }
 
     override fun onBind(intent: Intent?): IBinder? =

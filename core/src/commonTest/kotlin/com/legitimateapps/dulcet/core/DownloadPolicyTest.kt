@@ -377,7 +377,9 @@ class DownloadPolicyTest {
         seedEveryNonDownloadServerTable(fixture)
 
         assertEquals(
-            23L,
+            // Two retained media rows now also own two identity-only metadata rows, two pins,
+            // and two explicit-retention rows. All six participate in account removal.
+            29L,
             fixture.database.database.serverDataQueries.countRowsForServer(SERVER_ID)
                 .executeAsOne().sum,
         )

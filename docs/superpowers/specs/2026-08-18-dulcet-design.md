@@ -1309,8 +1309,9 @@ both additive, seeded with nothing, and not protected data.
 
 - SQLDelight `.sqm` migrations, with `verifySqlDelightMigration` in CI on every PR.
 - **Protected data — must survive every migration:** `scrobble_outbox`, `mutation_outbox`,
-  `download` rows plus their files, and `resume_position`. These are the only things not re-derivable
-  from the server. **Revision 104 adds** the pinned cache rows of downloaded and queued items
+  `download` rows plus their files, `resume_position`, and, from schema 11, device offline settings
+  and explicit/automatic retention ownership. These cannot be re-derived from the server.
+  **Revision 104 adds** the pinned cache rows of downloaded and queued items
   (§16.13): the metadata is re-derivable from the server only while the server is reachable and the
   item still exists, and a downloaded file with nothing to display is exactly the case offline use
   exists for.
@@ -1332,7 +1333,12 @@ both additive, seeded with nothing, and not protected data.
   negative control. From schema 9 it also compares the re-derivable `my_library_item` and
   `my_library_state` rows. From schema 10 it also compares `library_depth_entry` rows, with seeded
   account-scoped preferences, pins and recents and controls that reject overwrites, deletion and
-  account loss. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
+  account loss. From schema 11, per-account `offline_library_settings` and
+  `offline_media_retention` are protected user intent: preferences and explicit/automatic ownership
+  survive migrations. The derived `offline_source_snapshot` rows are compared from schema 11.
+  Seeded accounts, profiles and all ownership combinations have destructive controls that reject
+  settings resets, ownership loss, profile/account deletion and discarded source snapshots.
+  The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
   files; from schema 8 the gate also builds the schema from the current `.sq` files alone, requires
   that build to equal the snapshot (so an empty difference is the instrument agreeing, not the
   instrument reading nothing) and requires the newest fixture to equal it object for object
@@ -1342,7 +1348,7 @@ both additive, seeded with nothing, and not protected data.
   `migrations/<N−1>.sqm` as shipped, sets the schema version, adds that version's seed rows and
   vacuums; `--check` regenerates into a temporary directory and requires the committed fixture to
   be byte-identical. Writing and byte checks require the recorded SQLite build for that fixture:
-  3.51.0 for v4–v9 and 3.54.0 for v10 (v1–v3 were written by 3.50.6; none reserves bytes per page).
+  3.51.0 for v4–v9 and 3.54.0 for v10–v11 (v1–v3 were written by 3.50.6; none reserves bytes per page).
   They refuse another build, since a different build
   lays pages out differently (revision 104, item 23). That byte check is local; CI runs
   `--all --check-semantic` in the parity gate, which any SQLite build can answer: it regenerates
@@ -3099,6 +3105,50 @@ and reconciliation against a changed server item. The platform owns the **execut
   reader's playability comes from the account's `complete` and `stale` rows. Android TV has
   downloads; only tvOS ships none.
 
+### 14.5.1 Automatic Downloads and streaming retention
+
+Automatic Downloads is a per-account setting, enabled when its settings are first created. My
+Library starts empty; adding songs, albums or playlists retains their original files through the existing §14.5 executor,
+network policy, retry boundaries, disk budget and relaunch reconciliation. A saved-account launch
+holds new automatic transfers behind the existing account contact gate (§13.1); previously queued
+downloads retain their recovery behavior. The core projects current
+membership and pending local changes into track identities. Unresolved detail may add known tracks,
+but never authorizes deleting the children of an unresolved collection. Automatic work is ordered by
+recent library addition, with explicit download requests ahead of automatic work. Artist membership is metadata-only: it keeps that artist in My Library but does not imply membership or automatic retention of the artist's discography. Settings explains this distinction.
+
+Explicit and automatic retention are independent reasons on the same `(server_id, raw_id,
+transcode_profile)` identity. Existing downloads retain explicit ownership. An explicit Download
+also upgrades an automatic or cached file. Where a shell offers Remove Download, it releases explicit
+ownership and retains a file still owned automatically. Removing library membership, or switching Automatic
+Downloads off, releases only automatic ownership; explicit files remain. The current and preloaded
+items remain protected until their playback ownership ends. A removal result names the exact task
+identities the executor cancels; it never authorizes a directory-wide delete.
+
+A streaming cache receives bytes from the playback engine's own response. It does not issue a
+second stream request. Exact-length resources may arrive in bounded, out-of-order ranges, including
+MP4 tail probes. The core records interval coverage while writing directly to disk; promotion
+requires every byte from zero to the exact resource length and the same §12.4 binary validation as a
+download. Unknown-length responses require a sequential body from offset zero through EOF. A seek,
+cancellation, failed response or truncated body never publishes a partial cache file. A 206 is
+eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance, and are additionally owned by the canonical endpoint URL and exact server-confirmed username (or exact submitted username when not supplied) binding. DNS host case, default HTTP(S) ports, equivalent IPv6 spellings, percent-triplet hex case and trailing base separators do not change that binding; path case, interior separators and escaped separators remain significant. Rebinding the actual endpoint or an unproven username purges the old binding's downloaded and cached media, including explicit downloads, before local lookup can serve the new binding. Successful authentication with the exact saved credentials may adopt the server-confirmed spelling at the same canonical origin and provider instance into the existing epoch; both saved spellings remain valid across an interrupted credential save (§28, 2026-10-21). Password-only and equivalent-endpoint refresh preserve installed current/preloaded playback and media; future requests use refreshed credentials. A real binding change synchronously stops and invalidates current and preloaded playback, cancels retired callbacks and releases file protections before any old file is deleted. Old executors and completions cannot publish into the new binding. A previously unbound media namespace cannot adopt bytes without proven ownership. Server-item reconciliation applies to these files too.
+
+Offline playback prefers a validated local file, including a cached stream, before making a server
+read. Downloaded continues to mean deliberately retained downloads; the broader local-playable set
+also includes cached media. Queue construction, shuffle, preload and continuation apply the core's
+current playability predicate. Unavailable songs stay identifiable in My Library, and an unavailable
+row does not silently start another song. A queue loaded online can continue offline past any number
+of unavailable entries without spending the playback failure-chain limit. If a stream request is the
+first observation that the account became unreachable while the OS still has a network, the owner
+updates account availability before delivering that failure; the core can then continue onto a local
+successor. Authentication, trust and other account failures retain their existing ownership.
+
+Try Again may probe only the selected entry when OS connectivity and the account contact
+gate permit it. That permission does not make remote-only successors eligible. A retry that starts
+from a validated local file preserves the last observed server loss; only actual playback progress
+from the matching current remote attempt restores playback reachability. URL construction, local
+progress, and stale or preloaded events are insufficient. If a local row outlives its file, validation
+still runs before playback, and its remote fallback remains subject to the same OS/contact gates.
+
 ### 14.6 Storage budget and eviction priority
 
 One disk budget per account, user-configurable, with a strict priority order:
@@ -3107,6 +3157,7 @@ One disk budget per account, user-configurable, with a strict priority order:
 |---|---|
 | currently playing / next preloaded | never |
 | explicit user downloads (complete) | only by explicit user action or account removal |
+| automatic library downloads | only when library membership or Automatic Downloads is released; explicit ownership still protects the file |
 | explicit user downloads (partial, stale > 30 days) | yes, with notice |
 | streamed-media cache | yes, LRU |
 | artwork cache | yes, LRU, evicted first |
@@ -6665,7 +6716,7 @@ concurrency:
 with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 from
  2026-09-06, then per leg since the split — 80 `apple-platform`, 120 `apple-conformance-core`, 115
 `apple-conformance-ipad-iphone` per member, 5 for the aggregator — with per-step caps on the heavy steps; see
-§21.5**), 5 `parity-gate`, 60
+§21.5**), 10 `parity-gate` (remeasured 2026-10-19; §28), 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
 framework builds, macOS test, four Xcode shell builds, OS-floor assertions, both negative-control
@@ -7861,6 +7912,81 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-21 — Preserve media across authenticated saved-username confirmation.**
+A successful reconnect with the exact saved username and password may confirm a different username
+spelling through authenticated `getUser`. When the stable provider instance, submitted endpoint
+and confirmed endpoint all have the same canonical media origin, the core adopts that exact spelling
+into the current media epoch without deleting explicit downloads, automatic downloads or cache.
+It persists the authenticated spelling alongside the legacy spelling under the same epoch nonce,
+so an interruption between adoption and credential saving leaves either saved spelling usable.
+This is an authenticated alias for that epoch, not username case folding: an unproven typed username
+still changes ownership, including when it reuses an alias accepted by an earlier authenticated
+reconnect. The account-entry adapters explicitly request the existing core replacement policy for
+that unproven change; this retires playback before deleting files and rotates the epoch, dropping
+all aliases. A changed saved credential record supersedes an old authentication result. The shells validate a candidate
+before changing playback, credentials or protection; invalid replacements preserve current/preloaded
+playback and files. Percent-triplet hexadecimal case in an encoded base path is canonicalized
+(`%2f` equals `%2F`), while encoded and literal separators remain distinct. Same-principal adoption
+preserves installed playback and refreshes future authentication through the existing adapters.
+
+**2026-10-20 — Preserve equivalent media bindings and retire playback before a real purge.**
+Local media compares a shared Kotlin canonical HTTP(S) endpoint: DNS host case is folded,
+default ports are removed, equivalent IPv6 literals compare equal, and trailing base separators
+are normalized. Endpoint path case, interior separators and escaped separators remain meaningful.
+ASCII punycode hostnames use DNS comparison; Unicode host input remains unsupported by the
+existing account/redirect contract. Both stored legacy and incoming URLs are canonicalized for
+comparison, retaining the previous binding epoch byte for byte on equivalence. Invalid replacement
+endpoints fail before files or rows are removed. Truly different host, non-default port, scheme,
+path or exact username retains the previously chosen purge policy, including explicit media.
+
+An authenticated `getUser.username`, when present and nonblank, supplies the exact canonical
+username for saved credentials and media binding. When absent, the submitted spelling remains
+exact; clients do not infer that differently cased usernames identify one person. A real binding
+change must synchronously stop and invalidate current, queued/preloaded and prepared/fading player
+items and release their file protections before the first unlink, including downloads-first entry.
+Retired events and completion callbacks cannot reinstall old items. Password-only and equivalent
+endpoint refresh retain installed playback/preload and local media while updating future request
+credentials; this supersedes the immutable-player replacement wording in the earlier entry below.
+Item-scoped Apple notification observers leave with the invalidated item.
+
+**2026-10-20 — Bind offline media to endpoint ownership and clarify storage scope.**
+§14.5.1 makes local-media ownership depend on the stable account instance plus normalized endpoint URL and username. Changing either endpoint field purges the prior binding's automatic, explicit and cached files before the new binding can look up local media. This deliberately chooses purge over retaining a hidden old-binding library; password-only refresh preserves media. Same-binding membership removal or Automatic Downloads off still leaves explicit downloads intact. Stale executors, delayed completions and unproven legacy media must not cross the binding boundary.
+
+If saved credentials cannot be read, the plaintext account ID alone cannot establish that ownership is unchanged. Android releases the playback controller and session until the credentials become readable; it does not purge media for a read failure. Recovery creates a fresh controller, and readable credentials for the same binding retain its files. A password-only refresh likewise replaces the immutable playback credential snapshot while preserving local media.
+
+Artist membership is metadata-only and does not download a discography; Automatic Downloads covers the songs, albums and playlists a person adds. Settings explains this. Storage figures are labeled completed downloads/completed cache: active partial transfer and streaming-write bytes are excluded from those displayed totals, while existing budget admission continues to account for reservations and active writes. Android playback leases a local file atomically with resolution and holds it until the corresponding attempt releases it, so cache eviction cannot remove it between lookup and preparation. Apple removes canceled or no-longer-retained transfer payloads and their secured inbox metadata instead of retrying orphaned deliveries.
+
+**2026-10-19 — Scope offline recovery to the selected retry.**
+§14.5.1 distinguishes deliberate retry permission from account reachability. Retrying an already
+cached current entry leaves passive continuation restricted to locally playable successors after
+an observed server loss. The shared queue may admit only the selected current entry for a guarded
+remote probe; actual current remote playback progress restores reachability. This also preserves
+OS-offline and saved-account contact boundaries when an indexed local file disappears.
+
+**2026-10-19 — Give completed parity checks enough time to finish cleanup.**
+Both attempts of Actions run `39300490385` passed every test step, then the five-minute
+job deadline cancelled final cleanup at 5m03s and 5m01s. The release-policy controls took
+132 seconds in the second attempt, versus 99 seconds in green run `39296960604`; this is
+observed runtime variation, with no failed assertion. The parity job cap is now 10 minutes,
+the next five-minute boundary above 1.5 times the observed duration. Its checks, individual
+step limits, runner class and concurrency cancellation are unchanged.
+
+**2026-10-19 — Retain My Library automatically and cache the actual playback response.**
+§14.5.1 defines independent explicit/automatic ownership, recently-added scheduling, conservative
+collection expansion, and a validated same-response streaming cache. The Kotlin core owns retention,
+account-scoped budgets, LRU decisions and local queue eligibility. Platform executors retain the
+existing task identity, disk/retry policy and binary validation; shells expose per-account storage
+controls. The download identity, including server/account instance and media profile, scopes cache
+rows. Cached streams contribute to offline playability without turning the Downloaded destination
+into a list of opportunistic cache entries. The cache defaults to 1 GiB and can be resized or cleared;
+playing and preloaded files remain protected until playback releases them. Known-length cache writes
+assemble bounded range coverage on disk, including MP4 tail probes; incomplete coverage cannot
+promote. Artwork and streamed media share the configured cache budget, with evictable artwork
+yielding first and downloaded 256 px artwork pinned. Implementation and runtime evidence are tracked
+separately in `FEATURES.yml`; this contract entry does not promote any platform evidence claim.
+§11.4 protects the new device settings and retention ownership from schema 11, with generated
+fixtures and destructive controls; derived source snapshots are compared independently.
 
 **2026-10-19 - Preserve the latest playback intent across interruptions and replacement.**
 §12.9 makes explicit that a newer Pause, Stop, noisy-route pause or terminal failure revokes

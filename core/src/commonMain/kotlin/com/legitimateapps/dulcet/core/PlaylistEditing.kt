@@ -520,7 +520,7 @@ internal class PlaylistOutbox(
 
     fun all(): List<PendingPlaylistRow> =
         queries.selectPendingMutations(cache.serverId).executeAsList().mapNotNull { row ->
-            decode(row.target_id, row.field_, row.value_, row.local_sequence, row.wall_clock)
+            decodePendingPlaylistRow(row.target_id, row.field_, row.value_, row.local_sequence, row.wall_clock)
         }
 
     /**
@@ -535,7 +535,7 @@ internal class PlaylistOutbox(
 
     fun find(playlistId: String, kind: PlaylistRowKind): PendingPlaylistRow? =
         queries.selectPendingMutation(cache.serverId, playlistId, kind.field).executeAsOneOrNull()?.let { row ->
-            decode(row.target_id, row.field_, row.value_, row.local_sequence, row.wall_clock)
+            decodePendingPlaylistRow(row.target_id, row.field_, row.value_, row.local_sequence, row.wall_clock)
         }
 
     /** Writes [row] as a NEW change: a fresh sequence, replacing any row of the same key. */
@@ -632,48 +632,48 @@ internal class PlaylistOutbox(
             }
         },
     ).toString()
+}
 
-    private fun decode(targetId: String, field: String, value: String, localSequence: Long, wallClock: Long): PendingPlaylistRow? {
-        val kind = PlaylistRowKind.fromField(field) ?: return null
-        if (targetId.isBlank()) return null
-        val json = try {
-            LIBRARY_JSON.parseToJsonElement(value).jsonObject
-        } catch (_: IllegalArgumentException) {
-            return null
-        }
-        val failures = (json["failures"] as? JsonPrimitive)?.intOrNull ?: 0
-        fun number(name: String) = (json[name] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
-        fun bool(name: String) = (json[name] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
-        fun text(name: String) = (json[name] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
-        return try {
-            when (kind) {
-                PlaylistRowKind.Create -> PendingPlaylistRow.Create(
-                    targetId, text("name") ?: return null, text("comment"), bool("public"),
-                    json["songs"].strings() ?: return null, bool("attempted") ?: false, bool("cancelled") ?: false,
-                    localSequence, wallClock, failures, text("sentName"), json["sentSongs"].strings(),
-                    json["seenBeforeSend"].strings(), json["candidates"].strings(), text("chosen"),
-                )
-                PlaylistRowKind.Details -> {
-                    val fields = (json["fields"] as? JsonObject ?: return null).entries.mapNotNull { (name, element) ->
-                        val detail = PlaylistDetailField.entries.firstOrNull { it.wireName == name } ?: return@mapNotNull null
-                        val change = element as? JsonObject ?: return@mapNotNull null
-                        val set = (change["value"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return@mapNotNull null
-                        val base = (change["base"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-                        detail to PendingFieldChange(set, base, change["attempted"].strings().orEmpty().toSet())
-                    }.toMap()
-                    if (fields.isEmpty()) return null
-                    PendingPlaylistRow.Details(targetId, fields, localSequence, wallClock, failures)
-                }
-                PlaylistRowKind.Entries -> PendingPlaylistRow.Entries(
-                    targetId, json["base"].strings(), json["target"].strings(), json["suffix"].strings().orEmpty(),
-                    bool("attempted") ?: false, localSequence, wallClock, failures, json["sent"].strings(),
-                    json["sentAdded"].strings(), number("appended")?.toInt() ?: 0,
-                )
-                PlaylistRowKind.Delete -> PendingPlaylistRow.Delete(targetId, bool("attempted") ?: false, localSequence, wallClock, failures)
+internal fun decodePendingPlaylistRow(targetId: String, field: String, value: String, localSequence: Long, wallClock: Long): PendingPlaylistRow? {
+    val kind = PlaylistRowKind.fromField(field) ?: return null
+    if (targetId.isBlank()) return null
+    val json = try {
+        LIBRARY_JSON.parseToJsonElement(value).jsonObject
+    } catch (_: IllegalArgumentException) {
+        return null
+    }
+    val failures = (json["failures"] as? JsonPrimitive)?.intOrNull ?: 0
+    fun number(name: String) = (json[name] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
+    fun bool(name: String) = (json[name] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
+    fun text(name: String) = (json[name] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+    return try {
+        when (kind) {
+            PlaylistRowKind.Create -> PendingPlaylistRow.Create(
+                targetId, text("name") ?: return null, text("comment"), bool("public"),
+                json["songs"].strings() ?: return null, bool("attempted") ?: false, bool("cancelled") ?: false,
+                localSequence, wallClock, failures, text("sentName"), json["sentSongs"].strings(),
+                json["seenBeforeSend"].strings(), json["candidates"].strings(), text("chosen"),
+            )
+            PlaylistRowKind.Details -> {
+                val fields = (json["fields"] as? JsonObject ?: return null).entries.mapNotNull { (name, element) ->
+                    val detail = PlaylistDetailField.entries.firstOrNull { it.wireName == name } ?: return@mapNotNull null
+                    val change = element as? JsonObject ?: return@mapNotNull null
+                    val set = (change["value"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return@mapNotNull null
+                    val base = (change["base"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    detail to PendingFieldChange(set, base, change["attempted"].strings().orEmpty().toSet())
+                }.toMap()
+                if (fields.isEmpty()) return null
+                PendingPlaylistRow.Details(targetId, fields, localSequence, wallClock, failures)
             }
-        } catch (_: IllegalArgumentException) {
-            null
+            PlaylistRowKind.Entries -> PendingPlaylistRow.Entries(
+                targetId, json["base"].strings(), json["target"].strings(), json["suffix"].strings().orEmpty(),
+                bool("attempted") ?: false, localSequence, wallClock, failures, json["sent"].strings(),
+                json["sentAdded"].strings(), number("appended")?.toInt() ?: 0,
+            )
+            PlaylistRowKind.Delete -> PendingPlaylistRow.Delete(targetId, bool("attempted") ?: false, localSequence, wallClock, failures)
         }
+    } catch (_: IllegalArgumentException) {
+        null
     }
 }
 
@@ -1230,7 +1230,7 @@ internal class PlaylistEditor(
     private fun trackItem(rawId: String): LibraryItem {
         val member = CacheListMember(CacheItemKind.Track, rawId)
         val pending = guarded(emptyMap()) { reader.overlay.pending(cache.serverId, setOf(member)) }[member]
-        val downloaded = guarded(emptySet()) { reader.downloads.downloadedTrackRawIds(cache.serverId) }
+        val downloaded = guarded(emptySet()) { reader.downloads.localTrackRawIds(cache.serverId) }
         val playability = reader.trackPlayability(rawId, downloaded)
         return guarded(null) { cache.track(rawId) }?.toItem(pending, playability) ?: LibraryItem.Track(
             rawId = rawId, title = null, albumRawId = null, albumTitle = null, artistName = null, artistRawId = null,

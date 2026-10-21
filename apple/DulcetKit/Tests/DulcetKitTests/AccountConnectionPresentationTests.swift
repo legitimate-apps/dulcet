@@ -6,6 +6,24 @@ import Security
 import Testing
 @testable import DulcetKit
 
+@MainActor
+@Test
+func authenticatedCanonicalUsernameIsSavedAndUsedWithoutClientCaseFolding() throws {
+    for canonical in ["Canonical-Alice", nil] as [String?] {
+        let connector = ControlledAccountConnector()
+        let credentials = MemoryCredentialStore(persisted: nil)
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector, credentialStore: credentials))
+        store.accountServerURL = "https://music.example.invalid"
+        store.accountUsername = "ALIce"
+        store.accountPassword = "fixture"
+        store.submitAccountConnection()
+        connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+            normalizedServerURL: "https://music.example.invalid", canonicalUsername: canonical)))
+        #expect(try credentials.load()?.username == (canonical ?? "ALIce"))
+        #expect(store.accountUsername == (canonical ?? "ALIce"))
+    }
+}
+
 @Test
 func credentialBearingPresentationValuesCannotPrintCredentials() {
     let credentialValues = [
@@ -1664,6 +1682,50 @@ func unentitledKeychainWriteFailsClosedWithoutLegacyFallback() throws {
 }
 
 // Keep the published test identity while reversing its expectation with the contract.
+@Test(arguments: ["saved", "typed", "password", "endpoint", "superseded"]) @MainActor
+func onlyAuthenticatedUnchangedSavedCredentialsMayAdoptServerUsernameSpelling(scenario: String) throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "Alice",
+        password: "saved-password", allowLocalHTTP: false)
+    let credentials = InstanceCredentialStore(persisted: request, providerInstanceID: "canonical-proof-provider")
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        downloadController: downloads, providerInstanceIDFactory: { "canonical-proof-provider" })
+    let store = DulcetPresentationStore(source: source)
+    #expect(connector.requests == [request])
+    if scenario == "typed" || scenario == "password" || scenario == "endpoint" {
+        store.cancelAccountConnection()
+        if scenario == "typed" { store.accountUsername = "alice" }
+        if scenario == "password" { store.accountPassword = "typed-other-password" }
+        if scenario == "endpoint" { store.accountServerURL = "https://other.example.invalid" }
+        store.submitAccountConnection()
+    }
+    if scenario == "superseded" {
+        try credentials.save(.init(serverURL: request.serverURL, username: "different-principal",
+            password: "other-secret", allowLocalHTTP: false))
+    }
+    let endpoint = scenario == "endpoint" ? "https://other.example.invalid" : request.serverURL
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: endpoint, canonicalUsername: "alice")))
+    #expect(downloads.authenticatedAdoptions.count == (scenario == "saved" ? 1 : 0))
+    #expect(downloads.unconfirmedReplacements.count == (["typed", "password", "endpoint"].contains(scenario) ? 1 : 0))
+    if scenario == "saved", let adoption = downloads.authenticatedAdoptions.first {
+        #expect(adoption.0.username == "Alice")
+        #expect(adoption.1.username == "alice")
+        #expect(adoption.0.password == request.password)
+        #expect(adoption.0.providerInstanceID == adoption.1.providerInstanceID)
+        #expect(try credentials.load()?.username == "alice")
+        store.accountUsername = "Alice"
+        store.submitAccountConnection()
+        connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL, canonicalUsername: "Alice")))
+        #expect(downloads.authenticatedAdoptions.count == 1, "Typed alias is not saved-credential authentication")
+        #expect(downloads.unconfirmedReplacements.count == 1)
+        #expect(downloads.unconfirmedReplacements.first?.0.username == "alice")
+        #expect(downloads.unconfirmedReplacements.first?.1.username == "Alice")
+        #expect(try credentials.load()?.username == "Alice")
+    }
+    if scenario == "superseded" { #expect(try credentials.load()?.username == "different-principal") }
+}
+
 @Test("Saved credentials reconnect without a tap") @MainActor
 func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     let persisted = DulcetAccountConnectRequest(
@@ -1774,6 +1836,9 @@ func aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect() {
     #expect(!downloads.configuredBeforeStatusHandler,
             "a state the reconciliation publishes must reach the presentation")
     #expect(connector.requests.count == 1, "downloads reconcile while the saved account reconnects")
+    #expect(!downloads.automaticContactPermitted, "Saved recovery must not permit new automatic library requests")
+    connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music", normalizedServerURL: "http://127.0.0.1:4533")))
+    #expect(downloads.automaticContactPermitted, "A successful negotiation permits newly automatic members")
 }
 
 /// Saved playback knows the local account while network playback remains unconfigured.
@@ -2139,7 +2204,29 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
 }
 
 @MainActor
-private final class ControlledDownloadController: DulcetDownloadControlling {
+private final class ControlledDownloadController: DulcetDownloadControlling, DulcetOfflineLibraryControlling {
+    private(set) var authenticatedAdoptions: [(DulcetPlaybackAccount, DulcetPlaybackAccount)] = []
+    private(set) var unconfirmedReplacements: [(DulcetPlaybackAccount, DulcetPlaybackAccount)] = []
+    func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {
+        unconfirmedReplacements.append((previous, confirmed))
+    }
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        first.providerInstanceID == second.providerInstanceID && first.normalizedServerURL == second.normalizedServerURL
+    }
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool {
+        guard previous.providerInstanceID == confirmed.providerInstanceID,
+            previous.normalizedServerURL == confirmed.normalizedServerURL else { return false }
+        authenticatedAdoptions.append((previous, confirmed))
+        return true
+    }
+    private(set) var automaticContactPermitted = false
+    func setAutomaticDownloadContactPermitted(_ permitted: Bool) { automaticContactPermitted = permitted }
+    var offlineLibraryStorage = DulcetOfflineLibraryStorage(automaticDownloadsEnabled: true,
+        downloadBytes: 123, cacheBytes: 456, artworkBytes: 12)
+    private(set) var clearCacheCount = 0
+    func setAutomaticDownloadsEnabled(_ enabled: Bool) { offlineLibraryStorage.automaticDownloadsEnabled = enabled }
+    func setStreamingCacheBudgetBytes(_ bytes: Int64) { offlineLibraryStorage.cacheBudgetBytes = bytes }
+    func clearStreamingCache() { clearCacheCount += 1; offlineLibraryStorage.cacheBytes = 0 }
     var downloadsEnabled = true
     private var handler: (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
     private(set) var configuredAccount: DulcetPlaybackAccount?
@@ -2163,6 +2250,7 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
     }
 
     func configure(account: DulcetPlaybackAccount) {
+        automaticContactPermitted = false
         if handler == nil { configuredBeforeStatusHandler = true }
         configuredAccount = account
     }
@@ -2208,6 +2296,26 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
     func publish(_ state: DulcetDownloadState, for id: DulcetProviderItemID) {
         handler?(id, state)
     }
+}
+
+@Test @MainActor
+func offlineStorageControlsReachTheSameAccountDownloadController() {
+    let downloads = ControlledDownloadController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(), downloadController: downloads))
+    #expect(store.offlineLibraryStorage?.downloadBytes == 123)
+    #expect(store.offlineLibraryStorage?.artworkBytes == 12)
+    store.setAutomaticDownloadsEnabled(false)
+    let budget: Int64 = 256 * 1_024 * 1_024
+    store.setStreamingCacheBudgetBytes(budget)
+    store.clearStreamingCache()
+    #expect(store.offlineLibraryStorage?.automaticDownloadsEnabled == false)
+    #expect(store.offlineLibraryStorage?.cacheBudgetBytes == budget)
+    #expect(store.offlineLibraryStorage?.cacheBytes == 0)
+    #expect(store.offlineLibraryStorage?.downloadBytes == 123)
+    #expect(downloads.clearCacheCount == 1)
+    downloads.downloadsEnabled = false
+    #expect(store.offlineLibraryStorage == nil, "A shell without offline storage does not expose its controls")
 }
 
 @MainActor

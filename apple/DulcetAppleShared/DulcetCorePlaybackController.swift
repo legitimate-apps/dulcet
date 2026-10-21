@@ -3,6 +3,7 @@ import DulcetKit
 import Foundation
 
 protocol DulcetCorePlaybackEngine: DulcetApplePlaybackEngine {
+    func stopForAccountChange()
     func setRemoteCommandRouter(_ router: (any DulcetRemotePlaybackCommandRouting)?)
     @discardableResult
     func updateRemoteCommandCapabilities(
@@ -72,13 +73,23 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// busy server's own `Retry-After` is honoured rather than re-attacked (spec §12.2, §12.8).
     private var preloadSuppressedUntil: ContinuousClock.Instant?
     private var currentPlanIsTranscoded = false
+    /// Only actual progress from this remote attempt can establish that the server returned.
+    private var currentRemoteAttemptID: String?
     private let clock = ContinuousClock()
     /// Every preload lifecycle step, in order, for tests and diagnostics. Content-free.
     private(set) var preloadLog: [String] = []
-    private var wireClient: ApplePlaybackWireClient?
+    private var wireSource: DulcetCorePlaybackWireSource?
+    private var wireAccessEnabled = false
+    private var wireClient: ApplePlaybackWireClient? {
+        wireAccessEnabled ? wireSource?.select()?.client : nil
+    }
+    private var serverAvailable = true
+    private var networkAvailable = true
     private var resolveOperation: (any ApplePlaybackWireOperation)?
     private var account: PlaybackEndpointAccount?
     private var presentationAccount: DulcetPlaybackAccount?
+    /// tvOS has no download owner; retain only aliases authenticated during this playback binding.
+    private var authenticatedUsernameAliases: Set<String> = []
     private var catalog: [DulcetProviderItemID: DulcetTrack] = [:]
     private var progressingSessions: Set<String> = []
     private var restoredPausedSessions: Set<String> = []
@@ -86,6 +97,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         (@MainActor (DulcetPlaybackPresentation) -> Void)?
     private var activeDirectiveIdentity: String?
     private var pendingStarts: [String: PendingStart] = [:]
+    /// Fences event/completion tasks already dispatched by a retired account's engine work.
+    private var mediaBindingGeneration: UInt64 = 0
     private lazy var remoteBridge = DulcetCoreRemoteCommandBridge { [weak self] command in
         self?.handleRemoteCommand(command) == true
     }
@@ -142,12 +155,88 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         catalog = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
         self.downloadController = downloadController
         self.artworkFetcher = artworkFetcher
+        installEngineListener()
+        engine.setRemoteCommandRouter(remoteBridge)
+        downloadController?.setMediaBindingWillChangeHandler { [weak self] nextAccount in
+            guard let self, !hasSameMediaBinding(as: nextAccount) else { return }
+            invalidatePlaybackForMediaBindingChange()
+        }
+        downloadController?.setMediaBindingWillBeReplacedHandler { [weak self] in
+            self?.invalidatePlaybackForMediaBindingChange()
+        }
+    }
+
+    private func installEngineListener() {
+        let generation = mediaBindingGeneration
         engine.setEventListener { [weak self] event in
             Task { @MainActor [weak self] in
-                self?.receiveEngineEvent(event)
+                guard let self, generation == mediaBindingGeneration else { return }
+                receiveEngineEvent(event)
             }
         }
-        engine.setRemoteCommandRouter(remoteBridge)
+    }
+
+    private func hasSameMediaBinding(as next: DulcetPlaybackAccount) -> Bool {
+        guard let account else { return false }
+        let identity = MediaBindingIdentity.shared
+        if identity.sameBinding(
+            firstProviderInstanceId: account.providerInstanceId,
+            firstNormalizedBaseUrl: account.normalizedBaseUrl,
+            firstUsername: account.username,
+            secondProviderInstanceId: next.providerInstanceID,
+            secondNormalizedBaseUrl: next.normalizedServerURL,
+            secondUsername: next.username
+        ) { return true }
+        if let presentationAccount, let downloadController {
+            return downloadController.isSameMediaBinding(first: presentationAccount, second: next)
+        }
+        return downloadController == nil && account.providerInstanceId == next.providerInstanceID &&
+            authenticatedUsernameAliases.contains(account.username) &&
+            authenticatedUsernameAliases.contains(next.username) &&
+            identity.canonicalServerUrl(normalizedBaseUrl: account.normalizedBaseUrl) ==
+                identity.canonicalServerUrl(normalizedBaseUrl: next.normalizedServerURL)
+    }
+
+    /// Must finish in the caller's MainActor turn, before the download adapter opens a new
+    /// binding. Cancelled callbacks may still arrive; their generation cannot prepare old media.
+    private func invalidatePlaybackForMediaBindingChange() {
+        mediaBindingGeneration &+= 1
+        engine.setEventListener(nil)
+        resolveOperation?.cancel()
+        resolveOperation = nil
+        abandonPreload(reason: "media-binding")
+        cancelArtwork()
+        autoplayOperation?.cancel()
+        autoplayOperation = nil
+        pendingStarts = [:]
+        activeDirectiveIdentity = nil
+        currentRemoteAttemptID = nil
+        let session = queueClient.snapshot().snapshot?.currentSession
+        wireSource?.revoke()
+        engine.stopForAccountChange()
+        // The retired listener is deliberately fenced. Retire the core session synchronously
+        // too, rather than leaving an old Progressing session behind the new delivery binding.
+        if let session {
+            _ = queueClient.recordSkipped(attemptId: session.attemptId,
+                positionMilliseconds: max(0, session.positionMilliseconds), reason: "user")
+        }
+        wireSource = nil
+        wireAccessEnabled = false
+        account = nil
+        presentationAccount = nil
+        authenticatedUsernameAliases = []
+        catalog = [:]
+        progressingSessions = []
+        restoredPausedSessions = []
+        preloadSuppressedUntil = nil
+        sentCrossfade = nil
+        skipNotice = nil
+        _ = queueClient.setStopPoint(stopPoint: nil)
+        cancelSleepTimer()
+        refreshQueueAvailability()
+        currentPresentation = .unavailable
+        emitPresentation()
+        installEngineListener()
     }
 
     /// The device's streaming-quality setting (spec §12.5). Each resolve reads it; a change drops
@@ -221,17 +310,60 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         configure(account: presentationAccount, allowsServerAccess: false)
     }
 
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        let identity = MediaBindingIdentity.shared
+        return identity.isValidBinding(providerInstanceId: first.providerInstanceID,
+            normalizedBaseUrl: first.normalizedServerURL, username: first.username) &&
+            identity.isValidBinding(providerInstanceId: second.providerInstanceID,
+            normalizedBaseUrl: second.normalizedServerURL, username: second.username) &&
+            first.providerInstanceID == second.providerInstanceID &&
+            identity.canonicalServerUrl(normalizedBaseUrl: first.normalizedServerURL) ==
+                identity.canonicalServerUrl(normalizedBaseUrl: second.normalizedServerURL)
+    }
+
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) -> Bool {
+        guard hasSameMediaOrigin(first: previous, second: confirmed),
+            hasSameMediaBinding(as: previous), let current = account
+        else { return false }
+        let confirmedAccount = PlaybackEndpointAccount(providerInstanceId: confirmed.providerInstanceID,
+            normalizedBaseUrl: confirmed.normalizedServerURL, username: confirmed.username,
+            password: confirmed.password, allowLocalHttp: confirmed.allowLocalHTTP)
+        if let wireSource,
+           !wireSource.adoptAuthenticatedAccount(previous: current, confirmed: confirmedAccount) { return false }
+        account = confirmedAccount
+        presentationAccount = confirmed
+        authenticatedUsernameAliases.formUnion([previous.username, confirmed.username])
+        return true
+    }
+
     private func configure(account presentationAccount: DulcetPlaybackAccount, allowsServerAccess: Bool) {
+        guard MediaBindingIdentity.shared.isValidBinding(
+            providerInstanceId: presentationAccount.providerInstanceID,
+            normalizedBaseUrl: presentationAccount.normalizedServerURL,
+            username: presentationAccount.username
+        ) else { return }
+        let sameBinding = hasSameMediaBinding(as: presentationAccount)
+        if account != nil, !sameBinding {
+            invalidatePlaybackForMediaBindingChange()
+        }
         resolveOperation?.cancel()
         resolveOperation = nil
-        if let preload { discardPreload(preload, reason: "configure", startsHeldEnd: false) }
+        // An installed representation belongs to the unchanged media binding, not a password.
+        // Only an unresolved candidate needs the refreshed credentials for a new resolve.
+        if let preload, !sameBinding || !preload.inEngine {
+            discardPreload(preload, reason: "configure", startsHeldEnd: false)
+        }
         cancelArtwork()
         preloadSuppressedUntil = nil
-        wireClient?.close()
-        catalog = [:]
-        progressingSessions = []
-        restoredPausedSessions = []
-        pendingStarts = [:]
+        if !sameBinding {
+            wireSource?.revoke()
+            wireSource = nil
+            catalog = [:]
+            progressingSessions = []
+            restoredPausedSessions = []
+            pendingStarts = [:]
+            currentRemoteAttemptID = nil
+        }
         activeDirectiveIdentity = nil
         // A notice names a track of the account's queue, so reaching another server withdraws it
         // (§12.12 rule 5). Configuring the same server again keeps it.
@@ -250,13 +382,23 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             password: presentationAccount.password,
             allowLocalHttp: presentationAccount.allowLocalHTTP
         )
+        if sameBinding, let account, account.username != coreAccount.username {
+            _ = wireSource?.adoptAuthenticatedAccount(previous: account, confirmed: coreAccount)
+        }
         account = coreAccount
         self.presentationAccount = presentationAccount
+        if !sameBinding { authenticatedUsernameAliases = [presentationAccount.username] }
+        serverAvailable = allowsServerAccess
         if allowsServerAccess {
-            wireClient = ApplePlaybackWireClient(account: coreAccount)
+            // Installed resources share this source and select refreshed credentials on their
+            // next open; an in-flight authorization retains its previous selection.
+            if wireSource?.replace(account: coreAccount) != true {
+                wireSource = DulcetCorePlaybackWireSource(account: coreAccount)
+            }
+            wireAccessEnabled = true
             _ = queueClient.configureDelivery(account: coreAccount)
         } else {
-            wireClient = nil
+            wireAccessEnabled = false
             // Local audio is safe only once submitted plays have a durable destination.
             // Disconnect also stops an existing item and clears the configured account.
             guard configureOfflineDelivery().configured else {
@@ -266,9 +408,37 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         }
         autoplayOperation?.cancel()
         autoplayOperation = nil
-        sentCrossfade = nil
+        if !sameBinding { sentCrossfade = nil }
+        refreshQueueAvailability()
         applyListeningPreference(publishing: false)
         publish(queueClient.snapshot())
+    }
+
+    func setNetworkAvailable(_ available: Bool) {
+        networkAvailable = available
+        refreshQueueAvailability()
+    }
+    func setServerAvailable(_ available: Bool) {
+        serverAvailable = available
+        refreshQueueAvailability()
+    }
+
+    private func refreshQueueAvailability() {
+        // Without local playback, a connection failure keeps the existing Retry/Skip behavior.
+        // With it, passive continuation considers only local files while the server is absent.
+        queueClient.setNetworkAvailable(available:
+            networkAvailable && (serverAvailable || downloadController == nil) && wireClient != nil)
+    }
+
+    private func cacheWrapper(for track: DulcetTrack) -> (@MainActor (any DulcetPlaybackResourceLoading, DulcetAudioContainer) -> any DulcetPlaybackResourceLoading)? {
+        #if os(macOS) || os(iOS)
+        guard let downloads = downloadController as? DulcetCoreDownloadController else { return nil }
+        return { [weak downloads] resource, container in
+            downloads?.cachingResource(resource, track: track, expectedContainer: container) ?? resource
+        }
+        #else
+        return nil
+        #endif
     }
 
     func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {
@@ -458,11 +628,17 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// try again.
     private func retryCurrentEntry() {
         guard account != nil else { return }
-        let transition = queueClient.retryCurrent()
+        // Authorize only this deliberate probe. A cached retry says nothing about whether the
+        // server returned, so passive continuation retains its observed availability throughout.
+        // Saved/device-only accounts have no wire; OS-offline devices cannot authorize a probe.
+        let permitsRemoteProbe = networkAvailable && wireClient != nil
+        let transition = permitsRemoteProbe
+            ? queueClient.retryCurrentAllowingUnavailableCurrent()
+            : queueClient.retryCurrent()
         guard transition.errorKind == nil else { return publishFailure() }
         guard transition.startDirective != nil else { return }
         publishPreparing()
-        start(transition.startDirective)
+        start(transition.startDirective, allowsUnavailableServerProbe: permitsRemoteProbe)
     }
 
     /// Play after a stop: the selected entry again, as a new session (spec §12.1), resuming where
@@ -586,39 +762,15 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     func disconnect() {
-        resolveOperation?.cancel()
-        resolveOperation = nil
-        if let preload { discardPreload(preload, reason: "disconnect", startsHeldEnd: false) }
-        cancelArtwork()
-        presentationAccount = nil
-        wireClient?.close()
-        wireClient = nil
-        account = nil
-        catalog = [:]
-        progressingSessions = []
-        restoredPausedSessions = []
-        activeDirectiveIdentity = nil
-        pendingStarts = [:]
-        autoplayOperation?.cancel()
-        autoplayOperation = nil
-        sentCrossfade = nil
-        // The core's stop point outlives this controller's account: left set, the next session
-        // would stop at its first track's end with no timer shown.
-        _ = queueClient.setStopPoint(stopPoint: nil)
-        cancelSleepTimer()
-        execute(.stop(commandID: commandID("disconnect")))
-        // A notice names a track of the queue just left, so it goes with it: signing out must not
-        // show the previous account's track. Reaching another server withdraws it in `configure`.
-        skipNotice = nil
-        currentPresentation = .unavailable
-        emitPresentation()
+        invalidatePlaybackForMediaBindingChange()
     }
 
-    private func start(_ directive: ApplePlaybackStartDirectiveDto?) {
+    private func start(_ directive: ApplePlaybackStartDirectiveDto?, allowsUnavailableServerProbe: Bool = false) {
         guard let directive else {
             publish(queueClient.snapshot())
             return
         }
+        currentRemoteAttemptID = nil
         // Every start below issues a stop, and the engine's stop removes its preloaded item too;
         // the core discarded its registration when it began this session.
         abandonPreload(reason: "start")
@@ -675,7 +827,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             }
             return
         }
-        guard let wireClient else {
+        guard networkAvailable,
+              serverAvailable || downloadController == nil || allowsUnavailableServerProbe,
+              let wireClient else {
+            // An invalid local file cannot turn passive continuation or an OS-offline retry
+            // into a new remote probe. Only this contact-authorized explicit retry may probe.
             // No connection to the server at all: that is never the item's own failure, so it
             // must not read as one and send the queue skipping (spec §12.12).
             recordStartFailure(attemptId: directive.attemptId, errorKind: "transport")
@@ -704,6 +860,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             legacyPreference: LegacyPlaybackPreference(format: nil, maxBitRateKbps: nil),
             legacyTimeOffset: nil
         ).withStreamingQuality(quality: nextStreamingQuality)
+        let wireSource = self.wireSource
         resolveOperation = wireClient.startResolve(request: request) { [weak self] outcome in
             Task { @MainActor [weak self] in
                 guard let self,
@@ -715,12 +872,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     // the identity check above already drops it; this keeps that true should a
                     // withdrawal ever arrive for a directive that is still current.
                     guard outcome.errorKind != "cancelled" else { return }
+                    if outcome.errorKind == "transport" || outcome.errorKind == "tlsUntrusted" { self.setServerAvailable(false) }
                     self.recordStartFailure(
                         attemptId: directive.attemptId,
                         errorKind: Self.closedFailureKind(outcome.errorKind)
                     )
                     return
                 }
+                self.currentRemoteAttemptID = directive.attemptId
                 self.currentPlanIsTranscoded = corePlan.isTranscoded
                 let plan = DulcetCorePlaybackPlanFactory.makePlan(
                     client: wireClient,
@@ -729,7 +888,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                         title: track.title,
                         artist: track.artistNames.joined(separator: ", "),
                         albumTitle: track.albumTitle
-                    )
+                    ),
+                    retaining: wireSource,
+                    wrapResource: self.cacheWrapper(for: track)
                 )
                 self.execute(.stop(commandID: self.commandID("replace"))) { [weak self] _ in
                     self?.prepare(plan)
@@ -751,9 +912,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         _ command: DulcetPlaybackCommand,
         completion: (@MainActor (DulcetPlaybackCommandOutcome) -> Void)? = nil
     ) {
-        engine.execute(command) { outcome in
+        let generation = mediaBindingGeneration
+        engine.execute(command) { [weak self] outcome in
             guard let completion else { return }
-            Task { @MainActor in completion(outcome) }
+            Task { @MainActor [weak self] in
+                guard let self, generation == mediaBindingGeneration else { return }
+                completion(outcome)
+            }
         }
     }
 
@@ -761,6 +926,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         if let preload, event.attemptID.rawValue == preload.attemptID,
            handlePreloadedAttemptEvent(event, preload: preload) {
             return
+        }
+        if queueClient.snapshot().snapshot?.currentSession?.attemptId == event.attemptID.rawValue {
+            switch event {
+            case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error):
+                if error == .transport || error == .tlsUntrusted { setServerAvailable(false) }
+            default: break
+            }
         }
         var holdingForPreload = false
         if case let .endedNaturally(attemptID, _) = event,
@@ -785,12 +957,19 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         if case let .advancedToPreloaded(_, newAttemptID) = event,
            preload?.attemptID == newAttemptID.rawValue {
             preloadLog.append("advanced")
+            currentRemoteAttemptID = preload?.corePlan == nil ? nil : newAttemptID.rawValue
             currentPlanIsTranscoded = preload?.corePlan?.isTranscoded ?? false
             preload = nil
         }
         if case let .playbackProgressBegan(attemptID, _, _) = event,
            let session = transition.snapshot?.currentSession,
            session.attemptId == attemptID.rawValue {
+            // Resolution can merely construct a URL. Remote playback progress, unlike a local
+            // retry or a stale/preloaded event, demonstrates a successful current wire attempt.
+            if currentRemoteAttemptID == attemptID.rawValue, session.phase == "Progressing",
+               networkAvailable, wireClient != nil {
+                setServerAvailable(true)
+            }
             progressingSessions.insert(session.playbackSessionId)
             restoredPausedSessions.remove(session.playbackSessionId)
         }
@@ -863,6 +1042,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         guard autoplayOperation == nil, wireClient != nil, let account,
               let request = queueClient.takeAutoplayRequest() else { return }
         let key = request.key
+        let generation = mediaBindingGeneration
         autoplayOperation = autoplayClient.startCandidates(
             request: AppleLibraryBrowseRequest(
                 providerInstanceId: account.providerInstanceId,
@@ -876,9 +1056,15 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             count: request.count
         ) { [weak self] outcome in
             if Thread.isMainThread {
-                MainActor.assumeIsolated { self?.receiveAutoplay(key: key, outcome) }
+                MainActor.assumeIsolated {
+                    guard let self, generation == self.mediaBindingGeneration else { return }
+                    self.receiveAutoplay(key: key, outcome)
+                }
             } else {
-                DispatchQueue.main.async { self?.receiveAutoplay(key: key, outcome) }
+                DispatchQueue.main.async {
+                    guard let self, generation == self.mediaBindingGeneration else { return }
+                    self.receiveAutoplay(key: key, outcome)
+                }
             }
         }
     }
@@ -1064,6 +1250,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             legacyPreference: LegacyPlaybackPreference(format: nil, maxBitRateKbps: nil),
             legacyTimeOffset: nil
         ).withStreamingQuality(quality: nextStreamingQuality)
+        let wireSource = self.wireSource
         inFlight.resolve = wireClient.startResolve(request: request) { [weak self] outcome in
             Task { @MainActor [weak self] in
                 guard let self, let current = self.preload,
@@ -1086,7 +1273,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 self.deliverPreload(DulcetCorePlaybackPlanFactory.makePlan(
                     client: wireClient,
                     corePlan: corePlan,
-                    metadata: metadata
+                    metadata: metadata,
+                    retaining: wireSource,
+                    wrapResource: self.cacheWrapper(for: track)
                 ))
             }
         }
@@ -1165,6 +1354,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
               let presentationAccount,
               let reference = track.artwork.remoteReference,
               reference.serverID == presentationAccount.providerInstanceID else { return }
+        let generation = mediaBindingGeneration
         let operation = artworkFetcher.fetch(DulcetArtworkFetchRequest(
             reference: reference,
             sizeBucket: .pixels512,
@@ -1173,7 +1363,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             password: presentationAccount.password,
             allowLocalHTTP: presentationAccount.allowLocalHTTP
         )) { [weak self] outcome in
-            guard let self else { return }
+            guard let self, generation == mediaBindingGeneration else { return }
             self.artworkOperations[sessionID] = nil
             guard case let .loaded(data) = outcome else { return }
             self.engine.setNowPlayingArtwork(data, for: DulcetPlaybackSessionID(sessionID))

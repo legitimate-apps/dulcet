@@ -10,6 +10,8 @@ replays an earlier helper to prove that the controls reject incorrect cursor han
 The dismissal controls also replay captured iPad keyboard geometry, including a retained
 zero-height AX container and disappearance between live queries, while requiring a visible
 stuck keyboard or unavailable snapshot to fail.
+Focus controls require a fresh successful geometry callback before each actual tap, including a
+dropped tap or lost focus; a rejected callback must leave the credential and input events untouched.
 """
 import argparse
 from pathlib import Path
@@ -20,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PATH = "apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift"
 parser = argparse.ArgumentParser()
 parser.add_argument("--source-ref")
+parser.add_argument("--mutant", choices=["skip-focus-preflight", "prepare-only-once"])
 args = parser.parse_args()
 source = (subprocess.check_output(["git", "show", f"{args.source_ref}:{PATH}"],
                                   cwd=ROOT, text=True)
@@ -27,6 +30,14 @@ source = (subprocess.check_output(["git", "show", f"{args.source_ref}:{PATH}"],
 start = source.index("    private func replaceText(")
 end = source.index("\n    }", start) + len("\n    }")
 method = source[start:end].replace("private func", "func", 1)
+has_focus_preflight = "beforeFocusTap:" in method
+if args.mutant:
+    assert has_focus_preflight and "beforeFocusTap()" in method
+    if args.mutant == "skip-focus-preflight":
+        method = method.replace("beforeFocusTap()", "true")
+    else:
+        method = method.replace("        func focusForTyping(", "        var preflightWasCalled = false\n        func focusForTyping(")
+        method = method.replace("beforeFocusTap()", "({ if preflightWasCalled { return true }; preflightWasCalled = true; return beforeFocusTap() })()")
 
 collaborators = r'''
 import Foundation
@@ -62,6 +73,28 @@ final class XCUIElement {
     var insertions = 0
     var dropFocusOnNextValueRead = false
     var snapshotFailures = 0
+    var requiresPreparation = false
+    var preparedForFocus = false
+    var covered = false
+    var prepareCalls = 0
+    var focusTaps = 0
+    var ignoredFocusTaps = 0
+    var inputEvents = 0
+    func prepareFocus() -> Bool {
+        prepareCalls += 1
+        covered = false
+        preparedForFocus = true
+        return true
+    }
+    func recordFocusTap() -> Bool {
+        if requiresPreparation {
+            precondition(preparedForFocus && !covered, "Every actual focus tap needs a fresh successful geometry preflight")
+            preparedForFocus = false
+        }
+        focusTaps += 1
+        if ignoredFocusTaps > 0 { ignoredFocusTaps -= 1; return false }
+        return true
+    }
     struct Snapshot { let value: Any?; let placeholderValue: String? }
     enum SnapshotFailure: Error { case unavailable }
     func snapshot() throws -> Snapshot {
@@ -82,7 +115,7 @@ final class XCUIElement {
     }
     func value(forKey key: String) -> Any? { precondition(key == "hasKeyboardFocus"); return focused }
     func waitForExistence(timeout: Double) -> Bool { true }
-    func tap() { focused = true; cursor = text.count / 2 }
+    func tap() { focused = recordFocusTap(); cursor = text.count / 2 }
     @MainActor struct Coordinate {
         let field: XCUIElement
         let point: CGVector
@@ -90,7 +123,7 @@ final class XCUIElement {
             fatalError("This control exercises normal entry, not tour scrolling")
         }
         func tap() {
-            field.focused = true
+            field.focused = field.recordFocusTap()
             // The field shows 20 characters; a trailing-edge tap on wider text lands under the tap.
             field.cursor = point.dx > 0.9 ? min(field.text.count, 20) : field.text.count / 2
         }
@@ -107,6 +140,7 @@ final class XCUIElement {
         typeText(key.rawValue)
     }
     func typeText(_ input: String) {
+        inputEvents += 1
         precondition(focused)
         if input.contains(where: { $0 != "\u{7f}" }) {
             insertions += 1
@@ -180,9 +214,48 @@ struct Controls {
                          "A missing snapshot must not be mistaken for an empty field or send blind typing")
             print("\(name): PASS")
         }
+        __FOCUS_PREFLIGHT_CONTROLS__
     }
 }
 '''
+focus_controls = r'''
+        for (name, secure, photographed, droppedTap, lostFocus) in [
+            ("plain-every-focus-tap-prepared", false, false, false, false),
+            ("secure-lost-focus-reprepared", true, false, false, true),
+            ("dropped-focus-tap-reprepared", false, false, true, false),
+            ("photographed-focus-tap-prepared", false, true, false, false)
+        ] {
+            let field = XCUIElement(photographed ? "" : "previous-credential", secure: secure)
+            field.requiresPreparation = true
+            field.covered = true
+            field.ignoredFocusTaps = droppedTap ? 1 : 0
+            field.dropFocusOnNextValueRead = lostFocus
+            precondition(proof.replaceText(in: field, with: "canary", name: name, secure: secure,
+                photographing: photographed, beforeFocusTap: { field.prepareFocus() }), name)
+            precondition(field.text == "canary" && field.prepareCalls == field.focusTaps && field.focusTaps > 0)
+            precondition(field.hardwareEvents == 0)
+            if droppedTap || lostFocus { precondition(field.focusTaps >= 2) }
+            print("\(name): PASS")
+        }
+        let blocked = XCUIElement("keep-this-password", secure: true)
+        blocked.requiresPreparation = true
+        blocked.covered = true
+        var rejectedPreparations = 0
+        precondition(!proof.replaceText(in: blocked, with: "canary", name: "covered-password", secure: true,
+            beforeFocusTap: { rejectedPreparations += 1; return false }))
+        precondition(rejectedPreparations == 1 && blocked.focusTaps == 0 && blocked.inputEvents == 0 &&
+                     blocked.text == "keep-this-password" && !blocked.focused,
+                     "A rejected geometry preflight must prevent focus taps, deletion and insertion")
+        print("rejected-preflight-preserves-input: PASS")
+        blocked.dropFocusOnNextValueRead = true
+        precondition(proof.replaceText(in: blocked, with: "canary", name: "revealed-password", secure: true,
+            beforeFocusTap: { blocked.prepareFocus() }))
+        precondition(blocked.text == "canary" && blocked.prepareCalls == blocked.focusTaps && blocked.focusTaps >= 2 &&
+                     blocked.hardwareEvents == 0,
+                     "A later revealed field still requires reacquired focus and exact replacement")
+        print("later-reveal-retains-focus-and-readback: PASS")
+'''
+controls = controls.replace('__FOCUS_PREFLIGHT_CONTROLS__', focus_controls if has_focus_preflight else '')
 # Current source carries the application for tour-only geometry. Older --source-ref controls
 # retain their original signature; both execute the same credential replacement assertions.
 if "app: XCUIApplication" in method:

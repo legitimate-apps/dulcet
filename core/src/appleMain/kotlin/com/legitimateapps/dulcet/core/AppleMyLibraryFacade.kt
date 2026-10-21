@@ -58,6 +58,46 @@ public class AppleMyLibraryClient(private val reader: AppleLibraryReaderClient) 
             }
         }
 
+    /** Recomputes local playability after a download/cache or reachability change, without I/O. */
+    public fun refreshLocal() { reader.onSession { session -> publishAll(session) } }
+
+    /** Missing metadata only, selected by shared retention policy. Sequential reader requests
+     * use the normal epoch/cache/concurrency path; an offline reader sends nothing. */
+    public fun warmAutomaticDownloadDetails(albumIds: List<String>, trackIds: List<String>, playlistIds: List<String>,
+        loadPlaylistIndex: Boolean, completion: (AppleMyLibraryRefresh) -> Unit): AppleLibraryReaderOperation =
+        reader.operation(completion, failed = { AppleMyLibraryRefresh("unknown", "failed", it) }) { session ->
+            val library = session.reader
+            if (!library.online) return@operation AppleMyLibraryRefresh("unknown", "offline", null)
+            if (loadPlaylistIndex) library.rereadList(LibraryQuery.Playlists)
+            for ((index, id) in albumIds.distinct().withIndex()) {
+                if (!library.online) break
+                library.readAlbumDetail(id)
+                // Start the first resolved album at once, then publish bounded batches while a
+                // large collection warms. The executor need not wait for all its metadata.
+                if (index % 10 == 0) publishAll(session)
+            }
+            for (id in trackIds.distinct()) {
+                if (!library.online) break
+                try {
+                    val sent = library.send("getSong", mapOf("id" to id))
+                    sent.requireOk("getSong", mapOf("id" to id))
+                    parseLookupSong(sent.response.body, id)?.let { track ->
+                        library.cache.writeEntities(CacheWriteStamp(sent.issueSeq, library.cache.now(), null),
+                            CacheEntitySource.SongLookup, CacheEntities(tracks = listOf(track)))
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Throwable) { }
+            }
+            for (id in playlistIds.distinct()) {
+                if (!library.online) break
+                try { library.readPlaylistDetail(id, library.ensureEpoch()) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Throwable) { }
+            }
+            publishAll(session)
+            AppleMyLibraryRefresh(session.myLibrary.availability().appleKind(), "warmed", null)
+        }
+
     /** Adds an `artist`, `album` or `track`. False for any other kind, a blank id or a closed client. */
     public fun add(kind: String, rawId: String): Boolean = reader.changeInLibrary(kind, rawId, member = true)
 
@@ -81,7 +121,7 @@ public class AppleMyLibraryClient(private val reader: AppleLibraryReaderClient) 
 
     private fun publish(session: LibraryReaderSession, subscription: AppleMyLibrarySubscription) {
         val publication = try {
-            session.myLibrary.snapshot(subscription.sort).toApple(++sequence)
+            session.myLibrary.snapshot(subscription.sort).toApple(++sequence, session.reader)
         } catch (_: Throwable) {
             return
         }
@@ -196,6 +236,8 @@ public class AppleMyLibrarySong internal constructor(
     public val durationMilliseconds: Long,
     public val artworkKey: String?,
     public val pending: Boolean,
+    public val sourceContainer: String?,
+    public val playability: String?,
 )
 
 /**
@@ -235,7 +277,9 @@ internal fun MyLibrarySyncState.appleKind(): String = when (this) {
     MyLibrarySyncState.Failed -> "failed"
 }
 
-internal fun MyLibrarySnapshot.toApple(sequence: Int): AppleMyLibraryPublication = AppleMyLibraryPublication(
+internal fun MyLibrarySnapshot.toApple(sequence: Int, reader: LibraryReader? = null): AppleMyLibraryPublication {
+    val downloaded = reader?.downloads?.downloadedTrackRawIds(reader.cache.serverId).orEmpty()
+    return AppleMyLibraryPublication(
     sequence = sequence,
     availability = availability.appleKind(),
     syncState = syncState.appleKind(),
@@ -254,8 +298,10 @@ internal fun MyLibrarySnapshot.toApple(sequence: Int): AppleMyLibraryPublication
     songs = if (availability == MyLibraryAvailability.Unavailable) emptyList() else songs.map { song ->
         AppleMyLibrarySong(
             song.record.rawId, song.record.title, song.record.albumRawId, song.record.albumTitle,
-            song.record.credits.firstOrNull()?.name, song.record.durationMilliseconds ?: -1L, song.record.artworkKey, song.pending,
+            song.record.credits.firstOrNull()?.name, song.record.durationMilliseconds ?: -1L, song.record.artworkKey, song.pending, song.record.sourceContainer?.appleKind(),
+            reader?.trackPlayability(song.record.rawId, downloaded)?.appleKind(),
         )
     },
     snapshot = this,
 )
+}

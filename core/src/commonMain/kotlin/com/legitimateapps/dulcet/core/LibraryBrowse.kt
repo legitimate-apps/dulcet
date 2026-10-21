@@ -913,6 +913,7 @@ internal fun parseLookupSong(body: String, rawId: String): CacheTrackRecord? {
         trackNumber = song.int("track"),
         durationMilliseconds = tolerant { song.optionalDuration() }?.inWholeMilliseconds,
         sourceContainer = tolerant { song.libraryAudioContainer() },
+        sourceSizeBytes = song.long("size")?.takeIf { it >= 0 },
         artworkKey = lenientId("coverArt"),
         userState = tolerant { song.readerUserState(withPlays = true) } ?: CacheUserState(),
     )
@@ -978,6 +979,7 @@ private fun JsonObject.readerTrack(albumRawId: String?): CacheTrackRecord = Cach
     trackNumber = int("track"),
     durationMilliseconds = optionalDuration()?.inWholeMilliseconds,
     sourceContainer = libraryAudioContainer(),
+    sourceSizeBytes = long("size")?.takeIf { it >= 0 },
     artworkKey = optionalOpaqueId("coverArt"),
     userState = readerUserState(withPlays = true),
 )

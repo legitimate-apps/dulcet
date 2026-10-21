@@ -2721,6 +2721,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMacDownloadRowAppTest/aRowsDownloadButtonDownloadsTheTrackAndTheRowFollowsItThroughTheHostedMacApp"
+            },
+            {
+              "observes": "OBSERVED in the Mac binding-handoff regression: a real local AVPlayer item advances with an incoming cache item prepared. Genuine URL/username changes synchronously empty both players while their files still exist, then purge them. Password-only, equivalent-URL and invalid replacement candidates preserve installed items and bytes. A saved Alice account authenticated with its exact saved credentials and a controlled server-confirmed alice spelling retains its explicit payload, prepared cache item and provider instance. Subsequently typing Alice without that proof retires both items before unlink and purges both files. Shared-core controls separately preserve explicit bytes for equivalent legacy URL spellings, including percent-triplet hex case; this native fixture does not exercise every URL spelling.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
             }
           ],
           "reason": "The Mac app offers Download beside every track row the reader lists and in the row's menu, and shows where each download stands: a progress indicator while it runs, Retry Download after a failure, a downloaded or update-available mark, each also the row's accessibility value. Before 2026-10-07 the reader's rows, which are the Mac's library, offered no Download at all. Downloads run through the shared Apple controller's background URLSession, the app prefers a downloaded track's local playback plan, and the session is reconciled at launch before anything else touches downloads, a launch into a saved account included (before 2026-10-07 a launch into a saved account configured no downloads until Reconnect, so a finished background download was not reconciled; DulcetKit's aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect fails without the fix). The reader's library marks a track playable offline from the account's complete and stale downloads, as Android's does (core host test DownloadPolicyTest.theReadersDownloadSourceIsTheServersCompleteAndStaleDownloads). CONF-51 and CONF-52 run the platform controller against the disposable server: validated atomic promotion, and byte-identical local playback after the network clients close. The killed-process handoff runs with real processes (DulcetMacDownloadHandoffAppTest): the hosted test launches a copy of the app under a bundle identifier of the run's own, the fault proxy holds the download's stream read so the download is outstanding at the server while the app's session reports it running, the app is killed with SIGKILL and the read is still unanswered after it is gone, the read is released and answered once with no app process alive, and a replacement process reconciles the secured artifact into the durable downloaded row: the same download, the server's byte count and SHA-256 read back with the row, and no second fetch. OBSERVED in the Mac proof's configuration (an unsandboxed, ad-hoc-signed app copy under a separate bundle identifier, launched by NSWorkspace with activates=false): macOS did not relaunch that killed copy for its background session within the 60 s watch; a separate measurement watched for 120 s. The system finished the transfer while the app was not running and the next harness launch reconciled it. Unattended relaunch in the sandboxed distribution app remains ASSUMED; this proof does not establish a general macOS relaunch rule (spec \u00a728, 2026-10-07; docs/download-background-blockers.md). The row's Download is driven through the Mac app hosted over the production root view (DulcetMacDownloadRowAppTest), with the device's downloads recorded in place of the session: a click on the button drawn beside the row asks for that track by the server's id, and the control and the row's accessibility value follow the download through Downloading, Retry Download (whose click asks again) and Downloaded. The button used to be read with the row's label, so VoiceOver heard the track's name for it; that proof fails without the fix. Not covered on the Mac: a downloaded track played from the reader's library with the server unreachable, through the UI."
@@ -2751,6 +2757,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testASearchResultsMenuDownloadsTheTrackOnIPhone"
+            },
+            {
+              "observes": "The iPhone binding-handoff regression requires: a real local AVPlayer item advances with an incoming cache item prepared. Genuine URL/username changes synchronously empty both players while their files still exist, then purge them. Password-only, equivalent-URL and invalid replacement candidates preserve installed items and bytes. A saved Alice account authenticated with its exact saved credentials and a controlled server-confirmed alice spelling retains its explicit payload, prepared cache item and provider instance. Subsequently typing Alice without that proof retires both items before unlink and purges both files. Shared-core controls separately preserve explicit bytes for equivalent legacy URL spellings, including percent-triplet hex case; this native fixture does not exercise every URL spelling.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
             }
           ],
           "reason": "The iPhone app offers Download, and Retry Download after a failure, in a track row's menu wherever the reader lists the track, and in a track search result's menu; the row shows where its download stands with a mark and says it in its accessibility value (Downloading, Downloaded, Download Failed, Downloaded \u2014 Update Available). Before 2026-10-07 the iOS shell offered no Download anywhere. Downloads run through the shared Apple controller's background URLSession, the app prefers a downloaded track's local playback plan, and the session is reconciled at launch before anything else touches downloads, a launch into a saved account included (before 2026-10-07 a launch into a saved account configured no downloads until Reconnect, so a finished background download was not reconciled; DulcetKit's aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect fails without the fix). The reader's library marks a track playable offline from the account's complete and stale downloads, as Android's does (core host test DownloadPolicyTest.theReadersDownloadSourceIsTheServersCompleteAndStaleDownloads). CONF-51 and CONF-52 run the platform controller against the disposable server: validated atomic promotion, and byte-identical local playback after the network clients close. The killed-process handoff is driven through the app on the iPhone simulator (testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPhone): the row menu's Download starts the download, the fault proxy holds its stream read so it is outstanding at the server while the session reports it running, the app ends itself with exit(), which the system does not treat as a force quit, and the read is still unanswered after the process is gone; it is released and answered once with no app process alive. The system then launches the app in the background for the session's events, asserted on its own: a launch no harness made, and the scene's background URLSession task run. A replacement process promotes the secured artifact into the durable downloaded row: the same download, the server's byte count and SHA-256 read back with the row, and no second fetch; the reopened album shows the row Downloaded. A track search result's menu downloads the result's own track, the server's bytes read back with the durable row (testASearchResultsMenuDownloadsTheTrackOnIPhone).  ASSUMED: a real device's memory-pressure termination relaunches the app as the simulator's exit() does. Apple describes the relaunch for an app the system terminated, and a force quit, which is what simctl terminate and the app switcher are, cancels the session's tasks instead (docs/download-background-blockers.md)."
@@ -2775,6 +2787,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPadOS"
+            },
+            {
+              "observes": "The iPad binding-handoff regression requires: a real local AVPlayer item advances with an incoming cache item prepared. Genuine URL/username changes synchronously empty both players while their files still exist, then purge them. Password-only, equivalent-URL and invalid replacement candidates preserve installed items and bytes. A saved Alice account authenticated with its exact saved credentials and a controlled server-confirmed alice spelling retains its explicit payload, prepared cache item and provider instance. Subsequently typing Alice without that proof retires both items before unlink and purges both files. Shared-core controls separately preserve explicit bytes for equivalent legacy URL spellings, including percent-triplet hex case; this native fixture does not exercise every URL spelling.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
             }
           ],
           "reason": "The iPad app offers Download, and Retry Download after a failure, in a track row's menu wherever the reader lists the track, and in a track search result's menu; the row shows where its download stands with a mark and says it in its accessibility value (Downloading, Downloaded, Download Failed, Downloaded \u2014 Update Available). Before 2026-10-07 the iOS shell offered no Download anywhere. Downloads run through the shared Apple controller's background URLSession, the app prefers a downloaded track's local playback plan, and the session is reconciled at launch before anything else touches downloads, a launch into a saved account included (before 2026-10-07 a launch into a saved account configured no downloads until Reconnect, so a finished background download was not reconciled; DulcetKit's aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect fails without the fix). The reader's library marks a track playable offline from the account's complete and stale downloads, as Android's does (core host test DownloadPolicyTest.theReadersDownloadSourceIsTheServersCompleteAndStaleDownloads). CONF-51 and CONF-52 run the platform controller against the disposable server: validated atomic promotion, and byte-identical local playback after the network clients close. The killed-process handoff is driven through the app on the iPad simulator (testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPadOS): the row menu's Download starts the download, the fault proxy holds its stream read so it is outstanding at the server while the session reports it running, the app ends itself with exit(), which the system does not treat as a force quit, and the read is still unanswered after the process is gone; it is released and answered once with no app process alive. The system then launches the app in the background for the session's events, asserted on its own: a launch no harness made, and the scene's background URLSession task run. A replacement process promotes the secured artifact into the durable downloaded row: the same download, the server's byte count and SHA-256 read back with the row, and no second fetch; the reopened album shows the row Downloaded. The proof fails on an iPhone, so iPhone evidence does not stand for the iPad; the search result's Download is the same view on both and is driven on the iPhone only.  ASSUMED: a real device's memory-pressure termination relaunches the app as the simulator's exit() does. Apple describes the relaunch for an app the system terminated, and a force quit, which is what simctl terminate and the app switcher are, cancels the session's tasks instead (docs/download-background-blockers.md)."
@@ -2803,6 +2821,12 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "DownloadExecutorTest/signingOutCancelsTheAccountsTasksAndDeletesItsDownloads"
+            },
+            {
+              "observes": "OBSERVED on the phone app's host runtime: a real WorkManager explicit download survives reconnecting with the exact saved credentials when the controlled authenticated result confirms a different username spelling; the provider instance, local plan and identical bytes remain, with one audio fetch. Separate account-entry controls keep typed different usernames isolated. Authentication's result is controlled; native playback is covered separately.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "DownloadExecutorTest/authenticatedSavedUsernameSpellingKeepsLegacyExplicitBytesAndLocalPlaybackPlan"
             },
             {
               "observes": "a downloaded track's row shows the downloaded marker and its menu offers Remove download, which removes it",
@@ -2845,9 +2869,15 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable"
+            },
+            {
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable",
+              "observes": "OBSERVED on the Android phone emulator: a real WorkManager explicit download survives the production saved-account reconnect with an exact saved request and controlled authenticated canonical username; the provider instance, local plan and bytes remain. The server relay is then cut and production Media3 advances from the identical file with zero server requests and zero newly forwarded server bytes. Account removal leaves zero files and unfinished tasks. Only the authentication result is controlled; storage, credential persistence and native playback are real."
             }
           ],
-          "reason": "The phone app downloads an album or a track and removes a download from the album page, shows a downloaded marker and progress, plays a downloaded song from its file through the validating data source (a local plan is asked for before any server read), keeps downloads across process death through WorkManager and the core's relaunch reconciliation, and deletes an account's tasks and files at sign-out. OBSERVED on host runtimes only: Robolectric runs of the executor over a real test WorkManager and a loopback server, of the controls, and \u2014 in core's Android host tests, which core-ci runs but does not upload \u2014 of validated atomic promotion, an HTTP 200 error envelope rejected, short and grown files refused, and a downloaded file read identically through the data source after the controller's network clients close. The emulator proofs of CONF-51 and CONF-52 against the disposable server executed and passed on an API 34 phone emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656, before a download read its track's metadata (that the proofs still pass with that one getSong added is ASSUMED until core-ci runs them). Downloads request the original file with format=raw, validation reads a bounded prefix plus the on-disk length, and a transfer stopped mid-body resumes with a Range request (host tests only, including a changed file restarting from zero) \u2014 after a relaunch too: a partial file kept by a connection failure survives relaunch reconciliation and the retry asks only for the rest (DownloadRelaunchResumeTest). A track downloaded by its id alone has its metadata read with getSong before its transfer and kept pinned \u2014 best effort: a refused, failed or unreadable lookup never stops the transfer or deletes a kept partial file (core host tests only) \u2014 and the player names a downloaded song from it with no request, so a restored entry is titled offline (DownloadedTitleOfflineTest, on the phone's own Now Playing). Both were reproduced on main by these tests before the fix and fail again with it undone. Not covered: \u00a716.13 also pins the downloaded track's album with credits and its artwork; Android pins the track row only, which carries the album title and artwork key."
+          "reason": "The phone app downloads an album or a track and removes a download from the album page, shows a downloaded marker and progress, plays a downloaded song from its file through the validating data source (a local plan is asked for before any server read), keeps downloads across process death through WorkManager and the core's relaunch reconciliation, and deletes an account's tasks and files at sign-out. OBSERVED on host runtimes only: Robolectric runs of the executor over a real test WorkManager and a loopback server, of the controls, and \u2014 in core's Android host tests, which core-ci runs but does not upload \u2014 of validated atomic promotion, an HTTP 200 error envelope rejected, short and grown files refused, and a downloaded file read identically through the data source after the controller's network clients close. The emulator proofs of CONF-51 and CONF-52 against the disposable server executed and passed on an API 34 phone emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656, with a later 2026-10-21 CONF-52 run also covering retained explicit bytes after authenticated saved-name adoption and the current metadata read. Downloads request the original file with format=raw, validation reads a bounded prefix plus the on-disk length, and a transfer stopped mid-body resumes with a Range request (host tests only, including a changed file restarting from zero) \u2014 after a relaunch too: a partial file kept by a connection failure survives relaunch reconciliation and the retry asks only for the rest (DownloadRelaunchResumeTest). A track downloaded by its id alone has its metadata read with getSong before its transfer and kept pinned \u2014 best effort: a refused, failed or unreadable lookup never stops the transfer or deletes a kept partial file (core host tests only) \u2014 and the player names a downloaded song from it with no request, so a restored entry is titled offline (DownloadedTitleOfflineTest, on the phone's own Now Playing). Both were reproduced on main by these tests before the fix and fail again with it undone. Not covered: \u00a716.13 also pins the downloaded track's album with credits and its artwork; Android pins the track row only, which carries the album title and artwork key."
         },
         "androidtv": {
           "status": "shipped",
@@ -2893,9 +2923,15 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidTvEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable"
+            },
+            {
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable",
+              "observes": "OBSERVED on the Android TV emulator: a real WorkManager explicit download survives the production saved-account reconnect with an exact saved request and controlled authenticated canonical username; the provider instance, local plan and bytes remain. The server relay is then cut and production Media3 advances from the identical file with zero server requests and zero newly forwarded server bytes. Account removal leaves zero files and unfinished tasks. Only the authentication result is controlled; storage, credential persistence and native playback are real."
             }
           ],
-          "reason": "The TV app uses the phone's download executor, registry and playback path unchanged, with an album Download or Remove download action, a download button beside each track's heart, a downloaded marker and progress. OBSERVED on host runtimes: the TV controls under Robolectric with the remote's keys; the shared executor's other behaviour is observed only through the phone app's unit tests. The TV emulator proofs of CONF-51 and CONF-52 executed and passed on an API 34 Android TV emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656, before a download read its track's metadata (that they still pass with that one getSong added is ASSUMED until core-ci runs them). In the TV app's own Robolectric runtime, through the shared registry, WorkManager worker and playback service: a partial file kept by a dropped connection survives a relaunch and is resumed with a Range request (TvDownloadRelaunchResumeTest), and a song downloaded by its id alone is titled on the TV player after an offline relaunch, which the TV app can take only from what the download kept, since it fills no restored title from the library (TvDownloadedTitleOfflineTest). Both were reproduced on main by these tests before the fix and fail again with it undone. Not covered: \u00a716.13 also pins the downloaded track's album with credits and its artwork; Android pins the track row only."
+          "reason": "The TV app uses the phone's download executor, registry and playback path unchanged, with an album Download or Remove download action, a download button beside each track's heart, a downloaded marker and progress. OBSERVED on host runtimes: the TV controls under Robolectric with the remote's keys; the shared executor's other behaviour is observed only through the phone app's unit tests. The TV emulator proofs of CONF-51 and CONF-52 executed and passed on an API 34 Android TV emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656, with a later 2026-10-21 CONF-52 run also covering retained explicit bytes after authenticated saved-name adoption and the current metadata read. In the TV app's own Robolectric runtime, through the shared registry, WorkManager worker and playback service: a partial file kept by a dropped connection survives a relaunch and is resumed with a Range request (TvDownloadRelaunchResumeTest), and a song downloaded by its id alone is titled on the TV player after an offline relaunch, which the TV app can take only from what the download kept, since it fills no restored title from the library (TvDownloadedTitleOfflineTest). Both were reproduced on main by these tests before the fix and fail again with it undone. Not covered: \u00a716.13 also pins the downloaded track's album with credits and its artwork; Android pins the track row only."
         }
       }
     },
@@ -4766,6 +4802,424 @@
             "status": "blocked",
             "blocked_on": "submitted-play-playlist-context-transport",
             "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
+          }
+        }
+      }
+    },
+    {
+      "id": "downloads.automatic",
+      "title": "Keep My Library downloaded automatically",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1451-automatic-downloads-and-streaming-retention",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Adding a real album to My Library promotes its tracks through the production automatic download executor before the relay is cut.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryMacUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Adding a real album to My Library promotes its tracks through the production automatic download executor before the relay is cut.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Adding a real album to My Library promotes its tracks through the production automatic download executor before the relay is cut.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPadUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS retains the v1 no-download contract; persistent Automatic Downloads and their download storage controls are not offered."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Adding a real album produces four automatic local files; removal deletes automatic-only files while an explicit file survives removal and disabling Automatic Downloads.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Automatic retention uses the existing download scheduler, with recent additions first and separate explicit ownership. The cited native proof covers album addition; core acceptance separately covers deletion scope and relaunch safety. Every album, song and playlist mutation variant is not separately driven through each native screen. See docs/evidence/offline-library.md. Artist membership is metadata-only; Settings states that it does not download the discography. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Adding a real album produces four automatic local files; removal deletes automatic-only files while an explicit file survives removal and disabling Automatic Downloads.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            },
+            {
+              "observes": "An explicitly retained file survives removal from My Library and disabling Automatic Downloads, including reopening the core engine.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "OfflineLibraryRetentionSafetyTest/anExplicitDownloadSurvivesLibraryRemovalAndDisablingAutomaticDownloadsAfterRelaunch"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-library-membership-retention-matrix",
+            "reason": "Before promotion, drive album, song and playlist additions/removals and explicit-retention upgrades through this platform, including a fresh offline relaunch. The cited native album path and separate shared deletion acceptance cover narrower observations."
+          }
+        }
+      }
+    },
+    {
+      "id": "playback.streaming_cache",
+      "title": "Replay recently streamed songs from a bounded cache",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#146-storage-budget-and-eviction-priority",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Actual AVPlayer media time advances while streaming, the same response is promoted to cache, and a fresh AVPlayer advances from that file with both network clients closed. A separate loader path proves overlapping sparse ranges and identical offline bytes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Actual AVPlayer media time advances while streaming, the same response is promoted to cache, and a fresh AVPlayer advances from that file with both network clients closed. A separate loader path proves overlapping sparse ranges and identical offline bytes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Actual AVPlayer media time advances while streaming, the same response is promoted to cache, and a fresh AVPlayer advances from that file with both network clients closed. A separate loader path proves overlapping sparse ranges and identical offline bytes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS retains network playback and the v1 no-download contract. This change does not add a file-backed offline executor or streaming cache on tvOS; the offline cache and library playback claims apply to the other supported platforms."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "The first Media3 stream makes one media GET and produces a validated 24,334-byte cache file; after relay loss local playback advances without server bytes.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "The playback response is retained without another fetch, validated before promotion and bounded by account LRU policy. Core tests cover sparse completion, stale metadata, account scope and protected playback. Native gapless, crossfade and seek regression coverage remains the existing playback suites rather than a new exhaustive cache-specific matrix. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "The first Media3 stream makes one media GET and produces a validated 24,334-byte cache file; after relay loss local playback advances without server bytes.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-cached-playback-transition-matrix",
+            "reason": "Before promotion, repeat native gapless handover, crossfade, seek and scrobble acceptance with cached current/preloaded resources. The cited same-response and offline replay proof establishes the cache path without claiming that full transition matrix."
+          }
+        }
+      }
+    },
+    {
+      "id": "library.offline_playable",
+      "title": "Browse and continue My Library over offline-playable music",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1451-automatic-downloads-and-streaming-retention",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "After adding an album and waiting for automatic files, cutting the real relay still permits its My Library track to play, with the correct title and Pause control.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryMacUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "After adding an album and waiting for automatic files, cutting the real relay still permits its My Library track to play, with the correct title and Pause control.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "After adding an album and waiting for automatic files, cutting the real relay still permits its My Library track to play, with the correct title and Pause control.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPadUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS retains network playback and the v1 no-download contract. This change does not add a file-backed offline executor or streaming cache on tvOS; the offline cache and library playback claims apply to the other supported platforms."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "After real relay loss My Library publishes cached/downloaded and unavailable statuses; queue construction excludes the unavailable song and cached playback advances offline.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "The shared queue filters construction, shuffle, preload and continuation over playable items. Native evidence drives the stated offline path; every queue and shuffle interaction is not separately repeated on each device. See docs/evidence/offline-library.md. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "After real relay loss My Library publishes cached/downloaded and unavailable statuses; queue construction excludes the unavailable song and cached playback advances offline.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-offline-shuffle-continuation-and-relaunch-matrix",
+            "reason": "Before promotion, drive fresh saved offline relaunch, native Shuffle, queue continuation and unavailable selection on this platform. The cited server-loss playback path and shared queue tests establish narrower observations."
+          }
+        }
+      }
+    },
+    {
+      "id": "storage.offline_controls",
+      "title": "Manage automatic downloads and streaming cache storage",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#146-storage-budget-and-eviction-priority",
+      "gates": [
+        "account:authenticated"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. The Mac settings controls have presentation and bridge tests; the native Mac settings interaction is not cited as executed. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-mac-offline-storage-controls",
+            "reason": "Before promotion, drive the Mac settings controls for Automatic Downloads, cache capacity and Clear Cache and verify displayed usage and scoped deletion. Presentation, bridge and artwork tests do not establish native Mac settings interaction."
+          }
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Automatic Downloads can be disabled, survives relaunch, can be enabled again, and Clear Cache is activated in native settings.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDesignTourUITests/testOfflineMusicSettingsPersistAcrossRelaunch"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-cache-capacity-and-usage-controls",
+            "reason": "Before promotion, change the native cache-size control with real protected/unprotected files and verify displayed usage and eviction. The cited automatic-retention/Clear Cache path and shared budget tests establish narrower observations."
+          }
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Automatic Downloads can be disabled, survives relaunch, can be enabled again, and Clear Cache is activated in native settings.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDesignTourUITests/testOfflineMusicSettingsPersistAcrossRelaunch"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-cache-capacity-and-usage-controls",
+            "reason": "Before promotion, change the native cache-size control with real protected/unprotected files and verify displayed usage and eviction. The cited automatic-retention/Clear Cache path and shared budget tests establish narrower observations."
+          }
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS retains the v1 no-download contract; persistent Automatic Downloads and their download storage controls are not offered."
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Native settings changes Automatic Downloads and clears the streaming cache; the explicit file remains after removal and disabling automatic retention.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-cache-capacity-and-usage-controls",
+            "reason": "Before promotion, change the native cache-size control with real protected/unprotected files and verify displayed usage and eviction. The cited automatic-retention/Clear Cache path and shared budget tests establish narrower observations."
+          }
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Settings exposes automatic retention, separate download/cache usage, cache capacity and account-scoped Clear Cache. Native evidence drives the controls stated here; budget and pinned-artwork eviction ordering are covered by shared-core acceptance. See docs/evidence/offline-library.md. Usage labels explicitly describe completed files; active partial transfers are excluded from these counters. Round 3 canonical-binding and playback-retirement controls establish file-ownership safety; see docs/evidence/offline-library.md for the separate shared-core, host and actual native observations. The remaining native interaction matrix is unchanged.",
+          "evidence": [
+            {
+              "observes": "Native settings changes Automatic Downloads and clears the streaming cache; the explicit file remains after removal and disabling automatic retention.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-cache-capacity-and-usage-controls",
+            "reason": "Before promotion, change the native cache-size control with real protected/unprotected files and verify displayed usage and eviction. The cited automatic-retention/Clear Cache path and shared budget tests establish narrower observations."
           }
         }
       }

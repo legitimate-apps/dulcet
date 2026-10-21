@@ -40,7 +40,9 @@ final class HostedApp {
         defaultsSuite = "dulcet-mac-hosted-\(run)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuite))
         streamingQuality = DulcetCoreStreamingQuality(defaults: defaults)
-        controller = DulcetCorePlaybackController(databaseName: "dulcet-mac-hosted-playback-\(run).db", downloadController: downloadController,
+        // Match production: offline queue eligibility reads the same durable download rows as
+        // the library and download executor. A separate playback database sees no local music.
+        controller = DulcetCorePlaybackController(databaseName: "dulcet-mac-hosted-reader-\(run).db", downloadController: downloadController,
                                                  artworkFetcher: DulcetCoreArtworkFetcher())
         controller.streamingQuality = streamingQuality
         session = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: "dulcet-mac-hosted-reader-\(run).db", readsDownloads: downloadController != nil))

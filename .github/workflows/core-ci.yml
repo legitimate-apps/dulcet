@@ -98,6 +98,7 @@ jobs:
       # the prod assertion passing while proving nothing, and the dev test is what catches that.
       - name: Test the Android mobile channels and TV app
         run: >-
+          python3 tools/ci/run-with-thread-dump 480 --
           ./gradlew --no-daemon
           --max-workers=2
           :android:app:testDevDebugUnitTest

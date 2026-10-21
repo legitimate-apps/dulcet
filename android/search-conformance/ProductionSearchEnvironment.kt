@@ -37,8 +37,9 @@ fun SearchUiState.assertMergedOrder(environment: ProductionSearchEnvironment): S
 @Implements(className = "com.legitimateapps.dulcet.AndroidKeystoreAccountCredentialCipher", isInAndroidSdk = false)
 class HostCredentialCipher {
     @Implementation fun encrypt(id: String, plaintext: ByteArray): ByteArray {
-        val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
-        keys[id] = key
+        // Match Android Keystore's stable per-account key: replacing a record must not
+        // invalidate the prior ciphertext before the secure storage commit succeeds.
+        val key = keys.getOrPut(id) { KeyGenerator.getInstance("AES").apply { init(256) }.generateKey() }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key)
         return cipher.iv + cipher.doFinal(plaintext)

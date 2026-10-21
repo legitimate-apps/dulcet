@@ -92,7 +92,9 @@ final class DulcetMacDownloadHandoffAppTest: XCTestCase {
             let held = try await proxy.awaitStreams(of: songID, since: since, timeout: .seconds(90)) { $0.count == 1 && !$0[0].answered }
             XCTAssertNotNil(held, "The download's stream read must reach the proxy and be held; markers=\(probe.markers())")
             try await waitUntil(timeout: .seconds(30), "The child's session must report the download running; markers=\(probe.markers())") {
-                probe.markers().contains { $0.contains(" pid=\(firstPID) outstanding download=") }
+                let summary = DulcetDebugDownloadHandoff.summarize(probe.markers(), currentPID: firstPID, requestedItem: songID)
+                let outstanding = Self.fields(summary)["outstanding"] ?? "none"
+                return outstanding.hasPrefix("download:") && outstanding.hasSuffix("@\(firstPID)")
             }
 
             // 2. Death while outstanding, and the read still unanswered afterwards.
@@ -112,16 +114,18 @@ final class DulcetMacDownloadHandoffAppTest: XCTestCase {
             while ContinuousClock.now < watchEnd, !probe.markers().contains(where: { !$0.contains(" pid=\(firstPID) ") }) {
                 try await Task.sleep(for: .milliseconds(500))
             }
-            let unattended = DulcetDebugDownloadHandoff.summarize(probe.markers(), currentPID: 0)
+            let unattended = DulcetDebugDownloadHandoff.summarize(probe.markers(), currentPID: 0, requestedItem: songID)
             print("DULCET MAC HANDOFF os-launches=\(Self.fields(unattended)["unattended-launches"] ?? "?") watch-seconds=60")
 
             // 4. The replacement the person opens.
             let replacement = try await Self.launch(copy, ["-dulcet-debug-download-handoff", namespace])
             children.append(replacement)
             try await waitUntil(timeout: .seconds(60), "A replacement must promote the download; markers=\(probe.markers())") {
-                probe.markers().contains { $0.contains(" promoted ") }
+                let summary = DulcetDebugDownloadHandoff.summarize(
+                    probe.markers(), currentPID: replacement.processIdentifier, requestedItem: songID)
+                return Self.fields(summary)["promoted"]?.hasPrefix("download:") == true
             }
-            let summary = DulcetDebugDownloadHandoff.summarize(probe.markers(), currentPID: replacement.processIdentifier)
+            let summary = DulcetDebugDownloadHandoff.summarize(probe.markers(), currentPID: replacement.processIdentifier, requestedItem: songID)
             print("DULCET MAC HANDOFF summary \(summary)")
             let fields = Self.fields(summary)
             let outstanding = (fields["outstanding"] ?? "").split(separator: "@").map(String.init)
@@ -129,6 +133,7 @@ final class DulcetMacDownloadHandoffAppTest: XCTestCase {
             XCTAssertEqual(outstanding.last, String(firstPID), "The running download must be the killed process's")
             XCTAssertEqual(promoted.first, outstanding.first, "The replacement must promote the download that was outstanding")
             XCTAssertFalse(promoted.last == nil || promoted.last == String(firstPID), "The promotion must come from another process")
+            XCTAssertEqual(fields["requested"], songID, "The proof must follow the explicitly requested track")
             XCTAssertEqual(fields["item"], songID)
             XCTAssertEqual(fields["state"], "downloaded")
             XCTAssertEqual(fields["row"], "downloaded", "The durable row must read back downloaded")

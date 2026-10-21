@@ -1,9 +1,113 @@
+import AVFoundation
 import Foundation
 import Testing
 @testable import DulcetKit
 
 @Suite(.serialized)
 struct PlaybackResourceLoadingTests {
+@Test
+func unusedResourcesReleaseWithoutConstructingADelegateDuringDeinitialization() async {
+    for _ in 0..<20 {
+        var resource: DulcetURLSessionPlaybackResource? = makeURLSessionResource(
+            validator: AcceptingPlaybackValidator(), configuration: .ephemeral)
+        weak var released = resource
+        resource = nil
+        #expect(released == nil)
+    }
+    // Invalidation is asynchronous; let an illegally resurrected delegate receive its callback.
+    try? await Task.sleep(for: .milliseconds(100))
+}
+
+@Test
+func completedResourceReleasesItsSessionAndDelegate() async {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
+    ScriptedPlaybackURLProtocol.install { _ in
+        .response(status: 206, headers: ["Content-Type": "audio/mpeg", "Content-Length": "3",
+            "Content-Range": "bytes 0-2/3"], body: Data("ID3".utf8))
+    }
+    var resource: DulcetURLSessionPlaybackResource? = makeURLSessionResource(
+        validator: AcceptingPlaybackValidator(), configuration: configuration)
+    weak var released = resource
+    let outcome = await load(resource!)
+    guard case .loaded = outcome else { Issue.record("Positive HTTP fixture did not load"); return }
+    resource = nil
+    for _ in 0..<100 {
+        if released == nil { break }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(released == nil, "A finished session's delegate must not retain its resource forever")
+}
+
+@Test
+func releasingAnActiveResourceCancelsItsOutstandingLoadExactlyOnce() async {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
+    let capture = ResourceRetirementCapture()
+    let holder = PlaybackOperationHolder()
+    var resource: DulcetURLSessionPlaybackResource? = makeURLSessionResource(
+        validator: AcceptingPlaybackValidator(), configuration: configuration)
+    weak var released = resource
+    await withCheckedContinuation { (started: CheckedContinuation<Void, Never>) in
+        ScriptedPlaybackURLProtocol.install { _ in .held { started.resume() } }
+        holder.operation = resource!.load(.init(range: .init(start: 0, endInclusive: 2),
+            requiresAudioSignature: true)) { capture.record($0) }
+    }
+    resource = nil
+    for _ in 0..<100 {
+        if released == nil && capture.count > 0 { break }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(released == nil)
+    #expect(capture.count == 1)
+    #expect(capture.cancelled)
+    holder.operation?.cancel()
+    try? await Task.sleep(for: .milliseconds(20))
+    #expect(capture.count == 1, "Late native cancellation must not complete a retired transfer twice")
+}
+
+@Test @MainActor
+func releasingLoaderCancelsNativeRequestsAndIgnoresLateCompletion() async throws {
+    let resource = SuspendedLoaderResource()
+    let trace = LoaderRetirementTrace()
+    let proxy = RetiringLoaderProxy(delegate: DulcetAVAssetResourceLoaderDelegate(
+        resource: resource, attemptID: .init("loader-retirement"), expectedContainer: .wav,
+        traceHandler: { trace.record($0) }, failureHandler: { _, _, _ in trace.recordFailure() }))
+    weak var released = proxy.delegate
+    let queue = DispatchQueue(label: "test.loader-retirement")
+    let asset = AVURLAsset(url: URL(string: "dulcet-stream://retirement/track.wav")!)
+    asset.resourceLoader.setDelegate(proxy, queue: queue)
+    let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+    defer {
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        asset.cancelLoading()
+        asset.resourceLoader.setDelegate(nil, queue: nil)
+    }
+    player.play()
+    for _ in 0..<500 {
+        if resource.loadCount > 0 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(resource.loadCount > 0, "A real native resource request must reach the loader")
+    // Keep the native asset, proxy and player installed. Only the real delegate loses its owner,
+    // so an AVFoundation didCancel from item removal cannot rescue missing deinit cleanup.
+    queue.sync { proxy.delegate = nil }
+    #expect(released == nil)
+    let started = trace.startedCount
+    #expect(started > 0)
+    #expect(resource.cancelCount == resource.loadCount)
+    #expect(trace.cancelledCount == started)
+    #expect(trace.terminalCount == started)
+    resource.completeLate()
+    resource.cancelAgain()
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(resource.cancelCount == resource.loadCount)
+    #expect(trace.cancelledCount == started)
+    #expect(trace.terminalCount == started)
+    #expect(trace.failureCount == 0)
+}
+
 @Test
 func partialResponsePublishesContentRangeTotalRatherThanRangeLength() async throws {
     let configuration = URLSessionConfiguration.ephemeral
@@ -526,6 +630,7 @@ private final class ScriptedPlaybackURLProtocol: URLProtocol, @unchecked Sendabl
         /// The head and `body`, then the connection lost before the declared length arrived.
         case endedByLostConnection(status: Int, headers: [String: String], body: Data)
         case redirect(URL)
+        case held(@Sendable () -> Void)
     }
 
     private static let lock = NSLock()
@@ -549,6 +654,8 @@ private final class ScriptedPlaybackURLProtocol: URLProtocol, @unchecked Sendabl
             return
         }
         switch handler(request) {
+        case let .held(started):
+            started()
         case let .redirect(target):
             let response = HTTPURLResponse(
                 url: url,
@@ -603,4 +710,72 @@ private final class ScriptedPlaybackURLProtocol: URLProtocol, @unchecked Sendabl
     }
 
     override func stopLoading() {}
+}
+
+private final class ResourceRetirementCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var outcomes: [DulcetPlaybackResourceLoadOutcome] = []
+    func record(_ outcome: DulcetPlaybackResourceLoadOutcome) { lock.withLock { outcomes.append(outcome) } }
+    var count: Int { lock.withLock { outcomes.count } }
+    var cancelled: Bool { lock.withLock { outcomes.count == 1 && { if case .cancelled = outcomes[0] { true } else { false } }() } }
+}
+
+private final class RetiringLoaderProxy: NSObject, AVAssetResourceLoaderDelegate, @unchecked Sendable {
+    // Accessed only before installation or on the resource-loader serial queue.
+    var delegate: DulcetAVAssetResourceLoaderDelegate?
+    init(delegate: DulcetAVAssetResourceLoaderDelegate) { self.delegate = delegate }
+    func resourceLoader(_ loader: AVAssetResourceLoader,
+        shouldWaitForLoadingOfRequestedResource request: AVAssetResourceLoadingRequest) -> Bool {
+        delegate?.resourceLoader(loader, shouldWaitForLoadingOfRequestedResource: request) ?? false
+    }
+    func resourceLoader(_ loader: AVAssetResourceLoader, didCancel request: AVAssetResourceLoadingRequest) {
+        delegate?.resourceLoader(loader, didCancel: request)
+    }
+}
+
+private final class SuspendedLoaderResource: DulcetPlaybackResourceLoading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var completions: [@Sendable (DulcetPlaybackResourceLoadOutcome) -> Void] = []
+    private var operations: [SuspendedLoaderOperation] = []
+    var description: String { "SuspendedLoaderResource" }
+    var loadCount: Int { lock.withLock { operations.count } }
+    var cancelCount: Int { lock.withLock { operations.reduce(0) { $0 + $1.cancelCount } } }
+    func load(_ request: DulcetPlaybackResourceLoadRequest,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        let operation = SuspendedLoaderOperation()
+        lock.withLock { completions.append(completion); operations.append(operation) }
+        return operation
+    }
+    func completeLate() {
+        for completion in lock.withLock({ completions }) {
+            completion(.cancelled)
+            completion(.loaded(data: Data("late".utf8),
+                contentInformation: .init(contentLength: 4, supportsByteRanges: true)))
+        }
+    }
+    func cancelAgain() { for operation in lock.withLock({ operations }) { operation.cancel() } }
+}
+
+private final class SuspendedLoaderOperation: DulcetPlaybackResourceLoadOperation, @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    var cancelCount: Int { lock.withLock { cancelled ? 1 : 0 } }
+    func cancel() { lock.withLock { cancelled = true } }
+}
+
+private final class LoaderRetirementTrace: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [DulcetPlaybackResourceLoaderTraceEvent] = []
+    private var failures = 0
+    func record(_ event: DulcetPlaybackResourceLoaderTraceEvent) { lock.withLock { events.append(event) } }
+    func recordFailure() { lock.withLock { failures += 1 } }
+    var failureCount: Int { lock.withLock { failures } }
+    var startedCount: Int { lock.withLock { events.filter { if case .started = $0 { true } else { false } }.count } }
+    var cancelledCount: Int { lock.withLock { events.filter { if case .cancelled = $0 { true } else { false } }.count } }
+    var terminalCount: Int {
+        lock.withLock { events.filter {
+            switch $0 { case .finished, .cancelled, .failed: true; default: false }
+        }.count }
+    }
 }

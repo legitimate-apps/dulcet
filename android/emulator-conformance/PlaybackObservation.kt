@@ -11,6 +11,7 @@ import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import com.legitimateapps.dulcet.AccountConnectOutcome
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
+import com.legitimateapps.dulcet.CoreAccountDataGateway
 import com.legitimateapps.dulcet.connectAndSaveAccount
 import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnector
@@ -70,7 +71,7 @@ fun connectSavedAccount(context: Context, probe: DisposableServerProbe, serverUr
  * Reads the playback service's published state from outside the UI. Unbound before the app is
  * backgrounded, so nothing here can be what keeps the service alive.
  */
-class PlaybackObserver(private val context: Context) : AutoCloseable {
+class PlaybackObserver(private val context: Context, private val removeAccountDataOnClose: Boolean = true) : AutoCloseable {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var service: PlaybackService? = null
     private var bound = false
@@ -135,7 +136,15 @@ class PlaybackObserver(private val context: Context) : AutoCloseable {
         unbind()
         stopPlayback()
         context.stopService(Intent(context, PlaybackService::class.java))
-        AndroidAccountCredentialStore(context).delete()
+        // Every caller owns the fresh disposable account created by connectSavedAccount.
+        // Streaming now retains account files too: deleting credentials alone leaks them into
+        // the next proof. Tests that assert their own sign-out cleanup opt out explicitly.
+        val credentials = AndroidAccountCredentialStore(context)
+        val accountId = credentials.activeAccountId()
+        if (removeAccountDataOnClose && accountId != null) {
+            runBlocking { CoreAccountDataGateway(context).removeAccountData(accountId) }
+        }
+        credentials.delete()
     }
 }
 

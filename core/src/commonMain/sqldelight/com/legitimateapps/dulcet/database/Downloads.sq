@@ -210,3 +210,37 @@ WHERE server_id = ? AND raw_id = ? AND transcode_profile = ?;
 
 deleteDownload:
 DELETE FROM download WHERE download_id = ?;
+
+updateDownloadExpectedContainer:
+UPDATE download_policy_state SET expected_container = ?
+WHERE server_id = ? AND raw_id = ? AND transcode_profile = ?;
+
+selectDownloadsForItem:
+SELECT
+  d.server_id,
+  d.raw_id,
+  d.transcode_profile,
+  d.download_id,
+  d.state,
+  d.file_relative_path,
+  d.expected_byte_length,
+  d.file_size_bytes,
+  d.platform_resume_data,
+  d.resume_data_created_at_wall_clock,
+  p.expected_container,
+  p.source_duration_milliseconds,
+  p.source_size_bytes,
+  p.enqueue_sequence,
+  p.auth_generation,
+  p.retry_attempt,
+  p.retry_not_before_wall_clock,
+  p.updated_at_wall_clock
+FROM download AS d
+JOIN download_policy_state AS p USING (server_id, raw_id, transcode_profile)
+WHERE d.server_id = ? AND d.raw_id = ?
+ORDER BY p.enqueue_sequence, d.download_id;
+
+
+selectPlayableDownloadsForItem:
+SELECT file_relative_path FROM download
+WHERE server_id = ? AND raw_id = ? AND state IN ('complete', 'stale');

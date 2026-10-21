@@ -67,6 +67,8 @@ struct Outcome { var errorKind: String? = nil }
 @MainActor final class Client {
     var removals = 0
     var closes = 0
+    var abortedWrites: [String] = []
+    func abortStreamingCache(writeId: String) { abortedWrites.append(writeId) }
     func removeAccountData() -> Outcome { removals += 1; return Outcome() }
     func close() { closes += 1 }
 }
@@ -75,9 +77,13 @@ struct Outcome { var errorKind: String? = nil }
     func configure(account: String)
 }
 @MainActor final class Downloads: DulcetDownloadControlling {
+    struct CacheWrite { let identifier: String }
     var reconciliationGeneration = 0
     var reconciled = true
+    var cacheWrites: [String: CacheWrite] = [:]
+    var protectedPlayback: [String: String] = [:]
     var pendingTracks: [Int] = []
+    var pendingAutomaticDownloadsEnabled: Bool?
     var prepareOperations: [Int: Operation] = [:]
     var queuePrepareOperation: Operation?
     var removedTaskIdentifiers: Set<Int> = []
@@ -95,6 +101,12 @@ struct Outcome { var errorKind: String? = nil }
         reconciliationGeneration += 1
         self.account = account
         client = Client()
+    }
+    // Model independent playback activity in the currently configured account. A stale
+    // completion must leave a new account's writes and protection tokens intact.
+    func seedPlayback() {
+        cacheWrites["resource"] = CacheWrite(identifier: "\(account!)-write")
+        protectedPlayback["resource"] = "\(account!)-track"
     }
     func cancelRetry() {}
     func removeSecuredDownloadInbox() { inboxRemovals += 1 }
@@ -204,11 +216,14 @@ struct Failure: Error, CustomStringConvertible { var description: String }
             let downloads = Downloads()
             downloads.stateRefreshHandler = { downloads.stateRefreshes += 1 }
             downloads.configure(account: "kept")
+            downloads.seedPlayback()
             if name == "superseded" || name == "cancelled" {
                 let old = downloads.client!
                 let worker = Task { await downloads.removeAccountData() }
                 try await until { downloads.continuation != nil }
-                if name == "superseded" { downloads.configure(account: "new") }
+                try require(old.abortedWrites == ["kept-write"] && downloads.cacheWrites.isEmpty &&
+                            downloads.protectedPlayback.isEmpty, "removal did not release old playback cache state")
+                if name == "superseded" { downloads.configure(account: "new"); downloads.seedPlayback() }
                 else { worker.cancel() }
                 let active = downloads.client!
                 downloads.resume()
@@ -218,6 +233,11 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                             downloads.inboxRemovals == 0 && downloads.sessionTask.cancellations == 0 &&
                             downloads.stateRefreshes == 0,
                             "stale cleanup mutated active account/client/tasks/inbox")
+                if name == "superseded" {
+                    try require(active.abortedWrites.isEmpty && downloads.cacheWrites["resource"]?.identifier == "new-write" &&
+                                downloads.protectedPlayback["resource"] == "new-track",
+                                "stale cleanup cleared a new account's cache write or playback protection")
+                }
             } else if name == "timeout-reconnect" {
                 let presentation = Presentation()
                 presentation.downloadController = downloads
@@ -227,6 +247,7 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                 try await until { presentation.accountRemovalStatus == .failed }
                 presentation.dismissAccountRemovalFailure()
                 downloads.configure(account: "new")
+                downloads.seedPlayback()
                 let active = downloads.client!
                 downloads.resume()
                 await worker.value
@@ -236,6 +257,9 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                             downloads.stateRefreshes == 0 &&
                             presentation.credentialStore?.deletes == 0,
                             "timed-out cleanup deleted reconnected account data")
+                try require(active.abortedWrites.isEmpty && downloads.cacheWrites["resource"]?.identifier == "new-write" &&
+                            downloads.protectedPlayback["resource"] == "new-track",
+                            "timed-out cleanup cleared reconnected playback cache state")
             } else {
                 let presentation = Presentation()
                 let artwork = Artwork()

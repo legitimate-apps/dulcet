@@ -325,6 +325,8 @@ private final class UnusedAccountConnector: DulcetAccountConnecting {
 
 // Only the engine event source is controlled; recording and publication remain production code.
 private final class ControlledEventEngine: DulcetCorePlaybackEngine, @unchecked Sendable {
+    func stopForAccountChange() { XCTFail("event fixture unexpectedly rebound an active account") }
+
     private let lock = NSLock()
     private var listener: DulcetPlaybackEventHandler?
 
@@ -356,6 +358,8 @@ private final class ControlledEventEngine: DulcetCorePlaybackEngine, @unchecked 
 /// Mirrors DulcetAVPlayerEngine.stop(reason:): a stop emits `.skipped` for the active attempt,
 /// synchronously, before the command completes. The ordering under test comes from production.
 private final class StoppingEngine: DulcetCorePlaybackEngine, @unchecked Sendable {
+    func stopForAccountChange() { execute(.stop(commandID: .init("binding-stop"))) { _ in } }
+
     private let lock = NSLock()
     private var listener: DulcetPlaybackEventHandler?
     private let attemptID: DulcetPlaybackAttemptID

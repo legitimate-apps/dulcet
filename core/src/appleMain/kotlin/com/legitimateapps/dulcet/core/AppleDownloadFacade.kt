@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
+import platform.Foundation.timeIntervalSince1970
 import platform.Foundation.NSData
 import platform.Foundation.NSMutableData
 import platform.posix.memcpy
@@ -98,6 +99,74 @@ public class AppleDownloadFileTargetOutcomeDto internal constructor(
     public val errorKind: String?,
 )
 
+public class AppleOfflineLibraryHydrationDto internal constructor(
+    public val enabled: Boolean,
+    public val albumIds: List<String>,
+    public val trackIds: List<String>,
+    public val playlistIds: List<String>,
+)
+
+public class AppleOfflineLibraryStorageDto internal constructor(
+    public val automaticDownloadsEnabled: Boolean,
+    public val cacheBudgetBytes: Long,
+    public val downloadBytes: Long,
+    public val cacheBytes: Long,
+    public val artworkBytes: Long,
+    public val queuedAutomaticCount: Int,
+    public val completedAutomaticCount: Int,
+    public val errorKind: String?,
+)
+
+public class AppleOfflineLibraryChangeDto internal constructor(
+    public val taskIdentifiersToCancel: List<String>,
+    public val hasChanges: Boolean,
+    public val errorKind: String?,
+)
+
+/** Binding-only access never constructs an authenticated client or performs a network request. */
+public object AppleMediaBindingClient {
+    /** Opens a read/adoption context without acquiring a replacement binding or touching files. */
+    public fun adoptAuthenticatedAccount(
+        databaseName: String,
+        downloadRootPath: String,
+        previous: PlaybackEndpointAccount,
+        confirmed: PlaybackEndpointAccount,
+    ): Boolean = withPolicy(databaseName, downloadRootPath) { it.adoptAuthenticatedAccount(previous, confirmed) }
+
+    public fun isSameMediaBinding(
+        databaseName: String,
+        downloadRootPath: String,
+        first: PlaybackEndpointAccount,
+        second: PlaybackEndpointAccount,
+    ): Boolean = withPolicy(databaseName, downloadRootPath) { it.isSameMediaBinding(first, second) }
+
+    /**
+     * Establishes a fresh namespace for a typed account change without saved-credential proof.
+     * Native playback and download executors must be retired before this scoped replacement.
+     */
+    public fun replaceUnconfirmedAccount(
+        databaseName: String,
+        downloadRootPath: String,
+        confirmed: PlaybackEndpointAccount,
+    ): Boolean {
+        if (!MediaBindingIdentity.isValidAccount(confirmed)) return false
+        return withPolicy(databaseName, downloadRootPath) { policy ->
+            policy.bindMedia(DownloadMediaBinding(
+                confirmed.providerInstanceId, confirmed.normalizedBaseUrl, confirmed.username,
+            ), forceReplacement = true)
+            true
+        }
+    }
+
+    private fun withPolicy(databaseName: String, downloadRootPath: String, action: (DownloadPolicyEngine) -> Boolean): Boolean = try {
+        require(databaseName.isNotBlank() && downloadRootPath.isNotBlank())
+        val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+        try {
+            action(DownloadPolicyEngine(opened.database, DownloadFileStore(downloadRootPath, okio.FileSystem.SYSTEM)))
+        } finally { opened.close() }
+    } catch (_: Throwable) { false }
+}
+
 /**
  * Objective-C-compatible facade over the durable download policy.
  *
@@ -112,9 +181,35 @@ public class AppleDownloadClient(
     private val scope: CoroutineScope = MainScope()
     private var database: DulcetDatabaseStore? = null
     private var engine: DownloadPolicyEngine? = null
+    private var offline: OfflineLibraryPolicy? = null
     private var wireClient: PlaybackWireClient? = null
     private var requestClient: AuthenticatedEndpointClient? = null
     private var reconciled = false
+    private var closed = false
+    private var initializationFailed = false
+    private var bindingPurgedDownloadIds = emptySet<DownloadId>()
+
+    // Acquire during configuration, never on a delayed old-account callback. A construction
+    // failure stays closed; retrying configuration creates a fresh client explicitly.
+    init {
+        try { openPolicy() } catch (_: Throwable) {
+            close()
+            initializationFailed = true
+        }
+    }
+
+    public fun isMediaBindingCurrent(): Boolean = try {
+        !closed && !initializationFailed && engine?.isMediaBindingCurrent() == true
+    } catch (_: Throwable) { false }
+
+    /** The caller has authenticated the exact saved credentials; this never binds or purges. */
+    public fun adoptAuthenticatedAccount(previous: PlaybackEndpointAccount, confirmed: PlaybackEndpointAccount): Boolean = try {
+        !closed && !initializationFailed && engine?.adoptAuthenticatedAccount(previous, confirmed) == true
+    } catch (_: Throwable) { false }
+
+    public fun isSameMediaBinding(first: PlaybackEndpointAccount, second: PlaybackEndpointAccount): Boolean = try {
+        !closed && !initializationFailed && engine?.isSameMediaBinding(first, second) == true
+    } catch (_: Throwable) { false }
 
     public fun reconcile(
         outstandingTaskIdentifiers: List<String>,
@@ -134,7 +229,7 @@ public class AppleDownloadClient(
         )
         reconciled = true
         AppleDownloadReconciliationOutcomeDto(
-            taskIdentifiersToCancel = result.taskIdsToCancel.map { it.value },
+            taskIdentifiersToCancel = (result.taskIdsToCancel + bindingPurgedDownloadIds).map { it.value },
             interruptedDownloadIdentifiers = result.interruptedRows.map { it.value },
             recoveredDownloadIdentifiers = result.recoveredPromotions.map { it.value },
             errorKind = null,
@@ -163,6 +258,9 @@ public class AppleDownloadClient(
                 transcodeProfile = DownloadIdentity.ORIGINAL_PROFILE,
             )
             val existing = policy.record(identity)
+            if (existing != null) policy.enqueue(DownloadRequest(identity, sourceContainer, null,
+                DownloadServerSnapshot(durationMilliseconds.takeIf { it >= 0 }, null),
+                credentialGeneration, wallClockMilliseconds))
             if (existing?.state == DownloadState.Complete || existing?.state == DownloadState.Stale) {
                 AppleDownloadPreparationOutcomeDto(null, "downloaded", null, null)
             } else if (existing?.state == DownloadState.Downloading) {
@@ -360,7 +458,10 @@ public class AppleDownloadClient(
     public fun status(rawId: String): AppleDownloadStatusOutcomeDto = try {
         requireReconciled()
         val record = requireNotNull(engine).record(originalIdentity(rawId))
-        AppleDownloadStatusOutcomeDto(record?.state.appleState(), null, record?.retryNotBeforeWallClock)
+        val cached = requireNotNull(engine).recordsForItem(account.providerInstanceId, rawId).firstOrNull {
+            it.state in setOf(DownloadState.Complete, DownloadState.Stale)
+        }
+        AppleDownloadStatusOutcomeDto(if (cached != null && record?.state !in setOf(DownloadState.Complete, DownloadState.Stale)) (if (cached.state == DownloadState.Stale) "stale" else "cached") else record?.state.appleState(), null, record?.retryNotBeforeWallClock)
     } catch (_: Throwable) {
         AppleDownloadStatusOutcomeDto("notDownloaded", "persistence", null)
     }
@@ -408,7 +509,7 @@ public class AppleDownloadClient(
     public fun localPlaybackPlan(rawId: String): AppleLocalPlaybackPlanOutcomeDto = try {
         requireReconciled()
         val policy = requireNotNull(engine)
-        when (val result = policy.offlinePlaybackPlan(originalIdentity(rawId))) {
+        when (val result = requireNotNull(offline).offlinePlaybackPlan(account.providerInstanceId, rawId, (platform.Foundation.NSDate().timeIntervalSince1970 * 1000).toLong())) {
             is OfflinePlaybackPlanResult.Available -> when (policy.verifyOffline(result.plan)) {
                 OfflinePlaybackVerification.Valid -> AppleLocalPlaybackPlanOutcomeDto(
                     AppleLocalPlaybackPlanDto(result.plan),
@@ -429,14 +530,123 @@ public class AppleDownloadClient(
         AppleLocalPlaybackPlanOutcomeDto(null, "notDownloaded", "persistence")
     }
 
+    public fun missingAutomaticDownloadDetails(): AppleOfflineLibraryHydrationDto = try {
+        requireReconciled()
+        val policy = requireNotNull(offline)
+        AppleOfflineLibraryHydrationDto(policy.settings(account.providerInstanceId).automaticDownloadsEnabled,
+            policy.missingAutomaticDownloadAlbumIds(account.providerInstanceId),
+            policy.missingAutomaticDownloadTrackIds(account.providerInstanceId),
+            policy.missingAutomaticDownloadPlaylistIds(account.providerInstanceId))
+    } catch (_: Throwable) { AppleOfflineLibraryHydrationDto(false, emptyList(), emptyList(), emptyList()) }
+
+    public fun offlineLibraryStorage(): AppleOfflineLibraryStorageDto = try {
+        requireReconciled()
+        val policy = requireNotNull(offline)
+        val settings = policy.settings(account.providerInstanceId)
+        val stats = policy.stats(account.providerInstanceId)
+        AppleOfflineLibraryStorageDto(settings.automaticDownloadsEnabled, settings.cacheBudgetBytes,
+            stats.downloadBytes, stats.cacheBytes, stats.artworkBytes, stats.queuedAutomaticCount, stats.completedAutomaticCount, null)
+    } catch (_: Throwable) { AppleOfflineLibraryStorageDto(false, 0, 0, 0, 0, 0, 0, "persistence") }
+
+    public fun setAutomaticDownloadsEnabled(enabled: Boolean, allowNewDownloads: Boolean, credentialGeneration: Long, wallClockMilliseconds: Long): AppleOfflineLibraryChangeDto = try {
+        requireReconciled()
+        val policy = requireNotNull(offline)
+        val changed = policy.setAutomaticDownloadsEnabled(account.providerInstanceId, enabled)
+        val reconciled = if (enabled) policy.reconcileFromSeenCache(account.providerInstanceId, credentialGeneration, wallClockMilliseconds,
+            allowNewDownloads = allowNewDownloads) else changed
+        AppleOfflineLibraryChangeDto(reconciled.removed.map { it.downloadId.value }, true, null)
+    } catch (_: Throwable) { AppleOfflineLibraryChangeDto(emptyList(), false, "persistence") }
+
+    public fun reconcileMyLibrary(allowNewDownloads: Boolean, credentialGeneration: Long, wallClockMilliseconds: Long): AppleOfflineLibraryChangeDto = try {
+        requireReconciled()
+        val changed = requireNotNull(offline).reconcileFromSeenCache(account.providerInstanceId, credentialGeneration, wallClockMilliseconds,
+            allowNewDownloads = allowNewDownloads)
+        AppleOfflineLibraryChangeDto(changed.removed.map { it.downloadId.value }, changed.queued.isNotEmpty() || changed.removed.isNotEmpty(), null)
+    } catch (_: Throwable) { AppleOfflineLibraryChangeDto(emptyList(), false, "persistence") }
+
+    public fun setCacheBudgetBytes(bytes: Long): Boolean = try {
+        requireReconciled()
+        requireNotNull(offline).setCacheBudgetBytes(account.providerInstanceId, bytes)
+        true
+    } catch (_: Throwable) { false }
+
+    public fun clearStreamingCache(): Boolean = try {
+        requireReconciled()
+        requireNotNull(offline).clearCache(account.providerInstanceId)
+        true
+    } catch (_: Throwable) { false }
+
+    public fun protectPlaybackItems(rawIds: List<String>) {
+        try {
+            requireReconciled()
+            val ids = rawIds.toSet()
+            requireNotNull(offline).setProtectedIdentities(requireNotNull(engine).records(account.providerInstanceId)
+                .filter { it.identity.rawId in ids }.map { it.identity }.toSet() +
+                rawIds.flatMap { rawId -> AudioContainer.entries.map { container ->
+                    DownloadIdentity(account.providerInstanceId, rawId, "stream:${container.name}")
+                } })
+        } catch (_: Throwable) { }
+    }
+
+    public fun beginStreamingCache(rawId: String, container: AudioContainer, totalLength: Long,
+        durationMilliseconds: Long, rangeStart: Long, credentialGeneration: Long, wallClockMilliseconds: Long): String? = try {
+        requireReconciled()
+        val source = database?.database?.offlineLibraryQueries?.selectSourceSnapshot(account.providerInstanceId, rawId)?.executeAsOneOrNull()
+        requireNotNull(offline).beginCacheWrite(DownloadRequest(
+            DownloadIdentity(account.providerInstanceId, rawId, "stream:${container.name}"), container,
+            PlaybackContentLength.Exact(totalLength), DownloadServerSnapshot(source?.duration_milliseconds ?: durationMilliseconds.takeIf { it >= 0 }, source?.size_bytes),
+            credentialGeneration, wallClockMilliseconds), responseStatus = 206, rangeStart = rangeStart)?.writeId
+    } catch (_: Throwable) { null }
+
+    public fun appendStreamingCache(writeId: String, bytes: NSData, offset: Long): Boolean = try {
+        requireNotNull(offline).appendCacheWrite(writeId, bytes.toDownloadByteArray(), offset)
+    } catch (_: Throwable) { false }
+
+    public fun isStreamingCacheWriteComplete(writeId: String): Boolean = try {
+        offline?.isCacheWriteComplete(writeId) == true
+    } catch (_: Throwable) { false }
+
+    public fun planArtworkCache(evictableBytes: Long, pinnedBytes: Long, reservationBytes: Long): ArtworkCacheBudgetPlan? = try {
+        requireReconciled()
+        requireNotNull(offline).planArtworkCache(account.providerInstanceId, evictableBytes, pinnedBytes, reservationBytes)
+    } catch (_: Throwable) { null }
+
+    public fun planArtworkCacheForBudget(evictableBytes: Long, pinnedBytes: Long, reservationBytes: Long,
+        budgetBytes: Long): ArtworkCacheBudgetPlan? = try {
+        requireReconciled()
+        requireNotNull(offline).planArtworkCache(account.providerInstanceId, evictableBytes, pinnedBytes,
+            reservationBytes, budgetBytesOverride = budgetBytes)
+    } catch (_: Throwable) { null }
+
+    public fun planClearArtworkCache(evictableBytes: Long, pinnedBytes: Long): ArtworkCacheBudgetPlan? = try {
+        requireReconciled()
+        requireNotNull(offline).planClearCache(account.providerInstanceId, evictableBytes, pinnedBytes)
+    } catch (_: Throwable) { null }
+
+    public fun finishStreamingCache(writeId: String, totalLength: Long, wallClockMilliseconds: Long): Boolean = try {
+        val result = requireNotNull(offline).finishCacheWrite(writeId,
+            // Live response headers already passed the wire validator. A local file has no
+            // HTTP header, so use the same binary file type as verifyOffline, not a missing type.
+            DownloadResponseMetadata("application/octet-stream", PlaybackContentLength.Exact(totalLength)), wallClockMilliseconds)
+        result is DownloadPromotionResult.Promoted || result is DownloadPromotionResult.AlreadyPromoted
+    } catch (_: Throwable) { false }
+
+    public fun abortStreamingCache(writeId: String) {
+        try { offline?.abortCacheWrite(writeId) } catch (_: Throwable) { }
+    }
+
     public fun removeAccountData(): AppleDownloadAccountRemovalOutcomeDto = try {
-        openPolicy().removeAccountData(account.providerInstanceId)
+        openPolicy()
+        offline?.close()
+        requireNotNull(engine).removeAccountData(account.providerInstanceId)
         AppleDownloadAccountRemovalOutcomeDto(null)
     } catch (_: Throwable) {
         AppleDownloadAccountRemovalOutcomeDto("persistence")
     }
 
     public fun close() {
+        closed = true
+        try { offline?.close() } catch (_: Throwable) { }
         try {
             requestClient?.close()
         } catch (_: Throwable) {
@@ -453,6 +663,7 @@ public class AppleDownloadClient(
         wireClient = null
         database = null
         engine = null
+        offline = null
         reconciled = false
     }
 
@@ -471,7 +682,8 @@ public class AppleDownloadClient(
     }
 
     private fun openPolicy(): DownloadPolicyEngine {
-        engine?.let { return it }
+        check(!closed && !initializationFailed)
+        engine?.let { check(it.isMediaBindingCurrent()); return it }
         require(databaseName.isNotBlank())
         require(downloadRootPath.isNotBlank())
         val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
@@ -489,7 +701,19 @@ public class AppleDownloadClient(
         return DownloadPolicyEngine(
             opened.database,
             DownloadFileStore(downloadRootPath, okio.FileSystem.SYSTEM),
-        ).also { engine = it }
+        ).also {
+            bindingPurgedDownloadIds = it.bindMedia(DownloadMediaBinding(
+                account.providerInstanceId, account.normalizedBaseUrl, account.username,
+            )).purgedDownloadIds
+            // Downloads can reconcile before the asynchronously opened reader. Establish its
+            // metadata binding now, so automatic projection cannot consume the previous user's
+            // My Library. The independently acquired media epoch survives this cache purge.
+            SeenCacheStore(opened, SeenCacheWallClock {
+                (platform.Foundation.NSDate().timeIntervalSince1970 * 1000).toLong()
+            }).bind(CacheBinding(account.providerInstanceId, account.normalizedBaseUrl, account.username))
+            engine = it
+            offline = OfflineLibraryPolicy(opened.database, it)
+        }
     }
 
     private suspend fun prepare(
@@ -511,6 +735,7 @@ public class AppleDownloadClient(
                 legacyTimeOffset = null,
             ),
         )
+        requireReconciled() // The network suspension may have outlived this account binding.
         if (resolution is PlaybackResolutionResult.Failed) {
             val retry = requireNotNull(engine).recordFailure(
                 row.downloadId,
@@ -581,6 +806,7 @@ public class AppleDownloadClient(
 
     private fun requireReconciled() {
         check(reconciled) { "download reconciliation must finish before subsystem use" }
+        check(isMediaBindingCurrent()) { "media binding was revoked" }
     }
 }
 
