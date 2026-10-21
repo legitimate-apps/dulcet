@@ -353,7 +353,15 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             val expected = (0 until songs.length()).map { songs.getJSONObject(it).getString("id") }
             assertTrue(expected.size >= 3, "setup: a multi-track album")
 
-            if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+            // Resuming after the service bind rebuilds the root. Listen Now owns the initial
+            // bar focus; settle it before selecting Library, then settle the library's card focus.
+            await("the root restored after the service binding") { exists("listenNow.surface") || exists("library.surface") }
+            if (!exists("library.surface")) {
+                await("the restored Listen Now tab to take focus") { focused("listenNow.open") }
+                show("library.open")
+            }
+            await("the library selected after the service binding") { exists("library.surface") }
+            await("the selected library's first card to take focus") { focused("library.home.0.item.0") }
             press("library.view.albums")
             await("the albums screen") { exists("library.albums.item.0") }
             compose.onNodeWithTag("library.albums").performScrollToNode(hasText(ALBUM))
