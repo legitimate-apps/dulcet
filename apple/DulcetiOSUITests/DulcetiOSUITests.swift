@@ -7,6 +7,9 @@ final class DulcetiOSUITests: XCTestCase {
     /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
     /// comes from XCTest's Swift overlay, which `tools/typecheck-xcuitest-sources` cannot resolve.
     private var afterTest: [() -> Void] = []
+    // Each test owns its accounts. Relaunches of one endpoint keep the same identity; a
+    // disposable fault proxy is an independent server rather than an implicit account rebind.
+    private var liveAccountFixtures: [String: String] = [:]
 
     override func tearDown() {
         let cleanups = afterTest
@@ -3917,7 +3920,16 @@ final class DulcetiOSUITests: XCTestCase {
         extraArguments: [String] = []
     ) -> XCUIApplication? {
         let app = XCUIApplication()
-        app.launchArguments += extraArguments + [
+        var accountArguments: [String] = []
+        // Explicit fixture IDs and killed-process download namespaces already own credentials.
+        // Keep those seams authoritative, including the replacement launch with only its namespace.
+        if !extraArguments.contains("-dulcet-debug-account-fixture"),
+           !extraArguments.contains("-dulcet-debug-download-handoff") {
+            let fixture = liveAccountFixtures[serverURL] ?? UUID().uuidString
+            liveAccountFixtures[serverURL] = fixture
+            accountArguments = ["-dulcet-debug-account-fixture", fixture]
+        }
+        app.launchArguments += extraArguments + accountArguments + [
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", serverURL,
             "-dulcet-debug-account-username", configuration.username,
