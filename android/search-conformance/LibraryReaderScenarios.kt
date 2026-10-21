@@ -1632,8 +1632,11 @@ class LibraryReaderScenarios<A : ComponentActivity>(
      */
     fun conf82WhileTheServerScansPagesAppendUnguardedAndTheScanEndRebasesUnderAnUnchangedStamp() = withWindowPages {
         val stamp = server.scanStatus().getString("lastScan")
-        val presented = proxy.size()
         proxy.rewrite({ it.endpoint == "getScanStatus" }) { body -> scanStatus(body) { it.put("scanning", true) } }
+        // Install the presentation before its arrival fence. The proxy logs each arrival before
+        // choosing its rewrite rule, so every request counted from here must see the installed rule.
+        // A fence taken first can count a startup status that selected the previous rule in between.
+        val presented = proxy.size()
         try {
             relaunchIntoAlbums()
             val grid = checkNotNull(albumsGrid())
