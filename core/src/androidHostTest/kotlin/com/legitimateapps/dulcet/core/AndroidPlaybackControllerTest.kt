@@ -59,6 +59,146 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun identityRejectionDuringMetadataCannotRenameThePriorQueue() {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val contact = ChosenContact().also { it.open.value = true }
+        var hold = false
+        var metadataStarted = false
+        Fixture(serverContact = contact, loadSong = { id ->
+            if (hold) {
+                metadataStarted = true
+                release.await()
+                song(id).copy(body = """{"subsonic-response":{"status":"ok","song":{"id":"$id","title":"Wrong server","suffix":"wav","duration":40}}}""".toByteArray())
+            } else song(id)
+        }).use { f ->
+            f.controller.playSong(OWNER, "same-id", "Original")
+            assertEquals("Original", f.controller.state.value.queue.single().track.title)
+            hold = true
+            f.controller.playSong(OWNER, "same-id", "Original")
+            assertTrue(metadataStarted)
+            contact.open.value = false
+            release.complete(Unit)
+            settle(5)
+            assertEquals("Original", f.controller.state.value.queue.single().track.title,
+                "A late replacement response cannot change the retained server's metadata")
+            assertEquals(1, f.prepared.size)
+            assertTrue(f.controller.state.value.needsReconnect)
+        }
+    }
+
+    @Test fun identityRejectionDuringAutoplayCannotAppendReplacementServerIds() {
+        val release = kotlinx.coroutines.CompletableDeferred<List<AndroidTrack>>()
+        val contact = ChosenContact().also { it.open.value = true }
+        var candidatesStarted = false
+        Fixture(serverContact = contact, candidates = { _, _, _ -> candidatesStarted = true; release.await() }).use { f ->
+            f.controller.setAutoplay(true)
+            f.controller.playSong(OWNER, "original", "Original")
+            assertTrue(candidatesStarted)
+            assertEquals(listOf("original"), f.controller.state.value.queue.map { it.track.rawId })
+            contact.open.value = false
+            release.complete(listOf(AndroidTrack(OWNER, "wrong-server-id", "Wrong server", null, null, 40_000)))
+            settle(5)
+            assertEquals(listOf("original"), f.controller.state.value.queue.map { it.track.rawId },
+                "A late autoplay response cannot persist another server's IDs in the retained queue")
+            assertEquals(listOf("original"), f.prepared.map { it.itemId.rawId })
+        }
+    }
+
+    @Test fun identityRejectionDuringMetadataCannotResolveOrInstallTheRemoteSelection() {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val contact = ChosenContact().also { it.open.value = true }
+        var metadataStarted = false
+        val resolvedIds = mutableListOf<String>()
+        Fixture(serverContact = contact, loadSong = { id -> metadataStarted = true; release.await(); song(id) },
+            resolve = { request -> resolvedIds += request.itemId.rawId; resolved(request) }).use { f ->
+            f.controller.playSong(OWNER, "replacement", "Replacement")
+            assertTrue(metadataStarted)
+            contact.open.value = false
+            release.complete(Unit)
+            settle(5)
+            assertTrue(resolvedIds.isEmpty(), "A rejected account cannot resolve a late metadata response's stored ID")
+            assertTrue(f.prepared.isEmpty(), "A late response cannot install remote playback after rejection")
+            assertTrue(f.controller.state.value.needsReconnect)
+            assertTrue(f.controller.state.value.queue.isEmpty(), "The prior queue survives rejected selection")
+        }
+    }
+
+    @Test fun identityRejectionDuringResolutionCannotInstallTheRemotePlan() {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val contact = ChosenContact().also { it.open.value = true }
+        var resolutionStarted = false
+        Fixture(serverContact = contact, resolve = { request ->
+            resolutionStarted = true; release.await(); resolved(request)
+        }).use { f ->
+            f.controller.playSong(OWNER, "replacement", "Replacement")
+            assertTrue(resolutionStarted)
+            contact.open.value = false
+            release.complete(Unit)
+            settle(5)
+            assertTrue(f.prepared.isEmpty(), "A late plan cannot prepare or play remote bytes after identity rejection")
+            assertFalse(f.probe.requested)
+            assertTrue(f.controller.state.value.needsReconnect)
+        }
+    }
+
+    @Test fun aKnownIdentityRejectionCannotOpenAnotherRangeOfAnInstalledRemoteResource() {
+        PlaybackResourceReceiver(pcmWave()).use { receiver ->
+            val owner = "provider:${java.util.UUID.randomUUID()}"
+            Fixture(accountOwner = owner, baseUrl = receiver.url).use { f ->
+                f.controller.playSong(owner, "song", "Song")
+                val resource = f.controller.httpPlaybackResource(f.prepared.single())
+                val first = resource.open(0, 16)
+                try { assertEquals(16, first.input.readBytes().size) } finally { first.close() }
+                assertEquals(1, receiver.requestCount())
+                kotlinx.coroutines.runBlocking {
+                    AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                }
+                val next = runCatching { resource.open(16, 16) }
+                next.getOrNull()?.close?.invoke()
+                assertIs<AndroidPlaybackIOException>(next.exceptionOrNull(),
+                    "An installed resource cannot sign or send a new range after known replacement")
+                assertEquals(1, receiver.requestCount(), "No rejected old-ID range reaches the receiving socket")
+            }
+        }
+    }
+
+    @Test fun identityRejectionDuringPreloadMetadataCannotResolveOrPrepareTheNextTrack() = rejectedPreload("metadata")
+    @Test fun identityRejectionDuringPreloadResolutionCannotPrepareTheNextTrack() = rejectedPreload("resolve")
+
+    private fun rejectedPreload(phase: String) {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val contact = ChosenContact().also { it.open.value = true }
+        val incoming = PlayerProbe()
+        var holdNext = false
+        var started = false
+        val resolvedIds = mutableListOf<String>()
+        Fixture(serverContact = contact, overlapPlayer = { incoming.player }, loadSong = { id ->
+            if (holdNext && id == "b" && phase == "metadata") { started = true; release.await() }
+            song(id)
+        }, resolve = { request ->
+            resolvedIds += request.itemId.rawId
+            if (holdNext && request.itemId.rawId == "b" && phase == "resolve") { started = true; release.await() }
+            resolved(request)
+        }).use { f ->
+            f.controller.setAutoplay(false)
+            f.controller.setCrossfade(5)
+            f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Search, "Search")
+            assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId })
+            holdNext = true
+            ready(f)
+            progress(f, 0, 1_000)
+            assertTrue(started, "Setup: the next-track $phase request is held in flight")
+            contact.open.value = false
+            release.complete(Unit)
+            settle(5)
+            assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId },
+                "Identity rejection cannot install a late remote preload")
+            assertFalse(incoming.requested)
+            if (phase == "metadata") assertFalse("b" in resolvedIds,
+                "Rejected preload metadata cannot lead to an old-ID resolve request")
+        }
+    }
+
     @Test fun aNewSelectionSupersedesAPlayWaitingForIdentityValidation() {
         val release = kotlinx.coroutines.CompletableDeferred<Unit>()
         var open = false
@@ -1686,6 +1826,7 @@ class AndroidPlaybackControllerTest {
                 }
             }
         }
+        fun requestCount() = requests.size
         fun assertAuthenticatedSong(id: String) {
             assertTrue(requests.isNotEmpty(), "The production source must reach the receiving HTTP socket")
             for (query in requests) {
@@ -2042,6 +2183,8 @@ class AndroidPlaybackControllerTest {
         pendingPlays: List<String> = emptyList(),
         serverContact: AndroidServerContact? = null,
         overlapPlayer: (() -> androidx.media3.common.Player)? = null,
+        accountOwner: String = OWNER,
+        candidates: suspend (String, Set<String>, Int) -> List<AndroidTrack> = { _, _, _ -> emptyList() },
     ) : AutoCloseable {
         private val context = RuntimeEnvironment.getApplication()
         private val databaseName = "playback-controller-${java.util.UUID.randomUUID()}.db"
@@ -2062,16 +2205,16 @@ class AndroidPlaybackControllerTest {
             val outbox = PersistentScrobbleOutbox(store.database, OutboxWallClock { System.currentTimeMillis() })
             pendingPlays.forEachIndexed { index, rawId ->
                 outbox.persistSynchronously(RecordedPlaybackEvent.SubmittedPlay(
-                    ProviderItemId(OWNER, rawId), PlaybackWallClockTime(System.currentTimeMillis() - 60_000 + index)))
+                    ProviderItemId(accountOwner, rawId), PlaybackWallClockTime(System.currentTimeMillis() - 60_000 + index)))
             }
             controller = AndroidPlaybackController(RuntimeEnvironment.getApplication(),
-                PlaybackEndpointAccount(OWNER, baseUrl, "controller-canary", "controller-password-canary", true),
+                PlaybackEndpointAccount(accountOwner, baseUrl, "controller-canary", "controller-password-canary", true),
                 AndroidPlaybackControllerBoundaries(store, if (realPlayer) null else probe.player,
                     if (realPlayer) null else { plan -> prepared += plan }, loadSong, resolve,
                     onDelivery?.let { callback -> { event -> callback(this, event) } },
                     localPlans = localPlans,
                     prepareLocalSource = if (realPlayer) null else { plan -> preparedLocal += plan },
-                    overlapPlayer = overlapPlayer),
+                    overlapPlayer = overlapPlayer, autoplayCandidates = candidates),
                 serverContact = serverContact)
         }
         override fun close() {
