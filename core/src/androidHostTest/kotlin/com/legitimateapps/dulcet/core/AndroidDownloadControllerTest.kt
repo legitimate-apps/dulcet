@@ -742,6 +742,46 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    @Test fun aSameServerReaderProbeCannotStrandTheScheduledDownloadItSupersedes() = runBlocking {
+        val firstPing = CountDownLatch(1)
+        val releaseDownloadPing = CountDownLatch(1)
+        val pingCount = java.util.concurrent.atomic.AtomicInteger()
+        WireServer(identityType = "navidrome", concurrentRequests = true, identityStatus = {
+            if (pingCount.incrementAndGet() == 1) {
+                firstPing.countDown()
+                check(releaseDownloadPing.await(10, TimeUnit.SECONDS))
+            }
+            200
+        }) { WireReply(200, AUDIO) }.use { server ->
+            val accountId = "identity-concurrent:${java.util.UUID.randomUUID()}"
+            var now = NOW
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks, serverId = accountId, wall = { now }, validateIdentityBeforeTransfer = true)
+            ServerIdentityStore(inspect().database).accept(accountId, ServerIdentityPolicy.identity("navidrome"))
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val download = async(Dispatchers.IO) { controller.runTask(tasks.started.single()) }
+            try {
+                assertTrue(firstPing.await(10, TimeUnit.SECONDS), "The download identity request is in flight")
+                assertNull(AndroidServerIdentity.validate(accountId) {
+                    ServerIdentityGate(inspect().database, accountId,
+                        AccountConnectionRequest(server.url, USER, PASSWORD, true)).validate()
+                }, "The newer reader probe authenticates the same server")
+            } finally { releaseDownloadPing.countDown() }
+            assertEquals(AndroidDownloadRunOutcome.WillRetry, withTimeout(10_000) { download.await() },
+                "Supersession must retire the running row into normal retry scheduling")
+            assertFalse(AndroidServerIdentity.isRejected(accountId))
+            assertTrue(server.requests.isEmpty() && server.lookups.isEmpty(), "No opaque track ID precedes validation")
+            controller.scheduleNext() // The production worker always schedules after runTask.
+            val retry = tasks.wakes.single()
+            assertTrue(retry > now && retry < Long.MAX_VALUE)
+            now = retry
+            controller.scheduleNext()
+            assertEquals(2, tasks.started.size, "The worker's completed task has a scheduled successor")
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.last()))
+            assertContentEquals(AUDIO, File(assertNotNull(controller.localPlan(RAW_ID)).absolutePath).readBytes())
+        }
+    }
+
     @Test fun productionIdentityValidationRejectsBothProductSwapDirectionsBeforeAnyStoredSongId() = runBlocking {
         for ((oldType, newType) in listOf("navidrome" to "dulcet", "dulcet" to "navidrome")) {
             WireServer(identityType = newType) { WireReply(200, AUDIO) }.use { server ->
@@ -896,6 +936,7 @@ class AndroidDownloadControllerTest {
         private val lookup: (WireRequest) -> WireReply = { songReply(it.query["id"].orEmpty().single()) },
         private val identityType: String? = null,
         private val identityStatus: () -> Int = { 200 },
+        private val concurrentRequests: Boolean = false,
         private val respond: (WireRequest) -> WireReply,
     ) : AutoCloseable {
         private val socket = ServerSocket().apply { bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0)) }
@@ -904,11 +945,16 @@ class AndroidDownloadControllerTest {
         val lookups = CopyOnWriteArrayList<WireRequest>()
         val identityRequests = CopyOnWriteArrayList<WireRequest>()
         private val executor = Executors.newSingleThreadExecutor()
+        private val requestExecutor = Executors.newCachedThreadPool()
         private var closed = false
         init {
             executor.submit {
                 while (!socket.isClosed) {
-                    try { socket.accept().use(::serve) } catch (_: Exception) { }
+                    try {
+                        val client = socket.accept()
+                        if (concurrentRequests) requestExecutor.submit { client.use(::serve) }
+                        else client.use(::serve)
+                    } catch (_: Exception) { }
                 }
             }
         }
@@ -962,8 +1008,9 @@ class AndroidDownloadControllerTest {
         override fun close() {
             if (closed) return
             closed = true
-            socket.close(); executor.shutdown()
+            socket.close(); executor.shutdown(); requestExecutor.shutdown()
             check(executor.awaitTermination(15, TimeUnit.SECONDS)) { "Fixture server did not stop" }
+            check(requestExecutor.awaitTermination(15, TimeUnit.SECONDS)) { "Fixture requests did not stop" }
         }
     }
 

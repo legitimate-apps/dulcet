@@ -435,11 +435,19 @@ public class AndroidDownloadController internal constructor(
                     account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
             }
             if (identityError != null) {
-                if (identityError == DomainError.Protocol.ServerIdentityChanged ||
-                    identityError == DomainError.Transport.Cancelled) return AndroidDownloadRunOutcome.NotRunnable
-                // A transient probe failure follows the existing retry policy, without discarding
-                // bytes from the last authenticated server or sending the track's opaque ID.
-                withContext(database) { engine.recordFailure(id, identityError, wall()) }
+                if (identityError == DomainError.Protocol.ServerIdentityChanged) return AndroidDownloadRunOutcome.NotRunnable
+                if (identityError == DomainError.Transport.Cancelled) {
+                    // A reader or outbox probe may supersede this task's proof. Let that probe
+                    // finish before choosing between a sticky replacement hold and normal retry.
+                    AndroidServerIdentity.awaitValidation(account.providerInstanceId)
+                }
+                // A transient or superseded probe follows the existing retry policy, without
+                // discarding partial bytes or leaving a completed worker's row Downloading.
+                val retryRecorded = withContext(database) {
+                    if (AndroidServerIdentity.isRejected(account.providerInstanceId)) false
+                    else engine.recordFailure(id, identityError, wall()) != null
+                }
+                if (!retryRecorded) return AndroidDownloadRunOutcome.NotRunnable
                 publish()
                 return AndroidDownloadRunOutcome.WillRetry
             }
