@@ -462,3 +462,108 @@ both completed/active release controls and fails both methods (four expectation 
 seconds). A completed resource remains retained; the active resource remains retained and its
 completion count stays zero instead of one cancellation. These are assertion failures, with
 neither a compiler error nor an unused-resource crash counted as a discriminator.
+
+
+## Review round 4: authenticated saved-account continuity (2026-10-21)
+
+The shared media policy accepts a server-confirmed username spelling only after the shell
+authenticates the unchanged saved credentials on the same provider instance and canonical server
+origin. It records authenticated spellings in the existing durable ownership epoch before secure
+credentials are replaced. Either saved spelling can reopen that epoch if the credential save is
+interrupted. A typed different username has no continuity proof; a real rebind rotates the epoch and
+removes its authenticated spellings. Usernames are never globally case-folded. Apple and Android use
+this same Kotlin policy.
+
+Candidate binding validation now precedes playback retirement in both adapters. The shared URL
+canonicalizer also normalizes percent-triplet hex case without decoding escaped separators. The
+dated section 28 entry records these contracts.
+
+OBSERVED fail-before on `08d465ba`: the two focused JVM cases fail at local-file availability
+assertions after the server-confirmed spelling or percent-triplet hex case changes. Mac native
+Kotlin reproduces both failures, and the exported Apple adapter returns no local asset for the
+percent-case change. All five are assertion failures with zero errors or skips. The historical B2
+compatibility extension acknowledges the new adoption call but supplies no ownership change,
+migration or file behavior; the actual old binding then makes the explicit/cached bytes unavailable.
+
+OBSERVED fail-before on Android: both selected host cases fail at their intended assertions, with
+zero errors or skips. The invalid-replacement control first installs current/preloaded playback,
+then observes the incoming decoder released by the rejected candidate. The app control first
+completes a real WorkManager explicit download, then authenticates the saved request with a
+controlled canonical-name result and observes that the local plan no longer resolves the promoted
+payload. These are host/runtime and byte-plan controls; they do not establish Android native decoder
+continuity.
+
+OBSERVED fail-before in the actual Mac AVPlayer regression on `08d465ba`: one named method executes
+all six binding scenarios and the subsequent unproven typed-alias replacement. It reports 14
+assertion issues, zero unexpected failures, in 3.446 seconds. The invalid candidate loses current
+and prepared items (five issues); the authenticated saved reconnect loses its 480,044-byte explicit
+payload and installed items (seven issues); the subsequent typed replacement observes retirement
+after unlink and a second retirement (two issues). The pre-existing endpoint, username, password and
+equivalent-URL controls report no failures, and decoder setup/progress succeeds. The package
+continuity guard executes all five parameter cases and fails at the expected adoption, forced
+replacement and supersession assertions. These are executed assertions, not compilation failures.
+
+A test-fixture correction initially referenced a private Kotlin helper. That attempt failed to
+compile and its stale XML was rejected; it supplies no fail-before or pass-after evidence. The
+corrected fixture reads the generated query directly, and the runner clears only generated task XML
+before each fresh execution. The corrected historical force-replacement control then executes
+exactly once on JVM and once on Mac native Kotlin: both fail because the old binding still returns
+`Available` where the unproven replacement requires `NotDownloaded`. Zero errors or skips are
+counted. OBSERVED current-source pass-after: the complete recovery gate passes with 1,172 JVM tests
+and 1,259 Mac native Kotlin tests, zero failures/errors/skips, including all 21 common binding cases
+on each. Metadata, Android AAR, SQLDelight migration and license checks pass; iOS/tvOS simulator
+tests compile and all five Apple frameworks link. The fresh Android host gate passes 1,396 core, 229
+DEV app, 229 PROD app and 91 TV tests (1,945 total), with zero failures/errors/skips. Both app
+channels execute all four canonical-account controls and all four WorkManager executor controls. The
+first app attempt exposed a host-only encryption fixture that replaced its AES key on every save;
+the fixture now retains the per-account key, matching the production Keystore, and a new control
+reads both pre-save and post-save ciphertext before deletion. The expanded Android emulator
+pass-after is recorded below. Native Apple phone/iPad execution is guarded by the named binding methods in the final
+platform run; the production-range teardown discriminator is recorded below.
+
+OBSERVED current-source Mac pass-after: all seven Apple integration schemes build for testing. The
+package selection passes 83 distinct methods across eight suites, including all five saved-account
+provenance arguments, resource-lifetime and crossfade controls. The actual Mac download adapter
+selection passes five methods; its binding helper executes all six scenarios and the subsequent
+unproven typed-alias replacement, preserving explicit bytes/current/prepared items on proven
+reconnect and invalid input, and witnessing stopped playback before real unlink. Account-removal,
+inbox and restoration controls pass. The two production HTTP/range methods now pass, including Ready, progressing media time,
+refreshed-password requests and rebind rejection. The release trace accounts for every started
+request: started 2, finished 1, cancelled 1, failed 0, active 0. The original post-release assertions
+and timeout are unchanged. The final-owner fix and its discriminator are detailed below. The phone and iPad helper exercises these same six scenarios plus the unproven typed-alias
+replacement on native AVPlayer; its named-method and scenario-marker guards reject missing execution.
+
+OBSERVED Android emulator pass-after on `463f75be`, core-ci run `39547508617`: the shared phone/TV
+CONF-52 helper first completes a real WorkManager explicit download, reconnects the exact saved
+request through production account entry with only the authenticated canonical-name result
+controlled, and requires the same provider instance, local plan and identical bytes. Its
+canonical-adoption marker precedes real production Media3 playback after the server relay is cut.
+Phone media time reaches 1,793 ms; TV reaches 1,529 ms. Each reports zero server requests during
+playback and byte-identical content, while the helper asserts no newly forwarded server bytes. Both
+CONF-52 testcase XML entries pass, and each sign-out reports zero files and zero unfinished tasks.
+The full fresh Linux Android host gate also passes core 1,396 / DEV 229 / PROD 229 / TV 91,
+including all four canonical-account and four executor cases in both channels. The previous isolated
+PROD-worker stall does not recur: the app step completes in 4 minutes 10 seconds. Its exact cause
+remains unproven; the final workflow wraps that step with the existing JVM thread-dump watchdog
+instead of changing any test assertion or enlarging the job budget.
+
+The final native gate exposed a distinct loader teardown defect twice: production HTTP/range
+playback reached Ready and advanced, but one started native request had no terminal trace after
+release. A focused regression now keeps the real AVPlayer asset and a forwarding proxy installed,
+releases only the actual resource-loader delegate, and checks operation cancellation plus terminal
+traces before injecting late cancellation and loaded callbacks. Against the exact pre-fix loader it
+executes one method and fails five intended cleanup assertions; native request setup succeeds. An
+initial selector that ran zero tests was rejected and supplies no evidence. The fix drains pending
+contexts only when the delegate loses its final owner, cancelling outside its lock. It does not
+change PlayerItemContext observation invalidation, incoming promotion or fading-tail retention.
+
+OBSERVED loader pass-after: the focused native lifetime regression passes in 0.045 seconds; the
+complete package selection passes 83 distinct methods across eight suites in 99.200 seconds. All
+five saved-account provenance arguments execute and pass. Native request cancellation and terminal
+traces now remain complete after delegate release, including late callback injection.
+
+The final native platform gate selects all 47 Mac playback-system methods, the complete compiled
+TV engine suites, and the named phone/iPad binding method. Each device helper must emit exactly one
+marker for endpoint, username, password, equivalent origin, invalid input and authenticated saved
+reconnect, plus the unproven typed-alias control. The final run and local receipts are recorded in
+the PR handoff; no device execution is inferred solely from compilation or a shared-policy test.
