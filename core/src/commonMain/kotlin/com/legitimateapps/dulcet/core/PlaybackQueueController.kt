@@ -232,6 +232,39 @@ internal class PlaybackQueueController(
     /** The server whose queue is active, or null when none is. Owners use it to refuse a foreign queue. */
     fun activeServerId(): ServerId? = queues.activeServerId()
 
+    /**
+     * Selects the saved account's persisted queue without replacing either account's entries.
+     * The owner first retires its engine and then applies these outgoing-session effects before
+     * restoring the selected entry with [restoreCurrentPaused], after configuring its delivery
+     * and availability. Selecting the same account is a refresh, not a playback boundary.
+     */
+    fun selectAccount(providerInstanceId: String): PlaybackQueueTransition {
+        val serverId = ServerId(providerInstanceId)
+        if (queues.activeServerId() == serverId) return emptyTransition()
+        val discarded = discardRegisteredPreload()
+        val finalized = playback.clearQueue()
+        check(finalized is PlaybackTransitionResult.Applied)
+        knownDurations.clear()
+        knownAlbums.clear()
+        autoplayGeneration++
+        takenAutoplayKey = null
+        answeredAutoplayKey = null
+        finishedAwaitingAutoplayKey = null
+        stopPoint = null
+        endHeldForPreload = false
+        travel = QueueTravel.Forward
+        failureChain.clear()
+        skippedPastFailures.clear()
+        pausedStartAttempt = null
+        queues.activate(serverId)
+        return PlaybackQueueTransition(
+            snapshot = snapshot(),
+            startDirective = null,
+            effects = finalized.effects,
+            discardedPreloadAttemptId = discarded,
+        )
+    }
+
     fun replaceAndStart(request: PlaybackQueueRequest): PlaybackQueueTransition {
         val playable = request.items.filter { canPlayItem(it.itemId) }
         if (playable.isEmpty()) return emptyTransition()
