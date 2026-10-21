@@ -39,6 +39,7 @@ SELECT sum(row_count) FROM (
   UNION ALL SELECT count(*) FROM cache_lyrics WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_lyrics_layer WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_lyrics_line WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM library_depth_entry WHERE server_id = :server_id
 );
 
 -- Every account id that owns a row in a table countRowsForServer counts, for the launch sweep of
@@ -83,7 +84,8 @@ UNION SELECT server_id FROM cache_list_member
 UNION SELECT server_id FROM cache_pin
 UNION SELECT server_id FROM cache_lyrics
 UNION SELECT server_id FROM cache_lyrics_layer
-UNION SELECT server_id FROM cache_lyrics_line;
+UNION SELECT server_id FROM cache_lyrics_line
+UNION SELECT server_id FROM library_depth_entry;
 
 deleteMutationOutboxForServer:
 DELETE FROM mutation_outbox WHERE server_id = ?;

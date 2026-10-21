@@ -56,6 +56,7 @@ internal class LibraryReader(
     internal val overlay: LibraryMutationOverlay = LibraryMutationOverlay.None,
     internal val downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     private val outboxes: ReconnectOutboxes = ReconnectOutboxes.None,
+    private val validateServerIdentity: suspend () -> DomainError? = { null },
     internal val playlistOverlay: LibraryPlaylistOverlay = LibraryPlaylistOverlay.None,
     /**
      * Observed endpoint health for this account (§10.4). The reader holds it because the reader
@@ -254,6 +255,12 @@ internal class LibraryReader(
     suspend fun connect(): CatalogEpoch? {
         checkConfined()
         if (!online) return null
+        val identityFailure = validateServerIdentity()
+        if (identityFailure != null) {
+            goOffline()
+            afterFailedRead(identityFailure)
+            return null
+        }
         return readEpoch()
     }
 
@@ -265,6 +272,12 @@ internal class LibraryReader(
         checkConfined()
         if (!online) return ReaderConnectionOutcome.Failed(DomainError.Transport.Unreachable)
         return try {
+            val identityFailure = validateServerIdentity()
+            if (identityFailure != null) {
+                goOffline()
+                afterFailedRead(identityFailure)
+                return ReaderConnectionOutcome.Failed(identityFailure)
+            }
             readEpochReporting()
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -352,6 +365,14 @@ internal class LibraryReader(
     private suspend fun performReconnect(): ReaderConnectionOutcome {
         var transitioned = false
         return try {
+            val identityFailure = validateServerIdentity()
+            if (identityFailure != null) {
+                // This check runs ahead of the writable outboxes. The old namespace remains usable
+                // offline until account UI obtains consent to replace it.
+                if (online) goOffline()
+                afterFailedRead(identityFailure)
+                return ReaderConnectionOutcome.Failed(identityFailure)
+            }
             // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
             flushOutboxes()
             // Pinned BEFORE the reading is adopted: if a later step throws, the next sequence still
