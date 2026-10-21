@@ -118,6 +118,57 @@ final class DulcetDesignTourUITests: XCTestCase {
         XCTAssertTrue(openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact))
         XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
         XCTAssertTrue(home.waitForExistence(timeout: 10))
+        try provePlaylistContextIfAdvertised(in: app, compact: compact, environment: environment)
+    }
+
+    /// The ordinary-server Home proof remains unchanged. On the advertised disposable server,
+    /// a brand-new playlist cannot appear in history until this client actually submits its play.
+    @MainActor
+    private func provePlaylistContextIfAdvertised(in app: XCUIApplication, compact: Bool,
+                                                   environment: [String: String]) throws {
+        let server = TourServer(url: try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"]),
+                                username: try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+                                password: try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"]))
+        let extensions = rest("getOpenSubsonicExtensions", [], server)?["openSubsonicExtensions"] as? [[String: Any]] ?? []
+        guard extensions.contains(where: { $0["name"] as? String == "dulcetHome" && ($0["versions"] as? [Int] ?? []).contains(1) }) else { return }
+        let songs = (rest("search3", [URLQueryItem(name: "query", value: "UI Playback Canary"),
+                                    URLQueryItem(name: "songCount", value: "20")], server)?["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? []
+        let song = try XCTUnwrap(songs.first { $0["title"] as? String == "UI Playback Canary" })
+        let songID = try XCTUnwrap(song["id"] as? String)
+        let idiom = UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone"
+        let name = "Context " + idiom + " " + UUID().uuidString.prefix(8)
+        let made = rest("createPlaylist", [URLQueryItem(name: "name", value: name),
+                                           URLQueryItem(name: "songId", value: songID)], server)?["playlist"] as? [String: Any]
+        let playlistID = try XCTUnwrap(made?["id"] as? String)
+        defer { _ = rest("deletePlaylist", [URLQueryItem(name: "id", value: playlistID)], server) }
+        func historyContainsPlaylist() -> Bool {
+            let home = rest("getDulcetHome", [URLQueryItem(name: "shelf", value: "recentPlaylists")], server)?["dulcetHome"] as? [String: Any]
+            return (home?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlistID }
+        }
+        XCTAssertFalse(historyContainsPlaylist(), "Creating or reading the playlist must not supply a play")
+        XCTAssertTrue(openPlaylists(in: app, compact: compact), app.debugDescription)
+        let row = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(scrollIntoView(row, in: app))
+        row.tap()
+        let play = app.buttons["dulcet.playlist.play"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 20))
+        XCTAssertTrue(waitFor(timeout: 20) { play.isEnabled })
+        XCTAssertFalse(historyContainsPlaylist(), "Playlist reads must still leave history empty")
+        play.tap()
+        XCTAssertTrue(waitFor(timeout: 50) { historyContainsPlaylist() }, "A real playlist play must reach the server with its raw playlist ID")
+        dismissOverlay(in: app)
+        XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
+        let refresh = app.buttons["dulcet.listenNow.refresh"].firstMatch
+        XCTAssertTrue(scrollIntoView(refresh, in: app))
+        refresh.tap()
+        let recent = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        XCTAssertTrue(recent.waitForExistence(timeout: 30), "Home must render the playlist this client just played: " + app.debugDescription)
+        XCTAssertTrue(scrollIntoView(recent, in: app))
+        shoot("playlist-context-" + idiom, app)
+        print("PLAYLIST CONTEXT PROOF idiom=\(idiom) rawPlaylist=\(playlistID) serverHistory=true homeTile=true source=actual-playlist-play")
     }
 
     @MainActor

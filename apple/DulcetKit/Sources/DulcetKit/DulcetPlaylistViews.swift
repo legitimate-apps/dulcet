@@ -312,7 +312,14 @@ private struct DulcetPlaylistPageContent: View {
         LazyVStack(alignment: .leading, spacing: 0) {
             // By position: a playlist may hold one song twice (§18.6).
             ForEach(Array(window.items.enumerated()), id: \.offset) { index, item in
-                DulcetReaderTrackRow(item: item, index: window.leadingOffset + index + 1, showsIndex: false, prominentTVFocus: true) { track in
+                DulcetReaderTrackRow(
+                    item: item, index: window.leadingOffset + index + 1,
+                    showsIndex: false, prominentTVFocus: true,
+                    queueAddition: item.playableTrack.map {
+                        DulcetQueueAddition(tracks: [$0], sourceKind: .playlist,
+                                            sourceID: id, sourceDisplayName: window.header?.displayTitle ?? "")
+                    }
+                ) { track in
                     store.playReaderTracks(
                         playable,
                         startingAt: track,

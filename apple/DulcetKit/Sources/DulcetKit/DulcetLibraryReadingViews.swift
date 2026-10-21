@@ -773,6 +773,8 @@ struct DulcetReaderTrackRow: View {
     var showsAlbum = true
     var showsArtwork = true
     var albumArtists: [String] = []
+    /// The row's collection origin, captured in both menu and drag queue actions.
+    var queueAddition: DulcetQueueAddition? = nil
     let onPlay: (DulcetTrack) -> Void
 
     var body: some View {
@@ -795,6 +797,7 @@ struct DulcetReaderTrackRow: View {
                         .dulcetTrackContextMenu(
                             track: withDownloadState(track),
                             onPlay: { onPlay(track) },
+                            queueAddition: queueAddition,
                             offersAlbum: showsAlbum,
                             publishedRating: item.rating,
                             onDownload: downloadAction(track)
@@ -888,6 +891,7 @@ struct DulcetReaderTrackRow: View {
             showsIndex: showsIndex,
             prominentTVFocus: prominentTVFocus,
             albumArtists: albumArtists,
+            queueAddition: queueAddition,
             onActivate: item.isUnavailableOffline ? nil : { onPlay(track) },
             onDownload: downloadAction(track)
         ) {

@@ -743,6 +743,7 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// The album's own artists, for a row without artwork: the row names its artists only when
     /// they differ.
     var albumArtists: [String] = []
+    var queueAddition: DulcetQueueAddition?
     var onActivate: (() -> Void)?
     var onDownload: (() -> Void)?
     /// Trailing content -- the reader's favourite heart. At the accessibility text sizes the row
@@ -760,6 +761,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         showsIndex: Bool = true,
         prominentTVFocus: Bool = false,
         albumArtists: [String] = [],
+        queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil,
         @ViewBuilder trailing: () -> Trailing
@@ -774,6 +776,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         self.showsIndex = showsIndex
         self.prominentTVFocus = prominentTVFocus
         self.albumArtists = albumArtists
+        self.queueAddition = queueAddition
         self.onActivate = onActivate
         self.onDownload = onDownload
         self.trailing = trailing()
@@ -846,7 +849,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                 artwork: track.artwork,
                 title: track.title,
                 isEnabled: track.availability == .playable
-            ) { .track(track, in: store) }
+            ) { queueAddition ?? .track(track, in: store) }
         #endif
         }
     }
@@ -1533,6 +1536,7 @@ extension View {
     func dulcetTrackContextMenu(
         track: DulcetTrack,
         onPlay: (() -> Void)? = nil,
+        queueAddition: DulcetQueueAddition? = nil,
         offersAlbum: Bool = true,
         publishedRating: Int? = nil,
         onDownload: (() -> Void)? = nil,
@@ -1541,6 +1545,7 @@ extension View {
         modifier(DulcetTrackContextMenu(
             track: track,
             onPlay: onPlay,
+            queueAddition: queueAddition,
             offersAlbum: offersAlbum,
             publishedRating: publishedRating,
             onDownload: onDownload,
@@ -1560,6 +1565,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
     @Environment(DulcetPresentationStore.self) private var store
     let track: DulcetTrack
     let onPlay: (() -> Void)?
+    let queueAddition: DulcetQueueAddition?
     let offersAlbum: Bool
     let publishedRating: Int?
     let onDownload: (() -> Void)?
@@ -1597,7 +1603,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
     @ViewBuilder private var supplementalMenuItems: some View {
         if store.queueEditingEnabled {
             Menu {
-                DulcetQueueInsertionMenuItems(addition: .track(track, in: store))
+                DulcetQueueInsertionMenuItems(addition: queueAddition ?? .track(track, in: store))
             } label: {
                 Label(DulcetStrings.addToQueue, systemImage: "text.badge.plus")
             }
@@ -1632,7 +1638,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
         if let onPlay, track.availability == .playable {
             Button(DulcetStrings.play, systemImage: "play", action: onPlay)
         }
-        DulcetQueueInsertionMenuItems(addition: .track(track, in: store))
+        DulcetQueueInsertionMenuItems(addition: queueAddition ?? .track(track, in: store))
         if let onDownload, track.availability == .playable {
             switch track.downloadState {
             case .notDownloaded, .cached:

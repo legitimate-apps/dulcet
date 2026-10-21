@@ -167,6 +167,28 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         try await waitUntil(timeout: .seconds(20), "playback must progress; phase=\(String(describing: app.store.snapshot.nowPlaying?.phase))") {
             app.store.snapshot.nowPlaying?.progressBegan == true
         }
+        let extensions = try await server.call("getOpenSubsonicExtensions", [])["openSubsonicExtensions"] as? [[String: Any]] ?? []
+        if extensions.contains(where: { $0["name"] as? String == "dulcetHome" && ($0["versions"] as? [Int] ?? []).contains(1) }) {
+            // This unique playlist has never been submitted by any other client. A passing
+            // now-playing report alone cannot populate this shelf.
+            var submitted = false
+            try await waitUntil(timeout: .seconds(50), "The playlist play must reach server history") {
+                let shelf = try await server.call("getDulcetHome", [URLQueryItem(name: "shelf", value: "recentPlaylists")])["dulcetHome"] as? [String: Any]
+                submitted = (shelf?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlistID }
+                return submitted
+            }
+            try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.listenNow")
+            var refresh: Any?
+            try await waitUntil(timeout: .seconds(15), "Home Refresh must appear") {
+                refresh = app.windowFirstElement { app.identifier($0) == "dulcet.listenNow.refresh" }
+                return refresh != nil
+            }
+            try app.press(try XCTUnwrap(refresh), named: "Home Refresh")
+            try await waitUntil(timeout: .seconds(20), "Home must render the playlist this client just played") {
+                app.windowFirstElement { app.identifier($0) == "dulcet.library.playlist" && (app.label($0) ?? "").hasPrefix(name) } != nil
+            }
+            print("PLAYLIST CONTEXT PROOF idiom=macos rawPlaylist=\(playlistID) serverHistory=\(submitted) homeTile=true source=actual-playlist-play")
+        }
         print("DULCET MAC PLAYLIST PLAY PROOF PASS first=\(order[0].debugDescription)"
             + " queue=\(nowPlaying.queue.map(\.title)) source=\((nowPlaying.sourceDisplayName ?? "nil").debugDescription)")
     }

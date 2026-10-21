@@ -37,6 +37,46 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(selectSection(app,"library"))
         XCTAssertTrue(selectSection(app,"listenNow"))
         XCTAssertTrue(waitForNavigationTitle("Listen Now",in:app,timeout:10))
+        try provePlaylistContextIfAdvertised(in: app)
+    }
+
+    @MainActor
+    private func provePlaylistContextIfAdvertised(in app: XCUIApplication) throws {
+        let server = try disposableServer()
+        let extensions = restCall("getOpenSubsonicExtensions", [], server: server)?["openSubsonicExtensions"] as? [[String: Any]] ?? []
+        guard extensions.contains(where: { $0["name"] as? String == "dulcetHome" && ($0["versions"] as? [Int] ?? []).contains(1) }) else { return }
+        let album = try playlistProofAlbum(server: server)
+        let canary = try XCTUnwrap(album.songs.first { $0.title == "UI Playback Canary" })
+        let name = "Context tvos " + UUID().uuidString.prefix(8)
+        let playlist = try makeServerPlaylist(named: name, entries: [canary.id], server: server)
+        func historyContainsPlaylist() -> Bool {
+            let home = restCall("getDulcetHome", [URLQueryItem(name: "shelf", value: "recentPlaylists")], server: server)?["dulcetHome"] as? [String: Any]
+            return (home?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlist.id }
+        }
+        XCTAssertFalse(historyContainsPlaylist(), "Creation must not record a playlist play")
+        try openLibraryPlaylistsByRemote(app)
+        try openPlaylistByRemote(app, named: name)
+        let play = app.buttons["dulcet.playlist.play"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 20))
+        let ready = ContinuousClock.now.advanced(by: .seconds(20))
+        while !play.isEnabled, ContinuousClock.now < ready { Thread.sleep(forTimeInterval: 0.25) }
+        XCTAssertTrue(play.isEnabled)
+        XCTAssertFalse(historyContainsPlaylist(), "Playlist reads must not record a playlist play")
+        XCTAssertTrue(focusByRemote(play, in: app))
+        XCUIRemote.shared.press(.select)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(50))
+        while !historyContainsPlaylist(), ContinuousClock.now < deadline { Thread.sleep(forTimeInterval: 0.5) }
+        XCTAssertTrue(historyContainsPlaylist(), "A real playlist play must submit the raw playlist ID")
+        XCTAssertTrue(selectSection(app, "listenNow"))
+        let refresh = app.buttons["dulcet.listenNow.refresh"].firstMatch
+        XCTAssertTrue(focusByRemote(refresh, in: app))
+        XCUIRemote.shared.press(.select)
+        let recent = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        XCTAssertTrue(recent.waitForExistence(timeout: 30), "Home must render the playlist this client played: " + app.debugDescription)
+        XCTAssertTrue(focusByRemote(recent, in: app))
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "playlist-context-tvos"; shot.lifetime = .keepAlways; add(shot)
+        print("PLAYLIST CONTEXT PROOF idiom=tvos rawPlaylist=\(playlist.id) serverHistory=true homeTile=true source=actual-playlist-play")
     }
 
     private static let sections = ["listenNow", "library", "search", "nowPlaying", "settings"]
