@@ -1887,16 +1887,21 @@ class AndroidPlaybackControllerTest {
                             val line = assertNotNull(reader.readLine()).split(' ')
                             val uri = java.net.URI(line[1])
                             assertEquals("GET", line[0])
-                            assertEquals("/rest/scrobble.view", uri.path)
+                            assertTrue(uri.path in setOf("/rest/ping.view", "/rest/scrobble.view"))
                             while (!reader.readLine().isNullOrEmpty()) { /* drain request headers */ }
                             val query = uri.rawQuery.split('&').associate {
                                 val pair = it.split('=', limit = 2)
                                 java.net.URLDecoder.decode(pair[0], "UTF-8") to java.net.URLDecoder.decode(pair[1], "UTF-8")
                             }
-                            requests += query
-                            val refuse = query["submission"] == "true" && refused.getAndIncrement() < refuseFirstSubmissions
-                            val gone = query["submission"] == "true" && query["id"] == goneId
-                            val body = (if (gone) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Song not found"}}}"""
+                            assertEquals("controller-canary", query["u"])
+                            val salt = assertNotNull(query["s"])
+                            assertEquals(AccountConnectionContract.saltedToken("controller-password-canary", salt), query["t"])
+                            val identityProbe = uri.path == "/rest/ping.view"
+                            if (!identityProbe) requests += query
+                            val refuse = !identityProbe && query["submission"] == "true" && refused.getAndIncrement() < refuseFirstSubmissions
+                            val gone = !identityProbe && query["submission"] == "true" && query["id"] == goneId
+                            val body = (if (identityProbe) """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.60.0"}}"""
+                                else if (gone) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Song not found"}}}"""
                                 else if (refuse) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"unavailable"}}}"""
                                 else """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""").toByteArray()
                             client.getOutputStream().apply {
