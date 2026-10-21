@@ -7916,6 +7916,23 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-21 — Keep identity quarantine across background work and legacy account review.**
+The accepted database lineage takes precedence over saved credential metadata. Credential metadata
+seeds an empty identity store only; an older or product-only record cannot replace an instance ID
+learned during reconnect. Account negotiation compares against this accepted lineage before deciding
+whether replacement consent is needed.
+
+Download workers validate lineage before requesting stored song IDs and before publishing delivered
+media. A known replacement quarantines remote tasks, including callbacks already in flight, without
+removing existing files, partials, download rows or offline playback plans. Late successful probes
+cannot reopen a rejected account; explicit accepted account replacement is required. A transient
+identity-probe failure retains normal retry behavior. A fresh process revalidates against durable
+accepted lineage before remote work. Cancel retains the old account and its local playback.
+On Android, Play chosen during an already chosen connection's identity probe waits for that probe;
+a rejected probe leaves Reconnect required. This wait never chooses Connect or delays a local file,
+and a newer selection or Stop supersedes it.
+
+
 **2026-10-21 — Bind saved accounts to server lineage and confirm destructive replacement.**
 The Kotlin core derives server identity from the authenticated OpenSubsonic envelope's `type`,
 normalized as an implementation identifier, plus the advertised Dulcet discovery document's

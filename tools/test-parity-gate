@@ -1347,18 +1347,24 @@ passing_cases = """\
 for alias, methods in (
     ("DulcetKitTests", (
         "serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged",
+        "learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt",
+        "detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia",
         "serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges",
         "savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible",
         "savedServerChooserIsReachableFromAccountAndActivatesItsEntry",
     )),
     ("DulcetKitIOSTests", (
         "serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged",
+        "learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt",
+        "detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia",
         "serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges",
         "savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible",
         "savedServerChooserAccountActionsSelectEntryAndKeepBothServers",
     )),
     ("DulcetKitTVOSTests", (
         "serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged",
+        "learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt",
+        "detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia",
         "serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges",
         "savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible",
         "savedServerChooserAccountActionsSelectEntryAndKeepBothServers",

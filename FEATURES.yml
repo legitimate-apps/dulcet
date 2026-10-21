@@ -805,6 +805,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
+            },
+            {
+              "observes": "The native account presentation uses the accepted database lineage ahead of legacy saved metadata; both a learned product and a learned Dulcet instance require counted consent and retain the account on Cancel. Injected authenticated outcomes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt"
             }
           ],
           "promotion_condition": {
@@ -828,6 +834,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
+            },
+            {
+              "observes": "The native account presentation uses the accepted database lineage ahead of legacy saved metadata; both a learned product and a learned Dulcet instance require counted consent and retain the account on Cancel. Injected authenticated outcomes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt"
             }
           ],
           "promotion_condition": {
@@ -851,6 +863,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
+            },
+            {
+              "observes": "The native account presentation uses the accepted database lineage ahead of legacy saved metadata; both a learned product and a learned Dulcet instance require counted consent and retain the account on Cancel. Injected authenticated outcomes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt"
             }
           ],
           "promotion_condition": {
@@ -868,6 +886,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTVOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            },
+            {
+              "observes": "The native account presentation uses the accepted database lineage ahead of legacy saved metadata; both a learned product and a learned Dulcet instance require counted consent and retain the account on Cancel. Injected authenticated outcomes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt"
             }
           ],
           "promotion_condition": {
@@ -891,6 +915,12 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidAccountDataTest/replacementDownloadCountIncludesLegacyAndPendingItemsButExcludesCacheAndDuplicateProfiles"
+            },
+            {
+              "observes": "The phone production account policy requires counted consent when legacy credentials omit lineage already learned by the database, including a stronger Dulcet instance ID; Android host runtime, shared policy used by both shells.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerAccountsTest/aLegacyUnknownRecordCannotForgetTheServerIdentityLearnedByTheReader"
             }
           ],
           "promotion_condition": {
@@ -914,6 +944,12 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidAccountDataTest/replacementDownloadCountIncludesLegacyAndPendingItemsButExcludesCacheAndDuplicateProfiles"
+            },
+            {
+              "observes": "The phone production account policy requires counted consent when legacy credentials omit lineage already learned by the database, including a stronger Dulcet instance ID; Android host runtime, shared policy used by both shells.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerAccountsTest/aLegacyUnknownRecordCannotForgetTheServerIdentityLearnedByTheReader"
             }
           ],
           "promotion_condition": {
@@ -1378,6 +1414,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            },
+            {
+              "observes": "The native account presentation uses the accepted database lineage ahead of legacy saved metadata; both a learned product and a learned Dulcet instance require counted consent and retain the account on Cancel. Injected authenticated outcomes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt"
+            },
+            {
+              "observes": "A detected server replacement quarantines downloads before account negotiation; cancelling preserves existing media and the old account. Presentation orchestration with an injected quarantine boundary.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia"
             }
           ],
           "promotion_condition": {
@@ -1413,6 +1461,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            },
+            {
+              "observes": "The native account presentation uses the accepted database lineage ahead of legacy saved metadata; both a learned product and a learned Dulcet instance require counted consent and retain the account on Cancel. Injected authenticated outcomes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt"
+            },
+            {
+              "observes": "A detected server replacement quarantines downloads before account negotiation; cancelling preserves existing media and the old account. Presentation orchestration with an injected quarantine boundary.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia"
             }
           ],
           "promotion_condition": {
@@ -1448,6 +1508,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            },
+            {
+              "observes": "The native account presentation uses the accepted database lineage ahead of legacy saved metadata; both a learned product and a learned Dulcet instance require counted consent and retain the account on Cancel. Injected authenticated outcomes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt"
+            },
+            {
+              "observes": "A detected server replacement quarantines downloads before account negotiation; cancelling preserves existing media and the old account. Presentation orchestration with an injected quarantine boundary.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia"
             }
           ],
           "promotion_condition": {
@@ -1483,6 +1555,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTVOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            },
+            {
+              "observes": "The native account presentation uses the accepted database lineage ahead of legacy saved metadata; both a learned product and a learned Dulcet instance require counted consent and retain the account on Cancel. Injected authenticated outcomes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt"
+            },
+            {
+              "observes": "A detected server replacement quarantines downloads before account negotiation; cancelling preserves existing media and the old account. Presentation orchestration with an injected quarantine boundary.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia"
             }
           ],
           "promotion_condition": {
@@ -1518,6 +1602,18 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerAccountsTest/navidromeToDulcetSwapRequiresConsentAndRotatesTheNamespace"
+            },
+            {
+              "observes": "The phone production account policy requires counted consent when legacy credentials omit lineage already learned by the database, including a stronger Dulcet instance ID; Android host runtime, shared policy used by both shells.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerAccountsTest/aLegacyUnknownRecordCannotForgetTheServerIdentityLearnedByTheReader"
+            },
+            {
+              "observes": "The production Android download worker authenticates both product-swap directions before requesting any saved song ID; held tasks and late transfer rejection retain partial files without promotion. Android host runtime, shared phone/TV worker.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/productionIdentityValidationRejectsBothProductSwapDirectionsBeforeAnyStoredSongId"
             }
           ],
           "promotion_condition": {
@@ -1553,6 +1649,18 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerAccountsTest/navidromeToDulcetSwapRequiresConsentAndRotatesTheNamespace"
+            },
+            {
+              "observes": "The phone production account policy requires counted consent when legacy credentials omit lineage already learned by the database, including a stronger Dulcet instance ID; Android host runtime, shared policy used by both shells.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerAccountsTest/aLegacyUnknownRecordCannotForgetTheServerIdentityLearnedByTheReader"
+            },
+            {
+              "observes": "The production Android download worker authenticates both product-swap directions before requesting any saved song ID; held tasks and late transfer rejection retain partial files without promotion. Android host runtime, shared phone/TV worker.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/productionIdentityValidationRejectsBothProductSwapDirectionsBeforeAnyStoredSongId"
             }
           ],
           "promotion_condition": {
