@@ -1772,6 +1772,42 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun reconnectPreparesTheRestoredQueueWhileTheRealOutboxRevalidatesEstablishedContact() {
+        ScrobbleReceiver().use { receiver ->
+            AndroidServerIdentity.requireValidation(OWNER)
+            val chosen = kotlinx.coroutines.flow.MutableStateFlow(false)
+            val contact = object : AndroidServerContact {
+                override fun isOpen() = chosen.value && AndroidServerIdentity.isVerified(OWNER)
+                override suspend fun awaitOpen() {
+                    kotlinx.coroutines.flow.combine(chosen, AndroidServerIdentity.verified) { selected, verified ->
+                        selected && OWNER in verified
+                    }.first { it }
+                }
+                override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(OWNER) }
+            }
+            val loaded = java.util.concurrent.CopyOnWriteArrayList<String>()
+            Fixture(savedOwner = OWNER, baseUrl = receiver.url, onDelivery = null,
+                pendingPlays = listOf("played-before"), serverContact = contact,
+                loadSong = { id -> loaded += id; song(id) }).use { f ->
+                settle(5)
+                assertTrue(f.prepared.isEmpty())
+                assertTrue(loaded.isEmpty())
+                kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(OWNER) { null }) }
+                chosen.value = true
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                while ((f.prepared.isEmpty() || receiver.requests.none { it["submission"] == "true" }) &&
+                    System.nanoTime() < deadline) settle(5)
+                assertEquals(listOf("played-before"), receiver.requests.filter { it["submission"] == "true" }.map { it["id"] })
+                assertEquals(listOf("saved-song"), f.prepared.map { it.itemId.rawId },
+                    "The outbox's independent identity probe must not strand the restored queue after Connect")
+                assertEquals(setOf("saved-song"), loaded.toSet(), "Metadata and playback resolve only this server's restored entry")
+                assertFalse(f.probe.requested, "Reconnecting restores paused playback")
+                assertFalse(f.controller.state.value.needsReconnect)
+            }
+            AndroidServerIdentity.requireValidation(OWNER)
+        }
+    }
+
     /** Saved and not connected (spec §13.1), a downloaded song plays from its file, and only it does. */
     @Test fun aSavedAccountNotYetConnectedPlaysADownloadAndSaysTheNextSongNeedsReconnect() {
         val songReads = mutableListOf<String>()

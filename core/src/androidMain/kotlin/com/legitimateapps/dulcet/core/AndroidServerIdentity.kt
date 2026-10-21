@@ -38,7 +38,8 @@ public object AndroidServerIdentity {
     public fun isVerified(id: String): Boolean = id in mutableVerified.value && !isRejected(id)
     internal suspend fun validate(id: String, validation: suspend () -> DomainError?): DomainError? {
         val generation = synchronized(validationLock) {
-            mutableVerified.update { it - id }
+            // An independent background probe does not revoke established contact while in flight.
+            // New connections explicitly requireValidation; each ID-using worker still gates its own batch.
             validating.update { it + (id to ((it[id] ?: 0) + 1)) }
             nextGeneration(id)
         }
@@ -54,6 +55,11 @@ public object AndroidServerIdentity {
                     if (id in rejected) DomainError.Protocol.ServerIdentityChanged else error
                 }
             }
+        } catch (failure: Throwable) {
+            synchronized(validationLock) {
+                if (generations[id] == generation) mutableVerified.update { it - id }
+            }
+            throw failure
         } finally {
             synchronized(validationLock) {
                 validating.update { counts ->

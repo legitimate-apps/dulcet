@@ -35,6 +35,33 @@ class AndroidServerIdentityRaceTest {
         }
     }
 
+    @Test fun establishedContactStaysOpenDuringBackgroundValidationButClosesOnFailure() = runTest {
+        for (failure in listOf("success", "transport", "throw", "swap")) {
+            val id = UUID.randomUUID().toString()
+            assertNull(AndroidServerIdentity.validate(id) { null })
+            val release = CompletableDeferred<Unit>()
+            val probe = async { runCatching { AndroidServerIdentity.validate(id) {
+                release.await()
+                when (failure) {
+                    "transport" -> DomainError.Transport.Cancelled
+                    "throw" -> error("identity fixture failure")
+                    "swap" -> DomainError.Protocol.ServerIdentityChanged
+                    else -> null
+                }
+            } } }
+            runCurrent()
+            assertTrue(AndroidServerIdentity.isVerified(id),
+                "Starting an independent background probe cannot revoke already established contact")
+            release.complete(Unit)
+            probe.await()
+            assertEquals(failure == "success", AndroidServerIdentity.isVerified(id))
+            if (failure == "swap") {
+                AndroidServerIdentity.validate(id) { null }
+                assertFalse(AndroidServerIdentity.isVerified(id), "A confirmed swap stays quarantined")
+            }
+        }
+    }
+
     @Test fun aLateSuccessfulProbeCannotReopenContactAfterANewerSwapDetection() = runTest {
         val id = UUID.randomUUID().toString()
         val releaseOld = CompletableDeferred<Unit>()
