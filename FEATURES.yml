@@ -784,6 +784,582 @@
       }
     },
     {
+      "id": "account.replacement_consent",
+      "title": "Count downloads and confirm before account media replacement",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#28-revision-record",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Detection retains the old namespace. Account UI offers the stored download count before playback retirement or deletion, and cancellation leaves it unchanged. Platform evidence covers the stated orchestration/UI boundary; cache-only bytes are removed on confirmation but are not counted as downloads. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "For injected authenticated product replacements in both directions, the native presentation offers seven downloads, cancellation retains account/player/media, and confirmation orders retirement before removal.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            }
+          ]
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Detection retains the old namespace. Account UI offers the stored download count before playback retirement or deletion, and cancellation leaves it unchanged. Platform evidence covers the stated orchestration/UI boundary; cache-only bytes are removed on confirmation but are not counted as downloads. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "For injected authenticated product replacements in both directions, the native presentation offers seven downloads, cancellation retains account/player/media, and confirmation orders retirement before removal.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            }
+          ]
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Detection retains the old namespace. Account UI offers the stored download count before playback retirement or deletion, and cancellation leaves it unchanged. Platform evidence covers the stated orchestration/UI boundary; cache-only bytes are removed on confirmation but are not counted as downloads. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "For injected authenticated product replacements in both directions, the native presentation offers seven downloads, cancellation retains account/player/media, and confirmation orders retirement before removal.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            }
+          ]
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Detection retains the old namespace. Account UI offers the stored download count before playback retirement or deletion, and cancellation leaves it unchanged. Platform evidence covers the stated orchestration/UI boundary; cache-only bytes are removed on confirmation but are not counted as downloads. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "For injected authenticated product replacements in both directions, the native presentation offers seven downloads, cancellation retains account/player/media, and confirmation orders retirement before removal.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            }
+          ]
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Detection retains the old namespace. Account UI offers the stored download count before playback retirement or deletion, and cancellation leaves it unchanged. Platform evidence covers the stated orchestration/UI boundary; cache-only bytes are removed on confirmation but are not counted as downloads. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The phone Compose form renders seven downloads in the replacement dialog; activating Cancel preserves the stored account and performs no retirement or removal; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerSwitcherUiTest/connectFormShowsDownloadCountAndCancelKeepsTheOriginalAccount"
+            },
+            {
+              "observes": "The Android durable count includes legacy rows without policy metadata and pending downloads, counts the same track once across profiles, and excludes cache-only and other-account rows; host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidAccountDataTest/replacementDownloadCountIncludesLegacyAndPendingItemsButExcludesCacheAndDuplicateProfiles"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Detection retains the old namespace. Account UI offers the stored download count before playback retirement or deletion, and cancellation leaves it unchanged. Platform evidence covers the stated orchestration/UI boundary; cache-only bytes are removed on confirmation but are not counted as downloads. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The TV Compose form renders seven downloads and remote Cancel preserves the account with no removal; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvSavedServerSwitcherTest/remoteCanCancelTheCountedServerReplacementWithoutChangingTheAccount"
+            },
+            {
+              "observes": "The Android durable count includes legacy rows without policy metadata and pending downloads, counts the same track once across profiles, and excludes cache-only and other-account rows; host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidAccountDataTest/replacementDownloadCountIncludesLegacyAndPendingItemsButExcludesCacheAndDuplicateProfiles"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "account.canonical_identity",
+      "title": "Retain media for the server-confirmed saved canonical username",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#28-revision-record",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Authentication confirming saved alice retains its namespace when typed Alice; absent canonical usernames retain exact submitted spelling. No client case folding. The Apple path already retained this case before this change; Android now uses the same core rule. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The shared selection rule retains saved alice after typed Alice is authenticated as alice, and rejects an unconfirmed spelling change; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/canonicalConfirmationRetainsTheSavedPrincipalWithoutCaseFolding"
+            },
+            {
+              "observes": "The native production presentation keeps its provider ID and media binding when an injected successful negotiation confirms the exact saved canonical username after typed case/password changes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges"
+            }
+          ]
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Authentication confirming saved alice retains its namespace when typed Alice; absent canonical usernames retain exact submitted spelling. No client case folding. The Apple path already retained this case before this change; Android now uses the same core rule. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The shared selection rule retains saved alice after typed Alice is authenticated as alice, and rejects an unconfirmed spelling change; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/canonicalConfirmationRetainsTheSavedPrincipalWithoutCaseFolding"
+            },
+            {
+              "observes": "The native production presentation keeps its provider ID and media binding when an injected successful negotiation confirms the exact saved canonical username after typed case/password changes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges"
+            }
+          ]
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Authentication confirming saved alice retains its namespace when typed Alice; absent canonical usernames retain exact submitted spelling. No client case folding. The Apple path already retained this case before this change; Android now uses the same core rule. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The shared selection rule retains saved alice after typed Alice is authenticated as alice, and rejects an unconfirmed spelling change; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/canonicalConfirmationRetainsTheSavedPrincipalWithoutCaseFolding"
+            },
+            {
+              "observes": "The native production presentation keeps its provider ID and media binding when an injected successful negotiation confirms the exact saved canonical username after typed case/password changes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges"
+            }
+          ]
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Authentication confirming saved alice retains its namespace when typed Alice; absent canonical usernames retain exact submitted spelling. No client case folding. The Apple path already retained this case before this change; Android now uses the same core rule. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The shared selection rule retains saved alice after typed Alice is authenticated as alice, and rejects an unconfirmed spelling change; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/canonicalConfirmationRetainsTheSavedPrincipalWithoutCaseFolding"
+            },
+            {
+              "observes": "The native production presentation keeps its provider ID and media binding when an injected successful negotiation confirms the exact saved canonical username after typed case/password changes.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges"
+            }
+          ]
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Authentication confirming saved alice retains its namespace when typed Alice; absent canonical usernames retain exact submitted spelling. No client case folding. The Apple path already retained this case before this change; Android now uses the same core rule. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The shared selection rule retains saved alice after typed Alice is authenticated as alice, and rejects an unconfirmed spelling change; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/canonicalConfirmationRetainsTheSavedPrincipalWithoutCaseFolding"
+            },
+            {
+              "observes": "The production Android connect-and-save path keeps its encrypted saved provider ID and avoids retirement/removal after authenticated canonical confirmation; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerAccountsTest/typedCaseAndPasswordRefreshContinueWhenServerConfirmsTheSavedPrincipal"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Authentication confirming saved alice retains its namespace when typed Alice; absent canonical usernames retain exact submitted spelling. No client case folding. The Apple path already retained this case before this change; Android now uses the same core rule. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The shared selection rule retains saved alice after typed Alice is authenticated as alice, and rejects an unconfirmed spelling change; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/canonicalConfirmationRetainsTheSavedPrincipalWithoutCaseFolding"
+            },
+            {
+              "observes": "The production Android connect-and-save path keeps its encrypted saved provider ID and avoids retirement/removal after authenticated canonical confirmation; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerAccountsTest/typedCaseAndPasswordRefreshContinueWhenServerConfirmsTheSavedPrincipal"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "account.saved_servers",
+      "title": "Choose saved servers and restore their separate local state",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#28-revision-record",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "The shared queue selection and native account chooser are implemented. Evidence distinguishes rendered platform UI, injected account orchestration and durable core state. End-to-end switching against multiple disposable live servers remains separate from these bounded observations. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The durable shared queue store restores independent A and B order, current entry, repeat, shuffle and resume state after A to B to A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaybackQueueAccountSwitchTest/switchingBackRestoresEachAccountsOrderSelectionRepeatShuffleAndResume"
+            },
+            {
+              "observes": "The shared media policy preserves inactive A partial and completed bytes while B cannot resolve the same raw ID, then restores A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerMediaIsolationTest/selectingAnotherSavedServerPreservesInactivePartialAndCompletedMedia"
+            },
+            {
+              "observes": "The shipping shared root renders Account, opens its saved-server chooser, and activates the B entry through native accessibility actions; the connector and credential store are injected.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/savedServerChooserIsReachableFromAccountAndActivatesItsEntry"
+            },
+            {
+              "observes": "Injected transport failure activates a saved offline namespace; injected authentication failure stays visible and preserves the prior active account.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible"
+            }
+          ]
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "The shared queue selection and native account chooser are implemented. Evidence distinguishes rendered platform UI, injected account orchestration and durable core state. End-to-end switching against multiple disposable live servers remains separate from these bounded observations. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The durable shared queue store restores independent A and B order, current entry, repeat, shuffle and resume state after A to B to A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaybackQueueAccountSwitchTest/switchingBackRestoresEachAccountsOrderSelectionRepeatShuffleAndResume"
+            },
+            {
+              "observes": "The shared media policy preserves inactive A partial and completed bytes while B cannot resolve the same raw ID, then restores A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerMediaIsolationTest/selectingAnotherSavedServerPreservesInactivePartialAndCompletedMedia"
+            },
+            {
+              "observes": "The shipping shared root renders Account, opens its saved-server chooser, and activates the B entry through native accessibility actions; the connector and credential store are injected.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/savedServerChooserIsReachableFromAccountAndActivatesItsEntry"
+            },
+            {
+              "observes": "Injected transport failure activates a saved offline namespace; injected authentication failure stays visible and preserves the prior active account.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible"
+            }
+          ]
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "The shared queue selection and native account chooser are implemented. Evidence distinguishes rendered platform UI, injected account orchestration and durable core state. End-to-end switching against multiple disposable live servers remains separate from these bounded observations. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The durable shared queue store restores independent A and B order, current entry, repeat, shuffle and resume state after A to B to A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaybackQueueAccountSwitchTest/switchingBackRestoresEachAccountsOrderSelectionRepeatShuffleAndResume"
+            },
+            {
+              "observes": "The shared media policy preserves inactive A partial and completed bytes while B cannot resolve the same raw ID, then restores A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerMediaIsolationTest/selectingAnotherSavedServerPreservesInactivePartialAndCompletedMedia"
+            },
+            {
+              "observes": "The shipping shared root renders Account, opens its saved-server chooser, and activates the B entry through native accessibility actions; the connector and credential store are injected.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/savedServerChooserIsReachableFromAccountAndActivatesItsEntry"
+            },
+            {
+              "observes": "Injected transport failure activates a saved offline namespace; injected authentication failure stays visible and preserves the prior active account.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible"
+            }
+          ]
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "The shared queue selection and native account chooser are implemented. Evidence distinguishes rendered platform UI, injected account orchestration and durable core state. End-to-end switching against multiple disposable live servers remains separate from these bounded observations. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The durable shared queue store restores independent A and B order, current entry, repeat, shuffle and resume state after A to B to A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaybackQueueAccountSwitchTest/switchingBackRestoresEachAccountsOrderSelectionRepeatShuffleAndResume"
+            },
+            {
+              "observes": "The shared media policy preserves inactive A partial and completed bytes while B cannot resolve the same raw ID, then restores A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerMediaIsolationTest/selectingAnotherSavedServerPreservesInactivePartialAndCompletedMedia"
+            },
+            {
+              "observes": "The shipping shared root renders Account, opens its saved-server chooser, and activates the B entry through native accessibility actions; the connector and credential store are injected.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/savedServerChooserIsReachableFromAccountAndActivatesItsEntry"
+            },
+            {
+              "observes": "Injected transport failure activates a saved offline namespace; injected authentication failure stays visible and preserves the prior active account.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible"
+            }
+          ]
+        },
+        "android": {
+          "status": "partial",
+          "reason": "The shared queue selection and native account chooser are implemented. Evidence distinguishes rendered platform UI, injected account orchestration and durable core state. End-to-end switching against multiple disposable live servers remains separate from these bounded observations. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The durable shared queue store restores independent A and B order, current entry, repeat, shuffle and resume state after A to B to A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaybackQueueAccountSwitchTest/switchingBackRestoresEachAccountsOrderSelectionRepeatShuffleAndResume"
+            },
+            {
+              "observes": "The shared media policy preserves inactive A partial and completed bytes while B cannot resolve the same raw ID, then restores A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerMediaIsolationTest/selectingAnotherSavedServerPreservesInactivePartialAndCompletedMedia"
+            },
+            {
+              "observes": "The shipping phone Compose account menu switches both saved accounts and offers Add Server directly; Android host runtime with test credential encryption.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerSwitcherUiTest/accountMenuSwitchesSavedServersAndOffersAddWithoutSettingsNavigation"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "The shared queue selection and native account chooser are implemented. Evidence distinguishes rendered platform UI, injected account orchestration and durable core state. End-to-end switching against multiple disposable live servers remains separate from these bounded observations. See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The durable shared queue store restores independent A and B order, current entry, repeat, shuffle and resume state after A to B to A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaybackQueueAccountSwitchTest/switchingBackRestoresEachAccountsOrderSelectionRepeatShuffleAndResume"
+            },
+            {
+              "observes": "The shared media policy preserves inactive A partial and completed bytes while B cannot resolve the same raw ID, then restores A; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerMediaIsolationTest/selectingAnotherSavedServerPreservesInactivePartialAndCompletedMedia"
+            },
+            {
+              "observes": "The shipping TV Compose Account screen switches both saved entries via remote selection and offers Add Server; Android host runtime with test credential encryption.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvSavedServerSwitcherTest/accountScreenSwitchesBothWaysWithRemoteSelectionAndOffersAddServer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "account.server_identity",
+      "title": "Detect server lineage changes before reusing local state",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#28-revision-record",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Server identity uses product and advertised instance lineage; versions do not invalidate data. Shared-core negotiation/gate tests are observed on JVM. Platform integration tests are listed separately; same-product plain OpenSubsonic replacement and legacy records without product identity cannot be detected (spec 28). See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The JVM connector authenticates both directions of a product replacement at one disposable loopback address; this is protocol negotiation evidence, not a native UI deletion proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/navidromeToDulcetAndBackChangesIdentityAtTheSameAddress"
+            },
+            {
+              "observes": "The JVM connector preserves lineage across software version changes and repeat connections for both server products.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/softwareUpgradeAndRestartRetainIdentityForBothImplementations"
+            },
+            {
+              "observes": "The shared reader rejects a changed identity before epoch reads or queued writes and keeps the old offline namespace; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/readerIdentityFailurePrecedesAllWritesAndRetainsTheOldOfflineNamespace"
+            },
+            {
+              "observes": "The native presentation uses injected authenticated outcomes for both product-swap directions, offers the count, cancels without mutation, and rotates the namespace only after confirmation.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            }
+          ]
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Server identity uses product and advertised instance lineage; versions do not invalidate data. Shared-core negotiation/gate tests are observed on JVM. Platform integration tests are listed separately; same-product plain OpenSubsonic replacement and legacy records without product identity cannot be detected (spec 28). See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The JVM connector authenticates both directions of a product replacement at one disposable loopback address; this is protocol negotiation evidence, not a native UI deletion proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/navidromeToDulcetAndBackChangesIdentityAtTheSameAddress"
+            },
+            {
+              "observes": "The JVM connector preserves lineage across software version changes and repeat connections for both server products.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/softwareUpgradeAndRestartRetainIdentityForBothImplementations"
+            },
+            {
+              "observes": "The shared reader rejects a changed identity before epoch reads or queued writes and keeps the old offline namespace; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/readerIdentityFailurePrecedesAllWritesAndRetainsTheOldOfflineNamespace"
+            },
+            {
+              "observes": "The native presentation uses injected authenticated outcomes for both product-swap directions, offers the count, cancels without mutation, and rotates the namespace only after confirmation.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            }
+          ]
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Server identity uses product and advertised instance lineage; versions do not invalidate data. Shared-core negotiation/gate tests are observed on JVM. Platform integration tests are listed separately; same-product plain OpenSubsonic replacement and legacy records without product identity cannot be detected (spec 28). See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The JVM connector authenticates both directions of a product replacement at one disposable loopback address; this is protocol negotiation evidence, not a native UI deletion proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/navidromeToDulcetAndBackChangesIdentityAtTheSameAddress"
+            },
+            {
+              "observes": "The JVM connector preserves lineage across software version changes and repeat connections for both server products.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/softwareUpgradeAndRestartRetainIdentityForBothImplementations"
+            },
+            {
+              "observes": "The shared reader rejects a changed identity before epoch reads or queued writes and keeps the old offline namespace; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/readerIdentityFailurePrecedesAllWritesAndRetainsTheOldOfflineNamespace"
+            },
+            {
+              "observes": "The native presentation uses injected authenticated outcomes for both product-swap directions, offers the count, cancels without mutation, and rotates the namespace only after confirmation.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            }
+          ]
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Server identity uses product and advertised instance lineage; versions do not invalidate data. Shared-core negotiation/gate tests are observed on JVM. Platform integration tests are listed separately; same-product plain OpenSubsonic replacement and legacy records without product identity cannot be detected (spec 28). See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The JVM connector authenticates both directions of a product replacement at one disposable loopback address; this is protocol negotiation evidence, not a native UI deletion proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/navidromeToDulcetAndBackChangesIdentityAtTheSameAddress"
+            },
+            {
+              "observes": "The JVM connector preserves lineage across software version changes and repeat connections for both server products.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/softwareUpgradeAndRestartRetainIdentityForBothImplementations"
+            },
+            {
+              "observes": "The shared reader rejects a changed identity before epoch reads or queued writes and keeps the old offline namespace; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/readerIdentityFailurePrecedesAllWritesAndRetainsTheOldOfflineNamespace"
+            },
+            {
+              "observes": "The native presentation uses injected authenticated outcomes for both product-swap directions, offers the count, cancels without mutation, and rotates the namespace only after confirmation.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            }
+          ]
+        },
+        "android": {
+          "status": "partial",
+          "reason": "Server identity uses product and advertised instance lineage; versions do not invalidate data. Shared-core negotiation/gate tests are observed on JVM. Platform integration tests are listed separately; same-product plain OpenSubsonic replacement and legacy records without product identity cannot be detected (spec 28). See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The JVM connector authenticates both directions of a product replacement at one disposable loopback address; this is protocol negotiation evidence, not a native UI deletion proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/navidromeToDulcetAndBackChangesIdentityAtTheSameAddress"
+            },
+            {
+              "observes": "The JVM connector preserves lineage across software version changes and repeat connections for both server products.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/softwareUpgradeAndRestartRetainIdentityForBothImplementations"
+            },
+            {
+              "observes": "The shared reader rejects a changed identity before epoch reads or queued writes and keeps the old offline namespace; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/readerIdentityFailurePrecedesAllWritesAndRetainsTheOldOfflineNamespace"
+            },
+            {
+              "observes": "The production Android connect-and-save operation, with the test Keystore seam, offers seven downloads before replacing Navidrome with Dulcet and rotates the provider namespace only after confirmation; host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerAccountsTest/navidromeToDulcetSwapRequiresConsentAndRotatesTheNamespace"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "partial",
+          "reason": "Server identity uses product and advertised instance lineage; versions do not invalidate data. Shared-core negotiation/gate tests are observed on JVM. Platform integration tests are listed separately; same-product plain OpenSubsonic replacement and legacy records without product identity cannot be detected (spec 28). See docs/evidence/server-identity.md.",
+          "evidence": [
+            {
+              "observes": "The JVM connector authenticates both directions of a product replacement at one disposable loopback address; this is protocol negotiation evidence, not a native UI deletion proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/navidromeToDulcetAndBackChangesIdentityAtTheSameAddress"
+            },
+            {
+              "observes": "The JVM connector preserves lineage across software version changes and repeat connections for both server products.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityNegotiationTest/softwareUpgradeAndRestartRetainIdentityForBothImplementations"
+            },
+            {
+              "observes": "The shared reader rejects a changed identity before epoch reads or queued writes and keeps the old offline namespace; executed on the JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/readerIdentityFailurePrecedesAllWritesAndRetainsTheOldOfflineNamespace"
+            },
+            {
+              "observes": "The production Android connect-and-save operation, with the test Keystore seam, offers seven downloads before replacing Navidrome with Dulcet and rotates the provider namespace only after confirmation; host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerAccountsTest/navidromeToDulcetSwapRequiresConsentAndRotatesTheNamespace"
+            }
+          ]
+        }
+      }
+    },
+    {
       "id": "library.sync",
       "title": "Synchronize and browse the library",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#162-shape-of-a-full-import",

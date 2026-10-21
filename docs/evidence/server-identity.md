@@ -1,0 +1,60 @@
+# Server identity and saved accounts — 2026-10-21
+
+The implementation distinguishes a saved provider namespace from server lineage: the former is a
+local random account ID, the latter is authenticated product type and, for an advertised Dulcet
+server, its origin's discovery instance ID. Software versions do not enter lineage. See spec §28
+for trust, migration and plain OpenSubsonic limits.
+
+## Shared core
+
+- OBSERVED on parent revision `271dd44e`: four JVM `ServerIdentityNegotiationTest` cases fail.
+  Successful negotiation has no lineage to distinguish replacements or preserve over upgrades.
+- OBSERVED in the new implementation: the negotiation tests connect to a disposable loopback
+  server, change Navidrome → Dulcet → Navidrome at the same address, change only software version,
+  reconnect without changing lineage, rotate a Dulcet instance ID, and reject redirected discovery
+  without sending credentials or following the redirect.
+- `SavedServerIdentityTest` checks canonical-principal selection, both replacement directions,
+  cache-independent accepted identity, the read-before-write reconnect barrier, and the independent
+  scrobble retry barrier. Detection preserves old identity and pending writes until account consent.
+- OBSERVED: `PlaybackQueueAccountSwitchTest` (4 cases), plus existing queue/store regression
+  controls, execute 57 JVM tests with zero failures/errors/skips. A → B → A restores order, current
+  entry, repeat/shuffle state and separate resume positions even for identical opaque song IDs;
+  stale outgoing player/preload/AutoPlay events cannot change B.
+- `SavedServerMediaIsolationTest` checks that selecting B preserves A's partial and completed
+  media while neither account can resolve the other's identical raw ID, and that retiring an old
+  account deletes its independent lineage and preference rows while retaining the other account.
+
+- OBSERVED: the focused core acceptance set executes 78 JVM cases with zero failures/errors/skips
+  (identity negotiation, reader/outbox barriers, media binding, download policy and isolation).
+  Thirteen Android-host cases also pass: queue selection, shared identity/media isolation and
+  the independent contact-probe race controls.
+
+## Android
+
+OBSERVED fail-before at the production connect-and-save boundary: the baseline implementation with
+an API-only optional-parameter shim fails three new acceptance cases. Both product-swap directions
+skip the seven-download consent, and saved `alice` / typed `Alice` / confirmed `alice` rotates its
+provider ID. The encrypted store, connect operation and new tests are otherwise the production path.
+
+The phone and TV tests exercise Compose on the Android host runtime, with Keystore cryptography
+replaced at its existing test seam. These are host app observations, not emulator or physical-device
+execution. The local focused app run passes 17 phone cases and eight TV cases with no failures: 
+account conformance, canonical persistence, sign-out and the new switcher/consent flows. CI and
+soak results are recorded in the PR, tied to their run IDs and revisions.
+
+## Apple
+
+OBSERVED: the exact #347 canonical case already passes on the parent Apple implementation; it is
+not claimed as fail-before. New shared Kit acceptance exercises both product directions with a
+seven-download offer, cancellation before mutation, retirement before removal, canonical retention,
+unchanged lineage across upgrades/restarts, and A → B → A provider selection.
+
+OBSERVED on a Mac host: the shipping `DulcetRootView` renders the Account entry; native accessibility
+activation opens its saved-server list and activates server B. Native facades and persistent data
+have separate integration tests; a fixture datasource alone does not establish live-server I/O.
+
+## CI
+
+The PR records the final-head Linux soak lines, required checks and dispatched Apple run IDs.
+Platform cells remain partial where observations stop at the host UI, injected account transition
+or durable core boundary. These tests do not claim a signed-device or multiple-live-server UI tour.
