@@ -96,3 +96,17 @@ corrected presentation quarantines before negotiation and Cancel keeps media. Ne
 facade tests reject late promotion, retain existing bytes, reject stale probe success and prevent
 saved metadata from downgrading learned lineage. Native adapter execution and exact-head CI results
 are recorded in the PR; shared presentation tests do not establish a rendered live-server tour.
+
+OBSERVED fail-before: a real authenticated outbox delivery succeeded after Connect while its
+independent probe stranded the restored queue. The regression uses the production shared contact
+state and a receiving HTTP socket. Retaining established contact during an ordinary in-flight probe
+restores the selected track paused; explicit reconnect and failed, throwing or mismatched probes
+still close contact. The existing TV saved-launch oracle exercises the same production path.
+
+OBSERVED fail-before: three production Android stream-cache cases incorrectly allowed beginning a
+write, appending in-flight bytes, or promoting an already buffered write after known identity
+rejection. Guards at each boundary now pass all three while retaining the exact existing completed
+download and cache bytes. The focused download, probe-race, stream-cache and offline-ownership
+gate passes 45 tests with zero failures, errors or skips; phone and TV main compilation also passes.
+The restored-queue gate passes 67 playback and four identity-race tests; all four TV saved-launch
+cases pass. These host observations exercise production adapters, not a live native UI swap tour.

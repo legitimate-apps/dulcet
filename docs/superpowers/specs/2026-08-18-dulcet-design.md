@@ -7916,6 +7916,15 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-21 — Keep established playback contact stable during independent validation.**
+Starting an ordinary background identity probe does not revoke an already established connection.
+Each reader, outbox delivery and download still validates before its own stored-ID batch. Explicit
+Connect or Reconnect invalidates contact first; a completed failed probe closes it, and a confirmed
+replacement remains quarantined until accepted account review. This prevents an outbox probe from
+stranding the restored paused queue after Connect. Android stream-cache writers also check known
+replacement rejection before beginning, appending or promoting a write; rejection preserves existing
+completed downloads and cache files while preventing late bytes from entering the old namespace.
+
 **2026-10-21 — Keep identity quarantine across background work and legacy account review.**
 The accepted database lineage takes precedence over saved credential metadata. Credential metadata
 seeds an empty identity store only; an older or product-only record cannot replace an instance ID

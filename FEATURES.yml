@@ -1614,6 +1614,24 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidDownloadControllerTest/productionIdentityValidationRejectsBothProductSwapDirectionsBeforeAnyStoredSongId"
+            },
+            {
+              "observes": "The production stream-cache adapter refuses a new write after known server replacement, retaining existing completed downloads and cached bytes; Android host runtime, shared phone/TV adapter.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/aKnownIdentityRejectionCannotBeginAStreamCacheWrite"
+            },
+            {
+              "observes": "A stream-cache write begun before replacement rejects later bytes after identity rejection, retaining prior completed media; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/anIdentityRejectionStopsAnExistingStreamCacheAppend"
+            },
+            {
+              "observes": "A fully buffered stream-cache write cannot promote after identity rejection; existing completed downloads and cache remain playable with exact original bytes; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/anIdentityRejectionCannotPromoteAnAlreadyBufferedStreamCache"
             }
           ],
           "promotion_condition": {
@@ -1661,6 +1679,24 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidDownloadControllerTest/productionIdentityValidationRejectsBothProductSwapDirectionsBeforeAnyStoredSongId"
+            },
+            {
+              "observes": "The production stream-cache adapter refuses a new write after known server replacement, retaining existing completed downloads and cached bytes; Android host runtime, shared phone/TV adapter.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/aKnownIdentityRejectionCannotBeginAStreamCacheWrite"
+            },
+            {
+              "observes": "A stream-cache write begun before replacement rejects later bytes after identity rejection, retaining prior completed media; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/anIdentityRejectionStopsAnExistingStreamCacheAppend"
+            },
+            {
+              "observes": "A fully buffered stream-cache write cannot promote after identity rejection; existing completed downloads and cache remain playable with exact original bytes; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/anIdentityRejectionCannotPromoteAnAlreadyBufferedStreamCache"
             }
           ],
           "promotion_condition": {
