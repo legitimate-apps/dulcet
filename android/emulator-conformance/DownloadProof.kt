@@ -66,7 +66,8 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
             println("ANDROID DOWNLOAD CONF-52 OBSERVED " + proveOfflinePlayback(confirmed, rawId, original, relay, startPlayback))
         }
 
-    /** Review B2: real secure storage/download adapters, with only authentication's result controlled.
+    /** Review B2: real secure storage/download adapters, with only the authenticated
+     * canonical spelling controlled. The saved server lineage stays the same.
      * The subsequent CONF-52 cut and production Media3 entry must play these retained explicit bytes. */
     private fun proveAuthenticatedSavedSpelling(account: StoredAccount, rawId: String, original: ByteArray): StoredAccount {
         val confirmedUsername = account.username.uppercase()
@@ -79,9 +80,9 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
                     "Continuity must authenticate the exact saved credentials"
                 }
                 AccountConnectionResult.Connected(ConnectedAccount(account.serverUrl, account.allowLocalHttp,
-                    "1.16.1", false, "controlled-saved-auth", "1",
+                    "1.16.1", false, account.serverName, "1",
                     CapabilitySet(emptyMap(), UserPermissions(true, true, false, false, false), true),
-                    emptyList(), confirmedUsername))
+                    emptyList(), confirmedUsername, serverIdentity = account.serverIdentity))
             }, credentials)
         }
         check(outcome is AccountConnectOutcome.Connected) { "Authenticated spelling continuation failed: $outcome" }

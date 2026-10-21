@@ -125,7 +125,9 @@ class PlaybackBackgroundTest {
                             while (!reader.readLine().isNullOrEmpty()) Unit
                             val stream = path == "/rest/stream.view"
                             val body = if (stream) audio else (
-                                if (path == "/rest/getSong.view")
+                                if (path == "/rest/ping.view")
+                                    """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"fixture","serverVersion":"1"}}"""
+                                else if (path == "/rest/getSong.view")
                                     """{"subsonic-response":{"status":"ok","song":{"id":"fixture-song","suffix":"wav","duration":120}}}"""
                                 else """{"subsonic-response":{"status":"ok"}}""").toByteArray()
                             val type = if (stream) "audio/wav" else "application/json"
