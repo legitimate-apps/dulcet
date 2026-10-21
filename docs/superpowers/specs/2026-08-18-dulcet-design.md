@@ -3130,7 +3130,7 @@ MP4 tail probes. The core records interval coverage while writing directly to di
 requires every byte from zero to the exact resource length and the same §12.4 binary validation as a
 download. Unknown-length responses require a sequential body from offset zero through EOF. A seek,
 cancellation, failed response or truncated body never publishes a partial cache file. A 206 is
-eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance, and are additionally owned by the canonical endpoint URL and exact server-confirmed username (or exact submitted username when not supplied) binding. DNS host case, default HTTP(S) ports, equivalent IPv6 spellings and trailing base separators do not change that binding; path case, interior separators and escaped separators remain significant. Rebinding the actual endpoint or username purges the old binding's downloaded and cached media, including explicit downloads, before local lookup can serve the new binding. Password-only and equivalent-endpoint refresh preserve installed current/preloaded playback and media; future requests use refreshed credentials. A real binding change synchronously stops and invalidates current and preloaded playback, cancels retired callbacks and releases file protections before any old file is deleted. Old executors and completions cannot publish into the new binding. A previously unbound media namespace cannot adopt bytes without proven ownership. Server-item reconciliation applies to these files too.
+eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance, and are additionally owned by the canonical endpoint URL and exact server-confirmed username (or exact submitted username when not supplied) binding. DNS host case, default HTTP(S) ports, equivalent IPv6 spellings, percent-triplet hex case and trailing base separators do not change that binding; path case, interior separators and escaped separators remain significant. Rebinding the actual endpoint or an unproven username purges the old binding's downloaded and cached media, including explicit downloads, before local lookup can serve the new binding. Successful authentication with the exact saved credentials may adopt the server-confirmed spelling at the same canonical origin and provider instance into the existing epoch; both saved spellings remain valid across an interrupted credential save (§28, 2026-10-21). Password-only and equivalent-endpoint refresh preserve installed current/preloaded playback and media; future requests use refreshed credentials. A real binding change synchronously stops and invalidates current and preloaded playback, cancels retired callbacks and releases file protections before any old file is deleted. Old executors and completions cannot publish into the new binding. A previously unbound media namespace cannot adopt bytes without proven ownership. Server-item reconciliation applies to these files too.
 
 Offline playback prefers a validated local file, including a cached stream, before making a server
 read. Downloaded continues to mean deliberately retained downloads; the broader local-playable set
@@ -7912,6 +7912,23 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-21 — Preserve media across authenticated saved-username confirmation.**
+A successful reconnect with the exact saved username and password may confirm a different username
+spelling through authenticated `getUser`. When the stable provider instance, submitted endpoint
+and confirmed endpoint all have the same canonical media origin, the core adopts that exact spelling
+into the current media epoch without deleting explicit downloads, automatic downloads or cache.
+It persists the authenticated spelling alongside the legacy spelling under the same epoch nonce,
+so an interruption between adoption and credential saving leaves either saved spelling usable.
+This is an authenticated alias for that epoch, not username case folding: an unproven typed username
+still changes ownership, including when it reuses an alias accepted by an earlier authenticated
+reconnect. The account-entry adapters explicitly request the existing core replacement policy for
+that unproven change; this retires playback before deleting files and rotates the epoch, dropping
+all aliases. A changed saved credential record supersedes an old authentication result. The shells validate a candidate
+before changing playback, credentials or protection; invalid replacements preserve current/preloaded
+playback and files. Percent-triplet hexadecimal case in an encoded base path is canonicalized
+(`%2f` equals `%2F`), while encoded and literal separators remain distinct. Same-principal adoption
+preserves installed playback and refreshes future authentication through the existing adapters.
 
 **2026-10-20 — Preserve equivalent media bindings and retire playback before a real purge.**
 Local media compares a shared Kotlin canonical HTTP(S) endpoint: DNS host case is folded,
