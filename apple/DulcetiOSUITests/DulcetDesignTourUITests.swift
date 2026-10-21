@@ -81,6 +81,7 @@ final class DulcetDesignTourUITests: XCTestCase {
 
     @MainActor
     func testListenNowLaunchAlbumAndRelaunch() throws {
+        continueAfterFailure = false
         let environment = ProcessInfo.processInfo.environment
         guard environment["DULCET_HOME_PROOF"] == "1" else { throw XCTSkip("Requires a disposable home fixture") }
         let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
@@ -126,7 +127,7 @@ final class DulcetDesignTourUITests: XCTestCase {
     @MainActor
     private func provePlaylistContextIfAdvertised(in app: XCUIApplication, compact: Bool,
                                                    environment: [String: String]) throws {
-        let server = TourServer(url: try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"]),
+        let server = TourServer(url: try (environment["DULCET_PLAYLIST_CONTEXT_UPSTREAM"] ?? XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])),
                                 username: try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
                                 password: try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"]))
         let extensions = rest("getOpenSubsonicExtensions", [], server)?["openSubsonicExtensions"] as? [[String: Any]] ?? []
@@ -157,6 +158,26 @@ final class DulcetDesignTourUITests: XCTestCase {
         XCTAssertTrue(waitFor(timeout: 20) { play.isEnabled })
         XCTAssertFalse(historyContainsPlaylist(), "Playlist reads must still leave history empty")
         play.tap()
+        var offlineRelaunch = false
+        if let proxy = environment["DULCET_PLAYLIST_CONTEXT_OFFLINE_PROXY"] {
+            func setOffline(_ offline: Bool) throws {
+                let url = try XCTUnwrap(URL(string: proxy + "/fixture/network?offline=" + (offline ? "1" : "0")))
+                XCTAssertEqual(String(data: try Data(contentsOf: url), encoding: .utf8), offline ? "offline" : "online")
+            }
+            // The fixture proxy buffers this 31-second local file before serving it. Give
+            // playback time to start, then block new requests before the 50% play threshold.
+            Thread.sleep(forTimeInterval: 2)
+            try setOffline(true)
+            defer { try? setOffline(false) }
+            Thread.sleep(forTimeInterval: 23)
+            XCTAssertFalse(historyContainsPlaylist(), "The failed submission must remain local while offline")
+            app.terminate(); app.launchArguments = []; launchInInteractionScope(app)
+            XCTAssertTrue(app.descendants(matching: .any)["dulcet.listenNow"].firstMatch.waitForExistence(timeout: 20), "Saved Home must reopen offline")
+            XCTAssertFalse(historyContainsPlaylist(), "Offline relaunch must not fabricate delivery")
+            try setOffline(false)
+            app.terminate(); launchInInteractionScope(app)
+            offlineRelaunch = true
+        }
         XCTAssertTrue(waitFor(timeout: 50) { historyContainsPlaylist() }, "A real playlist play must reach the server with its raw playlist ID")
         dismissOverlay(in: app)
         XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
@@ -168,7 +189,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         XCTAssertTrue(recent.waitForExistence(timeout: 30), "Home must render the playlist this client just played: " + app.debugDescription)
         XCTAssertTrue(scrollIntoView(recent, in: app))
         shoot("playlist-context-" + idiom, app)
-        print("PLAYLIST CONTEXT PROOF idiom=\(idiom) rawPlaylist=\(playlistID) serverHistory=true homeTile=true source=actual-playlist-play")
+        print("PLAYLIST CONTEXT PROOF idiom=\(idiom) rawPlaylist=\(playlistID) serverHistory=true homeTile=true offlineRelaunch=\(offlineRelaunch) source=actual-playlist-play")
     }
 
     @MainActor

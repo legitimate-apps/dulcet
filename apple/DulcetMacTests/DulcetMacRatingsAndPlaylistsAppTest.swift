@@ -172,11 +172,13 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
             // This unique playlist has never been submitted by any other client. A passing
             // now-playing report alone cannot populate this shelf.
             var submitted = false
-            try await waitUntil(timeout: .seconds(50), "The playlist play must reach server history") {
+            let deliveryDeadline = ContinuousClock.now.advanced(by: .seconds(50))
+            repeat {
                 let shelf = try await server.call("getDulcetHome", [URLQueryItem(name: "shelf", value: "recentPlaylists")])["dulcetHome"] as? [String: Any]
                 submitted = (shelf?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlistID }
-                return submitted
-            }
+                if !submitted { try await Task.sleep(for: .milliseconds(250)) }
+            } while !submitted && ContinuousClock.now < deliveryDeadline
+            XCTAssertTrue(submitted, "The playlist play must reach server history")
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.listenNow")
             var refresh: Any?
             try await waitUntil(timeout: .seconds(15), "Home Refresh must appear") {
