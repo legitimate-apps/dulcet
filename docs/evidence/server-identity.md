@@ -110,3 +110,31 @@ download and cache bytes. The focused download, probe-race, stream-cache and off
 gate passes 45 tests with zero failures, errors or skips; phone and TV main compilation also passes.
 The restored-queue gate passes 67 playback and four identity-race tests; all four TV saved-launch
 cases pass. These host observations exercise production adapters, not a live native UI swap tour.
+
+
+## Playback replies after rejection
+
+OBSERVED fail-before: seven Android production-controller cases failed: late metadata could resolve
+and install a selection, a late current plan could install, next-track metadata and resolution could
+prepare preload, an installed resource could issue another actual HTTP range request, a late metadata
+reply could rename the retained queue, and late AutoPlay could append replacement-server IDs. The
+first five fail together; the latter two also fail before their mutation guards. The corrected
+controller rechecks contact after each asynchronous boundary and before writes. Its real HTTP
+resource refuses a new range after sticky identity rejection even without an optional contact gate.
+The focused run executes 74 playback, four identity-race, one credential-refresh and ten listening
+session tests: 89 passing, zero failures, errors or skips. These controls preserve ordinary playback,
+preload, credential refresh, AutoPlay and local playback; this is Android host evidence.
+
+OBSERVED Apple native fail-before: held current and preload resolves each installed a plan after
+rejection, and an installed resource sent a second range to a real HTTP receiver. The three native
+tests fail with four assertions before the fix, then pass with three adapter regression controls
+(six tests, zero failures, 3.339 seconds). Sticky controller rejection cancels pending remote work,
+revokes its wire source and fences authorizers after asynchronous preparation; local and already
+installed playback remain available until consent. Ordinary server availability cannot lift that
+rejection. These tests join the existing download aggregate on Mac, iPhone and iPad; they are not
+a tvOS native adapter or six-surface live swap tour claim.
+
+The core CI evidence upload now includes its already executed JVM reports alongside Android reports.
+The previous aggregate failed because JVM protocol evidence was absent from that artifact despite
+all four execution jobs passing. Replaying the actual downloaded artifact fails without JVM reports
+and passes with only the missing JVM reports added; no verifier or evidence requirement is weakened.

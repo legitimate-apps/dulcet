@@ -7916,6 +7916,17 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-21 — Fence playback replies and new byte requests after identity rejection.**
+Known replacement rejection closes remote playback even when a caller has no optional connection
+gate. Recheck that boundary after asynchronous metadata, current resolution and preload resolution,
+before installing a plan or changing retained metadata or AutoPlay queue IDs. A late reply cannot
+reopen the old account. Installed remote resources refuse subsequent range/open authorization after
+rejection; Apple also revokes its wire source and rejects authorizations returning after revocation.
+Pending remote directives and preload callbacks are retired, while existing local files and already
+open playback bytes remain through review and Cancel. Only accepted account configuration can open
+a new Apple playback lifetime; ordinary reachability cannot lift identity quarantine. Confirmation
+still retires installed current and preloaded playback before any local-media deletion.
+
 **2026-10-21 — Keep established playback contact stable during independent validation.**
 Starting an ordinary background identity probe does not revoke an already established connection.
 Each reader, outbox delivery and download still validates before its own stored-ID batch. Explicit

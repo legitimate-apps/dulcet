@@ -1632,6 +1632,48 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidDownloadControllerTest/anIdentityRejectionCannotPromoteAnAlreadyBufferedStreamCache"
+            },
+            {
+              "observes": "A held song-metadata response cannot resolve or install a remote selection after identity rejection; the prior queue remains. Production Android controller on the host runtime, shared by phone and TV.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringMetadataCannotResolveOrInstallTheRemoteSelection"
+            },
+            {
+              "observes": "A remote playback plan resolved after identity rejection cannot be installed or start playback. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringResolutionCannotInstallTheRemotePlan"
+            },
+            {
+              "observes": "A next-track metadata reply after identity rejection cannot resolve or prepare a remote preload. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringPreloadMetadataCannotResolveOrPrepareTheNextTrack"
+            },
+            {
+              "observes": "A remote preload resolution completed after identity rejection cannot prepare the next track. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringPreloadResolutionCannotPrepareTheNextTrack"
+            },
+            {
+              "observes": "An installed production Android HTTP resource opens the control range, then refuses a new range after known identity rejection without another request reaching the real loopback receiver.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/aKnownIdentityRejectionCannotOpenAnotherRangeOfAnInstalledRemoteResource"
+            },
+            {
+              "observes": "A late song-metadata reply after identity rejection cannot rename the retained prior queue from a replacement response. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringMetadataCannotRenameThePriorQueue"
+            },
+            {
+              "observes": "A late autoplay response after identity rejection cannot persist replacement-server IDs in the retained prior queue. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringAutoplayCannotAppendReplacementServerIds"
             }
           ],
           "promotion_condition": {
@@ -1697,6 +1739,48 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidDownloadControllerTest/anIdentityRejectionCannotPromoteAnAlreadyBufferedStreamCache"
+            },
+            {
+              "observes": "A held song-metadata response cannot resolve or install a remote selection after identity rejection; the prior queue remains. Production Android controller on the host runtime, shared by phone and TV.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringMetadataCannotResolveOrInstallTheRemoteSelection"
+            },
+            {
+              "observes": "A remote playback plan resolved after identity rejection cannot be installed or start playback. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringResolutionCannotInstallTheRemotePlan"
+            },
+            {
+              "observes": "A next-track metadata reply after identity rejection cannot resolve or prepare a remote preload. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringPreloadMetadataCannotResolveOrPrepareTheNextTrack"
+            },
+            {
+              "observes": "A remote preload resolution completed after identity rejection cannot prepare the next track. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringPreloadResolutionCannotPrepareTheNextTrack"
+            },
+            {
+              "observes": "An installed production Android HTTP resource opens the control range, then refuses a new range after known identity rejection without another request reaching the real loopback receiver.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/aKnownIdentityRejectionCannotOpenAnotherRangeOfAnInstalledRemoteResource"
+            },
+            {
+              "observes": "A late song-metadata reply after identity rejection cannot rename the retained prior queue from a replacement response. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringMetadataCannotRenameThePriorQueue"
+            },
+            {
+              "observes": "A late autoplay response after identity rejection cannot persist replacement-server IDs in the retained prior queue. Production Android controller on the host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringAutoplayCannotAppendReplacementServerIds"
             }
           ],
           "promotion_condition": {
