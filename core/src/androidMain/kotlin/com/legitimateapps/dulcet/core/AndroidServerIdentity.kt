@@ -25,7 +25,8 @@ public object AndroidServerIdentity {
         nextGeneration(id)
         mutableVerified.update { it - id }
     } }
-    public fun isVerified(id: String): Boolean = id in mutableVerified.value && id !in rejected
+    internal fun isRejected(id: String): Boolean = id in rejected
+    public fun isVerified(id: String): Boolean = id in mutableVerified.value && !isRejected(id)
     internal suspend fun validate(id: String, validation: suspend () -> DomainError?): DomainError? {
         val generation = synchronized(validationLock) {
             mutableVerified.update { it - id }

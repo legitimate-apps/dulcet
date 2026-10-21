@@ -695,6 +695,84 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    @Test fun aScheduledTaskSendsNoOldIdsAfterTheReaderRejectsTheServerIdentity() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val accountId = "identity-scheduled:${java.util.UUID.randomUUID()}"
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks, serverId = accountId)
+            controller.download(listOf(AndroidDownloadItem("local-before-swap", AudioContainer.Wav, null)))
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.single()))
+            val local = assertNotNull(controller.localPlan("local-before-swap"))
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val pending = tasks.started.last()
+            val requestsBefore = server.requests.size to server.lookups.size
+            val rowsBefore = inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsList()
+            AndroidServerIdentity.validate(accountId) { DomainError.Protocol.ServerIdentityChanged }
+
+            assertEquals(AndroidDownloadRunOutcome.NotRunnable, controller.runTask(pending))
+            controller.scheduleNext()
+            assertEquals(requestsBefore, server.requests.size to server.lookups.size,
+                "No old song lookup or stream may contact the replacement server")
+            assertEquals(rowsBefore, inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsList(),
+                "Pending downloads and completed local media wait unchanged for consent")
+            assertContentEquals(AUDIO, File(assertNotNull(controller.localPlan("local-before-swap")).absolutePath).readBytes())
+            assertEquals(local.absolutePath, assertNotNull(controller.localPlan("local-before-swap")).absolutePath)
+        }
+    }
+
+    @Test fun productionIdentityValidationRejectsBothProductSwapDirectionsBeforeAnyStoredSongId() = runBlocking {
+        for ((oldType, newType) in listOf("navidrome" to "dulcet", "dulcet" to "navidrome")) {
+            WireServer(identityType = newType) { WireReply(200, AUDIO) }.use { server ->
+                val accountId = "identity-probe:${java.util.UUID.randomUUID()}"
+                val tasks = RecordingTasks()
+                ServerIdentityStore(inspect().database).accept(accountId, ServerIdentityPolicy.identity(oldType))
+                val controller = controller(server, tasks, serverId = accountId, validateIdentityBeforeTransfer = true)
+                controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+                val rowsBefore = inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsList()
+                assertEquals(AndroidDownloadRunOutcome.NotRunnable, controller.runTask(tasks.started.single()), "$oldType to $newType")
+                assertEquals(1, server.identityRequests.size, "The task authenticates the server before using its saved ID")
+                val query = server.identityRequests.single().query
+                assertEquals(listOf(USER), query["u"])
+                val salt = assertNotNull(query["s"]).single()
+                assertEquals(listOf(AccountConnectionContract.saltedToken(PASSWORD, salt)), query["t"])
+                assertTrue(server.lookups.isEmpty() && server.requests.isEmpty(), "No old track ID reaches the replacement")
+                assertEquals(rowsBefore, inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsList())
+                assertTrue(AndroidServerIdentity.isRejected(accountId))
+                assertNull(controller.localPlan(RAW_ID))
+            }
+        }
+    }
+
+    @Test fun anIdentityRejectionDuringTransferPreservesItsPartialAndPreventsPromotion() = runBlocking {
+        val reached = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        WireServer { WireReply(200, AUDIO, pauseAfter = STOP_AT, pause = {
+            reached.countDown()
+            check(release.await(10, TimeUnit.SECONDS))
+        }) }.use { server ->
+            val accountId = "identity-inflight:${java.util.UUID.randomUUID()}"
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks, serverId = accountId)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = tasks.started.single()
+            val running = async(Dispatchers.IO) { runCatching { controller.runTask(task) } }
+            try {
+                assertTrue(reached.await(10, TimeUnit.SECONDS), "The original stream reached its held body")
+                val partial = File(controller.temporaryPathForTest(task))
+                withTimeout(10_000) { while (partial.length() < STOP_AT) delay(10) }
+                val prefix = partial.readBytes()
+                AndroidServerIdentity.validate(accountId) { DomainError.Protocol.ServerIdentityChanged }
+                release.countDown()
+                val result = running.await()
+                assertTrue(result.exceptionOrNull() is CancellationException || result.getOrNull() == AndroidDownloadRunOutcome.NotRunnable,
+                    "A rejected server cannot finish a previously opened transfer: $result")
+                assertContentEquals(prefix, partial.readBytes(), "Existing partial bytes are retained, without accepting more bytes")
+                assertNull(controller.localPlan(RAW_ID), "The rejected body must never become playable local media")
+                assertEquals("downloading", inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsOne().state)
+            } finally { release.countDown() }
+        }
+    }
+
     private fun readThroughDataSource(plan: LocalPlaybackPlan, position: Long = 0): ByteArray {
         val factory = AndroidPlaybackDataSourceFactory(plan.container,
             AndroidLocalFilePlaybackResource(File(plan.absolutePath), plan.exactByteLength))
@@ -725,6 +803,7 @@ class AndroidDownloadControllerTest {
         onChanged: (Set<String>) -> Unit = {},
         fileSystem: FileSystem = FileSystem.SYSTEM,
         serverId: String = SERVER_ID,
+        validateIdentityBeforeTransfer: Boolean = false,
     ): AndroidDownloadController = AndroidDownloadController(
         account = PlaybackEndpointAccount(serverId, server.url, USER, PASSWORD, allowLocalHttp = true),
         openStore = { openStore() },
@@ -735,6 +814,7 @@ class AndroidDownloadControllerTest {
         openTransfer = null,
         onDownloadedChanged = onChanged,
         fileSystem = fileSystem,
+        validateIdentityBeforeTransfer = validateIdentityBeforeTransfer,
     ).also { opened += it }
 
     // JDBC's process-wide DriverManager would retain a sandbox-loaded driver that ordinary host
@@ -790,12 +870,14 @@ class AndroidDownloadControllerTest {
 
     private class WireServer(
         private val lookup: (WireRequest) -> WireReply = { songReply(it.query["id"].orEmpty().single()) },
+        private val identityType: String? = null,
         private val respond: (WireRequest) -> WireReply,
     ) : AutoCloseable {
         private val socket = ServerSocket().apply { bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0)) }
         val url = "http://127.0.0.1:${socket.localPort}"
         val requests = CopyOnWriteArrayList<WireRequest>()
         val lookups = CopyOnWriteArrayList<WireRequest>()
+        val identityRequests = CopyOnWriteArrayList<WireRequest>()
         private val executor = Executors.newSingleThreadExecutor()
         private var closed = false
         init {
@@ -814,7 +896,12 @@ class AndroidDownloadControllerTest {
             val request = WireRequest(line.split(' ')[1], headers)
             // The track's own read (spec §16.13: a download keeps its metadata) is answered here and
             // counted apart, so every transfer assertion still counts only the transfer's requests.
-            val reply = if (request.path.startsWith("/rest/getSong")) {
+            val reply = if (identityType != null && request.path == "/rest/ping.view") {
+                identityRequests += request
+                WireReply(200, """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"$identityType","serverVersion":"1.0.0"}}""".toByteArray(), contentType = "application/json")
+            } else if (identityType != null && request.path == "/.well-known/dulcet") {
+                WireReply(200, """{"standard":"dulcet","server":{"instanceId":"fixture-instance"}}""".toByteArray(), contentType = "application/json")
+            } else if (request.path.startsWith("/rest/getSong")) {
                 lookups += request
                 lookup(request)
             } else {

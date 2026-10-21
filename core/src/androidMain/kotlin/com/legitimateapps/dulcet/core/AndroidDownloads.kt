@@ -131,6 +131,8 @@ public class AndroidDownloadController internal constructor(
     /** The file system the download directory lives on; a test substitutes one that faults. */
     fileSystem: okio.FileSystem = okio.FileSystem.SYSTEM,
     private var artworkRoot: File? = null,
+    /** Production tasks authenticate the saved server lineage before sending any stored song ID. */
+    private val validateIdentityBeforeTransfer: Boolean = false,
 ) : AutoCloseable {
     init { require(MediaBindingIdentity.isValidAccount(account)) { "Invalid media binding" } }
 
@@ -144,6 +146,7 @@ public class AndroidDownloadController internal constructor(
         openTransfer = null,
         onDownloadedChanged = { rawIds -> AndroidLibraryReader.notifyDownloadsChanged(rawIds) },
         artworkRoot = AndroidAccountData.artworkRootFor(context.applicationContext, account.providerInstanceId),
+        validateIdentityBeforeTransfer = true,
     )
 
     public val providerInstanceId: String get() = account.providerInstanceId
@@ -369,7 +372,7 @@ public class AndroidDownloadController internal constructor(
     }
 
     private suspend fun scheduleNextLocked() {
-        if (closed) return
+        if (closed || AndroidServerIdentity.isRejected(account.providerInstanceId)) return
         val decision = withContext(database) {
             val rows = engine.records(account.providerInstanceId)
             if (rows.any { it.state == DownloadState.Downloading }) return@withContext null
@@ -421,11 +424,27 @@ public class AndroidDownloadController internal constructor(
         withTimeoutOrNull(timeoutMilliseconds) { runningTasks.first { it == 0 } } != null
 
     private suspend fun runTaskCounted(downloadId: String): AndroidDownloadRunOutcome {
-        if (closed || !awaitReconciled()) return AndroidDownloadRunOutcome.NotRunnable
+        if (closed || AndroidServerIdentity.isRejected(account.providerInstanceId) || !awaitReconciled()) return AndroidDownloadRunOutcome.NotRunnable
         val id = DownloadId(downloadId)
         val row = withContext(database) { engine.record(id) }
             ?.takeIf { it.state == DownloadState.Downloading && it.identity.serverId == account.providerInstanceId }
             ?: return AndroidDownloadRunOutcome.NotRunnable
+        if (validateIdentityBeforeTransfer) {
+            val identityError = AndroidServerIdentity.validate(account.providerInstanceId) {
+                ServerIdentityGate(store.database, account.providerInstanceId, AccountConnectionRequest(
+                    account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+            }
+            if (identityError != null) {
+                if (identityError == DomainError.Protocol.ServerIdentityChanged ||
+                    identityError == DomainError.Transport.Cancelled) return AndroidDownloadRunOutcome.NotRunnable
+                // A transient probe failure follows the existing retry policy, without discarding
+                // bytes from the last authenticated server or sending the track's opaque ID.
+                withContext(database) { engine.recordFailure(id, identityError, wall()) }
+                publish()
+                return AndroidDownloadRunOutcome.WillRetry
+            }
+        }
+        ensureServerNotRejected()
         val temporary = File(withContext(database) { engine.temporaryFilePath(id) })
         // Best effort and outside the transfer's failure handling: no lookup outcome fails the run or
         // reaches the catch below, which deletes a partial file the failure does not keep.
@@ -433,7 +452,8 @@ public class AndroidDownloadController internal constructor(
         val outcome = try {
             val metadata = transfer(row, temporary)
             withContext(database) {
-                if (closed || !engine.isMediaBindingCurrent()) return@withContext AndroidDownloadRunOutcome.NotRunnable
+                if (closed || AndroidServerIdentity.isRejected(account.providerInstanceId) || !engine.isMediaBindingCurrent())
+                    return@withContext AndroidDownloadRunOutcome.NotRunnable
                 when (val promoted = engine.promote(id, metadata)) {
                     is DownloadPromotionResult.Promoted, is DownloadPromotionResult.AlreadyPromoted -> AndroidDownloadRunOutcome.Downloaded
                     is DownloadPromotionResult.Rejected -> {
@@ -576,16 +596,25 @@ public class AndroidDownloadController internal constructor(
      * unreadable or failed lookup leaves the identity-only row and the transfer runs as before; only
      * a cancellation leaves here.
      */
+    private fun ensureServerNotRejected() {
+        if (AndroidServerIdentity.isRejected(account.providerInstanceId))
+            throw CancellationException("server identity changed; local media waits for account confirmation")
+    }
+
     private suspend fun ensureTrackMetadata(rawId: String) {
         try {
+            ensureServerNotRejected()
             val issueSeq = withContext(database) {
                 val cached = cache().track(rawId)
                 if (cached?.record != null && !cached.metadataMissing) null else cache().issue()
             } ?: return
+            ensureServerNotRejected()
             val response = (requests ?: return).request("getSong", mapOf("id" to rawId))
+            ensureServerNotRejected()
             if (response.statusCode !in 200..299) return
             val track = parseLookupSong(response.body.decodeToString(), rawId) ?: return
             withContext(database) {
+                ensureServerNotRejected()
                 cache().writeEntities(CacheWriteStamp(issueSeq, wall(), null), CacheEntitySource.SongLookup, CacheEntities(tracks = listOf(track)))
             }
         } catch (cancelled: CancellationException) {
@@ -596,6 +625,7 @@ public class AndroidDownloadController internal constructor(
     }
 
     private suspend fun transfer(row: DownloadRecord, temporary: File): DownloadResponseMetadata {
+        ensureServerNotRejected()
         val wireClient = wire ?: throw AndroidDownloadTransferFailure(DomainError.Transport.Cancelled)
         val plan = when (val resolved = wireClient.resolve(PlaybackResolveRequest(
             PlaybackSessionId("download-session:${UUID.randomUUID()}"),
@@ -613,7 +643,8 @@ public class AndroidDownloadController internal constructor(
         val resource = openTransfer?.invoke(plan)
             ?: AndroidHttpPlaybackResource(resourceAccount, plan,
                 requests ?: throw AndroidDownloadTransferFailure(DomainError.Transport.Cancelled)) {
-                if (!closed && AndroidMediaBindingIdentity.sameAccount(store, resourceAccount, account)) requests else null
+                if (!closed && !AndroidServerIdentity.isRejected(account.providerInstanceId) &&
+                    AndroidMediaBindingIdentity.sameAccount(store, resourceAccount, account)) requests else null
             }
         val resumable = withContext(database) {
             (engine.resumeDecision(row.downloadId, wall()) as? DownloadResumeDecision.Resume)?.data
@@ -621,6 +652,7 @@ public class AndroidDownloadController internal constructor(
         return withContext(Dispatchers.IO) {
             val partial = if (temporary.exists()) temporary.length() else 0L
             val resumeAt = resumable?.takeIf { partial in 1 until it }?.let { partial }
+            ensureServerNotRejected()
             var response = resource.open(resumeAt ?: 0L, -1)
             var continuing = false
             if (resumeAt != null) {
@@ -631,6 +663,7 @@ public class AndroidDownloadController internal constructor(
                     response.headers.contentRange?.trim() == "bytes $resumeAt-${resumable - 1}/$resumable"
                 if (!continuing && response.status != 200 && (response.status == 206 || response.status == 416)) {
                     try { response.close() } catch (_: Exception) { }
+                    ensureServerNotRejected()
                     response = resource.open(0L, -1)
                 }
             }
@@ -663,6 +696,7 @@ public class AndroidDownloadController internal constructor(
                 // Opening a path is serialized with binding replacement too: an old response
                 // returning late must not recreate a purged partial after the new epoch starts.
                 val output = withContext(NonCancellable) { withContext(database) {
+                    ensureServerNotRejected()
                     if (closed || !engine.isMediaBindingCurrent()) throw CancellationException("download controller closed")
                     temporary.parentFile?.mkdirs()
                     FileOutputStream(temporary, continuing)
@@ -673,9 +707,11 @@ public class AndroidDownloadController internal constructor(
                         while (true) {
                             kotlinx.coroutines.currentCoroutineContext().ensureActive()
                             // A closed controller's account is being signed out: stop as a stopped task does.
+                            ensureServerNotRejected()
                             if (closed) throw CancellationException("download controller closed")
                             val count = response.input.read(buffer)
                             if (count < 0) break
+                            ensureServerNotRejected()
                             if (closed) throw CancellationException("download controller closed")
                             output.write(buffer, 0, count)
                             written += count
