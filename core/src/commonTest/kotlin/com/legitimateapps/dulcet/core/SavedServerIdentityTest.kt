@@ -83,4 +83,30 @@ class SavedServerIdentityTest {
             assertEquals(old, identities.read("server"), "detection cannot accept a swap before consent")
         } finally { store.close() }
     }
+
+    @Test fun disposableSeenCacheDeletionPreservesDurableBindingsAndTheOtherAccount() = runTest {
+        val store = DulcetDatabaseStore.open(createTestDriver())
+        try {
+            val database = store.database
+            val depth = database.libraryDepthQueries
+            val identities = ServerIdentityStore(database)
+            val identity = ServerIdentityPolicy.identity("Navidrome")
+            for (server in listOf("selected", "other")) {
+                identities.accept(server, identity)
+                depth.putEntry(server, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY, "media-$server", 0)
+                depth.putEntry(server, "albumMetadata", "album", "metadata-$server", 1)
+                depth.putEntry(server, "category", "albums", "preference-$server", 2)
+            }
+
+            database.serverDataQueries.deleteSeenCacheForServer("selected")
+
+            assertEquals(identity, identities.read("selected"), "cache deletion cannot authorize a replacement")
+            assertEquals("media-selected", depth.selectEntry("selected", MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull())
+            assertNull(depth.selectEntry("selected", "albumMetadata", "album").executeAsOneOrNull())
+            assertNull(depth.selectEntry("selected", "category", "albums").executeAsOneOrNull())
+            assertEquals(2, depth.selectEntries("selected").executeAsList().size, "only the independent lineage bindings survive")
+            assertEquals(4, depth.selectEntries("other").executeAsList().size, "another saved account stays intact")
+            assertEquals(identity, identities.read("other"))
+        } finally { store.close() }
+    }
 }
