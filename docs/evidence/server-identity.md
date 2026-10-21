@@ -80,6 +80,9 @@ OBSERVED fail-before: two Android download regressions allowed a scheduled trans
 payload to publish after a known replacement. The corrected worker validates before old-ID requests
 and rejects late promotion while preserving partial/local media. The focused download and probe
 suite passes; transient HTTP 503 identity failure remains retryable and completes after recovery.
+A further real authenticated concurrent-probe regression failed before the fix: a newer same-server
+reader probe stranded its superseded download task. The corrected task has a finite wake boundary
+and its successor completes the exact bytes; 25 download tests and three probe races pass.
 Two additional Android account cases failed to offer consent when the accepted database lineage
 was stronger than legacy credentials; the fixed policy reads the database first.
 

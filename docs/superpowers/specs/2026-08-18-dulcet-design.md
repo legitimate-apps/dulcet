@@ -7926,7 +7926,9 @@ Download workers validate lineage before requesting stored song IDs and before p
 media. A known replacement quarantines remote tasks, including callbacks already in flight, without
 removing existing files, partials, download rows or offline playback plans. Late successful probes
 cannot reopen a rejected account; explicit accepted account replacement is required. A transient
-identity-probe failure retains normal retry behavior. A fresh process revalidates against durable
+identity-probe failure retains normal retry behavior. A same-server reader probe that supersedes a
+download probe also leaves a finite retry, after active probes finish and only if no replacement was
+rejected; it cannot strand a downloading row without a worker. A fresh process revalidates against durable
 accepted lineage before remote work. Cancel retains the old account and its local playback.
 On Android, Play chosen during an already chosen connection's identity probe waits for that probe;
 a rejected probe leaves Reconnect required. This wait never chooses Connect or delays a local file,
