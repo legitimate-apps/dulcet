@@ -653,7 +653,7 @@ struct DulcetReaderTile: View {
                 .confirmationDialog(item.displayTitle, isPresented: $presentsTVActions) {
                     DulcetReaderItemMenuItems(item: item)
                 }
-                .accessibilityLabel(DulcetStrings.more + ", " + item.displayTitle)
+                .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, item.displayTitle))
                 .accessibilityIdentifier("dulcet.library.item.more.\(item.id.rawID)")
             }
             .frame(width: width, alignment: .leading)
