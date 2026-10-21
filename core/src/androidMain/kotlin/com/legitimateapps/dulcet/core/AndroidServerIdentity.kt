@@ -32,14 +32,16 @@ public object AndroidServerIdentity {
             nextGeneration(id)
         }
         val error = validation()
-        synchronized(validationLock) {
-            if (generations[id] == generation) {
+        return synchronized(validationLock) {
+            if (generations[id] != generation) {
+                if (id in rejected) DomainError.Protocol.ServerIdentityChanged else DomainError.Transport.Cancelled
+            } else {
                 if (error == DomainError.Protocol.ServerIdentityChanged) rejected += id
                 if (error == null && id !in rejected) mutableVerified.update { it + id }
                 else mutableVerified.update { it - id }
+                if (id in rejected) DomainError.Protocol.ServerIdentityChanged else error
             }
         }
-        return error
     }
     public fun accept(context: Context, providerInstanceId: String, identity: String) {
         val generation = synchronized(validationLock) { nextGeneration(providerInstanceId) }

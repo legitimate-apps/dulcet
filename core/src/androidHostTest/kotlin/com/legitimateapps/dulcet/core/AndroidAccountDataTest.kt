@@ -329,6 +329,28 @@ class AndroidAccountDataTest {
         assertEquals(counted, listed)
     }
 
+    @Test fun replacementDownloadCountIncludesLegacyAndPendingItemsButExcludesCacheAndDuplicateProfiles() = runBlocking {
+        val account = "count-${UUID.randomUUID()}"
+        val store = DulcetDriverFactory(context).openDulcetDatabase()
+        try {
+            val queries = store.database.downloadsQueries
+            // No policy-state rows: legacy downloads are still real items in the removal offer.
+            queries.insertDownload(account, "legacy", "original", "count-legacy-original", "legacy.mp3", null)
+            queries.insertDownload(account, "legacy", "converted", "count-legacy-converted", "legacy.aac", null)
+            queries.insertDownload(account, "pending", "original", "count-pending", "pending.mp3", null)
+            queries.insertDownload(account, "stream-cache", "cache", "count-stream-cache", "cache.mp3", null)
+            store.database.offlineLibraryQueries.upsertRetention(account, "stream-cache", "cache", 0, 0, 0, NOW)
+            queries.insertDownload("different-account", "other", "original", "count-other", "other.mp3", null)
+            assertEquals(0, queries.selectDownloadsForServer(account).executeAsList().size,
+                "The old policy join cannot see any of these durable legacy records")
+            assertEquals(2, AndroidAccountData.downloadedTrackCount(context, account),
+                "One legacy track plus one queued track; cache, other server and duplicate profile excluded")
+        } finally {
+            store.close()
+            context.deleteDatabase("dulcet.db")
+        }
+    }
+
     private suspend fun sweep(active: () -> String?): Set<String> =
         AndroidAccountData.sweep(::open, File(context.cacheDir, "artwork"), downloads, active)
 

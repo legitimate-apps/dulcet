@@ -43,6 +43,7 @@ public class AndroidAccountData internal constructor(
     private val monotonic: OutboxMonotonicClock,
     /** How long a removal waits for the library reader before it gives up and deletes nothing. */
     private val readerCloseBound: Duration = READER_CLOSE_BOUND,
+    private val validateIdentity: suspend (DulcetDatabaseStore, PlaybackEndpointAccount) -> DomainError? = { _, _ -> null },
     /** Returns once the process's library reader has terminated (§14.7 step 6 waits for it). */
     private val closeLibraryReader: suspend () -> Unit,
 ) {
@@ -55,6 +56,8 @@ public class AndroidAccountData internal constructor(
         wall = OutboxWallClock(System::currentTimeMillis),
         monotonic = OutboxMonotonicClock { SystemClock.elapsedRealtime().milliseconds },
         closeLibraryReader = ::closeProcessLibraryReader,
+        validateIdentity = { store, account -> ServerIdentityGate(store.database, account.providerInstanceId,
+            AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate() },
     )
 
     init {
@@ -100,8 +103,7 @@ public class AndroidAccountData internal constructor(
                         monotonic,
                         ScrobbleOutboxDiagnosticSink {},
                         validateServerIdentity = {
-                            ServerIdentityGate(store.database, serverId,
-                                AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+                            validateIdentity(store, account)
                         },
                     ).onForeground()
                 }
@@ -202,7 +204,7 @@ public class AndroidAccountData internal constructor(
                 val cached = store.database.offlineLibraryQueries.selectServerRetentions(serverId).executeAsList()
                     .filter { it.explicit_download == 0L && it.automatic_download == 0L }
                     .mapTo(mutableSetOf()) { it.raw_id to it.transcode_profile }
-                store.database.downloadsQueries.selectDownloadsForServer(serverId).executeAsList()
+                store.database.downloadsQueries.selectDownloadItemsForServer(serverId).executeAsList()
                     .filter { (it.raw_id to it.transcode_profile) !in cached }
                     .map { it.raw_id }.distinct().size
             }
