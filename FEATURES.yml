@@ -1184,10 +1184,10 @@
               "test": "SavedServerMediaIsolationTest/selectingAnotherSavedServerPreservesInactivePartialAndCompletedMedia"
             },
             {
-              "observes": "The shipping shared root renders Account, opens its saved-server chooser, and activates the B entry through native accessibility actions; the connector and credential store are injected.",
+              "observes": "The hostless shared root/action fixture constructs the chooser, selects Account and server B, and preserves both saved provider IDs with injected account outcomes. It does not establish rendered UIKit tab or remote activation; the Mac hosted accessibility proof is separate.",
               "workflow": "apple-ci",
               "job": "apple-ci",
-              "test": "DulcetKitIOSTests/savedServerChooserIsReachableFromAccountAndActivatesItsEntry"
+              "test": "DulcetKitIOSTests/savedServerChooserAccountActionsSelectEntryAndKeepBothServers"
             },
             {
               "observes": "Injected transport failure activates a saved offline namespace; injected authentication failure stays visible and preserves the prior active account.",
@@ -1225,10 +1225,10 @@
               "test": "SavedServerMediaIsolationTest/selectingAnotherSavedServerPreservesInactivePartialAndCompletedMedia"
             },
             {
-              "observes": "The shipping shared root renders Account, opens its saved-server chooser, and activates the B entry through native accessibility actions; the connector and credential store are injected.",
+              "observes": "The hostless shared root/action fixture constructs the chooser, selects Account and server B, and preserves both saved provider IDs with injected account outcomes. It does not establish rendered UIKit tab or remote activation; the Mac hosted accessibility proof is separate.",
               "workflow": "apple-ci",
               "job": "apple-ci",
-              "test": "DulcetKitIOSTests/savedServerChooserIsReachableFromAccountAndActivatesItsEntry"
+              "test": "DulcetKitIOSTests/savedServerChooserAccountActionsSelectEntryAndKeepBothServers"
             },
             {
               "observes": "Injected transport failure activates a saved offline namespace; injected authentication failure stays visible and preserves the prior active account.",
@@ -1266,10 +1266,10 @@
               "test": "SavedServerMediaIsolationTest/selectingAnotherSavedServerPreservesInactivePartialAndCompletedMedia"
             },
             {
-              "observes": "The shipping shared root renders Account, opens its saved-server chooser, and activates the B entry through native accessibility actions; the connector and credential store are injected.",
+              "observes": "The hostless shared root/action fixture constructs the chooser, selects Account and server B, and preserves both saved provider IDs with injected account outcomes. It does not establish rendered UIKit tab or remote activation; the Mac hosted accessibility proof is separate.",
               "workflow": "apple-ci",
               "job": "apple-ci",
-              "test": "DulcetKitTVOSTests/savedServerChooserIsReachableFromAccountAndActivatesItsEntry"
+              "test": "DulcetKitTVOSTests/savedServerChooserAccountActionsSelectEntryAndKeepBothServers"
             },
             {
               "observes": "Injected transport failure activates a saved offline namespace; injected authentication failure stays visible and preserves the prior active account.",

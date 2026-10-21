@@ -62,6 +62,12 @@ media bytes. Both proofs are invoked by the existing download aggregate selected
 Mac, iPhone and iPad. tvOS has the shared account/chooser proof and shared-core store tests; this
 native AVPlayer adapter aggregate is not claimed there.
 
+OBSERVED on the iPhone simulator: the hostless shared root/action fixture passes with
+`DULCET SAVED SERVER ACTIONS PASS selected=server-b kept=2 native-ui=unproven`.
+The app and shared test target compile for iPhone. This is action wiring with injected accounts;
+the hostless target has no application scene, so rendered UIKit tab/remote activation remains an
+explicit evidence gap on iPhone, iPad and tvOS. The Mac accessibility proof is separate.
+
 ## CI
 
 The PR records the final-head Linux soak lines, required checks and dispatched Apple run IDs.
