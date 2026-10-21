@@ -10,6 +10,12 @@ class SavedServerIdentityTest {
             "https://music.example", "alice", navidrome))
         assertFalse(SavedServerPolicy.canContinue("https://music.example", "alice", navidrome,
             "https://music.example", "Alice", navidrome), "absent canonical confirmation retains exact typed case")
+        assertTrue(SavedServerPolicy.samePrincipal("music.example/rest/ping.view", "alice",
+            "https://music.example", "alice"), "legacy saved input compares through the connection URL parser")
+        assertFalse(SavedServerPolicy.samePrincipal("http://music.example", "alice",
+            "https://music.example", "alice"), "an explicit scheme remains binding")
+        assertFalse(SavedServerPolicy.samePrincipal("https://music.example/a%2Fb", "alice",
+            "https://music.example/a/b", "alice"), "encoded separators remain distinct")
         assertFalse(SavedServerPolicy.samePrincipal("https://music.example", "alice", "https://music.example/other", "alice"))
     }
 

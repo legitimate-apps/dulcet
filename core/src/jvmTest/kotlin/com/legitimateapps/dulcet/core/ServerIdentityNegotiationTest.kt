@@ -47,6 +47,22 @@ class ServerIdentityNegotiationTest {
         assertEquals(listOf("/rest/ping.view"), f.paths)
     }
 
+    @Test fun reconnectProbeRetainsGatewayRetryAndBusySemanticsBeforeParsingMaintenancePages() = fixture { f ->
+        fun probe() = assertIs<AccountConnectionResult.Failed>(runBlocking {
+            AccountConnector().identify(AccountConnectionRequest(
+                "http://127.0.0.1:${f.server.address.port}", "alice", "fixture", true))
+        }).error
+        f.pingStatus = 503
+        f.pingBody = "<html>maintenance</html>"
+        assertEquals(DomainError.Server.HttpStatus(503), probe())
+        f.pingStatus = 429
+        f.pingBody = """{"subsonic-response":{"status":"failed","error":{"code":0}}}"""
+        assertEquals(7_000L, assertIs<DomainError.Server.Busy>(probe()).retryAfter?.inWholeMilliseconds)
+        f.pingStatus = 401
+        f.pingBody = "<html>unauthorized</html>"
+        assertEquals(DomainError.Auth.InvalidCredentials, probe())
+    }
+
     private fun fixture(body: (Fixture) -> Unit) {
         val f = Fixture()
         try { body(f) } finally { f.server.stop(0) }
@@ -58,12 +74,14 @@ class ServerIdentityNegotiationTest {
         var instance = "original-history"
         var redirect = false
         var foreignRequests = 0
+        var pingStatus = 200
+        var pingBody: String? = null
         val paths = mutableListOf<String>()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/") { exchange ->
                 val path = exchange.requestURI.path
                 paths += path
-                val body = if (path == "/.well-known/dulcet") {
+                val body = if (path == "/rest/ping.view" && pingBody != null) pingBody!! else if (path == "/.well-known/dulcet") {
                     // Discovery must be unauthenticated even though the preceding ping was not.
                     check(exchange.requestURI.rawQuery == null)
                     check(exchange.requestHeaders.getFirst("Authorization") == null)
@@ -83,7 +101,9 @@ class ServerIdentityNegotiationTest {
                 val bytes = body.toByteArray()
                 exchange.requestBody.use { it.readBytes() }
                 exchange.responseHeaders.add("Content-Type", "application/json")
-                exchange.sendResponseHeaders(if (redirect && path == "/.well-known/dulcet") 302 else 200, bytes.size.toLong())
+                exchange.responseHeaders.add("Retry-After", "7")
+                val status = if (path == "/rest/ping.view") pingStatus else if (redirect && path == "/.well-known/dulcet") 302 else 200
+                exchange.sendResponseHeaders(status, bytes.size.toLong())
                 exchange.responseBody.use { it.write(bytes) }
             }
             start()

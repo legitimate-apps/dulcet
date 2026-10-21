@@ -588,6 +588,17 @@ public class AccountConnector private constructor(
             formPost = formPost,
             traceRecorder = traceRecorder,
         )
+        if (identityOnly) {
+            // Reconnect previously used the library transport. Keep its status-first busy and
+            // gateway semantics so a maintenance page remains retryable instead of appearing
+            // to be an unrelated server. A valid protocol error still has its protocol meaning.
+            try {
+                LibraryEndpointResponse(ping.statusCode, ping.body, ping.logicalRequestUrl,
+                    retryAfter = ping.retryAfter).okPayload()
+            } catch (failure: LibraryRequestFailure) {
+                return AccountConnectionResult.Failed(failure.error)
+            }
+        }
         val pingEnvelope = parseEnvelope(ping.body)
             ?: return AccountConnectionResult.Failed(
                 if (extensionListUnavailable) {
@@ -791,6 +802,7 @@ public class AccountConnector private constructor(
                     statusCode = response.status.value,
                     body = logSink.accountPhase("$endpoint.body") { response.bodyAsText() },
                     logicalRequestUrl = traceRecorder.latestRedactedUrl(),
+                    retryAfter = response.headers[HttpHeaders.RetryAfter],
                 )
             }
 
@@ -901,6 +913,7 @@ public class AccountConnector private constructor(
         val statusCode: Int,
         val body: String,
         val logicalRequestUrl: String,
+        val retryAfter: String? = null,
     )
 
     private companion object {
@@ -1471,6 +1484,12 @@ private sealed interface NormalizedServerUrl {
     data class Valid(val candidates: List<String>) : NormalizedServerUrl
     data class Invalid(val error: DomainError) : NormalizedServerUrl
 }
+
+/** Legacy secure records can contain the originally submitted address rather than its reached
+ * base URL. Compare its parser candidates only after the caller authenticated the saved user. */
+internal fun savedServerEndpointMatches(savedInput: String, connectedUrl: String): Boolean =
+    (normalizeServerUrl(savedInput, allowLocalHttp = true) as? NormalizedServerUrl.Valid)
+        ?.candidates?.any { MediaBindingIdentity.sameEndpoint(it, connectedUrl) } == true
 
 private fun normalizeServerUrl(input: String, allowLocalHttp: Boolean): NormalizedServerUrl {
     val trimmed = input.trim()

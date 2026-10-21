@@ -33,7 +33,7 @@ public object ServerIdentityPolicy {
 public object SavedServerPolicy {
     public fun samePrincipal(savedUrl: String, savedUsername: String,
         connectedUrl: String, confirmedUsername: String): Boolean =
-        savedUsername == confirmedUsername && MediaBindingIdentity.sameEndpoint(savedUrl, connectedUrl)
+        savedUsername == confirmedUsername && savedServerEndpointMatches(savedUrl, connectedUrl)
 
     public fun isServerReplacement(savedServerIdentity: String, connectedServerIdentity: String): Boolean =
         ServerIdentityPolicy.isReplacement(savedServerIdentity, connectedServerIdentity)
