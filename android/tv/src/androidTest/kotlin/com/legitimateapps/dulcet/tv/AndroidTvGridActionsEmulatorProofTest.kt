@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.tv
 
 import android.app.Activity
+import android.content.Intent
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -41,7 +42,8 @@ class AndroidTvGridActionsEmulatorProofTest {
                 awaitQueuedBroadcastsDelivered()
                 connectSavedAccount(context, probe)
                 val intent = context.packageManager.getLeanbackLaunchIntentForPackage(context.packageName)!!
-                ActivityScenario.launch<Activity>(intent).use {
+                ActivityScenario.launch<Activity>(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)).use {
+                    awaitTag("listenNow.surface")
                     select("browse.open")
                     select("library.view.albums")
                     awaitTag("library.albums.item.0")

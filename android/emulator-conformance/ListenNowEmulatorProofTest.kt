@@ -66,6 +66,15 @@ class ListenNowEmulatorProofTest {
                 check(output.isBlank()) { "Could not retain Home photograph: $output" }
             }
         }
+        // The existing required CI Home method exercises this full chain only on the positive
+        // advertised fixture. Ordinary OpenSubsonic keeps the original navigation proof.
+        val extensions = probe.call("getOpenSubsonicExtensions").getJSONArray("openSubsonicExtensions")
+        val playlistContextOffered = (0 until extensions.length()).any { index ->
+            val extension = extensions.getJSONObject(index)
+            extension.getString("name") == "dulcetHome" && (0 until extension.getJSONArray("versions").length())
+                .any { version -> extension.getJSONArray("versions").getInt(version) == 1 }
+        }
+        if (playlistContextOffered) PlaylistPlayContextProof(compose).run()
     }
     private fun await(tag:String) {
         try {

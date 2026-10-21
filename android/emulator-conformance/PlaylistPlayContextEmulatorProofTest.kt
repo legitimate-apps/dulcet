@@ -1,11 +1,13 @@
 package com.legitimateapps.dulcet.emulator
 
 import android.app.Activity
+import android.content.Intent
 import android.content.res.Configuration
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -20,7 +22,12 @@ import java.net.URLDecoder
 class PlaylistPlayContextEmulatorProofTest {
     @get:Rule val compose = createEmptyComposeRule()
 
-    @Test fun playlistThresholdSubmissionPopulatesRecentlyPlayedPlaylists() {
+    @Test fun playlistThresholdSubmissionPopulatesRecentlyPlayedPlaylists() = PlaylistPlayContextProof(compose).run()
+}
+
+/** Reused by the required Home proof after its ordinary navigation and screenshot assertions. */
+class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
+    fun run() {
         val probe = DisposableServerProbe.fromInstrumentation()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val platform = if (isTelevision()) "androidtv" else "android"
@@ -52,7 +59,7 @@ class PlaylistPlayContextEmulatorProofTest {
                     val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
                         ?: context.packageManager.getLeanbackLaunchIntentForPackage(context.packageName)
                         ?: error("No production activity")
-                    ActivityScenario.launch<Activity>(intent).use {
+                    ActivityScenario.launch<Activity>(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)).use {
                         awaitTag("listenNow.surface")
                         observer.bind()
                         activate("browse.open")
@@ -84,12 +91,17 @@ class PlaylistPlayContextEmulatorProofTest {
                         else activate("player.close")
                         activate("listenNow.open")
                         activate("listenNow.refresh")
-                        compose.waitUntil("recent playlists shelf renders", 30_000) {
-                            runCatching {
-                                compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag("listenNow.recentPlaylists"))
+                        // Anchor the lazy list on the logical shelf once. Repeated full-list
+                        // searches can dispose an initially empty shelf before its live read arrives.
+                        compose.onNodeWithTag("listenNow.surface").performScrollToIndex(if (observer.state().hasSession) 3 else 2)
+                        try {
+                            compose.waitUntil("recent playlists shelf renders", 30_000) {
                                 compose.onAllNodes(hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists")))
                                     .fetchSemanticsNodes().isNotEmpty()
-                            }.getOrDefault(false)
+                            }
+                        } catch (failure: AssertionError) {
+                            println(compose.onRoot(useUnmergedTree = true).printToString())
+                            throw failure
                         }
                         activate(compose.onNode(hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists"))))
                         awaitTag("playlist.title")
@@ -124,7 +136,11 @@ class PlaylistPlayContextEmulatorProofTest {
             compose.waitForIdle()
             node.assertIsFocused()
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-        } else node.performClick()
+        } else {
+            // Browse categories can lie outside the horizontal viewport on a phone.
+            runCatching { node.performScrollTo() }
+            node.assertIsDisplayed().performClick()
+        }
         compose.waitForIdle()
     }
     private fun isTelevision(): Boolean =
