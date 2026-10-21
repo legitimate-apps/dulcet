@@ -10,8 +10,10 @@ import UIKit
 @MainActor
 final class DulcetMyLibraryUITests: XCTestCase {
     private var app = XCUIApplication()
-#if os(macOS)
+    // Keep each disposable proof's account separate on every shell. Relaunches inside
+    // one proof retain this namespace; a later server must not inherit a prior account.
     private let accountFixtureNamespace = UUID().uuidString
+#if os(macOS)
     private var installedFixtureNetworkMonitor = false
 #endif
     private var user: String {
@@ -443,9 +445,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             launchArguments += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server ?? base,
                 "-dulcet-debug-account-username", username ?? user, "-dulcet-debug-account-password", password ?? self.password]
         }
-#if os(macOS)
         launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
-#endif
         app.launchArguments = launchArguments
 #if os(macOS)
         if !installedFixtureNetworkMonitor {
