@@ -4656,7 +4656,7 @@ func sameServerUpgradeOrRestartKeepsAccountAndMediaNamespace() throws {
     #expect(downloads.removeAccountDataCount == 0)
 }
 
-#if os(macOS) || os(iOS) || os(tvOS)
+#if os(macOS)
 import SwiftUI
 #if os(macOS)
 import AppKit
@@ -4812,3 +4812,35 @@ func savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailu
         #expect(credentials.savedProviderInstanceIDs.count == 2)
     }
 }
+
+#if os(iOS) || os(tvOS)
+import SwiftUI
+
+/// The UIKit Kit targets are hostless. This verifies the account action boundary and root
+/// composition; native touch/remote accessibility activation requires an app-hosted UI proof.
+@Test @MainActor
+func savedServerChooserAccountActionsSelectEntryAndKeepBothServers() throws {
+    let first = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid", username: "alice", password: "fixture-a", allowLocalHTTP: false)
+    let second = DulcetAccountConnectRequest(serverURL: "https://two.example.invalid", username: "bob", password: "fixture-b", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(second, providerInstanceID: "server-b", serverIdentity: "dulcet")
+    try credentials.save(first, providerInstanceID: "server-a", serverIdentity: "navidrome")
+    let connector = ControlledAccountConnector()
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
+        credentialStore: credentials, playbackController: playback))
+    connector.complete(.connected(.init(serverName: "Navidrome", normalizedServerURL: first.serverURL,
+        canonicalUsername: first.username, serverIdentity: "navidrome")))
+    _ = DulcetRootView(store: store)
+    store.navigate(to: .settings)
+    #expect(store.selectedDestination == .settings)
+    #expect(store.savedServers.map(\.id).sorted() == ["server-a", "server-b"])
+    store.selectSavedServer("server-b")
+    #expect(connector.requests.last == second)
+    connector.complete(.connected(.init(serverName: "Dulcet", normalizedServerURL: second.serverURL,
+        canonicalUsername: second.username, serverIdentity: "dulcet")))
+    #expect(playback.configuredProviderInstanceID == "server-b")
+    #expect(credentials.savedProviderInstanceIDs.count == 2)
+    print("DULCET SAVED SERVER ACTIONS PASS selected=server-b kept=2 native-ui=unproven")
+}
+#endif
