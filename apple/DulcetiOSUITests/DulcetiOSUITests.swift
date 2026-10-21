@@ -2420,13 +2420,19 @@ final class DulcetiOSUITests: XCTestCase {
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
         // The bar remains in the accessibility tree beneath the full-screen player on iPad.
         // Its existence alone let a read return while the player still obscured the drag source.
-        let dismissed = NSPredicate { _, _ in !close.exists && bar.isHittable }
-        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: dismissed, object: nil)], timeout: 10) == .completed else {
-            XCTFail("Closing the player must dismiss it and uncover the bar: " + app.debugDescription)
-            return nil
-        }
-        print("DULCET UP NEXT read=\(labels)")
-        return labels
+        let dismissalDeadline = Date().addingTimeInterval(10)
+        repeat {
+            // A loaded accessibility server can spend the waiter's entire budget inside one
+            // query. Accept a successful observation before checking elapsed time, as in the
+            // connection driver, rather than letting the timer discard the observed dismissal.
+            if !close.exists, bar.exists, bar.isHittable {
+                print("DULCET UP NEXT read=\(labels)")
+                return labels
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < dismissalDeadline
+        XCTFail("Closing the player must dismiss it and uncover the bar: " + app.debugDescription)
+        return nil
     }
 
     /// Drags `source` onto the now-playing bar until Up Next holds `count` more entries than
