@@ -4553,7 +4553,8 @@ private final class SavedServerMemoryCredentials: DulcetSavedServerCredentialSto
     }
 }
 
-@Test(arguments: [("navidrome", "dulcet"), ("dulcet", "navidrome")]) @MainActor
+@Test("serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged",
+      arguments: [("navidrome", "dulcet"), ("dulcet", "navidrome")]) @MainActor
 func serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged(identities: (String, String)) async throws {
     let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice",
         password: "fixture", allowLocalHTTP: false)
