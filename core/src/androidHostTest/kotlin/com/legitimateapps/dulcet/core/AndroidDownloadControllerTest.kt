@@ -805,6 +805,51 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    @Test fun aKnownIdentityRejectionCannotBeginAStreamCacheWrite() = streamCacheIdentityRejection("begin")
+    @Test fun anIdentityRejectionStopsAnExistingStreamCacheAppend() = streamCacheIdentityRejection("append")
+    @Test fun anIdentityRejectionCannotPromoteAnAlreadyBufferedStreamCache() = streamCacheIdentityRejection("finish")
+
+    private fun streamCacheIdentityRejection(phase: String) = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val accountId = "identity-stream-cache:${java.util.UUID.randomUUID()}"
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks, serverId = accountId)
+            controller.download(listOf(AndroidDownloadItem("existing-download", AudioContainer.Wav, null)))
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.single()))
+            val explicit = assertNotNull(controller.localPlan("existing-download"))
+            fun plan(rawId: String): RemotePlaybackWirePlan {
+                val base = playbackPlan(session = "cache:$rawId", attempt = "cache:$rawId")
+                val item = ProviderItemId(accountId, rawId)
+                return RemotePlaybackWirePlan(base.playbackSessionId, base.attemptId, item, base.path,
+                    base.deliveryProtocol, AudioContainer.Wav, base.transcode,
+                    PlaybackContentLength.Exact(AUDIO.size.toLong()), "stream", mapOf("id" to rawId),
+                    base.resolutionRequest.copy(itemId = item))
+            }
+            val oldWrite = assertNotNull(controller.beginStreamCacheWrite(plan("existing-cache"), 200, "audio/wav", AUDIO.size.toLong(), 0))
+            oldWrite.append(AUDIO, 0, AUDIO.size); oldWrite.finish()
+            val cached = assertNotNull(controller.localPlan("existing-cache"))
+            val pending = if (phase == "begin") null else assertNotNull(controller.beginStreamCacheWrite(
+                plan("replacement-cache"), 200, "audio/wav", AUDIO.size.toLong(), 0))
+            if (phase == "finish") pending!!.append(AUDIO, 0, AUDIO.size)
+            AndroidServerIdentity.validate(accountId) { DomainError.Protocol.ServerIdentityChanged }
+            when (phase) {
+                "begin" -> assertNull(controller.beginStreamCacheWrite(plan("replacement-cache"), 200, "audio/wav", AUDIO.size.toLong(), 0))
+                "append" -> {
+                    assertFailsWith<IllegalStateException> { pending!!.append(AUDIO, 0, AUDIO.size) }
+                    assertFalse(pending!!.isComplete())
+                    pending.finish() // A tee can still finish after a failed append; neither path may promote.
+                }
+                "finish" -> pending!!.finish()
+            }
+            pending?.abort() // Cleanup is safe even after a rejected finish.
+            assertNull(controller.localPlan("replacement-cache"))
+            assertContentEquals(AUDIO, File(assertNotNull(controller.localPlan("existing-download")).absolutePath).readBytes())
+            assertContentEquals(AUDIO, File(assertNotNull(controller.localPlan("existing-cache")).absolutePath).readBytes())
+            assertEquals(explicit.absolutePath, assertNotNull(controller.localPlan("existing-download")).absolutePath)
+            assertEquals(cached.absolutePath, assertNotNull(controller.localPlan("existing-cache")).absolutePath)
+        }
+    }
+
     @Test fun anIdentityRejectionDuringTransferPreservesItsPartialAndPreventsPromotion() = runBlocking {
         for (resetConnection in listOf(false, true)) {
             val reached = CountDownLatch(1)

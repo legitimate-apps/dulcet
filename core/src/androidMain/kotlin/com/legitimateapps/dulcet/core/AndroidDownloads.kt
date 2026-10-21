@@ -889,10 +889,12 @@ public class AndroidDownloadController internal constructor(
     public fun beginStreamCacheWrite(
         plan: RemotePlaybackWirePlan, status: Int, contentType: String?, exactLength: Long?, position: Long,
     ): AndroidStreamCacheWrite? {
-        if (closed || plan.itemId.providerInstanceId != account.providerInstanceId ||
+        if (closed || AndroidServerIdentity.isRejected(account.providerInstanceId) ||
+            plan.itemId.providerInstanceId != account.providerInstanceId ||
             plan.resolutionRequest.legacyTimeOffset?.isPositive() == true) return null
         return runBlocking(database) {
-            if (!awaitReconciled() || closed || !engine.isMediaBindingCurrent()) return@runBlocking null
+            if (!awaitReconciled() || closed || AndroidServerIdentity.isRejected(account.providerInstanceId) ||
+                !engine.isMediaBindingCurrent()) return@runBlocking null
             trimArtworkBeforeWrite(exactLength ?: 0)
             val request = DownloadRequest(
                 DownloadIdentity(account.providerInstanceId, plan.itemId.rawId, "stream:${plan.expectedContainer}"),
@@ -908,25 +910,39 @@ public class AndroidDownloadController internal constructor(
                 private var writtenOffset = position
                 override fun append(bytes: ByteArray, offset: Int, length: Int) = appendAt(bytes, offset, length, writtenOffset)
                 override fun appendAt(bytes: ByteArray, offset: Int, length: Int, resourceOffset: Long) = runBlocking(database) {
+                    if (closed || AndroidServerIdentity.isRejected(account.providerInstanceId) || !engine.isMediaBindingCurrent()) {
+                        offline.abortCacheWrite(write.writeId)
+                        error("The stream cache's server binding is no longer available")
+                    }
                     if (exactLength == null) trimArtworkBeforeWrite(length.toLong())
-                    check(!closed && offline.appendCacheWrite(write.writeId, bytes.copyOfRange(offset, offset + length), resourceOffset))
+                    check(offline.appendCacheWrite(write.writeId, bytes.copyOfRange(offset, offset + length), resourceOffset))
                     writtenOffset = resourceOffset + length
                 }
-                override fun isComplete() = runBlocking(database) { !closed && offline.isCacheWriteComplete(write.writeId) }
+                override fun isComplete() = runBlocking(database) {
+                    !closed && !AndroidServerIdentity.isRejected(account.providerInstanceId) && offline.isCacheWriteComplete(write.writeId)
+                }
                 override fun finish() {
-                    runBlocking(database) {
-                        if (closed || !engine.isMediaBindingCurrent()) {
+                    val accepted = runBlocking(database) {
+                        if (closed || AndroidServerIdentity.isRejected(account.providerInstanceId) || !engine.isMediaBindingCurrent()) {
                             offline.abortCacheWrite(write.writeId)
-                            return@runBlocking
+                            return@runBlocking false
                         }
                         offline.finishCacheWrite(write.writeId, DownloadResponseMetadata(contentType,
                             exactLength?.let(PlaybackContentLength::Exact)), wall())
+                        true
                     }
-                    scope.launch { publish(); onDownloadedChanged(previouslyPlayable + plan.itemId.rawId) }
+                    if (accepted) publishCacheChange()
                 }
                 override fun abort() {
                     runBlocking(database) { offline.abortCacheWrite(write.writeId) }
-                    scope.launch { publish(); onDownloadedChanged(previouslyPlayable + plan.itemId.rawId) }
+                    publishCacheChange()
+                }
+                private fun publishCacheChange() {
+                    scope.launch {
+                        if (!AndroidServerIdentity.isRejected(account.providerInstanceId)) {
+                            publish(); onDownloadedChanged(previouslyPlayable + plan.itemId.rawId)
+                        }
+                    }
                 }
             }
         }
