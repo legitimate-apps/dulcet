@@ -147,6 +147,17 @@ final class DulcetDesignTourUITests: XCTestCase {
             return (home?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlistID }
         }
         XCTAssertFalse(historyContainsPlaylist(), "Creating or reading the playlist must not supply a play")
+        if !compact {
+            // The wide shell can already own its playlist window before this external fixture
+            // create. Reconnect the actual app so that window revalidates its first publication.
+            app.terminate()
+            app.launchArguments = ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url",
+                                   try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"]),
+                                   "-dulcet-debug-account-username", server.username,
+                                   "-dulcet-debug-account-password", server.password]
+            launchInInteractionScope(app)
+            XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        }
         XCTAssertTrue(openPlaylists(in: app, compact: compact), app.debugDescription)
         let row = app.buttons.matching(identifier: "dulcet.library.playlist")
             .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
@@ -158,15 +169,21 @@ final class DulcetDesignTourUITests: XCTestCase {
         XCTAssertTrue(waitFor(timeout: 20) { play.isEnabled })
         XCTAssertFalse(historyContainsPlaylist(), "Playlist reads must still leave history empty")
         play.tap()
+        let miniPlayer = app.buttons["dulcet.mini-player.open"].firstMatch
+        XCTAssertTrue(miniPlayer.waitForExistence(timeout: 15), "Playlist Play must open a real player: " + app.debugDescription)
+        miniPlayer.tap()
+        let elapsed = app.staticTexts["Elapsed"].firstMatch
+        XCTAssertTrue(elapsed.waitForExistence(timeout: 15), "A player must report progressing media time: " + app.debugDescription)
+        let initialElapsed = elapsed.value as? String
+        XCTAssertTrue(waitFor(timeout: 8) { (elapsed.value as? String) != initialElapsed }, "Elapsed media time must advance before the delivery proof")
         var offlineRelaunch = false
         if let proxy = environment["DULCET_PLAYLIST_CONTEXT_OFFLINE_PROXY"] {
             func setOffline(_ offline: Bool) throws {
                 let url = try XCTUnwrap(URL(string: proxy + "/fixture/network?offline=" + (offline ? "1" : "0")))
                 XCTAssertEqual(String(data: try Data(contentsOf: url), encoding: .utf8), offline ? "offline" : "online")
             }
-            // The fixture proxy buffers this 31-second local file before serving it. Give
-            // playback time to start, then block new requests before the 50% play threshold.
-            Thread.sleep(forTimeInterval: 2)
+            // The fixture proxy buffers this 31-second local file before serving it. Block
+            // new requests only after the real player's elapsed media time has advanced.
             try setOffline(true)
             defer { try? setOffline(false) }
             Thread.sleep(forTimeInterval: 23)
@@ -179,6 +196,7 @@ final class DulcetDesignTourUITests: XCTestCase {
             offlineRelaunch = true
         }
         XCTAssertTrue(waitFor(timeout: 50) { historyContainsPlaylist() }, "A real playlist play must reach the server with its raw playlist ID")
+        if app.buttons["dulcet.now-playing.close"].firstMatch.exists { closePlayer(in: app) }
         dismissOverlay(in: app)
         XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
         let refresh = app.buttons["dulcet.listenNow.refresh"].firstMatch
