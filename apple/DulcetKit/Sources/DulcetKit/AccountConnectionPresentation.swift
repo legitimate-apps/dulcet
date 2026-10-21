@@ -817,6 +817,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             }
         }
         librarySession?.onServerIdentityChanged = { [weak self] in
+            self?.playbackController?.rejectServerIdentity()
             self?.downloadController?.rejectServerIdentity()
             guard let self, self.pendingConnection == nil, self.currentSnapshot.accountConnection != .connecting,
                   let saved = try? self.credentialStore?.load() else { return }
@@ -1258,7 +1259,10 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             oldIdentity = persisted.isEmpty ? ((try? multi?.serverIdentity(providerInstanceID: targetID)) ?? "") : persisted
         } else { oldIdentity = "" }
         let replacement = identityPolicy.isReplacement(oldIdentity, account.serverIdentity)
-        if replacement { downloadController?.rejectServerIdentity() }
+        if replacement {
+            playbackController?.rejectServerIdentity()
+            downloadController?.rejectServerIdentity()
+        }
         let samePrincipal = old.map { identityPolicy.samePrincipal($0.serverURL, $0.username, saved.serverURL, saved.username) } ?? true
         let destructive = old != nil && (replacement || (!samePrincipal && !aliasProof))
         let instanceID = destructive || targetID == nil ? providerInstanceIDFactory() : targetID!

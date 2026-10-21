@@ -198,7 +198,13 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             plan: plan,
             rangeStart: range.start,
             rangeEndInclusive: range.endInclusive
-        ) { outcome in
+        ) { [weak source] outcome in
+            // Authorization may complete after the lineage was rejected. An old selected
+            // client cannot grant a new open merely because it survived cancellation.
+            guard source?.select() != nil else {
+                completion(.failure(.transport))
+                return
+            }
             guard let prepared = outcome.request, let url = URL(string: prepared.url) else {
                 completion(.failure(Self.failure(for: outcome.errorKind)))
                 return

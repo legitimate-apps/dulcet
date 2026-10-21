@@ -328,7 +328,7 @@ private final class PlaybackPlanCapture: @unchecked Sendable {
     }
 }
 
-private final class ProductionPathLoopbackServer: @unchecked Sendable {
+final class ProductionPathLoopbackServer: @unchecked Sendable {
     private let audio: Data
     private let listener: NWListener
     private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.production-http")

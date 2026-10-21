@@ -84,8 +84,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         wireAccessEnabled ? wireSource?.select()?.client : nil
     }
     private var serverAvailable = true
+    private var identityRejected = false
     private var networkAvailable = true
     private var resolveOperation: (any ApplePlaybackWireOperation)?
+    /// Allows native boundary tests to hold a real core result after cancellation.
+    var resolvePlayback: (ApplePlaybackWireClient, PlaybackResolveRequest,
+        @escaping (ApplePlaybackResolutionOutcomeDto) -> Void) -> any ApplePlaybackWireOperation = {
+        $0.startResolve(request: $1, completion: $2)
+    }
     private var account: PlaybackEndpointAccount?
     private var presentationAccount: DulcetPlaybackAccount?
     /// tvOS has no download owner; retain only aliases authenticated during this playback binding.
@@ -343,6 +349,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             username: presentationAccount.username
         ) else { return }
         let sameBinding = hasSameMediaBinding(as: presentationAccount)
+        identityRejected = false // Only explicit accepted account configuration opens a new lifetime.
         if account != nil, !sameBinding {
             invalidatePlaybackForMediaBindingChange()
         }
@@ -422,7 +429,28 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         refreshQueueAvailability()
     }
     func setServerAvailable(_ available: Bool) {
+        guard !identityRejected else { return }
         serverAvailable = available
+        refreshQueueAvailability()
+    }
+
+    func rejectServerIdentity() {
+        guard !identityRejected else { return }
+        identityRejected = true
+        serverAvailable = false
+        wireAccessEnabled = false
+        if resolveOperation != nil, let activeDirectiveIdentity {
+            pendingStarts[activeDirectiveIdentity] = nil
+        }
+        activeDirectiveIdentity = nil
+        resolveOperation?.cancel()
+        resolveOperation = nil
+        if let preload, preload.resolve != nil || preload.corePlan != nil {
+            discardPreload(preload, reason: "server-identity", startsHeldEnd: false)
+        }
+        autoplayOperation?.cancel()
+        autoplayOperation = nil
+        wireSource?.revoke()
         refreshQueueAvailability()
     }
 
@@ -864,9 +892,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             legacyTimeOffset: nil
         ).withStreamingQuality(quality: nextStreamingQuality)
         let wireSource = self.wireSource
-        resolveOperation = wireClient.startResolve(request: request) { [weak self] outcome in
+        resolveOperation = resolvePlayback(wireClient, request) { [weak self] outcome in
             Task { @MainActor [weak self] in
                 guard let self,
+                      !self.identityRejected,
                       self.activeDirectiveIdentity == directive.attemptId else { return }
                 self.resolveOperation = nil
                 guard let corePlan = outcome.plan else {
@@ -896,7 +925,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     wrapResource: self.cacheWrapper(for: track)
                 )
                 self.execute(.stop(commandID: self.commandID("replace"))) { [weak self] _ in
-                    self?.prepare(plan)
+                    guard let self, !identityRejected,
+                          activeDirectiveIdentity == directive.attemptId else { return }
+                    prepare(plan)
                 }
             }
         }
@@ -1254,9 +1285,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             legacyTimeOffset: nil
         ).withStreamingQuality(quality: nextStreamingQuality)
         let wireSource = self.wireSource
-        inFlight.resolve = wireClient.startResolve(request: request) { [weak self] outcome in
+        inFlight.resolve = resolvePlayback(wireClient, request) { [weak self] outcome in
             Task { @MainActor [weak self] in
                 guard let self, let current = self.preload,
+                      !self.identityRejected,
                       current.attemptID == directive.attemptId else { return }
                 self.preload?.resolve = nil
                 guard let corePlan = outcome.plan else {

@@ -155,6 +155,90 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         }
     }
 
+    func testKnownReplacementRejectsLateCurrentResolve() async throws {
+        try await proveRejectedPlaybackResolve(preload: false)
+    }
+
+    func testKnownReplacementRejectsLatePreloadResolve() async throws {
+        try await proveRejectedPlaybackResolve(preload: true)
+    }
+
+    private func rejectionTrack(_ raw: String) -> DulcetTrack {
+        DulcetTrack(id: .init(providerInstanceID: "loopback-provider", rawID: raw),
+            title: raw, credits: [], albumTitle: nil, duration: .seconds(120),
+            sourceContainer: .mp3, mediaSourceID: nil, artwork: .init(seed: raw, palette: .indigoCoral))
+    }
+
+    private func proveRejectedPlaybackResolve(preload: Bool) async throws {
+        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        defer { queue.close() }
+        let engine = RejectionPlaybackEngine()
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: engine, catalog: [])
+        defer { controller.disconnect() }
+        controller.configure(account: .init(providerInstanceID: "loopback-provider",
+            normalizedServerURL: "http://127.0.0.1:9", username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        var held: [() -> Void] = []
+        controller.resolvePlayback = { client, request, completion in
+            client.startResolve(request: request) { outcome in
+                Task { @MainActor in held.append { completion(outcome) } }
+            }
+        }
+        controller.replaceQueueAndPlay(.init(tracks: [rejectionTrack("first"), rejectionTrack("second")],
+            sourceKind: .library, sourceID: nil, sourceDisplayName: "Rejected fixture", startIndex: 0, shuffle: false))
+        try await waitUntil(timeout: .seconds(3), failureMessage: "real current resolve did not complete") { !held.isEmpty }
+        if preload {
+            let answer = try XCTUnwrap(held.first)
+            held.removeFirst(); answer()
+            try await waitUntil(timeout: .seconds(3), failureMessage: "current plan was not installed") { engine.plans.count == 1 }
+            let plan = try XCTUnwrap(engine.plans.first)
+            engine.emit(.ready(attemptID: plan.attemptID, duration: 120, seekability: .seekable))
+            engine.emit(.playbackProgressBegan(attemptID: plan.attemptID,
+                wallClock: Date(timeIntervalSince1970: 1), mediaPosition: 1))
+            try await waitUntil(timeout: .seconds(3), failureMessage: "real preload resolve did not complete") { !held.isEmpty }
+        }
+        controller.rejectServerIdentity()
+        controller.setServerAvailable(true) // Ordinary progress/reconnect signals cannot reopen a rejected lineage.
+        let answer = try XCTUnwrap(held.first)
+        held.removeFirst(); answer()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(engine.plans.count, preload ? 1 : 0, "Late remote current plan must not be installed")
+        XCTAssertEqual(engine.preloads.count, 0, "Late remote preload must not be installed")
+    }
+
+    func testKnownReplacementBlocksAnInstalledResourcesNextHTTPRange() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let server = try ProductionPathLoopbackServer(audio: Data(contentsOf: url))
+        defer { server.stop() }
+        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        defer { queue.close() }
+        let engine = RejectionPlaybackEngine()
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: engine, catalog: [])
+        defer { controller.disconnect() }
+        controller.configure(account: .init(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        controller.replaceQueueAndPlay(.init(tracks: [rejectionTrack("loopback-track")],
+            sourceKind: .library, sourceID: nil, sourceDisplayName: "HTTP guard", startIndex: 0, shuffle: false))
+        try await waitUntil(timeout: .seconds(3), failureMessage: "remote plan was not installed") { engine.plans.count == 1 }
+        let resource = try XCTUnwrap(engine.plans.first?.resource as? any DulcetPlaybackResourceLoading)
+        func load(_ start: Int64) async -> DulcetPlaybackResourceLoadOutcome {
+            var operation: (any DulcetPlaybackResourceLoadOperation)?
+            let result: DulcetPlaybackResourceLoadOutcome = await withCheckedContinuation { continuation in
+                operation = resource.load(.init(range: .init(start: start, endInclusive: start + 1023),
+                    requiresAudioSignature: start == 0)) { continuation.resume(returning: $0) }
+            }
+            withExtendedLifetime(operation) {}
+            return result
+        }
+        guard case .loaded = await load(0) else { XCTFail("Positive real HTTP range must load"); return }
+        XCTAssertEqual(server.requestQueries.count, 1)
+        controller.rejectServerIdentity()
+        controller.setServerAvailable(true)
+        if case .loaded = await load(1024) { XCTFail("Known rejected server cannot receive another range") }
+        XCTAssertEqual(server.requestQueries.count, 1, "No new HTTP request after identity rejection")
+    }
+
     func testKnownServerReplacementQuarantinesLateMediaAndKeepsOfflinePlayback() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-rejected-identity-\(UUID())")
         let databaseName = "dulcet-rejected-identity-\(UUID()).db"
@@ -893,6 +977,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await testLocalPlaybackStopsBeforeARealBindingPurgeAndEquivalentRefreshKeepsIt()
         try await testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary()
         try await testKnownServerReplacementQuarantinesLateMediaAndKeepsOfflinePlayback()
+        try await testKnownReplacementRejectsLateCurrentResolve()
+        try await testKnownReplacementRejectsLatePreloadResolve()
+        try await testKnownReplacementBlocksAnInstalledResourcesNextHTTPRange()
         try await testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair()
         try await testAutomaticDownloadPreferenceIsNotLostDuringSameAccountReconciliation()
         try await testPendingAutomaticDownloadPreferenceUsesLatestIntentAndDoesNotCrossAccounts()
@@ -1778,4 +1865,26 @@ private final class BindingMultiCredentials: DulcetSavedServerCredentialStoring 
         savedProviderInstanceIDs.removeAll { $0 == providerInstanceID }
         if self.providerInstanceID == providerInstanceID { self.providerInstanceID = nil }
     }
+}
+
+private final class RejectionPlaybackEngine: DulcetCorePlaybackEngine, @unchecked Sendable {
+    private let lock = NSLock()
+    private var listener: DulcetPlaybackEventHandler?
+    private var storedPlans: [DulcetPlaybackPlan] = []
+    private var storedPreloads: [DulcetPlaybackPlan] = []
+    var plans: [DulcetPlaybackPlan] { lock.withLock { storedPlans } }
+    var preloads: [DulcetPlaybackPlan] { lock.withLock { storedPreloads } }
+    func setEventListener(_ listener: DulcetPlaybackEventHandler?) { lock.withLock { self.listener = listener } }
+    func emit(_ event: DulcetPlaybackEvent) { lock.withLock { listener }?(event) }
+    func stopForAccountChange() {}
+    func execute(_ command: DulcetPlaybackCommand, completion: @escaping DulcetPlaybackCommandCompletion) {
+        lock.withLock {
+            if case let .prepare(_, plan) = command { storedPlans.append(plan) }
+            if case let .preloadNext(_, plan) = command { storedPreloads.append(plan) }
+        }
+        completion(.accepted(commandID: command.commandID))
+    }
+    func setRemoteCommandRouter(_ router: (any DulcetRemotePlaybackCommandRouting)?) {}
+    func updateRemoteCommandCapabilities(_ capabilities: DulcetRemoteCommandCapabilities,
+        for sessionID: DulcetPlaybackSessionID) -> Bool { true }
 }
