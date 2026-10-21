@@ -248,6 +248,11 @@ public class AndroidPlaybackController internal constructor(
         wall, OutboxMonotonicClock { SystemClock.elapsedRealtime().milliseconds },
         ScrobbleOutboxDiagnosticSink { event ->
             if (event is ScrobbleOutboxDiagnosticEvent.RefusedDropped) refusedDrops.incrementAndGet()
+        }, validateServerIdentity = {
+            AndroidServerIdentity.validate(account.providerInstanceId) {
+                ServerIdentityGate(store.database, account.providerInstanceId,
+                    AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+            }
         })
     /**
      * Plays the server refused as its own (error 70, the track is gone) three times while it went on
@@ -409,6 +414,7 @@ public class AndroidPlaybackController internal constructor(
     init {
         check(Looper.myLooper() == Looper.getMainLooper())
         instances += this
+        queue.selectAccount(account.providerInstanceId)
         if (ownsActiveQueue() || queue.activeServerId() == null) {
             queue.setAutoplay(preferences.getBoolean("autoplay", true))
             queue.setCrossfade(crossfadeSeconds.seconds)

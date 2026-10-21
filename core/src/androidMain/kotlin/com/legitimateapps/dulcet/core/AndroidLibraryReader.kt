@@ -1200,6 +1200,12 @@ private fun productionComposer(
                 downloads = DownloadedTrackSource.fromDownloads(opened.database),
                 formPost = false,
                 foreground = foreground,
+                validateServerIdentity = {
+                    AndroidServerIdentity.validate(account.providerInstanceId) {
+                        ServerIdentityGate(opened.database, account.providerInstanceId,
+                            AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+                    }
+                },
             ),
             release = {
                 live.close()

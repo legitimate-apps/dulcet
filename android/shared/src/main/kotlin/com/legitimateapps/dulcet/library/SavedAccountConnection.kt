@@ -87,8 +87,8 @@ public object SavedAccountConnection {
      * not yet claimed by a reader, or by Reconnect on the process's current reader for it.
      */
     public fun isConnected(accountId: String): Boolean = synchronized(lock) {
-        chosenAccountId == accountId ||
-            AndroidLibraryReader.currentFor(accountId)?.let { it in connectedReaders } == true
+        com.legitimateapps.dulcet.core.AndroidServerIdentity.isVerified(accountId) &&
+            (chosenAccountId == accountId || AndroidLibraryReader.currentFor(accountId)?.let { it in connectedReaders } == true)
     }
 
     /** A foreground host starts reconnecting: [reader] reads the server from now on, in every screen host. */
@@ -110,7 +110,9 @@ public object SavedAccountConnection {
     public fun contact(accountId: String): AndroidServerContact = object : AndroidServerContact {
         override fun isOpen(): Boolean = isConnected(accountId)
         override suspend fun awaitOpen() {
-            choices.first { isConnected(accountId) }
+            kotlinx.coroutines.flow.combine(choices, com.legitimateapps.dulcet.core.AndroidServerIdentity.verified) { _, _ ->
+                isConnected(accountId)
+            }.first { it }
         }
     }
 

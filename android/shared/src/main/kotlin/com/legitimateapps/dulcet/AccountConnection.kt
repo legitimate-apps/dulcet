@@ -25,10 +25,12 @@ public suspend fun connectAndSaveAccount(
     connect: suspend (AccountConnectionRequest) -> AccountConnectionResult,
     store: AccountCredentialStore,
     stillWanted: () -> Boolean = { true },
+    replacement: AccountReplacement? = null,
 ): AccountConnectOutcome {
-    // Preserve the exact credential snapshot that was actually authenticated. A server-confirmed
-    // spelling is not evidence of continuity for a different typed username or password.
-    val previous = try { store.load() } catch (_: CredentialStoreException) { null }
+    // Preserve the selection snapshot across authentication. The confirmed canonical principal,
+    // origin and server identity decide continuity; typed case and password refresh do not.
+    val previousActive = try { store.load() } catch (_: CredentialStoreException) { null }
+    val savedAccounts = try { store.savedAccounts() } catch (_: CredentialStoreException) { emptyList() }
     val result = connect(request)
     // Checked after the connector returns and before anything is saved: an attempt the user
     // cancelled or replaced must never leave credentials behind, even when the server accepted them.
@@ -45,26 +47,37 @@ public suspend fun connectAndSaveAccount(
             try {
                 val username = result.account.canonicalUsername ?: request.username
                 val identity = com.legitimateapps.dulcet.core.MediaBindingIdentity
-                val previousOrigin = previous?.let { identity.canonicalServerUrl(it.serverUrl) }
-                val continuesSaved = previous != null && previous.username == request.username &&
-                    previous.password == request.password && previousOrigin != null &&
-                    previousOrigin == identity.canonicalServerUrl(request.serverUrl) &&
-                    previousOrigin == identity.canonicalServerUrl(result.account.normalizedBaseUrl)
-                if (continuesSaved && store.load() != previous) return AccountConnectOutcome.Superseded
+                val policy = com.legitimateapps.dulcet.core.SavedServerPolicy
+                val previous = savedAccounts.firstOrNull {
+                    identity.canonicalServerUrl(it.serverUrl) == identity.canonicalServerUrl(result.account.normalizedBaseUrl) &&
+                        (it.username == username || (it == previousActive && it.username == request.username && it.password == request.password))
+                }
+                if (store.load() != previousActive) return AccountConnectOutcome.Superseded
+                val confirmsSaved = previous != null && policy.canContinue(previous.serverUrl, previous.username,
+                    previous.serverIdentity, result.account.normalizedBaseUrl, username, result.account.serverIdentity)
+                // Exact saved credentials can also learn a canonical spelling from getUser. An
+                // unrelated typed spelling only continues when the server confirms the saved name.
+                val learnsCanonical = previous != null && previous.username == request.username &&
+                    previous.password == request.password && !policy.isServerReplacement(previous.serverIdentity, result.account.serverIdentity)
+                val continuesSaved = confirmsSaved || learnsCanonical
+                val confirmed = StoredAccount(previous?.id.orEmpty(), serverName, result.account.normalizedBaseUrl,
+                    username, request.password, request.allowLocalHttp, result.account.serverIdentity)
+                if (previous != null && !continuesSaved) {
+                    if (replacement == null || !replacement.confirmAndRemove(previous, stillWanted))
+                        return AccountConnectOutcome.Superseded
+                }
+                if (!stillWanted()) return AccountConnectOutcome.Superseded
+                val changesSelection = previous?.id != previousActive?.id || !continuesSaved
+                if (previousActive != null && changesSelection && (previous == null || continuesSaved) && replacement?.retirePlayback() == false)
+                    return AccountConnectOutcome.PersistenceFailed
                 val continued = if (continuesSaved) {
-                    val authenticated = requireNotNull(previous)
-                    store.saveAuthenticatedContinuation(authenticated, StoredAccount(
-                        authenticated.id, serverName, result.account.normalizedBaseUrl,
-                        username, request.password, request.allowLocalHttp,
-                    ))
+                    store.saveAuthenticatedContinuation(requireNotNull(previous), confirmed)
                 } else null
-                val saved = continued ?: store.save(
-                    serverName = serverName,
-                    serverUrl = result.account.normalizedBaseUrl,
-                    username = username,
-                    password = request.password,
-                    allowLocalHttp = request.allowLocalHttp,
-                )
+                val saved = if (continued != null) {
+                    if (continued.id != store.activeAccountId() && store.activate(continued.id) == null)
+                        return AccountConnectOutcome.PersistenceFailed
+                    continued
+                } else store.saveAdditional(confirmed)
                 // The person chose Connect: the library this opens reads the server (spec §13.1).
                 SavedAccountConnection.connectedOnTheForm(saved.id)
                 AccountConnectOutcome.Connected(serverName, result.account.normalizedBaseUrl)
