@@ -1384,13 +1384,18 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertEquals(AndroidLibraryFreshness.Loading, last("home.2").freshness, "row 2 still says it is loading")
         compose.onNodeWithTag("library.home.0.item.0").assertExists()
         proxy.release()
-        await("row 2 live") { last("home.2").freshness == AndroidLibraryFreshness.Live }
+        // The initial reconnect can revalidate the other rows after row 2's first answer. Wait
+        // for that sequence as well as their final publications before checking the settled home.
+        // The assertions above already proved rows 0 and 1 published while row 2 was held.
+        await("the initial reconnect to finish with rows 0, 1 and 2 live") {
+            observed().connections.last() is LibraryConnectionState.Online &&
+                (0..2).all { last("home.$it").freshness == AndroidLibraryFreshness.Live }
+        }
         assertEquals(AndroidLibraryFreshness.Live, last("home.0").freshness)
         assertEquals(AndroidLibraryFreshness.Live, last("home.1").freshness)
         assertTrue(last("home.3").freshness.isFailed(), "the failed row stays failed on its own")
-        // On TV this is also the initial reconnect: while row 2 was held, the home had one
-        // connecting notice. Once it settles, the independent row failure must be visible.
-        await("the initial reconnect to finish") { observed().connections.last() is LibraryConnectionState.Online }
+        // While row 2 was held the home could have one connecting notice. Once it settles,
+        // the independent row failure must be visible on both phone and TV.
         compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("library.home.0")))
             .performScrollToNode(hasTestTag("library.home.3.unavailable"))
         compose.onNodeWithTag("library.home.3.unavailable").assertTextContains("Couldn't load this — ", substring = true)
