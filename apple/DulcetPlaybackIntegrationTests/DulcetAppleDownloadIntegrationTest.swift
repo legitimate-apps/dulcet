@@ -330,6 +330,20 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 XCTAssertEqual(connector.requests.last?.username, "Alice")
                 connector.complete(.connected(.init(serverName: "Binding proof", normalizedServerURL: account.normalizedServerURL,
                     canonicalUsername: "Alice")))
+                XCTAssertEqual(presentation.pendingDownloadRemovalCount, 1)
+                XCTAssertEqual(try credentials.load()?.username, "alice", "Consent precedes credential replacement")
+                XCTAssertTrue(nativePlayer.currentItem === current, "The confirmation keeps playback intact")
+                XCTAssertTrue(paths.allSatisfy { FileManager.default.fileExists(atPath: $0) })
+                presentation.cancelServerReplacement()
+                XCTAssertEqual(try credentials.load()?.username, "alice")
+                presentation.accountUsername = "Alice"
+                presentation.submitAccountConnection()
+                connector.complete(.connected(.init(serverName: "Binding proof", normalizedServerURL: account.normalizedServerURL,
+                    canonicalUsername: "Alice")))
+                presentation.confirmServerReplacement()
+                try await waitUntil(timeout: .seconds(10), failureMessage: "Confirmed account replacement did not complete") {
+                    (try? credentials.load()?.username) == "Alice"
+                }
                 XCTAssertEqual(try credentials.load()?.username, "Alice")
                 XCTAssertEqual(witnessedBeforePurge, 1, "Unproven typed alias must retire once before forced replacement")
                 XCTAssertNil(nativePlayer.currentItem)
@@ -355,6 +369,96 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         defer { sqlite3_close(db) }
         XCTAssertEqual(sqlite3_exec(db, "UPDATE offline_media_retention SET explicit_download=1 WHERE raw_id='current'", nil, nil, nil), SQLITE_OK)
         XCTAssertEqual(sqlite3_changes(db), 1, "The fixture must mark an existing payload explicit")
+    }
+
+    /// The production account data source selects two durable namespaces; the real download,
+    /// queue and reader facades must each return the first server's state when it is selected again.
+    /// Credentials and connector results are controlled; media validation, files and SQLite are real.
+    func testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-saved-roundtrip-\(UUID())")
+        let databaseName = "dulcet-saved-roundtrip-\(UUID()).db"
+        let credentials = BindingMultiCredentials()
+        let accounts: [(String, DulcetAccountConnectRequest)] = [
+            ("saved-a", .init(serverURL: "https://one.example.invalid", username: "alice", password: "fixture-a", allowLocalHTTP: false)),
+            ("saved-b", .init(serverURL: "https://two.example.invalid", username: "bob", password: "fixture-b", allowLocalHTTP: false))
+        ]
+        var payloads: [String: Data] = [:]
+        let queue = ApplePlaybackQueueClient(databaseName: databaseName)
+        defer { queue.close(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(databaseName) }
+        for (id, request) in accounts {
+            let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: id,
+                normalizedBaseUrl: request.serverURL, username: request.username, password: request.password,
+                allowLocalHttp: false), databaseName: databaseName, downloadRootPath: root.path)
+            XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 0).errorKind)
+            var bytes = bindingPCMWave(seconds: 1)
+            bytes[bytes.count - 1] = id == "saved-a" ? 1 : 2
+            payloads[id] = bytes
+            let write = try XCTUnwrap(seed.beginStreamingCache(rawId: "same-raw-id", container: .wav,
+                totalLength: Int64(bytes.count), durationMilliseconds: 1000, rangeStart: 0,
+                credentialGeneration: 0, wallClockMilliseconds: 1))
+            XCTAssertTrue(seed.appendStreamingCache(writeId: write, bytes: bytes, offset: 0))
+            XCTAssertTrue(seed.finishStreamingCache(writeId: write, totalLength: Int64(bytes.count), wallClockMilliseconds: 2))
+            seed.close()
+            try credentials.save(request, providerInstanceID: id, serverIdentity: "stable-\(id)")
+            XCTAssertNil(queue.selectAccount(providerInstanceId: id).errorKind)
+            XCTAssertNil(queue.replaceAndStart(request: ApplePlaybackQueueRequestDto(
+                items: [ApplePlaybackQueueItemDto(providerInstanceId: id, rawId: "same-raw-id", durationMilliseconds: 1000)],
+                sourceKind: "album", sourceRawId: "album-\(id)", sourceDisplayName: id,
+                startIndex: 0, shuffle: false)).errorKind)
+        }
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(databaseName)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        let seedSQL = """
+        UPDATE offline_media_retention SET explicit_download=1;
+        INSERT OR REPLACE INTO cache_track(server_id,raw_id,title,normalized_title,duration_milliseconds,source_container,issue_seq,last_access_wall)
+        VALUES ('saved-a','same-raw-id','Library A','library a',1000,'wav',1,1),('saved-b','same-raw-id','Library B','library b',1000,'wav',1,1);
+        """
+        XCTAssertEqual(sqlite3_exec(database, seedSQL, nil, nil, nil), SQLITE_OK)
+        try credentials.activate(providerInstanceID: "saved-a")
+        let downloads = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer { downloads.disconnect() }
+        let playback = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(), catalog: [])
+        let connector = BindingSavedConnector()
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
+            credentialStore: credentials, playbackController: playback, downloadController: downloads))
+        for index in [0, 1, 0] {
+            let (id, request) = accounts[index]
+            if credentials.providerInstanceID != id || index == 1 { store.selectSavedServer(id) }
+            connector.complete(.connected(.init(serverName: id, normalizedServerURL: request.serverURL,
+                canonicalUsername: request.username, serverIdentity: "stable-\(id)")))
+            try await waitUntil(timeout: .seconds(10), failureMessage: "Selected server media did not reconcile") {
+                downloads.status(for: .init(providerInstanceID: id, rawID: "same-raw-id")).isLocallyPlayable
+            }
+            XCTAssertEqual(credentials.providerInstanceID, id)
+            XCTAssertEqual(queue.snapshot().snapshot?.entries.map(\.providerInstanceId), [id])
+            XCTAssertEqual(queue.snapshot().snapshot?.entries.map(\.rawId), ["same-raw-id"])
+            XCTAssertTrue(downloads.status(for: .init(providerInstanceID: id, rawID: "same-raw-id")).isLocallyPlayable)
+            XCTAssertEqual(downloads.downloadCountToRemove, 1)
+            let local = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: id,
+                normalizedBaseUrl: request.serverURL, username: request.username, password: request.password, allowLocalHttp: false),
+                databaseName: databaseName, downloadRootPath: root.path)
+            XCTAssertNil(local.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 0).errorKind)
+            let plan = try XCTUnwrap(local.localPlaybackPlan(rawId: "same-raw-id").plan)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: plan.filePath)), payloads[id])
+            local.close()
+            let reader = AppleLibraryReaderClient(databaseName: databaseName, account: AppleLibraryReaderAccount(
+                providerInstanceId: id, normalizedBaseUrl: request.serverURL, username: request.username,
+                password: request.password, allowLocalHttp: false), foreground: false)
+            reader.setOnline(reachable: false)
+            let listener = BindingLibraryListener()
+            let subscription = reader.subscribeLibraryWindow(request: AppleLibraryWindowRequest(kind: "songs", rawId: nil,
+                listType: "title", genre: "", fromYear: 0, toYear: 0, musicFolderId: nil), listener: listener)
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Selected server's seen library was not restored") {
+                listener.titles == [index == 0 ? "Library A" : "Library B"]
+            }
+            subscription.close()
+            await withCheckedContinuation { done in reader.close { done.resume() } }
+        }
+        XCTAssertEqual(credentials.savedProviderInstanceIDs, ["saved-a", "saved-b"])
+        print("DULCET SAVED SERVER STORAGE PASS selection=A->B->A media=distinct-bytes queue=restored library=restored deleted=0")
     }
 
     private func removeAdapterTestDatabase(_ name: String) {
@@ -727,6 +831,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         // delivery across asynchronous transfer reconciliation.
         try await testRebindingTheSameProviderRejectsPriorLocalBytesAndLateCacheCallbacks()
         try await testLocalPlaybackStopsBeforeARealBindingPurgeAndEquivalentRefreshKeepsIt()
+        try await testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary()
         try await testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair()
         try await testAutomaticDownloadPreferenceIsNotLostDuringSameAccountReconciliation()
         try await testPendingAutomaticDownloadPreferenceUsesLatestIntentAndDoesNotCrossAccounts()
@@ -1487,6 +1592,7 @@ private final class BindingBoundaryDownloads: DulcetDownloadControlling {
     var afterRetirement: (() -> Void)?
     init(_ base: DulcetCoreDownloadController) { self.base = base }
     var downloadsEnabled: Bool { base.downloadsEnabled }
+    var downloadCountToRemove: Int? { base.downloadCountToRemove }
     func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {
         base.setMediaBindingWillChangeHandler { [weak self] upcoming in
             handler(upcoming)
@@ -1517,7 +1623,11 @@ private final class BindingBoundaryDownloads: DulcetDownloadControlling {
     func requestDownload(_ track: DulcetTrack) { base.requestDownload(track) }
     func status(for id: DulcetProviderItemID) -> DulcetDownloadState { base.status(for: id) }
     func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? { base.offlinePlaybackAsset(for: track) }
-    func removeAccountData() async -> Bool { await base.removeAccountData() }
+    func removeAccountData() async -> Bool {
+        afterRetirement?()
+        afterRetirement = nil
+        return await base.removeAccountData()
+    }
     func disconnect() { base.disconnect() }
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) { base.setStateRefreshHandler(handler) }
 }
@@ -1542,13 +1652,13 @@ private func bindingPCMWave(seconds: Int) -> Data {
 
 @MainActor
 private final class BindingSavedCredentials: DulcetProviderInstanceCredentialStoring {
-    let providerInstanceID: String?
+    private(set) var providerInstanceID: String?
     private var request: DulcetAccountConnectRequest?
     init(provider: String, request: DulcetAccountConnectRequest) { providerInstanceID = provider; self.request = request }
     func load() throws -> DulcetAccountConnectRequest? { request }
     func save(_ request: DulcetAccountConnectRequest) throws { self.request = request }
     func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
-        XCTAssertEqual(providerInstanceID, self.providerInstanceID)
+        self.providerInstanceID = providerInstanceID
         self.request = request
     }
     func delete() throws { request = nil }
@@ -1568,3 +1678,43 @@ private final class BindingSavedConnector: DulcetAccountConnecting {
 
 @MainActor
 private final class BindingSavedOperation: DulcetAccountConnectOperation { func cancel() {} }
+
+
+private final class BindingLibraryListener: NSObject, AppleLibraryWindowListener, @unchecked Sendable {
+    @MainActor var titles: [String] = []
+    func onWindowPublication(publication: AppleLibraryWindowPublication) {
+        let publishedTitles = publication.items.compactMap(\.title)
+        MainActor.assumeIsolated { titles = publishedTitles }
+    }
+}
+
+@MainActor
+private final class BindingMultiCredentials: DulcetSavedServerCredentialStoring {
+    private var records: [String: (DulcetAccountConnectRequest, String)] = [:]
+    var providerInstanceID: String?
+    private(set) var savedProviderInstanceIDs: [String] = []
+    var serverIdentity: String { providerInstanceID.flatMap { records[$0]?.1 } ?? "" }
+    func load() throws -> DulcetAccountConnectRequest? { providerInstanceID.flatMap { records[$0]?.0 } }
+    func load(providerInstanceID: String) throws -> DulcetAccountConnectRequest {
+        try XCTUnwrap(records[providerInstanceID]?.0)
+    }
+    func serverIdentity(providerInstanceID: String) throws -> String { records[providerInstanceID]?.1 ?? "" }
+    func activate(providerInstanceID: String) throws { self.providerInstanceID = providerInstanceID }
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        try save(request, providerInstanceID: providerInstanceID ?? "new", serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        try save(request, providerInstanceID: providerInstanceID, serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String, serverIdentity: String) throws {
+        records[providerInstanceID] = (request, serverIdentity)
+        if !savedProviderInstanceIDs.contains(providerInstanceID) { savedProviderInstanceIDs.append(providerInstanceID) }
+        self.providerInstanceID = providerInstanceID
+    }
+    func delete() throws { if let providerInstanceID { try delete(providerInstanceID: providerInstanceID) } }
+    func delete(providerInstanceID: String) throws {
+        records[providerInstanceID] = nil
+        savedProviderInstanceIDs.removeAll { $0 == providerInstanceID }
+        if self.providerInstanceID == providerInstanceID { self.providerInstanceID = nil }
+    }
+}

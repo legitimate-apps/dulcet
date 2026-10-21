@@ -375,6 +375,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 cancelSleepTimer()
             }
         }
+        if !sameBinding {
+            _ = queueClient.selectAccount(providerInstanceId: presentationAccount.providerInstanceID)
+        }
         let coreAccount = PlaybackEndpointAccount(
             providerInstanceId: presentationAccount.providerInstanceID,
             normalizedBaseUrl: presentationAccount.normalizedServerURL,

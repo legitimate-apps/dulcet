@@ -352,6 +352,7 @@ internal fun DomainError.readerErrorKind(): String = when (this) {
     DomainError.Auth.InvalidCredentials -> "invalidCredentials"
     DomainError.Auth.Forbidden -> "forbidden"
     is DomainError.Auth -> "authentication"
+    DomainError.Protocol.ServerIdentityChanged -> "serverIdentityChanged"
     is DomainError.Protocol -> "protocol"
     is DomainError.Server.Busy -> "serverBusy"
     is DomainError.Server -> if (isNotFound()) "notFound" else "server"

@@ -620,6 +620,8 @@ private fun productionComposer(
                 downloads = if (readsDownloads) DownloadedTrackSource.fromDownloads(opened.database) else DownloadedTrackSource.None,
                 formPost = false,
                 foreground = foreground,
+                validateServerIdentity = ServerIdentityGate(opened.database, account.providerInstanceId,
+                    AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp))::validate,
             ),
             release = {
                 live.close()

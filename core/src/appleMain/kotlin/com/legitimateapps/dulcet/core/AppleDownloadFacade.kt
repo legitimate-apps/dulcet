@@ -125,6 +125,30 @@ public class AppleOfflineLibraryChangeDto internal constructor(
 
 /** Binding-only access never constructs an authenticated client or performs a network request. */
 public object AppleMediaBindingClient {
+    /** Reads durable rows without acquiring or changing a media binding. Negative means unavailable. */
+    public fun downloadCount(databaseName: String, providerInstanceId: String): Int = try {
+        val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+        try {
+            val retentions = opened.database.offlineLibraryQueries.selectServerRetentions(providerInstanceId)
+                .executeAsList().associateBy { it.raw_id to it.transcode_profile }
+            opened.database.downloadsQueries.selectDownloadItemsForServer(providerInstanceId).executeAsList()
+                .filter { row ->
+                    val retention = retentions[row.raw_id to row.transcode_profile]
+                    retention == null || retention.explicit_download == 1L || retention.automatic_download == 1L
+                }.map { it.raw_id }.distinct().size
+        } finally { opened.close() }
+    } catch (_: Throwable) { -1 }
+
+    /** The caller retires playback and every writer before invoking this account-scoped removal. */
+    public fun removeAccountData(databaseName: String, downloadRootPath: String, providerInstanceId: String): Boolean =
+        withPolicy(databaseName, downloadRootPath) { policy -> policy.removeAccountData(providerInstanceId); true }
+
+    public fun acceptServerIdentity(databaseName: String, providerInstanceId: String, identity: String): Boolean = try {
+        val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+        try { ServerIdentityStore(opened.database).accept(providerInstanceId, identity); true }
+        finally { opened.close() }
+    } catch (_: Throwable) { false }
+
     /** Opens a read/adoption context without acquiring a replacement binding or touching files. */
     public fun adoptAuthenticatedAccount(
         databaseName: String,

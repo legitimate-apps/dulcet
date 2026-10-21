@@ -132,6 +132,19 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         )
     }
 
+    func downloadCount(providerInstanceID: String) -> Int? {
+        let count = Int(AppleMediaBindingClient.shared.downloadCount(databaseName: databaseName, providerInstanceId: providerInstanceID))
+        return count >= 0 ? count : nil
+    }
+
+    var downloadCountToRemove: Int? { account.flatMap { downloadCount(providerInstanceID: $0.providerInstanceID) } }
+
+    func removeSavedAccountData(providerInstanceID: String) async -> Bool {
+        if account?.providerInstanceID == providerInstanceID { return await removeAccountData() }
+        return AppleMediaBindingClient.shared.removeAccountData(databaseName: databaseName,
+            downloadRootPath: downloadRootURL.path, providerInstanceId: providerInstanceID)
+    }
+
     func setStatusHandler(
         _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
     ) {

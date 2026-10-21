@@ -149,7 +149,7 @@ enum DulcetAppleProduction {
                 playbackController: playbackController,
                 downloadController: downloads,
                 providerInstanceIDFactory: {
-                    credentialStore.providerInstanceID ?? UUID().uuidString
+                    UUID().uuidString
                 },
                 localNetworkAccess: DulcetNetworkLocalNetworkAccessProbe(),
                 librarySession: DulcetLibrarySession(
@@ -171,7 +171,32 @@ enum DulcetAppleProduction {
                     ),
                     reachability: DulcetNetworkReachability(),
                     foreground: initialForeground
-                )
+                ),
+                acceptServerIdentity: { id, identity in
+                    AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: databaseName,
+                        providerInstanceId: id, identity: identity)
+                },
+                identityPolicy: DulcetAccountIdentityPolicy(samePrincipal: { oldURL, oldUser, newURL, newUser in
+                    SavedServerPolicy.shared.samePrincipal(savedUrl: oldURL, savedUsername: oldUser,
+                        connectedUrl: newURL, confirmedUsername: newUser)
+                }, isReplacement: { old, new in
+                    SavedServerPolicy.shared.isServerReplacement(savedServerIdentity: old, connectedServerIdentity: new)
+                }),
+                countAccountDownloads: { id in
+                    let count = Int(AppleMediaBindingClient.shared.downloadCount(databaseName: databaseName, providerInstanceId: id))
+                    return count >= 0 ? count : nil
+                },
+                removeSavedAccountData: { id in
+                    #if os(macOS) || os(iOS)
+                    if let downloads = downloads as? DulcetCoreDownloadController {
+                        return await downloads.removeSavedAccountData(providerInstanceID: id)
+                    }
+                    #endif
+                    let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("Dulcet/Downloads", isDirectory: true)
+                    return AppleMediaBindingClient.shared.removeAccountData(databaseName: databaseName,
+                        downloadRootPath: root.path, providerInstanceId: id)
+                }
             )
         )
         DulcetSystemActions.shared.store = store
@@ -922,7 +947,8 @@ final class DulcetCoreAccountConnector: DulcetAccountConnecting {
                 completion(.connected(DulcetConnectedAccountSummary(
                     serverName: account.serverType.isEmpty ? fallbackName : account.serverType,
                     normalizedServerURL: account.normalizedBaseUrl,
-                    canonicalUsername: account.canonicalUsername
+                    canonicalUsername: account.canonicalUsername,
+                    serverIdentity: account.serverIdentity
                 )))
                 return
             }

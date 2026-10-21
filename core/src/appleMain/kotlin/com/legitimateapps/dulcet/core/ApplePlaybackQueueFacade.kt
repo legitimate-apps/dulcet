@@ -240,6 +240,11 @@ public class ApplePlaybackQueueClient private constructor(
         deliveryDispatcher,
     )
 
+    /** Called after retiring platform playback, before installing another account's delivery. */
+    public fun selectAccount(providerInstanceId: String): ApplePlaybackQueueTransitionDto = runClosed {
+        requireNotNull(controller).selectAccount(providerInstanceId)
+    }
+
     /** Network reachability changes queue eligibility without changing or deleting queue entries. */
     public fun setNetworkAvailable(available: Boolean) { availability?.online = available }
 
@@ -254,6 +259,8 @@ public class ApplePlaybackQueueClient private constructor(
                 serverId = ServerId(account.providerInstanceId),
                 sender = ScrobbleEndpointSender(account),
                 outbox = PersistentScrobbleOutbox(database, ApplePlaybackWallClock),
+                validateServerIdentity = ServerIdentityGate(database, account.providerInstanceId,
+                    AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp))::validate,
             )
             ApplePlaybackDeliveryConfigurationOutcomeDto(true, null)
         } catch (_: IllegalArgumentException) {
@@ -316,6 +323,7 @@ public class ApplePlaybackQueueClient private constructor(
         outbox: PersistentScrobbleOutbox,
         wallClock: OutboxWallClock = ApplePlaybackWallClock,
         monotonicClock: OutboxMonotonicClock? = null,
+        validateServerIdentity: suspend () -> DomainError? = { null },
     ) {
         delivery?.sender?.close()
         delivery?.retry?.cancel()
@@ -326,6 +334,7 @@ public class ApplePlaybackQueueClient private constructor(
             sender = sender,
             wallClock = wallClock,
             monotonicClock = monotonicClock ?: OutboxMonotonicClock { monotonicOrigin.elapsedNow() },
+            validateServerIdentity = validateServerIdentity,
             diagnosticSink = ScrobbleOutboxDiagnosticSink { event ->
                 when (event) {
                     is ScrobbleOutboxDiagnosticEvent.DeliveryFailed -> updateDeliveryReport {
@@ -363,7 +372,7 @@ public class ApplePlaybackQueueClient private constructor(
                 }
             },
         )
-        delivery = ApplePlaybackDeliveryComposition(sender, outbox, worker, retry)
+        delivery = ApplePlaybackDeliveryComposition(sender, outbox, worker, retry, validateServerIdentity)
         val waiting = pendingEffects.toList()
         pendingEffects.clear()
         captureEffects(waiting)
@@ -953,6 +962,7 @@ public class ApplePlaybackQueueClient private constructor(
         if (activeDelivery !== queued.delivery) return
         when (val event = queued.event) {
             is RecordedPlaybackEvent.NowPlaying -> {
+                if (activeDelivery.validateServerIdentity() != null) return
                 when (activeDelivery.sender?.send(ScrobbleEndpointRequest(event))) {
                     is ScrobbleSendResult.Sent -> updateDeliveryReport {
                         copy(nowPlayingSent = nowPlayingSent + 1)
@@ -1018,6 +1028,7 @@ private data class ApplePlaybackDeliveryComposition(
     val outbox: PersistentScrobbleOutbox,
     val worker: ScrobbleOutboxDeliveryWorker?,
     val retry: ScrobbleOutboxRetryLoop?,
+    val validateServerIdentity: suspend () -> DomainError? = { null },
 )
 
 private data class ApplePlaybackQueueCompositionResult(

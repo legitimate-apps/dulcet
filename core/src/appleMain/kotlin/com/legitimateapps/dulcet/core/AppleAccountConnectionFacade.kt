@@ -41,6 +41,7 @@ public enum class AppleAccountErrorKind {
     SecurityLocalExceptionViolated,
     SecurityRedirectRejected,
     ProtocolMalformedEnvelope,
+    ProtocolServerIdentityChanged,
     ProtocolIncompatible,
     ProtocolNotASubsonicServer,
     ProtocolTooLarge,
@@ -157,6 +158,7 @@ internal fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentati
     is DomainError.Security.TlsUntrusted -> applePresentation("tlsUntrusted")
     DomainError.Security.LocalExceptionViolated -> applePresentation("localNetworkPolicyRejected")
     is DomainError.Security.RedirectRejected -> applePresentation("redirectRejected")
+    DomainError.Protocol.ServerIdentityChanged -> applePresentation("serverIdentityChanged")
     DomainError.Protocol.MalformedEnvelope,
     is DomainError.Protocol.UnexpectedContentType,
     DomainError.Protocol.UnexpectedBinary,
@@ -191,6 +193,7 @@ private fun applePresentation(kind: String): AppleAccountErrorPresentation =
     )
 
 internal fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) {
+    DomainError.Protocol.ServerIdentityChanged -> AppleAccountErrorKind.ProtocolServerIdentityChanged
     is DomainError.Input.InvalidServerUrl -> AppleAccountErrorKind.InputInvalidServerUrl
     DomainError.Transport.Unreachable -> AppleAccountErrorKind.TransportUnreachable
     DomainError.Transport.Timeout -> AppleAccountErrorKind.TransportTimeout
