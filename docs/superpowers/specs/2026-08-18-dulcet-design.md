@@ -7956,7 +7956,9 @@ remains deferred (§11.2).
 For #347, authenticated `getUser` confirmation of the exact saved canonical principal at the same
 origin and lineage retains media even when typed username case or password changed: saved `alice`,
 typed `Alice`, confirmed `alice` continues `alice`. Without a nonblank canonical username, the exact
-submitted spelling is authoritative; there is no inferred case folding. The existing exact-saved-
+submitted spelling is authoritative; there is no inferred case folding. Legacy saved submitted
+addresses compare through the connection URL parser against the authenticated reached base URL;
+explicit schemes and encoded path separators remain significant. The existing exact-saved-
 credential proof may still learn an authenticated spelling alias at that origin. A real replacement
 that would remove media first states the number of stored downloaded tracks to remove and asks for
 confirmation, including zero. Count distinct stored audio track IDs across profiles, including

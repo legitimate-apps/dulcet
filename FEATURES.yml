@@ -799,6 +799,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            },
+            {
+              "observes": "The native download aggregate invokes the real AVPlayer current/preload rebind proof: Cancel preserves files and installed playback, then confirmation retires native playback before the purge callback can remove local media.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
             }
           ]
         },
@@ -811,6 +817,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            },
+            {
+              "observes": "The native download aggregate invokes the real AVPlayer current/preload rebind proof: Cancel preserves files and installed playback, then confirmation retires native playback before the purge callback can remove local media.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
             }
           ]
         },
@@ -823,6 +835,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
+            },
+            {
+              "observes": "The native download aggregate invokes the real AVPlayer current/preload rebind proof: Cancel preserves files and installed playback, then confirmation retires native playback before the purge callback can remove local media.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
             }
           ]
         },
@@ -1027,6 +1045,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible"
+            },
+            {
+              "observes": "The native download aggregate invokes the production adapter A to B to A proof: distinct persisted local bytes, provider-scoped seen library and queue restore without deleting either account; no live multi-server UI tour is claimed.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
             }
           ]
         },
@@ -1057,6 +1081,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible"
+            },
+            {
+              "observes": "The native download aggregate invokes the production adapter A to B to A proof: distinct persisted local bytes, provider-scoped seen library and queue restore without deleting either account; no live multi-server UI tour is claimed.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
             }
           ]
         },
@@ -1087,6 +1117,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible"
+            },
+            {
+              "observes": "The native download aggregate invokes the production adapter A to B to A proof: distinct persisted local bytes, provider-scoped seen library and queue restore without deleting either account; no live multi-server UI tour is claimed.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
             }
           ]
         },

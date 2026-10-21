@@ -53,6 +53,15 @@ OBSERVED on a Mac host: the shipping `DulcetRootView` renders the Account entry;
 activation opens its saved-server list and activates server B. Native facades and persistent data
 have separate integration tests; a fixture datasource alone does not establish live-server I/O.
 
+OBSERVED native adapter tests also pass locally: the real AVPlayer current/preload rebind proof
+keeps installed playback and files through Cancel, then observes retirement before the purge
+callback after confirmation. The storage roundtrip prints
+`DULCET SAVED SERVER STORAGE PASS selection=A->B->A media=distinct-bytes queue=restored library=restored deleted=0`.
+It checks provider-scoped SQLite seen-library rows, persistent queue state and different local
+media bytes. Both proofs are invoked by the existing download aggregate selected by Apple CI on
+Mac, iPhone and iPad. tvOS has the shared account/chooser proof and shared-core store tests; this
+native AVPlayer adapter aggregate is not claimed there.
+
 ## CI
 
 The PR records the final-head Linux soak lines, required checks and dispatched Apple run IDs.

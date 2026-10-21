@@ -485,8 +485,8 @@ class AndroidDownloadControllerTest {
         }
     }
 
-    /** A partial file with resume data is kept only for its own account's controller. */
-    @Test fun anotherAccountsResumablePartialFileIsNotKeptAtRelaunch() = runBlocking {
+    /** Selecting B leaves A's durable partial untouched; only A can resume it. */
+    @Test fun anotherSavedAccountsResumablePartialFileSurvivesSwitchingBack() = runBlocking {
         val partialPath = java.util.concurrent.atomic.AtomicReference<String?>(null)
         val first = java.util.concurrent.atomic.AtomicBoolean(true)
         WireServer { request ->
@@ -500,19 +500,32 @@ class AndroidDownloadControllerTest {
                 })
             } else rangeAware(request, CountDownLatch(0))
         }.use { server ->
+            var now = NOW
             val tasks = RecordingTasks()
-            val before = controller(server, tasks)
+            val before = controller(server, tasks, wall = { now })
             before.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
             val task = tasks.started.single()
             val partial = File(before.temporaryPathForTest(task)).also { partialPath.set(it.path) }
             assertEquals(AndroidDownloadRunOutcome.WillRetry, before.runTask(task))
             assertEquals(STOP_AT.toLong(), partial.length(), "control: the connection failure kept the bytes so far")
             assertNotNull(rows().single().platform_resume_data, "control: the row holds resume data")
+            now = assertNotNull(before.statuses.value.getValue(RAW_ID).retryNotBeforeWallClock)
             before.close()
 
-            val other = controller(server, RecordingTasks(outstanding = emptyList()), serverId = "server:another-account")
+            val otherTasks = RecordingTasks(outstanding = emptyList())
+            val other = controller(server, otherTasks, serverId = "server:another-account")
             assertTrue(other.awaitReconciled())
-            assertFalse(partial.exists(), "another account's controller keeps no partial file of this account")
+            assertEquals(STOP_AT.toLong(), partial.length(), "B preserves A's resumable partial")
+            assertTrue(otherTasks.started.isEmpty(), "B cannot schedule A's download")
+            other.close()
+
+            val restoredTasks = RecordingTasks(outstanding = emptyList())
+            val restored = controller(server, restoredTasks, wall = { now })
+            assertTrue(restored.awaitReconciled())
+            withTimeout(10_000) { while (restoredTasks.started.isEmpty()) delay(20) }
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, restored.runTask(task))
+            assertEquals(listOf<String?>(null, "bytes=$STOP_AT-"), server.requests.map { it.headers["range"] },
+                "restored A resumes its own bytes rather than restarting")
         }
     }
 
