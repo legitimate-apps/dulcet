@@ -192,6 +192,14 @@ enum DulcetStrings {
     static let cancel = text("action.cancel", "Cancel")
     static let accountCredentialFootnote = text("account.connect.keychain", "After a successful connection, Dulcet stores these credentials in the system Keychain.")
     static let savedAccountReconnectBody = text("account.connect.saved.body", "This account is saved. Dulcet reconnects automatically when the server is reachable.")
+    static let savedServers = text("account.savedServers.title", "Servers")
+    static let currentServer = text("account.savedServers.current", "Current server")
+    static let addServer = text("account.savedServers.add", "Add Server")
+    static let serverReplacementTitle = text("account.replace.confirm.title", "Replace this server’s local data?")
+    static let serverReplacementAction = text("account.replace.confirm.action", "Remove Downloads and Connect")
+    static func serverReplacementBody(downloadCount: Int) -> String {
+        formatted("account.replace.confirm.body", "Connecting will remove %@ downloads and rebuild this server’s library, queue and saved position. Other saved servers are kept.", groupedNumber(downloadCount))
+    }
     static let tvTextEntryHint = text("account.connect.tv.textEntryHint", "Select a field to enter text with the Apple TV keyboard or a nearby Apple device.")
     static let signOut = text("account.remove.action", "Sign Out")
     static let signOutConfirmationTitle = text("account.remove.confirm.title", "Sign out of this server?")

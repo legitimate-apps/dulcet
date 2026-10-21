@@ -141,7 +141,7 @@ struct DulcetAccountConnectionView: View {
     private var savedServers: some View {
         if !store.savedServers.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Servers").font(.headline)
+                Text(DulcetStrings.savedServers).font(.headline)
                 ForEach(store.savedServers) { server in
                     Button {
                         store.selectSavedServer(server.id)
@@ -152,14 +152,14 @@ struct DulcetAccountConnectionView: View {
                                 Text(server.username).font(.caption)
                             }
                             Spacer()
-                            if server.isActive { Image(systemName: "checkmark").accessibilityLabel("Current server") }
+                            if server.isActive { Image(systemName: "checkmark").accessibilityLabel(DulcetStrings.currentServer) }
                         }
                         .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier("dulcet.account.server.\(server.id)")
                     .disabled(isConnecting)
                 }
-                Button("Add Server", systemImage: "plus") { store.addServer() }
+                Button(DulcetStrings.addServer, systemImage: "plus") { store.addServer() }
                     .accessibilityIdentifier("dulcet.account.add-server")
                     .disabled(isConnecting)
             }

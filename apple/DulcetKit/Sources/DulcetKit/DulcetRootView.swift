@@ -120,15 +120,15 @@ private struct DulcetLibrarySessionChrome: ViewModifier {
             .dulcetLibraryNotices(store: store)
             .dulcetSignOutOffer(store: store)
             .dulcetPlaylistSheets(store: store)
-            .confirmationDialog("Replace this server’s local data?", isPresented: Binding(
+            .confirmationDialog(DulcetStrings.serverReplacementTitle, isPresented: Binding(
                 get: { store.pendingDownloadRemovalCount != nil },
                 set: { if !$0 { store.cancelServerReplacement() } }
             ), titleVisibility: .visible) {
-                Button("Remove Downloads and Connect", role: .destructive) { store.confirmServerReplacement() }
+                Button(DulcetStrings.serverReplacementAction, role: .destructive) { store.confirmServerReplacement() }
                     .accessibilityIdentifier("dulcet.account.confirm-replacement")
-                Button("Cancel", role: .cancel) { store.cancelServerReplacement() }
+                Button(DulcetStrings.cancel, role: .cancel) { store.cancelServerReplacement() }
             } message: {
-                Text("Connecting will remove \(store.pendingDownloadRemovalCount ?? 0) downloads and rebuild this server’s library, queue and saved position. Other saved servers are kept.")
+                Text(DulcetStrings.serverReplacementBody(downloadCount: store.pendingDownloadRemovalCount ?? 0))
             }
             .onChange(of: store.librarySession?.readerGeneration) { _, _ in store.resetReaderNavigation() }
             // Foreground is "not in the background": an inactive app -- another window in
