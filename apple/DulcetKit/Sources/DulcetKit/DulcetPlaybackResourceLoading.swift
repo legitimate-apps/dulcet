@@ -607,6 +607,19 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
         super.init()
     }
 
+    deinit {
+        // AVFoundation need not send didCancel after retiring its asset. Remove ownership before
+        // cancelling operations because cancellation may synchronously invoke their completions.
+        lock.lock()
+        let pending = Array(contexts.values)
+        contexts.removeAll()
+        lock.unlock()
+        for context in pending {
+            context.cancel()
+            traceHandler?(.cancelled(requestID: context.requestID))
+        }
+    }
+
     public func resourceLoader(
         _ resourceLoader: AVAssetResourceLoader,
         shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest
