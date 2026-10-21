@@ -567,3 +567,17 @@ TV engine suites, and the named phone/iPad binding method. Each device helper mu
 marker for endpoint, username, password, equivalent origin, invalid input and authenticated saved
 reconnect, plus the unproven typed-alias control. The final run and local receipts are recorded in
 the PR handoff; no device execution is inferred solely from compilation or a shared-policy test.
+
+The first final-candidate Linux core run (`39554300578`, head `0d6ff99c`) exposed a second
+full-app-suite stall. The existing 480-second watchdog captured the current SDK Main thread
+sleeping in `DownloadRelaunchResumeScenario.awaitState` after the retry was started. A background
+worker was waiting in the production download factory's Main handoff. Pinned Robolectric bytecode
+confirms that the fixture's `System.nanoTime()` reads its paused clock, so its nominal 15-second
+poll deadline did not expire. This identifies the second stall directly; the earlier run did not
+retain a stack, so assigning it the same cause remains an inference.
+
+The shared phone/TV relaunch fixture now pumps its Main looper while polling and bounds attempts
+independently of the shadow clock. Its loopback server's prefix wait is bounded the same way. The
+partial-prefix, resumed Range request, exactly one promoted file and full byte-identity assertions
+are unchanged. Production retirement ordering is unchanged. Fresh full host reports and additional
+relaunch soaks, together with the final exact-head CI run, supply the pass-after gate.

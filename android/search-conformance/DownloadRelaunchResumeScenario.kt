@@ -110,33 +110,36 @@ class DownloadRelaunchResumeScenario {
 
     private fun partials(): List<File> = root.walkTopDown().filter { it.isFile && it.name.endsWith(".partial") }.toList()
 
+    // These tests run on Robolectric's paused Main looper. Workers may need Main to hand off
+    // account ownership before touching files. Pump it while waiting, and bound attempts rather
+    // than using System.nanoTime(), which this instrumented fixture reads from the frozen clock.
     private fun awaitTask(which: (WorkInfo) -> Boolean): WorkInfo {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
-        while (true) {
+        repeat(750) {
+            shadowOf(Looper.getMainLooper()).idle()
             val matching = downloadTasks().filter(which)
             if (matching.isNotEmpty()) return matching.singleOrNull() ?: error("More than one download task: $matching")
-            check(System.nanoTime() < deadline) { "No download task was started: ${downloadTasks().map { it.state }}" }
             Thread.sleep(20)
         }
+        error("No download task was started: ${downloadTasks().map { it.state }}")
     }
 
     private fun awaitFinished(id: UUID): WorkInfo.State {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
-        while (true) {
+        repeat(750) {
+            shadowOf(Looper.getMainLooper()).idle()
             val state = WorkManager.getInstance(context).getWorkInfoById(id).get()!!.state
             if (state.isFinished) return state
-            check(System.nanoTime() < deadline) { "The download task never finished: $state" }
             Thread.sleep(20)
         }
+        error("The download task never finished: ${WorkManager.getInstance(context).getWorkInfoById(id).get()}")
     }
 
     private fun awaitState(controller: AndroidDownloadController, done: (AndroidDownloadState) -> Boolean): AndroidDownloadState {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
-        while (true) {
+        repeat(750) {
+            shadowOf(Looper.getMainLooper()).idle()
             controller.statuses.value[RAW_ID]?.state?.takeIf(done)?.let { return it }
-            check(System.nanoTime() < deadline) { "The download never settled: ${controller.statuses.value}" }
             Thread.sleep(20)
         }
+        error("The download never settled: ${controller.statuses.value}")
     }
 
     private fun downloadTasks(): List<WorkInfo> =
@@ -182,11 +185,11 @@ class DownloadRelaunchResumeScenario {
             if (range == null) {
                 respond("200 OK", "audio/wav", AUDIO.copyOfRange(0, STOP_AT), length = AUDIO.size)
                 // Held until the bytes are on disk, then reset (RST), as a dropped network ends a read.
-                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-                while ((partial()?.length() ?: 0L) < STOP_AT) {
-                    check(System.nanoTime() < deadline) { "the worker never wrote the first bytes" }
+                for (attempt in 0 until 2_000) {
+                    if ((partial()?.length() ?: 0L) >= STOP_AT) break
                     Thread.sleep(5)
                 }
+                check((partial()?.length() ?: 0L) >= STOP_AT) { "the worker never wrote the first bytes" }
                 client.setSoLinger(true, 0)
                 return
             }
