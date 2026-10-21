@@ -319,3 +319,13 @@ The current player must carry its real playlist source through the durable submi
 and transport before these REST contexts can populate from app listens. That player integration
 belongs to the separate player-session change. The Home UI does not infer playlist listening
 from fetching or editing playlists. Continue Listening uses the existing saved queue independently.
+
+
+## Playlist-context follow-up (2026-10-21)
+
+Lane G implements the shared submitted-play transport and records new per-platform runtime
+observations in [playlist-play-context.md](playlist-play-context.md). The earlier full-grid
+limitation above is historical: Android TV now has an explicit remote-focusable More button
+on full-grid and Home cards. Its actual full-grid proof observes membership add/remove on the
+server, album queuing and restored focus. The tvOS result is recorded separately in that evidence
+report; an Android result does not establish tvOS behavior.

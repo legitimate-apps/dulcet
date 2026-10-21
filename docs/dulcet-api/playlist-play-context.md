@@ -23,6 +23,9 @@ to the core context. Android's `AndroidQueueSource.Playlist` passes the raw play
 through the controller's queue mapping.
 Do not substitute a title, a queue-entry ID, an album ID, a local cache key, or a fabricated
 playlist for the raw server playlist ID.
+An offline-created playlist that has no server ID yet uses a library source with no playlist
+context. A server playlist with pending edits retains its real server ID. Resolving a local
+create later does not retroactively assign context to a session already started.
 
 At the session's actual submitted-play threshold, snapshot the **playing entry's** context,
 not the then-visible screen or the queue's current selection after advancement. The additive event/outbox shape is:

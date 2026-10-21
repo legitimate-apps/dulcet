@@ -4712,46 +4712,36 @@
               "test": "DulcetMacDesignTourTest/testDesignTour"
             }
           ],
-          "reason": "Listen Now opens first. Hosted production Home reached populated shelves, activated an album and returned through Library/Home in apple-ci 38991471536 (1 passing test and screen captures). Core tests establish cache-before-network. Corrected connection landing passed in 38995086942. The catalog-sidebar regression passed on all four hosted Apple runtimes. The actual Mac app-hosted catalog Playlists edit proof passed locally (1/1, 8.801 seconds) and in hosted apple-ci 39019373903 (1/1, 9.192 seconds), including independent server reads and an individual execution guard. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
+          "reason": "The shared submitted-play playlist context is implemented through queue sessions, schema-12 persistence, retry, migration and negotiated delivery, with plain OpenSubsonic negative controls. Earlier Home runtime observations are retained in docs/evidence/listen-now.md. This cell remains partial until actual playlist playback on this runtime is observed reaching the disposable Dulcet Server and its rendered Home playlist row; shared tests and another platform do not establish that chain here. See docs/evidence/playlist-play-context.md.",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "submitted-play-playlist-context-transport",
-            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
+            "blocked_on": "platform-playlist-context-home-runtime-evidence",
+            "reason": "Drive actual playlist playback past its media threshold on this platform, independently observe the exact playlist in server Home, and observe the rendered Home card. Record offline-relaunch coverage separately."
           }
         },
         "ios": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
-              "observes": "The production Home launches first, opens a real album and returns through Library/Home; platform execution and cache evidence are recorded in docs/evidence/listen-now.md.",
+              "observes": "Home launches first and survives relaunch; on advertised dulcetHome v1, real playlist Play reaches the submitted-play threshold, retains context through an offline app relaunch, then updates independently read server Home and the rendered playlist card after reconnect.",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch"
             }
           ],
-          "reason": "Listen Now opens first. Native Home-to-album, saved relaunch and Library/Home navigation passed 1/1 without skips in 35.622 seconds (apple-ci 38991471536, retained Home JUnit and screenshots). Shared tests establish per-account cached first paint and honest REST fallback. After the cold-connection driver correction, all four iPhone Library controls passed without skips locally and in hosted apple-ci 39019373903, including membership/offline replay and the largest text size; Home also passed 1/1 in that hosted run (44.470 seconds); exact xcresult execution guards and JUnit required every method. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "submitted-play-playlist-context-transport",
-            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
-          }
+          "reason": "OBSERVED 2026-10-21 on iPhone against a local disposable Dulcet Server: required Home test 1/1 in 101.028 seconds, zero failures/errors/skips. The actual playlist Play progresses media while the fixture relay is offline; server history remains absent before and after offline app relaunch, cached Home survives, and reconnect/relaunch produces serverHistory=true and homeTile=true for the exact raw playlist. Shared tests separately cover migration, account isolation, retry and unchanged ordinary OpenSubsonic requests. Earlier ordinary REST and Home controls remain in docs/evidence/listen-now.md; current observations and limits are in docs/evidence/playlist-play-context.md."
         },
         "ipados": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
-              "observes": "The production Home launches first, opens a real album and returns through Library/Home; platform execution and cache evidence are recorded in docs/evidence/listen-now.md.",
+              "observes": "Home launches first and survives relaunch; on advertised dulcetHome v1, real playlist Play advances the player elapsed time and reaches the submitted-play threshold, updates independently read server Home and renders the exact playlist card.",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch"
             }
           ],
-          "reason": "Listen Now opens first. Native Home-to-album, saved relaunch and Library/Home navigation passed 1/1 without skips in 51.905 seconds (apple-ci 38991471536, retained Home JUnit and screenshots). Shared tests establish per-account cached first paint and honest REST fallback. After the driver correction, all three iPad Library controls passed without skips locally and in hosted apple-ci 39019373903, including membership/offline replay and appearance variants; Home also passed 1/1 in that hosted run (49.527 seconds); exact xcresult execution guards and JUnit required every method. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "submitted-play-playlist-context-transport",
-            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
-          }
+          "reason": "OBSERVED 2026-10-21 on iPad against a local disposable Dulcet Server: required Home test 1/1 in 100.488 seconds, zero failures/errors/skips. The actual playlist Play is followed by an advancing native player elapsed value, independently observed serverHistory=true and rendered homeTile=true for the exact raw playlist. An attempted offline phase cut the relay before playback was established and produced neither now-playing nor an outbox row; offline queued-play delivery across iPad process relaunch remains unobserved. Shared tests separately establish durable core persistence, retry, migration and account isolation. Earlier ordinary REST and cached Home controls remain in docs/evidence/listen-now.md; current evidence and limits are in docs/evidence/playlist-play-context.md."
         },
         "tvos": {
           "status": "partial",
@@ -4763,46 +4753,36 @@
               "test": "DulcetTVUITests/testListenNowLaunchAlbumAndRelaunch"
             }
           ],
-          "reason": "Listen Now opens first. Shared reader queries cache shelves per account and retain them on failure; advertised dulcetHome v1 supplies server picks and ordinary servers use public REST fallbacks. Local Apple TV Home passed 1/1 in 16.433 seconds on tvOS 26.5, including remote focus, album activation, relaunch and Library/Home navigation, with individual xcresult execution guard and JUnit. Hosted apple-ci 39019373903 also passed Home 1/1 (25.099 seconds), including the strict Library focus identifier regression. Library appearance and ordinary-server controls passed. The original Browse shelf membership path passed locally 1/1 (103.615 seconds) through Add/removal/relaunch/offline replay with independent server reads after the driver revealed its lazy card by remote movement and waited for section-bar focus. The full-grid native context-menu limitation remains unresolved; this shelf proof does not establish a full-grid fix. The merged-source typed TV sort query then passed pin/offline Songs 1/1 (60.152 seconds), and Home passed again 1/1 (16.820 seconds), both without skips and with exact individual result checks and JUnit. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
+          "reason": "The shared submitted-play playlist context is implemented through queue sessions, schema-12 persistence, retry, migration and negotiated delivery, with plain OpenSubsonic negative controls. Earlier Home runtime observations are retained in docs/evidence/listen-now.md. This cell remains partial until actual playlist playback on this runtime is observed reaching the disposable Dulcet Server and its rendered Home playlist row; shared tests and another platform do not establish that chain here. See docs/evidence/playlist-play-context.md. The earlier full-grid native context-menu limitation also requires its own tvOS runtime proof or an explicit documented fallback/limitation.",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "submitted-play-playlist-context-transport",
-            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
+            "blocked_on": "platform-playlist-context-home-runtime-evidence",
+            "reason": "Drive actual playlist playback past its media threshold on this platform, independently observe the exact playlist in server Home, and observe the rendered Home card. Record offline-relaunch coverage separately."
           }
         },
         "android": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
-              "observes": "The production Home launches first, opens a real album and returns through Library/Home; platform execution and cache evidence are recorded in docs/evidence/listen-now.md.",
+              "observes": "Home launches first, opens a real album and survives relaunch; on advertised dulcetHome v1, actual playlist-entry playback passes the media threshold, submits its exact playlist context, populates server Home, renders the playlist card after Refresh and opens that playlist.",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "ListenNowEmulatorProofTest/homeLaunchAlbumAndCachedRelaunch"
             }
           ],
-          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, actual album activation, relaunch and Library/Home controls passed on the API 34 phone emulator against plain REST and advertised Dulcet Server in core-ci 39014292891 (one non-skipped Home case per server). The whole current-product core workflow passed, including 151 server cases and 60 API self-tests without failures/errors/skips. Shared tests cover server personalization, account binding and cache-before-network. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "submitted-play-playlist-context-transport",
-            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
-          }
+          "reason": "OBSERVED 2026-10-21 on the API 34 emulator against a local disposable Dulcet Server: phone 1/1 in 42.281 seconds, no failures/errors/skips. The required Home proof drives actual Media3 playlist-entry playback to an independently read server recommendation and the rendered Home card; now-playing carries no context. Home owns shelf windows for its route lifetime so empty/offscreen shelves participate in Refresh; the host regression passes and fails under the old ownership. Shared outbox tests cover persisted context, migration, retry and ordinary OpenSubsonic negative controls. Android offline queued-play delivery across process relaunch has not been observed; this shipped Home claim is the live playlist-to-rendered-row chain, not that additional lifecycle case. Earlier ordinary REST and cached Home observations remain in docs/evidence/listen-now.md; current evidence is in docs/evidence/playlist-play-context.md."
         },
         "androidtv": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
-              "observes": "The production Home launches first, opens a real album and returns through Library/Home; platform execution and cache evidence are recorded in docs/evidence/listen-now.md.",
+              "observes": "Home launches first, opens a real album and survives relaunch; on advertised dulcetHome v1, actual playlist-entry playback passes the media threshold, submits its exact playlist context, populates server Home, renders the playlist card after Refresh and opens that playlist.",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "ListenNowEmulatorProofTest/homeLaunchAlbumAndCachedRelaunch"
             }
           ],
-          "reason": "Listen Now opens first and the shared reader caches shelves per account. Home launch, actual album activation, relaunch and Library/Home controls passed on the API 34 TV emulator against plain REST and advertised Dulcet Server in core-ci 39014292891 (one non-skipped Home case per server). The whole current-product core workflow passed, including 151 server cases and 60 API self-tests without failures/errors/skips. Shared tests cover server personalization, account binding and cache-before-network. Current-app playlist-context transport remains unimplemented in the player-session outbox; docs/dulcet-api/playlist-play-context.md defines the exact integration and acceptance checks. See docs/evidence/listen-now.md.",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "submitted-play-playlist-context-transport",
-            "reason": "The player-session owner must implement the playing-entry playlist context, account-bound durable outbox propagation and negotiated submission fields specified in docs/dulcet-api/playlist-play-context.md, then prove offline relaunch and delivery populate that playlist in Home. The current client does not implement this transport."
-          }
+          "reason": "OBSERVED 2026-10-21 on the API 34 emulator against a local disposable Dulcet Server: TV Home and full-grid actions 2/2 in 47.155 seconds, no failures/errors/skips. The required Home proof drives actual Media3 playlist-entry playback to an independently read server recommendation and the rendered Home card; now-playing carries no context. Home owns shelf windows for its route lifetime so empty/offscreen shelves participate in Refresh; the host regression passes and fails under the old ownership. Shared outbox tests cover persisted context, migration, retry and ordinary OpenSubsonic negative controls. Android offline queued-play delivery across process relaunch has not been observed; this shipped Home claim is the live playlist-to-rendered-row chain, not that additional lifecycle case. Earlier ordinary REST and cached Home observations remain in docs/evidence/listen-now.md; current evidence is in docs/evidence/playlist-play-context.md. Full-grid and Home cards expose an explicit remote-focusable More button; the local grid proof independently verifies membership add/remove, album queue action and restored focus. It does not depend on a native context-menu gesture."
         }
       }
     },

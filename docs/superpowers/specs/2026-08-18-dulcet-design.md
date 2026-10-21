@@ -7927,6 +7927,11 @@ retain their existing wire parameters. Playlist track queue actions retain the p
 tracks inserted from another surface keep their own source. The three playback identities and
 progressing-media threshold policy are unchanged. See `docs/dulcet-api/playlist-play-context.md`
 for the wire contract and `docs/evidence/playlist-play-context.md` for observed platform coverage.
+Offline-created playlists without a server ID use a library source until resolved; already-started
+sessions are not relabeled. Android Home owns shelf windows for the route lifetime, including
+empty/offscreen shelves, so Refresh can observe a newly submitted playlist. Android TV full-grid
+and Home cards expose a separate remote-focusable More button for membership, pin and queue
+actions, preserving the card's normal activation and returning focus after the action.
 
 **2026-10-21 — Preserve media across authenticated saved-username confirmation.**
 A successful reconnect with the exact saved username and password may confirm a different username
@@ -14108,6 +14113,12 @@ The same extension accepts optional `dulcetContextType=playlist` and `dulcetCont
 count is manufactured. Invalid, private, deleted and non-member contexts are ignored without
 rejecting the ordinary song scrobble. Playlist reads and now-playing reports do not create
 history. API playlist contexts and these REST annotations merge into one deduplicated shelf.
+
+The playing session and durable outbox retain the nullable playlist ID independently of the
+currently visible screen and delivery time; existing persisted submissions migrate to no context.
+Home Refresh keeps every shelf's reader window alive even while a lazy row is empty or offscreen.
+Android TV full-grid and Home cards offer a focusable More action for card commands alongside
+normal activation; the action does not require a native context-menu gesture.
 
 ### 29.5 Lyrics
 

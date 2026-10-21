@@ -21,6 +21,9 @@ with no failures, errors or skips. Removing the queue's context snapshot made th
 fail with the expected playlist ID versus null. After restoring production code, 83 queue,
 session, retry and context cases passed. The migration gate passed all 12 schema fixtures and
 29 destructive controls, including erasing a populated playlist context from a pending play.
+The existing DownloadPolicy suite passes 18 JVM cases after its positional outbox seed was
+changed to explicit columns. The interrupted-migration fixture now includes the actual released
+version-2 outbox table; all four driver-factory JVM cases pass, including transactional rollback.
 
 These shared checks establish core behavior. They do not alone establish any platform's UI,
 engine playback, process-death behavior or rendered Home result. Platform observations and test
@@ -28,5 +31,49 @@ counts are recorded below only when the corresponding runtime has executed.
 
 ## Platform coverage
 
-Pending runtime evidence. Each `FEATURES.yml` cell retains its existing platform observations and
-states any remaining gap; a successful build is not a runtime observation.
+OBSERVED 2026-10-21 against a local disposable Dulcet Server:
+
+| Runtime | Actual trigger and observed effect | Result |
+| --- | --- | --- |
+| Android phone, API 34 | Playlist-entry activation → progressing Media3 playback → exact submitted playlist context → independently read server Home → refreshed rendered playlist card → same playlist opens. Now-playing carries no context. | Required `ListenNowEmulatorProofTest/homeLaunchAlbumAndCachedRelaunch`: 1/1, 42.281 seconds. |
+| Android TV, API 34 | Same playlist-entry-to-rendered-Home chain, using real remote movement. Full-grid More also adds/removes membership (independent server reads), queues the album and restores focus. | Required Home plus `AndroidTvGridActionsEmulatorProofTest`: 2/2, 47.155 seconds. |
+| iPhone | Real playlist Play → relay cut → media threshold → no server playlist history → offline app termination/relaunch with cached Home and still no server history → reconnect/relaunch → exact playlist in independently read server Home and rendered card. | `DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch`: 1/1, 101.028 seconds; `serverHistory=true homeTile=true offlineRelaunch=true`. |
+| iPad | Real playlist Play → native player elapsed value advances → submitted threshold → exact playlist in independently read server Home → rendered Home playlist card. | `DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch`: 1/1, 100.488 seconds; `serverHistory=true homeTile=true offlineRelaunch=false`. |
+
+Each listed run has zero failures, errors or skips. The new capability-gated context branch
+executes only when the authenticated server advertises `dulcetHome` version 1; the ordinary
+OpenSubsonic Home path still executes its existing controls. An optional local fixture proxy
+provides the Apple offline phase; ordinary hosted Home execution without that proxy does not
+prove offline submitted-play relaunch.
+
+Android Home previously let lazy shelf rows own their reader windows. An empty or offscreen
+row could be unregistered when Refresh ran. Home now owns all ten windows for its route
+lifetime. `PhoneListenNowWindowLifecycleTest` passes 1/1 (8.158 seconds); restoring the old
+ownership makes its missing-offscreen-refresh assertion fail. The TV driver also uses paced
+D-pad movement, allowing the real focus system to reveal the row.
+
+Android offline queued-play delivery across process relaunch remains unobserved at runtime.
+The Android shipped Home cells claim the observed live chain; shared persistence tests are
+separate evidence for durable core behavior. Per-action provenance mapping has host/source
+evidence; the Android full runtime chain specifically drives playlist-entry activation.
+
+
+The iPad offline attempt cut the relay after a fixed two-second delay without establishing
+media start. Its outbox was empty and no new now-playing report reached the server. The driver
+now observes advancing player elapsed time; the subsequent live iPad chain passed. Offline
+queued-play delivery across iPad process relaunch remains unobserved and is not inferred from
+the iPhone result.
+
+
+## Android host stability
+
+Each changed Android host-test group completed all 20 repetitions on the repository's Linux
+soak runner. Every linked run ends with the exact line `SOAK RESULT passed=20 failed=0`:
+
+| Filter | Run |
+| --- | --- |
+| `PlaylistPlayContextTest, AndroidPlaybackControllerTest` | [39633028692](https://github.com/legitimate-apps/dulcet/actions/runs/39633028692) |
+| `PlaylistAndLyricsPresentationTest` | [39633033548](https://github.com/legitimate-apps/dulcet/actions/runs/39633033548) |
+| `TvCardOptionsTest` | [39633263175](https://github.com/legitimate-apps/dulcet/actions/runs/39633263175) |
+| `DownloadPolicyTest` | [39635131913](https://github.com/legitimate-apps/dulcet/actions/runs/39635131913) |
+| `PhoneListenNowWindowLifecycleTest` | [39635935469](https://github.com/legitimate-apps/dulcet/actions/runs/39635935469) |
