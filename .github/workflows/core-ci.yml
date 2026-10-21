@@ -157,6 +157,7 @@ jobs:
           # The core's Android host tests carry CONF-82 and CONF-87, whose reader rules the
           # disposable corpus cannot reach; their server is scripted inside the test.
           path: |
+            core/build/test-results/jvmTest
             core/build/test-results/testAndroidHostTest
             android/app/build/test-results/testDevDebugUnitTest
             android/app/build/test-results/testProdDebugUnitTest
