@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.tv
 
 import com.legitimateapps.dulcet.library.playPlaylist
+import com.legitimateapps.dulcet.library.queuePlaylistTrack
 import com.legitimateapps.dulcet.library.playlistEditLine
 import com.legitimateapps.dulcet.library.playlistOwnerLine
 import com.legitimateapps.dulcet.library.playlistPendingLine
@@ -1372,12 +1373,15 @@ internal fun tvTrackAddition(
     provider: String,
     track: AndroidLibraryItem.Track,
     album: AndroidLibraryItem.Album?,
+    playlist: AndroidLibraryItem.Playlist? = null,
 ): TvQueueAddition? {
     // Hidden while no playback service is bound, rather than offered and then refused (spec §14.1).
     if (playback == null || !track.canBeQueued()) return null
     val library = context.getString(R.string.tv_library_title)
     fun add(insertion: AndroidQueueInsertion) {
-        if (!queueTrack(playback, provider, track, insertion, library, album)) queueEditRefused(context)
+        val accepted = if (playlist == null) queueTrack(playback, provider, track, insertion, library, album)
+            else queuePlaylistTrack(playback, provider, track, playlist, insertion)
+        if (!accepted) queueEditRefused(context)
     }
     return TvQueueAddition(track.title.orEmpty(), { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) },
         TvPlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty()))
@@ -1635,7 +1639,7 @@ private fun TvPlaylistScreen(
                         onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                         tagPrefix = "playlist.entry",
                         byPosition = true,
-                        onQueue = tvTrackAddition(context, playback, provider, item, null)?.let { addition -> { adding = addition } },
+                        onQueue = tvTrackAddition(context, playback, provider, item, null, playlist)?.let { addition -> { adding = addition } },
                     )
                 }
             }

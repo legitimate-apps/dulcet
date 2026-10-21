@@ -173,7 +173,7 @@ public data class AndroidQueueEntry(val queueEntryId: String, val track: Android
 /** An edit that has taken effect, claimed once by the foreground surface. */
 public data class AndroidQueueConfirmation(val sequence: Long, val insertion: AndroidQueueInsertion, val trackCount: Int)
 
-public enum class AndroidQueueSource { Album, Artist, Library, Search }
+public enum class AndroidQueueSource { Album, Artist, Playlist, Library, Search }
 
 /** Where [AndroidPlaybackController.addToQueue] puts tracks: straight after the current entry, or at the end. */
 public enum class AndroidQueueInsertion { PlayNext, AddToQueue }
@@ -565,7 +565,7 @@ public class AndroidPlaybackController internal constructor(
     /**
      * Replaces the queue with [tracks] and starts [startIndex]. Every track must belong to this
      * service's account; a foreign identity is refused rather than played with the wrong credentials.
-     * An album or artist queue names its source by opaque [sourceRawId]; library and search do not.
+     * An album, artist or playlist queue names its source by opaque [sourceRawId]; library and search do not.
      */
     public fun playQueue(
         tracks: List<AndroidTrack>,
@@ -576,8 +576,8 @@ public class AndroidPlaybackController internal constructor(
         shuffle: Boolean = false,
     ) {
         if (!live()) return
-        val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist
-        require(named == !sourceRawId.isNullOrBlank()) { "Album and artist queues, and only they, name a source" }
+        val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist || source == AndroidQueueSource.Playlist
+        require(named == !sourceRawId.isNullOrBlank()) { "Album, artist and playlist queues, and only they, name a source" }
         if (tracks.isEmpty() || startIndex !in tracks.indices ||
             tracks.any { it.providerInstanceId != account.providerInstanceId }) {
             failure = DomainError.Auth.Forbidden; publish(); return
@@ -621,6 +621,7 @@ public class AndroidPlaybackController internal constructor(
                 val kind = when (source) {
                     AndroidQueueSource.Album -> QueueSourceKind.Album
                     AndroidQueueSource.Artist -> QueueSourceKind.Artist
+                    AndroidQueueSource.Playlist -> QueueSourceKind.Playlist
                     AndroidQueueSource.Library -> QueueSourceKind.Library
                     AndroidQueueSource.Search -> QueueSourceKind.Search
                 }
@@ -811,8 +812,8 @@ public class AndroidPlaybackController internal constructor(
         sourceRawId: String? = null,
     ): Boolean {
         if (!live()) return false
-        val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist
-        require(named == !sourceRawId.isNullOrBlank()) { "Album and artist queues, and only they, name a source" }
+        val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist || source == AndroidQueueSource.Playlist
+        require(named == !sourceRawId.isNullOrBlank()) { "Album, artist and playlist queues, and only they, name a source" }
         if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId }) return false
         if (queueLoading()) {
             heldAdditions += HeldAddition(tracks.toList(), insertion, source, sourceName, sourceRawId)
@@ -959,6 +960,7 @@ public class AndroidPlaybackController internal constructor(
     private fun AndroidQueueSource.kind(): QueueSourceKind = when (this) {
         AndroidQueueSource.Album -> QueueSourceKind.Album
         AndroidQueueSource.Artist -> QueueSourceKind.Artist
+        AndroidQueueSource.Playlist -> QueueSourceKind.Playlist
         AndroidQueueSource.Library -> QueueSourceKind.Library
         AndroidQueueSource.Search -> QueueSourceKind.Search
     }

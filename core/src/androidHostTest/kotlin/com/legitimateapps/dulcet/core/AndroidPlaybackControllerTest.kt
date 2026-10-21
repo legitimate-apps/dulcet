@@ -151,6 +151,33 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun playlistSourceSurvivesPlayShuffleAndMixedInsertionsInPersistentQueue() {
+        for (shuffle in listOf(false, true)) Fixture().use { f ->
+            val source = QueueSourceContext(QueueSourceKind.Playlist, ProviderItemId(OWNER, "playlist / opaque"), "My Mix")
+            f.controller.playQueue(album("a", "b", "c"), 0, AndroidQueueSource.Playlist, "My Mix", "playlist / opaque", shuffle)
+            val queues = PersistentQueueStore(f.store.database)
+            assertEquals(3, queues.load(ServerId(OWNER)).entries.size)
+            assertTrue(queues.load(ServerId(OWNER)).entries.all { it.sourceContext == source })
+            assertTrue(f.controller.addToQueue(album("next"), AndroidQueueInsertion.PlayNext,
+                AndroidQueueSource.Playlist, "Another", "playlist-next"))
+            assertTrue(f.controller.addToQueue(album("later"), AndroidQueueInsertion.AddToQueue,
+                AndroidQueueSource.Playlist, "Later", "playlist-later"))
+            assertTrue(f.controller.addToQueue(album("search"), AndroidQueueInsertion.AddToQueue,
+                AndroidQueueSource.Search, "Search"))
+            val stored = queues.load(ServerId(OWNER)).entries
+            assertEquals(6, stored.size)
+            assertEquals(source, stored.first { it.providerItemId.rawId == "a" }.sourceContext)
+            assertEquals(QueueSourceContext(QueueSourceKind.Playlist, ProviderItemId(OWNER, "playlist-next"), "Another"),
+                stored.first { it.providerItemId.rawId == "next" }.sourceContext)
+            assertEquals(QueueSourceContext(QueueSourceKind.Playlist, ProviderItemId(OWNER, "playlist-later"), "Later"),
+                stored.first { it.providerItemId.rawId == "later" }.sourceContext)
+            assertEquals(QueueSourceContext(QueueSourceKind.Search, null, "Search"), stored.last().sourceContext)
+            f.controller.next()
+            assertEquals("next", f.controller.state.value.queue[f.controller.state.value.currentIndex!!].track.rawId)
+            assertEquals(stored, queues.load(ServerId(OWNER)).entries, "Advancement must keep each entry's provenance")
+        }
+    }
+
     @Test fun albumQueuePublishesUpNextAndJumpStartsTheNamedEntry() {
         Fixture().use { f ->
             f.controller.playQueue(album("t1", "t2", "t3"), 1, AndroidQueueSource.Album, "Album", "album-id")
