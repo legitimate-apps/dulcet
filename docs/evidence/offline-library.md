@@ -581,3 +581,33 @@ independently of the shadow clock. Its loopback server's prefix wait is bounded 
 partial-prefix, resumed Range request, exactly one promoted file and full byte-identity assertions
 are unchanged. Production retirement ordering is unchanged. Fresh full host reports and additional
 relaunch soaks, together with the final exact-head CI run, supply the pass-after gate.
+
+The full Apple run on `9caa2375` also exposed an iPad UI-driver assumption. The helper checked
+selection after an iPhone tab tap but assumed an iPad sidebar label tap had selected its destination.
+In attempts 2 and 3 of `39557938551`, retained native tap events were inside Library's actual bounds,
+yet the failure hierarchies still positively identified Listen Now as selected. Attempt 3 passed
+the complete automatic-download/offline-replay method, then failed the largest-text appearance
+variant after its light and dark variants passed. These are observed navigation failures; a
+host-contention or OS event-delivery cause remains an inference. No membership, retention or
+playback failure is inferred from reading the wrong destination.
+
+The iPad helper now observes the requested sidebar row's selection, permits one bounded second
+real tap on its containing native cell if the first tap is unacknowledged, and requires selection
+before continuing. Its original destination-content assertions and execution allowances remain
+unchanged. OBSERVED on an owned iPad Pro 11-inch (M5), iOS 26.4: a held-out driver trigger omits
+only the first synthesized iPad navigation tap. With the historical `9caa2375` helper, the named
+appearance method executes and fails its empty-Library assertion in 48.161 seconds, with one
+failure and zero unexpected failures. With the candidate helper and the identical trigger, the
+method passes in 118.506 seconds: all six omitted taps require actual cell taps, and all nine
+Library, Browse and Album-Add captures execute across light, dark and largest text. The app,
+server and UI content checks remain real; this controlled trigger proves driver recovery rather
+than the cause of the original undelivered taps. The normal, uninjected suite and final exact-head
+CI receipts are recorded in the PR handoff. All seven Apple integration schemes also build for
+testing with this test-only correction; no production engine or policy code changes here.
+
+OBSERVED after restoring the uninjected candidate byte-for-byte: the full five-method iPad
+My Library selection passes with zero skips on the same iOS 26.4 simulator. Replay passes in
+125.817 seconds, appearance in 82.314, depth in 74.596, search in 38.129 and plain-OpenSubsonic
+fallback in 14.429. Replay again witnesses album-add, a completed automatic download and native
+playback after cutting the account's HTTP route. The finite fixture and owned simulator are
+stopped/disposed after the run. The final-head cloud run remains a separate gate.

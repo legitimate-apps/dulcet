@@ -573,6 +573,24 @@ final class DulcetMyLibraryUITests: XCTestCase {
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
                            "The tab tap must select \(section): \(app.debugDescription)")
+        } else {
+            // A synthesized iPad label tap can finish without changing the sidebar selection.
+            // Retained failures show Listen Now still selected after a tap inside Library's
+            // correct bounds, at both default and accessibility text sizes. Observe selection
+            // before reading destination content; make at most one second real row tap.
+            let firstSelection = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
+            if XCTWaiter.wait(for: [firstSelection], timeout: 3) != .completed {
+                let row = app.cells.containing(.staticText, identifier: "dulcet.sidebar.\(section)").firstMatch
+                guard row.waitForExistence(timeout: 3) else {
+                    XCTFail("Missing native sidebar row for \(section): \(app.debugDescription)")
+                    return
+                }
+                print("MY LIBRARY IPAD unacknowledged-sidebar-tap target=\(section) retry=cell")
+                row.tap()
+            }
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
+                           "The sidebar tap must select \(section): \(app.debugDescription)")
         }
 #endif
 #if os(macOS)
