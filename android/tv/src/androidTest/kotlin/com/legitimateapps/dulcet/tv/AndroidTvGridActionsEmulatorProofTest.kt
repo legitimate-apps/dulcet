@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -22,8 +23,6 @@ class AndroidTvGridActionsEmulatorProofTest {
     @get:Rule val compose = createEmptyComposeRule()
 
     @Test fun gridMoreOptionsAddsRemovesAndQueuesTheActualAlbum() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        check(context.packageManager.hasSystemFeature("android.software.leanback"))
         val probe = DisposableServerProbe.fromInstrumentation()
         val extensions = probe.call("getOpenSubsonicExtensions").getJSONArray("openSubsonicExtensions")
         assumeTrue("Grid membership proof requires advertised dulcetLibrary v1", (0 until extensions.length()).any { index ->
@@ -31,6 +30,16 @@ class AndroidTvGridActionsEmulatorProofTest {
             extension.getString("name") == "dulcetLibrary" && (0 until extension.getJSONArray("versions").length())
                 .any { version -> extension.getJSONArray("versions").getInt(version) == 1 }
         })
+        AndroidTvGridActionsProof(compose).run()
+    }
+}
+
+/** The required Dulcet My Library proof also exercises these full-grid actions. */
+class AndroidTvGridActionsProof(private val compose: ComposeTestRule) {
+    fun run() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageManager.hasSystemFeature("android.software.leanback"))
+        val probe = DisposableServerProbe.fromInstrumentation()
         val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "500"))
             .getJSONObject("albumList2").getJSONArray("album")
         val album = (0 until albums.length()).map(albums::getJSONObject).first { it.getString("name") == "Threshold Boundary" }
