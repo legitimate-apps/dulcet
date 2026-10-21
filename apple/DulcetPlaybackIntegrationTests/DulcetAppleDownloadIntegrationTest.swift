@@ -155,6 +155,60 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         }
     }
 
+    func testACompletedDeliveryWinsAgainstALatePreparedDownload() async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let audio = try Data(contentsOf: audioURL)
+        let server = try ProductionPathLoopbackServer(audio: audio, answersIdentity: true)
+        defer { server.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-delivery-race-\(UUID())")
+        let name = "dulcet-delivery-race-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1)
+        let controller = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer { controller.disconnect(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name) }
+        var held: (() -> Void)?
+        controller.preparedDownloadDelivery = { held = $0 }
+        controller.configure(account: account)
+        controller.setAutomaticDownloadsEnabled(false)
+        let track = rejectionTrack("delivered")
+        controller.requestDownload(track)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Real core preparation did not complete") { held != nil }
+        // An OS-delivered secured payload promotes while the earlier prepare callback is delayed.
+        let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: account.providerInstanceID,
+            normalizedBaseUrl: account.normalizedServerURL, username: account.username, password: account.password,
+            allowLocalHttp: true), databaseName: name, downloadRootPath: root.path)
+        defer { seed.close() }
+        XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1).errorKind)
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(name)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT download_id FROM download WHERE raw_id='delivered'", -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+        let id = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 0)))
+        let target = try XCTUnwrap(seed.fileTarget(downloadIdentifier: id).temporaryFilePath)
+        try FileManager.default.createDirectory(at: URL(fileURLWithPath: target).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try audio.write(to: URL(fileURLWithPath: target))
+        XCTAssertEqual(seed.finishDownload(downloadIdentifier: id, statusCode: 200, contentType: "audio/mpeg",
+            contentLength: Int64(audio.count), retryAfterMilliseconds: -1, wallClockMilliseconds: 2).state, "downloaded")
+        let answer = try XCTUnwrap(held)
+        held = nil; answer()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.requestQueries.count, 0, "A delayed prepare must not fetch an already-promoted delivery")
+        XCTAssertTrue(controller.status(for: track.id).isLocallyPlayable)
+        controller.preparedDownloadDelivery = nil
+        let ordinary = rejectionTrack("ordinary-after-delivery")
+        controller.requestDownload(ordinary)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Ordinary pending download did not resume") {
+            controller.status(for: ordinary.id).isLocallyPlayable
+        }
+        XCTAssertEqual(server.requestQueries.count, 1, "Only the new ordinary track may fetch after delivery reconciliation")
+    }
+
     func testKnownReplacementRejectsLateCurrentResolve() async throws {
         try await proveRejectedPlaybackResolve(preload: false)
     }
@@ -977,6 +1031,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await testLocalPlaybackStopsBeforeARealBindingPurgeAndEquivalentRefreshKeepsIt()
         try await testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary()
         try await testKnownServerReplacementQuarantinesLateMediaAndKeepsOfflinePlayback()
+        try await testACompletedDeliveryWinsAgainstALatePreparedDownload()
         try await testKnownReplacementRejectsLateCurrentResolve()
         try await testKnownReplacementRejectsLatePreloadResolve()
         try await testKnownReplacementBlocksAnInstalledResourcesNextHTTPRange()

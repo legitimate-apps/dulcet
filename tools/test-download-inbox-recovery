@@ -107,6 +107,7 @@ extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
     var identityValidations = 0
     init(_ root: URL) { downloadInboxURL = root.appendingPathComponent(".incoming"); client = Client(root) }
     func scheduleNextDownload() {}
+    func resumePendingDownloads() { scheduleNextDownload() }
     func refreshArtworkBudget() {}
     func scheduleRetry(at: Int64?) {}
     func publish(_ state: DulcetDownloadState, for id: DulcetProviderItemID) {}

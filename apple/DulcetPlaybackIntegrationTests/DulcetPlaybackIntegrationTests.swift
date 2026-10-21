@@ -330,6 +330,7 @@ private final class PlaybackPlanCapture: @unchecked Sendable {
 
 final class ProductionPathLoopbackServer: @unchecked Sendable {
     private let audio: Data
+    private let answersIdentity: Bool
     private let listener: NWListener
     private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.production-http")
     private let lock = NSLock()
@@ -348,8 +349,9 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
         return rangeStorage
     }
 
-    init(audio: Data) throws {
+    init(audio: Data, answersIdentity: Bool = false) throws {
         self.audio = audio
+        self.answersIdentity = answersIdentity
         listener = try NWListener(using: .tcp, on: .any)
         let startup = ProductionPathLoopbackStartup()
         listener.stateUpdateHandler = { state in
@@ -411,6 +413,13 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
             .split(separator: "\r\n")
             .first { $0.lowercased().hasPrefix("range:") }
             .map { String($0.dropFirst("range:".count)).trimmingCharacters(in: .whitespaces) }
+        if answersIdentity, request.split(separator: " ").dropFirst().first?.contains("/ping") == true {
+            let body = Data(#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"test"}}"#.utf8)
+            var response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+            response.append(body)
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
         lock.lock()
         rangeStorage.append(rangeHeader)
         queryStorage.append(request.split(separator: " ").dropFirst().first.map(String.init) ?? "")

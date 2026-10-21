@@ -30,6 +30,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var mediaBindingWillBeReplacedHandler: (@MainActor () -> Void)?
     private var prepareOperations: [DulcetProviderItemID: any AppleDownloadOperation] = [:]
     private var pendingTracks: [DulcetTrack] = []
+    // Tests can retain a completed core prepare while a secured delivery wins the race.
+    var preparedDownloadDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
     // Like pending tracks, a preference belongs to the configured URL/user binding. Repeated
     // same-binding reconciliation must not discard the listener's latest choice.
     private var pendingAutomaticDownloadsEnabled: Bool?
@@ -329,7 +331,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         // DEBUG proof witness shared by row actions and the Mac launch-argument driver.
         // Automatic membership reconciliation does not enter this explicit-request path.
         probe("download-requested item=\(track.id.rawID)")
-        guard reconciled, remoteEligible, !identityRejected else {
+        guard reconciled, remoteEligible, !identityRejected, validatingDeliveries.isEmpty else {
             if !pendingTracks.contains(where: { $0.id == track.id }) {
                 pendingTracks.append(track)
             }
@@ -355,8 +357,13 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         ) { [weak self] outcome in
             Task { @MainActor [weak self] in
                 guard let self, generation == reconciliationGeneration else { return }
-                prepareOperations[track.id] = nil
-                handlePreparationOutcome(outcome, fallbackItemID: track.id)
+                let deliver: @MainActor () -> Void = { [weak self] in
+                    guard let self, generation == reconciliationGeneration else { return }
+                    prepareOperations[track.id] = nil
+                    handlePreparationOutcome(outcome, fallbackItemID: track.id)
+                }
+                if outcome.prepared != nil, let preparedDownloadDelivery { preparedDownloadDelivery(deliver) }
+                else { deliver() }
             }
         }
         prepareOperations[track.id] = operation
@@ -768,13 +775,18 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                         if task.state == .suspended { task.resume() }
                     }
                     processSecuredDownloads()
-                    let queued = pendingTracks
-                    pendingTracks = []
-                    queued.forEach(requestDownload)
-                    scheduleNextDownload()
+                    resumePendingDownloads()
                 }
             }
         }
+    }
+
+    private func resumePendingDownloads() {
+        guard remoteEligible, !identityRejected, validatingDeliveries.isEmpty else { return }
+        let queued = pendingTracks
+        pendingTracks = []
+        queued.forEach(requestDownload)
+        scheduleNextDownload()
     }
 
     private func handlePreparationOutcome(
@@ -810,8 +822,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     private func scheduleNextDownload() {
-        guard reconciled, remoteEligible, !identityRejected, pendingAutomaticDownloadsEnabled == nil,
-              queuePrepareOperation == nil, let client else { return }
+        guard reconciled, remoteEligible, !identityRejected, validatingDeliveries.isEmpty,
+              pendingAutomaticDownloadsEnabled == nil, queuePrepareOperation == nil, let client else { return }
         let generation = reconciliationGeneration
         let operation = client.startPrepareNextDownload(
             wallClockMilliseconds: Date().downloadWallClockMilliseconds,
@@ -858,6 +870,14 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         request: URLRequest
     ) {
         guard remoteEligible, !identityRejected, let client else { return }
+        // A secured OS delivery may have promoted while preparation was suspended in identity
+        // validation or URL resolution. Its committed bytes win over the stale prepared URL.
+        let current = client.status(rawId: itemID.rawID)
+        if current.errorKind == nil, ["downloaded", "stale"].contains(current.state) {
+            publish(DulcetDownloadState(rawValue: current.state) ?? .downloaded, for: itemID)
+            scheduleNextDownload()
+            return
+        }
         let resume = client.resumeData(
             downloadIdentifier: prepared.downloadIdentifier,
             wallClockMilliseconds: Date().downloadWallClockMilliseconds
@@ -909,6 +929,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             validatingDeliveries.remove(secured.identifier)
             guard valid, !identityRejected else { return }
             _ = promoteSecuredDownload(secured)
+            resumePendingDownloads()
         }
         return false
     }
