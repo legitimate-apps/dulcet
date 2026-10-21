@@ -318,7 +318,7 @@ internal fun TvLibraryEntry(
                             TvMyLibraryHome(account, session, myLibrarySession, playback, navigator)
                         top == ROUTE_LIBRARY -> TvLibraryHome(account, session, playback, navigator)
                         top == ROUTE_BROWSE -> TvLibraryHome(account, session, playback, navigator)
-                        top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator)
+                        top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator, playback)
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
                         top == ROUTE_SONGS -> TvDeviceSongs(account, session, playback, navigator, false, playingRawId)
                         top == ROUTE_DOWNLOADED -> TvDeviceSongs(account, session, playback, navigator, true, playingRawId)
@@ -832,7 +832,7 @@ internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolea
  * leaves the remote on the button chosen.
  */
 @Composable
-private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator) {
+private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator, playback: AndroidPlaybackController?) {
     val depth by session.depth.collectAsState()
     if (depth == null) { TvStatement("…", "library.albums.loading"); return }
     val filters = com.legitimateapps.dulcet.library.rememberLibraryCategory(session, "albums")
@@ -840,7 +840,7 @@ private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, naviga
     val sort = rememberAlbumSort(session)
     val order = sort.value
     val surface = rememberSurface(session, ROUTE_ALBUMS + ":" + order) { openAlbums(order) }
-    TvBrowseGrid(account, session, surface, "library.albums", R.string.tv_library_albums,
+    TvBrowseGrid(account, session, surface, "library.albums", R.string.tv_library_albums, playback = playback,
         controls = { TvAlbumSortRow(order, sort::choose); TvLibraryCategoryControls(filters, showSort = false) }) { item ->
         if (item is AndroidLibraryItem.Album) navigator.openAlbum(item.rawId)
     }
@@ -898,7 +898,7 @@ private fun TvArtistsGrid(account: SearchAccount, session: LibrarySession, navig
 
 @Composable
 private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surface: LibrarySurface, tag: String, title: Int,
-                         controls: (@Composable () -> Unit)? = null, open: (AndroidLibraryItem) -> Unit) {
+                         controls: (@Composable () -> Unit)? = null, playback: AndroidPlaybackController? = null, open: (AndroidLibraryItem) -> Unit) {
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
     val current = publication
@@ -935,7 +935,7 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
             }
         }
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
-            TvCard(account, item, "$tag.item.$position", default = position == 0, width = null) { open(item) }
+            TvContextCard(account, session, playback, item, "$tag.item.$position", default = position == 0, width = null) { open(item) }
         }
     }
 }

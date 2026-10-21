@@ -77,4 +77,5 @@
     <string name="tv_playlist_delete_confirm">Delete “%1$s”? This removes it from your server.</string>
     <string name="tv_playlist_delete_action">Delete</string>
     <string name="tv_playlist_no_editable">You have no playlists you can add to yet.</string>
+    <string name="tv_more_options">More options</string>
 </resources>

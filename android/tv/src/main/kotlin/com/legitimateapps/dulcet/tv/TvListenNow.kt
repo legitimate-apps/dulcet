@@ -52,7 +52,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                             itemsIndexed(publication.items,key={ _, item -> item::class.simpleName+item.rawId }) { position,item ->
                                 // Keep the remote on Home until the person moves down. Several
                                 // shelves can arrive together; none may steal focus from the bar.
-                                TvCard(account,item,"listenNow.${shelf.wireName}.item.$position") {
+                                TvContextCard(account,session,playback,item,"listenNow.${shelf.wireName}.item.$position") {
                                     when(item) {
                                         is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
                                         is AndroidLibraryItem.Track -> playTracks(plays,account.providerInstanceId,shown?.items.orEmpty(),item.rawId,shelf.title) {
