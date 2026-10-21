@@ -88,7 +88,11 @@ public object SavedAccountConnection {
      */
     public fun isConnected(accountId: String): Boolean = synchronized(lock) {
         com.legitimateapps.dulcet.core.AndroidServerIdentity.isVerified(accountId) &&
-            (chosenAccountId == accountId || AndroidLibraryReader.currentFor(accountId)?.let { it in connectedReaders } == true)
+            connectionChosen(accountId)
+    }
+
+    private fun connectionChosen(accountId: String): Boolean = synchronized(lock) {
+        chosenAccountId == accountId || AndroidLibraryReader.currentFor(accountId)?.let { it in connectedReaders } == true
     }
 
     /** A foreground host starts reconnecting: [reader] reads the server from now on, in every screen host. */
@@ -109,6 +113,9 @@ public object SavedAccountConnection {
     /** Playback's view of [accountId]: opens with the saved account's automatic reconnect. */
     public fun contact(accountId: String): AndroidServerContact = object : AndroidServerContact {
         override fun isOpen(): Boolean = isConnected(accountId)
+        override suspend fun awaitValidation() {
+            if (connectionChosen(accountId)) com.legitimateapps.dulcet.core.AndroidServerIdentity.awaitValidation(accountId)
+        }
         override suspend fun awaitOpen() {
             kotlinx.coroutines.flow.combine(choices, com.legitimateapps.dulcet.core.AndroidServerIdentity.verified) { _, _ ->
                 isConnected(accountId)

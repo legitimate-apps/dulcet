@@ -134,6 +134,9 @@ public interface AndroidServerContact {
 
     /** Returns once [isOpen] is true; at once when it already is. */
     public suspend fun awaitOpen()
+
+    /** Waits for an already chosen connection's in-flight identity probe, without choosing Connect. */
+    public suspend fun awaitValidation() {}
 }
 
 /**
@@ -600,6 +603,11 @@ public class AndroidPlaybackController internal constructor(
                 // its protected file in start(); an unleased preflight would leave a gap where
                 // Clear Cache can remove it and also touches LRU for a choice not yet started.
                 val downloaded = localPlans?.isLocallyPlayable(chosen.rawId) == true
+                // An already connected account briefly closes contact while its reader checks
+                // lineage. Keep this choice pending until that probe finishes; a rejected probe
+                // still follows the ordinary Reconnect path below. Local playback never waits.
+                if (!downloaded) serverContact?.awaitValidation()
+                if (generation != requestGeneration || closed) return@launch
                 if (!downloaded && !contactOpen()) {
                     // Saved and not connected (§13.1): the song needs the server, so nothing is
                     // sent and the queue stays as it was; the surface offers Reconnect.

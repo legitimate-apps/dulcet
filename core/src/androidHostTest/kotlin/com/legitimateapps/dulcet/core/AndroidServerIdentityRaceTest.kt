@@ -10,6 +10,31 @@ import kotlin.test.*
 /** Independent acceptance for remote-contact publication ordering across asynchronous probes. */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class AndroidServerIdentityRaceTest {
+    @Test fun validationWaitsForEveryProbeAndCancellationOrFailureReleasesTheWaiter() = runTest {
+        for (throws in listOf(false, true)) {
+            val id = UUID.randomUUID().toString()
+            val release = CompletableDeferred<Unit>()
+            val cancelled = async { AndroidServerIdentity.validate(id) { kotlinx.coroutines.awaitCancellation() } }
+            val probe = async {
+                runCatching { AndroidServerIdentity.validate(id) {
+                    release.await()
+                    if (throws) error("identity fixture failure") else null
+                } }
+            }
+            runCurrent()
+            val waiter = async { AndroidServerIdentity.awaitValidation(id) }
+            runCurrent()
+            assertFalse(waiter.isCompleted)
+            cancelled.cancel()
+            runCurrent()
+            assertFalse(waiter.isCompleted, "One cancelled probe cannot release another active probe")
+            release.complete(Unit)
+            probe.await()
+            waiter.await()
+            assertEquals(!throws, AndroidServerIdentity.isVerified(id))
+        }
+    }
+
     @Test fun aLateSuccessfulProbeCannotReopenContactAfterANewerSwapDetection() = runTest {
         val id = UUID.randomUUID().toString()
         val releaseOld = CompletableDeferred<Unit>()

@@ -31,6 +31,53 @@ class AndroidPlaybackControllerTest {
     @Before fun dispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher(mainScheduler)) }
     @After fun resetDispatcher() { Dispatchers.resetMain() }
 
+    @Test fun aPlayChosenDuringIdentityValidationResumesOnlyWhenTheSameServerIsVerified() {
+        for (verified in listOf(true, false)) {
+            val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+            var open = false
+            val contact = object : AndroidServerContact {
+                override fun isOpen() = open
+                override suspend fun awaitOpen() { kotlinx.coroutines.awaitCancellation() }
+                override suspend fun awaitValidation() { release.await() }
+            }
+            Fixture(serverContact = contact).use { f ->
+                f.controller.playSong(OWNER, "song", "Song")
+                assertTrue(f.prepared.isEmpty(), "An unverified connection cannot resolve saved IDs")
+                assertFalse(f.probe.requested)
+                open = verified
+                release.complete(Unit)
+                settle(5)
+                if (verified) {
+                    assertEquals(listOf("song"), f.prepared.map { it.itemId.rawId },
+                        "A same-server probe must not discard the person's Play selection")
+                    assertTrue(f.probe.requested)
+                } else {
+                    assertTrue(f.prepared.isEmpty(), "A failed probe must leave remote contact closed")
+                    assertTrue(f.controller.state.value.needsReconnect)
+                }
+            }
+        }
+    }
+
+    @Test fun aNewSelectionSupersedesAPlayWaitingForIdentityValidation() {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var open = false
+        val contact = object : AndroidServerContact {
+            override fun isOpen() = open
+            override suspend fun awaitOpen() { kotlinx.coroutines.awaitCancellation() }
+            override suspend fun awaitValidation() { release.await() }
+        }
+        Fixture(serverContact = contact).use { f ->
+            f.controller.playSong(OWNER, "old", "Old")
+            f.controller.playSong(OWNER, "new", "New")
+            open = true
+            release.complete(Unit)
+            settle(5)
+            assertEquals(listOf("new"), f.prepared.map { it.itemId.rawId })
+            assertTrue(f.probe.requested)
+        }
+    }
+
     @Test fun lateMetadataAfterNewSelectionCannotReplaceTheNewQueue() {
         var pending: Continuation<AuthenticatedEndpointResponse>? = null
         var lateReturns = 0
