@@ -238,8 +238,12 @@ public class AndroidPlaybackController internal constructor(
         account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp), "playback.scrobble")
     // Keep the delivery worker's retry/refusal state when credentials refresh; each future send
     // obtains the current client, while an already running send retains its original client.
-    private val sender = ScrobbleEndpointSender(ScrobbleEndpointTransport { parameters ->
-        scrobbleRequests.request("scrobble", parameters)
+    private val sender = ScrobbleEndpointSender(object : ScrobbleEndpointTransport {
+        override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse =
+            scrobbleRequests.request("scrobble", parameters)
+
+        override suspend fun extensions(): AuthenticatedEndpointResponse =
+            scrobbleRequests.request("getOpenSubsonicExtensions", emptyMap())
     })
     private val wall = OutboxWallClock(System::currentTimeMillis)
     private val outbox = PersistentScrobbleOutbox(store.database, wall)
@@ -1520,7 +1524,10 @@ public class AndroidPlaybackController internal constructor(
     public fun refreshAccount(expected: PlaybackEndpointAccount): Boolean {
         check(Looper.myLooper() == Looper.getMainLooper())
         if (closed || !MediaBindingIdentity.isValidAccount(expected) || !AndroidMediaBindingIdentity.sameAccount(store, account, expected)) return false
-        if (account == expected) return true
+        if (account == expected) {
+            sender.invalidateCapabilities()
+            return true
+        }
         val oldWire = wire
         val oldRequests = requests
         val oldScrobbles = scrobbleRequests
@@ -1537,6 +1544,7 @@ public class AndroidPlaybackController internal constructor(
             expected.normalizedBaseUrl, expected.username, expected.password, expected.allowLocalHttp), "playback.resource")
         scrobbleRequests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
             expected.normalizedBaseUrl, expected.username, expected.password, expected.allowLocalHttp), "playback.scrobble")
+        sender.invalidateCapabilities()
         if (boundaries == null) artwork = AndroidArtworkRepository(playbackContext, expected)
         return true
     }

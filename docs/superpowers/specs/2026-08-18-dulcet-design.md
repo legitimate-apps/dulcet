@@ -7913,6 +7913,21 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-21 — Persist and negotiate each submitted play's playlist provenance.**
+The shared queue snapshots a real playlist source into its playback session, including restored
+queues, repeat and preloaded entries. A submitted play retains that nullable provider-scoped
+playlist ID through synchronous outbox persistence, process recreation, retry and timestamp
+clamping; schema 12 adds a nullable raw playlist column and migrates existing events to no context.
+The account-bound sender negotiates `dulcetHome` version 1 independently of Home loading and
+serializes discovery per connection. Valid absence and unsupported discovery (70/404/501) keep
+ordinary scrobbling; authentication, malformed and transport failures retain the durable event
+for retry. Reconnect invalidates the advertisement. Only positively negotiated playlist submissions
+add `dulcetContextType=playlist` and `dulcetContextId`; now-playing and non-playlist submissions
+retain their existing wire parameters. Playlist track queue actions retain the playlist source;
+tracks inserted from another surface keep their own source. The three playback identities and
+progressing-media threshold policy are unchanged. See `docs/dulcet-api/playlist-play-context.md`
+for the wire contract and `docs/evidence/playlist-play-context.md` for observed platform coverage.
+
 **2026-10-21 — Preserve media across authenticated saved-username confirmation.**
 A successful reconnect with the exact saved username and password may confirm a different username
 spelling through authenticated `getUser`. When the stable provider instance, submitted endpoint
