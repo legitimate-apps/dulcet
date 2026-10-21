@@ -176,6 +176,12 @@ enum DulcetAppleProduction {
                     AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: databaseName,
                         providerInstanceId: id, identity: identity)
                 },
+                readServerIdentity: { id in
+                    AppleMediaBindingClient.shared.acceptedServerIdentity(databaseName: databaseName, providerInstanceId: id)
+                },
+                seedServerIdentity: { id, identity in
+                    AppleMediaBindingClient.shared.seedServerIdentity(databaseName: databaseName, providerInstanceId: id, identity: identity)
+                },
                 identityPolicy: DulcetAccountIdentityPolicy(samePrincipal: { oldURL, oldUser, newURL, newUser in
                     SavedServerPolicy.shared.samePrincipal(savedUrl: oldURL, savedUsername: oldUser,
                         connectedUrl: newURL, confirmedUsername: newUser)

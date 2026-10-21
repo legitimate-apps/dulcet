@@ -149,6 +149,21 @@ public object AppleMediaBindingClient {
         finally { opened.close() }
     } catch (_: Throwable) { false }
 
+    public fun acceptedServerIdentity(databaseName: String, providerInstanceId: String): String? = try {
+        val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+        try { ServerIdentityStore(opened.database).read(providerInstanceId) } finally { opened.close() }
+    } catch (_: Throwable) { null }
+
+    /** Saved metadata only fills an empty store; learned instance lineage is authoritative. */
+    public fun seedServerIdentity(databaseName: String, providerInstanceId: String, identity: String): Boolean = try {
+        val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+        try {
+            val store = ServerIdentityStore(opened.database)
+            if (store.read(providerInstanceId).isEmpty()) store.accept(providerInstanceId, identity)
+            true
+        } finally { opened.close() }
+    } catch (_: Throwable) { false }
+
     /** Opens a read/adoption context without acquiring a replacement binding or touching files. */
     public fun adoptAuthenticatedAccount(
         databaseName: String,
@@ -212,6 +227,36 @@ public class AppleDownloadClient(
     private var closed = false
     private var initializationFailed = false
     private var bindingPurgedDownloadIds = emptySet<DownloadId>()
+    private var identityRejected = false
+    internal var identityValidator: (suspend () -> DomainError?)? = null
+
+    /** A known replacement stays closed until account negotiation constructs a new client. */
+    public fun rejectServerIdentity() { identityRejected = true }
+
+    public fun ownsDownloadTask(downloadIdentifier: String): Boolean = try {
+        database?.database?.downloadsQueries?.selectDownloadById(downloadIdentifier)
+            ?.executeAsOneOrNull()?.server_id == account.providerInstanceId
+    } catch (_: Throwable) { false }
+
+    /** Authenticated shared gate, used before resuming OS tasks or promoting their deliveries. */
+    public fun startValidateServerIdentity(completion: (String?) -> Unit): AppleDownloadOperation =
+        AppleDownloadOperationImpl(scope) {
+            val error = try { validateServerIdentity()?.appleDownloadKind() }
+            catch (_: CancellationException) { "cancelled" }
+            catch (_: Throwable) { "persistence" }
+            try { completion(error) } catch (_: Throwable) { }
+        }
+
+    internal suspend fun validateServerIdentity(): DomainError? {
+        if (identityRejected) return DomainError.Protocol.ServerIdentityChanged
+        check(!closed && !initializationFailed)
+        val validator = identityValidator
+        val error = if (validator != null) validator() else ServerIdentityGate(requireNotNull(database).database, account.providerInstanceId,
+            AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+        if (error == DomainError.Protocol.ServerIdentityChanged) identityRejected = true
+        // A probe suspended before a newer rejection cannot reopen the old client.
+        return if (identityRejected) DomainError.Protocol.ServerIdentityChanged else error
+    }
 
     // Acquire during configuration, never on a delayed old-account callback. A construction
     // failure stays closed; retrying configuration creates a fresh client explicitly.
@@ -361,6 +406,7 @@ public class AppleDownloadClient(
         wallClockMilliseconds: Long,
     ): AppleDownloadPromotionOutcomeDto = try {
         requireReconciled()
+        if (identityRejected) return AppleDownloadPromotionOutcomeDto("interrupted", -1, "serverIdentityChanged")
         val policy = requireNotNull(engine)
         val downloadId = DownloadId(downloadIdentifier)
         if (statusCode !in 200..299) {
@@ -615,6 +661,7 @@ public class AppleDownloadClient(
     public fun beginStreamingCache(rawId: String, container: AudioContainer, totalLength: Long,
         durationMilliseconds: Long, rangeStart: Long, credentialGeneration: Long, wallClockMilliseconds: Long): String? = try {
         requireReconciled()
+        check(!identityRejected)
         val source = database?.database?.offlineLibraryQueries?.selectSourceSnapshot(account.providerInstanceId, rawId)?.executeAsOneOrNull()
         requireNotNull(offline).beginCacheWrite(DownloadRequest(
             DownloadIdentity(account.providerInstanceId, rawId, "stream:${container.name}"), container,
@@ -623,6 +670,7 @@ public class AppleDownloadClient(
     } catch (_: Throwable) { null }
 
     public fun appendStreamingCache(writeId: String, bytes: NSData, offset: Long): Boolean = try {
+        check(!identityRejected)
         requireNotNull(offline).appendCacheWrite(writeId, bytes.toDownloadByteArray(), offset)
     } catch (_: Throwable) { false }
 
@@ -648,6 +696,7 @@ public class AppleDownloadClient(
     } catch (_: Throwable) { null }
 
     public fun finishStreamingCache(writeId: String, totalLength: Long, wallClockMilliseconds: Long): Boolean = try {
+        check(!identityRejected)
         val result = requireNotNull(offline).finishCacheWrite(writeId,
             // Live response headers already passed the wire validator. A local file has no
             // HTTP header, so use the same binary file type as verifyOffline, not a missing type.
@@ -745,6 +794,12 @@ public class AppleDownloadClient(
         failureWallClockMilliseconds: Long,
     ): AppleDownloadPreparationOutcomeDto {
         val row = scheduled.record
+        val identityFailure = validateServerIdentity()
+        requireReconciled()
+        if (identityFailure != null) {
+            val retry = requireNotNull(engine).recordFailure(row.downloadId, identityFailure, failureWallClockMilliseconds)
+            return AppleDownloadPreparationOutcomeDto(null, "interrupted", identityFailure.appleDownloadKind(), retry?.retryAtWallClock)
+        }
         val sessionId = PlaybackSessionId("download-session:${secureRandomBytes(16).toLowerHex()}")
         val attemptId = AttemptId("download-attempt:${secureRandomBytes(16).toLowerHex()}")
         val resolution = requireNotNull(wireClient).resolve(
@@ -760,6 +815,7 @@ public class AppleDownloadClient(
             ),
         )
         requireReconciled() // The network suspension may have outlived this account binding.
+        if (identityRejected) return AppleDownloadPreparationOutcomeDto(null, "interrupted", "serverIdentityChanged", null)
         if (resolution is PlaybackResolutionResult.Failed) {
             val retry = requireNotNull(engine).recordFailure(
                 row.downloadId,
@@ -859,6 +915,7 @@ private fun DownloadState?.appleState(): String = when (this) {
 }
 
 private fun DomainError.appleDownloadKind(): String = when (this) {
+    DomainError.Protocol.ServerIdentityChanged -> "serverIdentityChanged"
     DomainError.Transport.Cancelled -> "cancelled"
     DomainError.Transport.Timeout -> "timeout"
     DomainError.Transport.Unreachable -> "transport"

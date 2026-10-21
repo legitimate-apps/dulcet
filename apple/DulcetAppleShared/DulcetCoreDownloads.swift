@@ -47,6 +47,10 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var reconciliationGeneration = 0
     private var reconciled = false
     private var automaticDownloadContactPermitted = false
+    private var remoteEligible = false
+    private var identityRejected = false
+    private var identityValidationOperation: (any AppleDownloadOperation)?
+    private var validatingDeliveries: Set<String> = []
     private var cacheBudgetRevision = 0
 
     private var credentialGeneration: Int64 {
@@ -257,6 +261,11 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             username: account.username
         ) else { return }
         automaticDownloadContactPermitted = false
+        remoteEligible = false
+        identityRejected = false
+        identityValidationOperation?.cancel()
+        identityValidationOperation = nil
+        validatingDeliveries = []
         let sameAccount = self.account.map { previous in
             MediaBindingIdentity.shared.sameBinding(
                 firstProviderInstanceId: previous.providerInstanceID,
@@ -307,6 +316,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         session.getAllTasks { [weak self] tasks in
             Task { @MainActor [weak self] in
                 guard let self, generation == reconciliationGeneration else { return }
+                tasks.filter { task in task.taskDescription.map { self.client?.ownsDownloadTask(downloadIdentifier: $0) == true } ?? false }
+                    .forEach { if $0.state == .running { $0.suspend() } }
                 finishReconciliation(tasks: tasks)
             }
         }
@@ -318,7 +329,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         // DEBUG proof witness shared by row actions and the Mac launch-argument driver.
         // Automatic membership reconciliation does not enter this explicit-request path.
         probe("download-requested item=\(track.id.rawID)")
-        guard reconciled else {
+        guard reconciled, remoteEligible, !identityRejected else {
             if !pendingTracks.contains(where: { $0.id == track.id }) {
                 pendingTracks.append(track)
             }
@@ -449,6 +460,61 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     func setAutomaticDownloadContactPermitted(_ permitted: Bool) {
         automaticDownloadContactPermitted = permitted
         if permitted { reconcileMyLibrary(); stateRefreshHandler?() }
+    }
+
+    func rejectServerIdentity() {
+        guard !identityRejected else { return }
+        identityRejected = true
+        remoteEligible = false
+        client?.rejectServerIdentity()
+        // Retain the policy/local plans. Only remote work and its late completions are retired.
+        prepareOperations.values.forEach { $0.cancel() }
+        prepareOperations = [:]
+        queuePrepareOperation?.cancel()
+        queuePrepareOperation = nil
+        identityValidationOperation?.cancel()
+        identityValidationOperation = nil
+        cancelRetry()
+        markPendingDeliveriesRejected()
+        let owned = Set(knownTaskIdentifiers.compactMap { taskID, id in
+            client?.ownsDownloadTask(downloadIdentifier: id) == true ? taskID : nil
+        })
+        removedTaskIdentifiers.formUnion(owned)
+        let generation = reconciliationGeneration
+        session.getAllTasks { [weak self] tasks in
+            Task { @MainActor [weak self] in
+                guard let self, generation == reconciliationGeneration, identityRejected else { return }
+                for task in tasks where task.taskDescription.map({ client?.ownsDownloadTask(downloadIdentifier: $0) == true }) ?? false {
+                    removedTaskIdentifiers.insert(task.taskIdentifier)
+                    task.cancel()
+                }
+            }
+        }
+    }
+
+    private func validateRemoteAccess(_ completion: @escaping @MainActor (Bool) -> Void) {
+        guard let client, !identityRejected else { completion(false); return }
+        let generation = reconciliationGeneration
+        identityValidationOperation = client.startValidateServerIdentity { [weak self] error in
+            Task { @MainActor [weak self] in
+                guard let self, generation == reconciliationGeneration, !identityRejected else { return }
+                if error == "serverIdentityChanged" { rejectServerIdentity(); completion(false); return }
+                if let error {
+                    remoteEligible = false
+                    session.getAllTasks { [weak self] tasks in
+                        Task { @MainActor [weak self] in
+                            guard let self, generation == reconciliationGeneration, !remoteEligible else { return }
+                            tasks.filter { $0.taskDescription.map { self.client?.ownsDownloadTask(downloadIdentifier: $0) == true } ?? false }
+                                .forEach { if $0.state == .running { $0.suspend() } }
+                        }
+                    }
+                    if ["transport", "timeout", "serverBusy", "server"].contains(error) {
+                        scheduleRetry(at: Date().downloadWallClockMilliseconds + 30_000)
+                    }
+                }
+                completion(error == nil)
+            }
+        }
     }
     private func applyOfflineChange(_ outcome: AppleOfflineLibraryChangeDto, scheduleDownloads: Bool = true) {
         guard outcome.errorKind == nil else { return }
@@ -685,13 +751,38 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         let queued = pendingTracks
         pendingTracks = []
         queued.forEach(requestDownload)
-        scheduleNextDownload()
+        beginRemoteValidation()
+    }
+
+    private func beginRemoteValidation() {
+        guard reconciled, !identityRejected else { return }
+        validateRemoteAccess { [weak self] valid in
+            guard let self, valid, !identityRejected else { return }
+            remoteEligible = true
+            let generation = reconciliationGeneration
+            session.getAllTasks { [weak self] tasks in
+                Task { @MainActor [weak self] in
+                    guard let self, generation == reconciliationGeneration, remoteEligible, !identityRejected else { return }
+                    for task in tasks where !removedTaskIdentifiers.contains(task.taskIdentifier)
+                        && (task.taskDescription.map { client?.ownsDownloadTask(downloadIdentifier: $0) == true } ?? false) {
+                        if task.state == .suspended { task.resume() }
+                    }
+                    processSecuredDownloads()
+                    let queued = pendingTracks
+                    pendingTracks = []
+                    queued.forEach(requestDownload)
+                    scheduleNextDownload()
+                }
+            }
+        }
     }
 
     private func handlePreparationOutcome(
         _ outcome: AppleDownloadPreparationOutcomeDto,
         fallbackItemID: DulcetProviderItemID?
     ) {
+        guard remoteEligible, !identityRejected else { return }
+        if outcome.errorKind == "serverIdentityChanged" { rejectServerIdentity(); return }
         if let prepared = outcome.prepared,
            let url = URL(string: prepared.url),
            let account {
@@ -719,7 +810,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     private func scheduleNextDownload() {
-        guard reconciled, pendingAutomaticDownloadsEnabled == nil,
+        guard reconciled, remoteEligible, !identityRejected, pendingAutomaticDownloadsEnabled == nil,
               queuePrepareOperation == nil, let client else { return }
         let generation = reconciliationGeneration
         let operation = client.startPrepareNextDownload(
@@ -751,7 +842,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             guard !Task.isCancelled, let self else { return }
             retryTask = nil
             retryNotBeforeWallClock = nil
-            scheduleNextDownload()
+            if remoteEligible { scheduleNextDownload() } else { beginRemoteValidation() }
         }
     }
 
@@ -766,7 +857,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         itemID: DulcetProviderItemID,
         request: URLRequest
     ) {
-        guard let client else { return }
+        guard remoteEligible, !identityRejected, let client else { return }
         let resume = client.resumeData(
             downloadIdentifier: prepared.downloadIdentifier,
             wallClockMilliseconds: Date().downloadWallClockMilliseconds
@@ -804,6 +895,25 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
 
     @discardableResult
     private func processSecuredDownload(_ secured: DulcetSecuredDownload) -> Bool {
+        guard UUID(uuidString: secured.identifier) != nil, let client else { return false }
+        guard let identifier = secured.downloadIdentifier else { return removeSecuredDownload(secured) }
+        // Orphan cleanup is local and cannot promote anything, so it remains available offline.
+        if client.fileTarget(downloadIdentifier: identifier).errorKind == "unknownDownload" {
+            return removeSecuredDownload(secured)
+        }
+        guard !identityRejected, secured.identityRejected != true, remoteEligible,
+              !validatingDeliveries.contains(secured.identifier) else { return false }
+        validatingDeliveries.insert(secured.identifier)
+        validateRemoteAccess { [weak self] valid in
+            guard let self else { return }
+            validatingDeliveries.remove(secured.identifier)
+            guard valid, !identityRejected else { return }
+            _ = promoteSecuredDownload(secured)
+        }
+        return false
+    }
+
+    private func promoteSecuredDownload(_ secured: DulcetSecuredDownload) -> Bool {
         guard UUID(uuidString: secured.identifier) != nil, let client else { return false }
         guard let downloadIdentifier = secured.downloadIdentifier else {
             return removeSecuredDownload(secured)
@@ -1002,6 +1112,16 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         }
     }
 
+    private func markPendingDeliveriesRejected() {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: downloadInboxURL, includingPropertiesForKeys: nil) else { return }
+        for file in files where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file), var secured = try? JSONDecoder().decode(DulcetSecuredDownload.self, from: data),
+                  let id = secured.downloadIdentifier, client?.ownsDownloadTask(downloadIdentifier: id) == true else { continue }
+            secured.identityRejected = true
+            if let marked = try? JSONEncoder().encode(secured) { try? marked.write(to: file, options: .atomic) }
+        }
+    }
+
     private func removeSecuredDownload(_ secured: DulcetSecuredDownload) -> Bool {
         guard UUID(uuidString: secured.identifier) != nil else { return false }
         do {
@@ -1172,6 +1292,7 @@ private struct DulcetSecuredDownload: Codable {
     let contentRange: String?
     let retryAfter: String?
     let deliveredFileLength: Int64
+    var identityRejected: Bool? = nil
 
     func payloadURL(in inbox: URL) -> URL {
         inbox.appendingPathComponent("\(identifier).download")

@@ -571,6 +571,8 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     private let libraryRefreshCadence: Duration
     private let libraryRefreshScheduler: any DulcetLibraryRefreshScheduling
     private let acceptServerIdentity: @MainActor (String, String) -> Bool
+    private let readServerIdentity: @MainActor (String) -> String?
+    private let seedServerIdentity: @MainActor (String, String) -> Bool
     private let identityPolicy: DulcetAccountIdentityPolicy
     private let countAccountDownloads: (@MainActor (String) -> Int?)?
     private let removeSavedAccountData: (@MainActor (String) async -> Bool)?
@@ -694,11 +696,15 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         librarySession: DulcetLibrarySession? = nil,
         reconnectDelays: any DulcetDelayScheduling = DulcetTaskDelayScheduler(),
         acceptServerIdentity: @escaping @MainActor (String, String) -> Bool = { _, _ in true },
+        readServerIdentity: @escaping @MainActor (String) -> String? = { _ in "" },
+        seedServerIdentity: @escaping @MainActor (String, String) -> Bool = { _, _ in true },
         identityPolicy: DulcetAccountIdentityPolicy = .exact,
         countAccountDownloads: (@MainActor (String) -> Int?)? = nil,
         removeSavedAccountData: (@MainActor (String) async -> Bool)? = nil
     ) {
         self.acceptServerIdentity = acceptServerIdentity
+        self.readServerIdentity = readServerIdentity
+        self.seedServerIdentity = seedServerIdentity
         self.identityPolicy = identityPolicy
         self.countAccountDownloads = countAccountDownloads
         self.removeSavedAccountData = removeSavedAccountData
@@ -769,7 +775,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             self?.receivePlaybackPresentation(presentation)
         }
         if let providerInstanceID, let savedIdentity = (credentialStore as? any DulcetSavedServerCredentialStoring)?.serverIdentity,
-           !savedIdentity.isEmpty { _ = acceptServerIdentity(providerInstanceID, savedIdentity) }
+           !savedIdentity.isEmpty { _ = seedServerIdentity(providerInstanceID, savedIdentity) }
         if let providerInstanceID, let restored = restoredForReader {
             playbackController?.configureOffline(account: DulcetPlaybackAccount(
                 providerInstanceID: providerInstanceID,
@@ -811,6 +817,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             }
         }
         librarySession?.onServerIdentityChanged = { [weak self] in
+            self?.downloadController?.rejectServerIdentity()
             guard let self, self.pendingConnection == nil, self.currentSnapshot.accountConnection != .connecting,
                   let saved = try? self.credentialStore?.load() else { return }
             self.submit(saved, inPlace: true)
@@ -1241,8 +1248,17 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         if targetID == nil, !addingServer, aliasProof { targetID = originalID }
         if targetID == nil, !addingServer { targetID = originalID }
         let old = targetID.flatMap { id in (try? multi?.load(providerInstanceID: id)) ?? (id == originalID ? originalRequest : nil) }
-        let oldIdentity = targetID.flatMap { try? multi?.serverIdentity(providerInstanceID: $0) } ?? ""
+        let oldIdentity: String
+        if let targetID {
+            guard let persisted = readServerIdentity(targetID) else {
+                publishInPlace(status: .failed(DulcetAccountErrorPresenter.presentation(for:
+                    DulcetAccountErrorContext(kind: .credentialPersistenceFailed, serverName: account.serverName))), form: request)
+                return
+            }
+            oldIdentity = persisted.isEmpty ? ((try? multi?.serverIdentity(providerInstanceID: targetID)) ?? "") : persisted
+        } else { oldIdentity = "" }
         let replacement = identityPolicy.isReplacement(oldIdentity, account.serverIdentity)
+        if replacement { downloadController?.rejectServerIdentity() }
         let samePrincipal = old.map { identityPolicy.samePrincipal($0.serverURL, $0.username, saved.serverURL, saved.username) } ?? true
         let destructive = old != nil && (replacement || (!samePrincipal && !aliasProof))
         let instanceID = destructive || targetID == nil ? providerInstanceIDFactory() : targetID!

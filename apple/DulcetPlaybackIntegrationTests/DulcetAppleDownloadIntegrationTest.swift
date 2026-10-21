@@ -155,6 +155,61 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         }
     }
 
+    func testKnownServerReplacementQuarantinesLateMediaAndKeepsOfflinePlayback() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-rejected-identity-\(UUID())")
+        let databaseName = "dulcet-rejected-identity-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+            normalizedServerURL: "https://media.example.invalid", username: "alice", password: "fixture",
+            allowLocalHTTP: false, credentialGeneration: 1)
+        let bytes = bindingPCMWave(seconds: 1)
+        let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+            normalizedBaseUrl: account.normalizedServerURL, username: account.username,
+            password: account.password, allowLocalHttp: false), databaseName: databaseName, downloadRootPath: root.path)
+        XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1).errorKind)
+        let write = try XCTUnwrap(seed.beginStreamingCache(rawId: "retained", container: .wav,
+            totalLength: Int64(bytes.count), durationMilliseconds: 1000, rangeStart: 0, credentialGeneration: 1, wallClockMilliseconds: 1))
+        XCTAssertTrue(seed.appendStreamingCache(writeId: write, bytes: bytes, offset: 0))
+        XCTAssertTrue(seed.finishStreamingCache(writeId: write, totalLength: Int64(bytes.count), wallClockMilliseconds: 2))
+        let path = try XCTUnwrap(seed.localPlaybackPlan(rawId: "retained").plan?.filePath)
+        seed.close()
+        let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer {
+            controller.disconnect()
+            try? FileManager.default.removeItem(at: root)
+            removeAdapterTestDatabase(databaseName)
+        }
+        func track(_ raw: String) -> DulcetTrack {
+            DulcetTrack(id: .init(providerInstanceID: providerInstanceID, rawID: raw), title: raw, credits: [], albumTitle: nil,
+                duration: .seconds(1), sourceContainer: .wav, mediaSourceID: nil,
+                artwork: DulcetArtwork(seed: raw, palette: .indigoCoral))
+        }
+        controller.configure(account: account)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "offline media did not reconcile") {
+            controller.offlineLibraryStorage.cacheBytes == Int64(bytes.count)
+        }
+        let sourceURL = root.appendingPathComponent("late-source.wav")
+        try bytes.write(to: sourceURL)
+        let late = controller.cachingResource(DulcetLocalFilePlaybackResource(fileURL: sourceURL,
+            exactByteLength: Int64(bytes.count)), track: track("late"), expectedContainer: .wav)
+        controller.rejectServerIdentity()
+        controller.requestDownload(track("queued-after-rejection"))
+        let delivered = await load(resource: late, range: .init(start: 0, endInclusive: Int64(bytes.count - 1)))
+        if case let .loaded(actual, _) = delivered { XCTAssertEqual(actual, bytes) }
+        else { XCTFail("the real late resource must deliver bytes to exercise its callback") }
+        await Task.yield()
+        await Task.yield()
+        XCTAssertNil(controller.offlinePlaybackAsset(for: track("late")))
+        XCTAssertEqual(controller.offlineLibraryStorage.cacheBytes, Int64(bytes.count))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+        let retained = try XCTUnwrap(controller.offlinePlaybackAsset(for: track("retained")))
+        let local = await load(resource: retained.resource, range: .init(start: 0, endInclusive: Int64(bytes.count - 1)))
+        if case let .loaded(actual, _) = local { XCTAssertEqual(actual, bytes) }
+        else { XCTFail("quarantine must preserve ordinary offline playback") }
+        let tasks = await controller.debugSessionTasks()
+        XCTAssertTrue(tasks.isEmpty, "known rejected namespaces cannot start a transfer")
+        print("DULCET REJECTED SERVER MEDIA PASS late-promotion=blocked offline-bytes=retained remote-tasks=0")
+    }
+
     func testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-orphan-\(UUID())")
         let databaseName = "dulcet-orphan-\(UUID()).db"
@@ -684,7 +739,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
 
         try await Task.sleep(for: .seconds(3))
         let observed = try await downloadProxyRequests(baseURL: context.baseURL, since: browseRequests.total)
-        XCTAssertEqual(observed.entries.count, 0, "a new Download must wait for successful negotiation")
+        XCTAssertEqual(observed.entries.filter { $0.endpoint != "ping" }.count, 0,
+                       "Only the authenticated identity check may run; a new Download must wait for successful negotiation")
         XCTAssertEqual(replacement.status(for: track.id), .notDownloaded, "the tap must not enqueue a transfer")
         XCTAssertEqual(connector.requestCount, 1, "saved launch reconnects without permitting a new stream yet")
         XCTAssertEqual(source.currentSnapshot.accountConnection, .connecting)
@@ -718,8 +774,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         // Nothing after this baseline browses, connects, or asks for another Download. The real
         // saved-account presentation configures the replacement controller as production does.
         let seedRequests = try await downloadProxyRequests(baseURL: context.baseURL, since: seedBaseline)
-        XCTAssertEqual(seedRequests.entries.count, 1, "the request counter must observe the earlier Download")
-        let seedStream = try XCTUnwrap(seedRequests.entries.first)
+        let seedTransfers = seedRequests.entries.filter { $0.endpoint != "ping" }
+        XCTAssertEqual(seedTransfers.count, 1, "the request counter must observe the earlier Download beside its identity checks")
+        let seedStream = try XCTUnwrap(seedTransfers.first)
         XCTAssertEqual(seedStream.endpoint, "stream")
         XCTAssertEqual(seedStream.rawID, track.id.rawID)
         XCTAssertTrue(seedStream.answered)
@@ -760,11 +817,14 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         let observed = try await downloadProxyRequests(baseURL: context.baseURL, since: baseline)
         XCTAssertEqual(connector.requestCount, 1, "saved launch reconnects independently of download recovery")
         XCTAssertEqual(source.currentSnapshot.accountConnection, .connecting)
+        XCTAssertTrue(observed.entries.contains { $0.endpoint == "ping" && $0.answered && $0.status == 200 },
+                      "Saved recovery must authenticate server identity before resuming remote work")
+        let recoveryTransfers = observed.entries.filter { $0.endpoint != "ping" }
         if recovery == .intact {
-            XCTAssertEqual(observed.entries.count, 0, "an intact download has no recovery read to make")
+            XCTAssertEqual(recoveryTransfers.count, 0, "an intact download has no recovery read to make")
         } else {
-            XCTAssertEqual(observed.entries.count, 1, "only the permitted recovery stream may be sent")
-            let stream = try XCTUnwrap(observed.entries.first)
+            XCTAssertEqual(recoveryTransfers.count, 1, "only the permitted recovery stream may be sent beside identity checks")
+            let stream = try XCTUnwrap(recoveryTransfers.first)
             XCTAssertEqual(stream.endpoint, "stream")
             XCTAssertEqual(stream.rawID, track.id.rawID)
             XCTAssertTrue(stream.answered, "the replacement must promote the actual server response")
@@ -832,6 +892,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await testRebindingTheSameProviderRejectsPriorLocalBytesAndLateCacheCallbacks()
         try await testLocalPlaybackStopsBeforeARealBindingPurgeAndEquivalentRefreshKeepsIt()
         try await testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary()
+        try await testKnownServerReplacementQuarantinesLateMediaAndKeepsOfflinePlayback()
         try await testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair()
         try await testAutomaticDownloadPreferenceIsNotLostDuringSameAccountReconciliation()
         try await testPendingAutomaticDownloadPreferenceUsesLatestIntentAndDoesNotCrossAccounts()

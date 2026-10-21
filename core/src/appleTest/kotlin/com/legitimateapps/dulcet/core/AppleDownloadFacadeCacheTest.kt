@@ -4,6 +4,10 @@ import app.cash.sqldelight.db.QueryResult
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import okio.Buffer
 import okio.FileSystem
 import okio.Path.Companion.toPath
@@ -22,6 +26,59 @@ import kotlin.test.assertTrue
 /** The exported bridge must supply local-file validation metadata as well as the original bytes. */
 @OptIn(ExperimentalForeignApi::class)
 class AppleDownloadFacadeCacheTest {
+    @Test
+    fun knownReplacementRejectsLateCachePromotionAndKeepsExistingLocalBytes() = fixture { client ->
+        val body = waveAudio()
+        fun write(rawId: String): String {
+            val id = assertNotNull(client.beginStreamingCache(rawId, AudioContainer.Wav, body.size.toLong(), 1, 0, 1, 1))
+            assertTrue(client.appendStreamingCache(id, body.toData(), 0))
+            return id
+        }
+        val retained = write("retained")
+        assertTrue(client.finishStreamingCache(retained, body.size.toLong(), 2))
+        val late = write("late")
+        client.rejectServerIdentity()
+        assertFalse(client.appendStreamingCache(late, body.toData(), 0))
+        assertFalse(client.finishStreamingCache(late, body.size.toLong(), 3))
+        assertNull(client.localPlaybackPlan("late").plan)
+        val existing = assertNotNull(client.localPlaybackPlan("retained").plan)
+        assertContentEquals(body, FileSystem.SYSTEM.read(existing.filePath.toPath()) { readByteArray() })
+    }
+
+    @Test
+    fun aSuspendedSuccessfulIdentityProbeCannotUndoAReplacementRejection() = fixture { client ->
+        runBlocking {
+            val answer = CompletableDeferred<Unit>()
+            var probes = 0
+            client.identityValidator = { probes++; answer.await(); null }
+            val old = async(start = CoroutineStart.UNDISPATCHED) { client.validateServerIdentity() }
+            client.rejectServerIdentity()
+            answer.complete(Unit)
+            assertEquals(DomainError.Protocol.ServerIdentityChanged, old.await())
+            assertEquals(DomainError.Protocol.ServerIdentityChanged, client.validateServerIdentity())
+            assertEquals(1, probes, "known rejection never implicitly reopens after a later matching answer")
+        }
+    }
+
+    @Test
+    fun savedMetadataOnlySeedsEmptyIdentityAndCannotOverwriteLearnedInstance() {
+        val name = "dulcet-apple-identity-seed-${NSUUID().UUIDString}.db"
+        val locator = DulcetDriverFactory(name).openDulcetDatabase()
+        val path = locator.driver.executeQuery(null, "PRAGMA database_list", { cursor ->
+            check(cursor.next().value); QueryResult.Value(requireNotNull(cursor.getString(2)))
+        }, 0).value
+        locator.close()
+        try {
+            val learned = ServerIdentityPolicy.identity("dulcet", "learned-instance")
+            val metadata = ServerIdentityPolicy.identity("dulcet")
+            assertTrue(AppleMediaBindingClient.seedServerIdentity(name, "server", learned))
+            assertTrue(AppleMediaBindingClient.seedServerIdentity(name, "server", metadata))
+            assertEquals(learned, AppleMediaBindingClient.acceptedServerIdentity(name, "server"))
+        } finally {
+            listOf("", "-wal", "-shm").forEach { NSFileManager.defaultManager.removeItemAtPath(path + it, null) }
+        }
+    }
+
     @Test
     fun streamedAudioPromotesThroughFacadeAndPlaysFromItsExactBytesWithoutNetworkAccess() = fixture { client ->
         val body = waveAudio()

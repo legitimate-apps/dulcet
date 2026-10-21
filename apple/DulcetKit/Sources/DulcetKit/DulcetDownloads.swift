@@ -45,6 +45,8 @@ public protocol DulcetDownloadControlling: AnyObject {
     /// Forced replacement also retires a previously authenticated alias.
     func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void)
     func configure(account: DulcetPlaybackAccount)
+    /// Stops remote transfers and late promotions after a known server replacement, retaining local media.
+    func rejectServerIdentity()
     /// Authenticated saved-credential continuity, committed before saving its canonical name.
     /// False means another provider/endpoint; a failed eligible adoption throws without purging.
     func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool
@@ -69,6 +71,7 @@ public protocol DulcetDownloadControlling: AnyObject {
 }
 
 public extension DulcetDownloadControlling {
+    func rejectServerIdentity() {}
     var downloadCountToRemove: Int? { 0 }
     func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool { false }
     func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {}

@@ -2214,6 +2214,8 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
 
 @MainActor
 private final class ControlledDownloadController: DulcetDownloadControlling, DulcetOfflineLibraryControlling {
+    private(set) var identityRejectionCount = 0
+    func rejectServerIdentity() { identityRejectionCount += 1 }
     private(set) var authenticatedAdoptions: [(DulcetPlaybackAccount, DulcetPlaybackAccount)] = []
     private(set) var unconfirmedReplacements: [(DulcetPlaybackAccount, DulcetPlaybackAccount)] = []
     func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {
@@ -4845,3 +4847,55 @@ func savedServerChooserAccountActionsSelectEntryAndKeepBothServers() throws {
     print("DULCET SAVED SERVER ACTIONS PASS selected=server-b kept=2 native-ui=unproven")
 }
 #endif
+
+@Test @MainActor
+func detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice", password: "fixture", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(request, providerInstanceID: "server-a", serverIdentity: "navidrome")
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    let session = DulcetLibrarySession(factory: nil)
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        playbackController: ControlledPlaybackController(), downloadController: downloads, librarySession: session,
+        countAccountDownloads: { _ in 7 })
+    let store = DulcetPresentationStore(source: source)
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        canonicalUsername: "alice", serverIdentity: "navidrome")))
+    session.onServerIdentityChanged?()
+    #expect(downloads.identityRejectionCount == 1, "Quarantine must precede even the account negotiation answer")
+    #expect(downloads.removeAccountDataCount == 0)
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        canonicalUsername: "alice", serverIdentity: "dulcet")))
+    #expect(store.pendingDownloadRemovalCount == 7)
+    let rejectionCount = downloads.identityRejectionCount
+    store.cancelServerReplacement()
+    #expect(downloads.identityRejectionCount == rejectionCount && rejectionCount > 0, "Cancel cannot reopen a known rejected remote namespace")
+    #expect(downloads.removeAccountDataCount == 0)
+    #expect(credentials.providerInstanceID == "server-a")
+    #expect(credentials.serverIdentity == "navidrome")
+    #expect(downloads.offlineLibraryStorage.downloadBytes == 123)
+}
+
+@Test @MainActor
+func learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt() throws {
+    for (learned, replacement) in [("navidrome", "dulcet"), ("dulcet-instance-a", "dulcet-instance-b")] {
+        let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice", password: "fixture", allowLocalHTTP: false)
+        let credentials = SavedServerMemoryCredentials()
+        try credentials.save(request, providerInstanceID: "legacy", serverIdentity: "")
+        let connector = ControlledAccountConnector()
+        var accepted: [String] = []
+        let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+            acceptServerIdentity: { _, identity in accepted.append(identity); return true },
+            readServerIdentity: { _ in learned }, countAccountDownloads: { _ in 3 })
+        let store = DulcetPresentationStore(source: source)
+        connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+            canonicalUsername: "alice", serverIdentity: replacement)))
+        #expect(store.pendingDownloadRemovalCount == 3)
+        #expect(accepted.isEmpty, "An empty legacy Keychain identity cannot overwrite learned lineage")
+        store.cancelServerReplacement()
+        #expect(credentials.providerInstanceID == "legacy")
+        #expect(credentials.serverIdentity.isEmpty)
+        #expect(accepted.isEmpty)
+    }
+}
