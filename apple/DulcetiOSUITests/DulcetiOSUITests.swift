@@ -1067,15 +1067,8 @@ final class DulcetiOSUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         guard let configuration = livePlaybackConfiguration() else { return }
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -1197,15 +1190,8 @@ final class DulcetiOSUITests: XCTestCase {
         guard let configuration = livePlaybackConfiguration() else { return }
         let album = "Double Lines"
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -1245,7 +1231,7 @@ final class DulcetiOSUITests: XCTestCase {
 
         // 2. Relaunch with nothing but the saved account.
         app.terminate()
-        app.launchArguments = []
+        app.launchArguments = liveAccountFixtureArguments(serverURL: configuration.serverURL)
         app.launch()
         let libraryTile = app.buttons["dulcet.library.album"].firstMatch
         XCTAssertTrue(libraryTile.waitForExistence(timeout: 15),
@@ -1621,16 +1607,9 @@ final class DulcetiOSUITests: XCTestCase {
         extraLaunchArguments: [String] = []
     ) -> SkipProbeRun? {
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-ui-markers",
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ] + extraLaunchArguments
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration,
+            extraArguments: ["-dulcet-debug-ui-markers"] + extraLaunchArguments)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -1836,12 +1815,8 @@ final class DulcetiOSUITests: XCTestCase {
         }
 
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -3247,12 +3222,8 @@ final class DulcetiOSUITests: XCTestCase {
         let track = "Twenty Nine Seconds"
         let line = "Dulcet English line one"
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -3295,12 +3266,8 @@ final class DulcetiOSUITests: XCTestCase {
         let album = "Threshold Boundary"
         let track = "Twenty Nine Seconds"
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -3391,12 +3358,8 @@ final class DulcetiOSUITests: XCTestCase {
         }
 
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -3910,6 +3873,29 @@ final class DulcetiOSUITests: XCTestCase {
             + " started=\(started ?? "nil")")
     }
 
+    /// Unrelated proofs own separate credential stores; relaunches of one endpoint keep the
+    /// same saved account. Explicit credential fixtures and killed-process handoffs own theirs.
+    private func liveAccountFixtureArguments(serverURL: String, extraArguments: [String] = []) -> [String] {
+        guard !extraArguments.contains("-dulcet-debug-account-fixture"),
+              !extraArguments.contains("-dulcet-debug-download-handoff") else { return [] }
+        let fixture = liveAccountFixtures[serverURL] ?? UUID().uuidString
+        liveAccountFixtures[serverURL] = fixture
+        return ["-dulcet-debug-account-fixture", fixture]
+    }
+
+    private func liveAccountLaunchArguments(
+        serverURL: String,
+        configuration: LivePlaybackConfiguration,
+        extraArguments: [String] = []
+    ) -> [String] {
+        extraArguments + liveAccountFixtureArguments(serverURL: serverURL, extraArguments: extraArguments) + [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", serverURL,
+            "-dulcet-debug-account-username", configuration.username,
+            "-dulcet-debug-account-password", configuration.password,
+        ]
+    }
+
     /// Launches the app with the account injected for `serverURL` and waits for its live
     /// connection, on the device class the caller names.
     @MainActor
@@ -3920,21 +3906,8 @@ final class DulcetiOSUITests: XCTestCase {
         extraArguments: [String] = []
     ) -> XCUIApplication? {
         let app = XCUIApplication()
-        var accountArguments: [String] = []
-        // Explicit fixture IDs and killed-process download namespaces already own credentials.
-        // Keep those seams authoritative, including the replacement launch with only its namespace.
-        if !extraArguments.contains("-dulcet-debug-account-fixture"),
-           !extraArguments.contains("-dulcet-debug-download-handoff") {
-            let fixture = liveAccountFixtures[serverURL] ?? UUID().uuidString
-            liveAccountFixtures[serverURL] = fixture
-            accountArguments = ["-dulcet-debug-account-fixture", fixture]
-        }
-        app.launchArguments += extraArguments + accountArguments + [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: serverURL, configuration: configuration, extraArguments: extraArguments)
         app.launch()
         let window = app.windows.firstMatch
         guard window.waitForExistence(timeout: 10) else {
@@ -4488,12 +4461,8 @@ final class DulcetiOSUITests: XCTestCase {
         let album = "Threshold Boundary"
         let track = "Twenty Nine Seconds"
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -5064,16 +5033,9 @@ final class DulcetiOSUITests: XCTestCase {
         guard requireSimulator(.pad, "The iPad full-screen player proof") else { return }
         guard let configuration = livePlaybackConfiguration() else { return }
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-ui-markers",
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration,
+            extraArguments: ["-dulcet-debug-ui-markers"])
         app.launch()
 
         let window = app.windows.firstMatch
@@ -5303,15 +5265,8 @@ final class DulcetiOSUITests: XCTestCase {
         let app = XCUIApplication()
         // The delivery marker is the other proof of playback below, for a canary that has ended.
         app.launchArguments += ["-dulcet-debug-scrobble-delivery-marker"]
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
 
         let window = app.windows.firstMatch
@@ -5676,15 +5631,8 @@ final class DulcetiOSUITests: XCTestCase {
         // 2026-09-11: NowPlaying logged, no Scrobbled line, count stayed 0, test green).
         app.launchArguments += ["-dulcet-debug-scrobble-delivery-marker"]
         if usingInjectedAccount {
-            app.launchArguments += [
-                "-dulcet-debug-connect-account",
-                "-dulcet-debug-account-server-url",
-                configuration.serverURL,
-                "-dulcet-debug-account-username",
-                configuration.username,
-                "-dulcet-debug-account-password",
-                configuration.password,
-            ]
+            app.launchArguments += liveAccountLaunchArguments(
+                serverURL: configuration.serverURL, configuration: configuration)
         } else {
             installSystemAlertInterruptionMonitors()
         }
