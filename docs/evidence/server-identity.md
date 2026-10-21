@@ -38,7 +38,7 @@ provider ID. The encrypted store, connect operation and new tests are otherwise 
 
 The phone and TV tests exercise Compose on the Android host runtime, with Keystore cryptography
 replaced at its existing test seam. These are host app observations, not emulator or physical-device
-execution. The local focused app run passes 17 phone cases and eight TV cases with no failures: 
+execution. The local focused app run passes 17 phone cases and eight TV cases with no failures:
 account conformance, canonical persistence, sign-out and the new switcher/consent flows. CI and
 soak results are recorded in the PR, tied to their run IDs and revisions.
 
