@@ -1167,6 +1167,36 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         submit(request)
     }
 
+    private func activateSavedServerOffline(after failure: DulcetAccountFailurePresentation) -> Bool {
+        guard let id = switchingToServerID,
+              let multi = credentialStore as? any DulcetSavedServerCredentialStoring,
+              let saved = try? multi.load(providerInstanceID: id) else { return false }
+        do {
+            try multi.activate(providerInstanceID: id)
+            playbackController?.disconnect()
+            providerInstanceID = id
+            switchingToServerID = nil
+            addingServer = false
+            savedReconnectEnabled = true
+            savedServerName = Self.savedServerName(for: saved.serverURL)
+            restorationTrackIDs = []
+            downloadStateCache = [:]
+            libraryAlbums = []
+            let account = DulcetPlaybackAccount(providerInstanceID: id, normalizedServerURL: saved.serverURL,
+                username: saved.username, password: saved.password, allowLocalHTTP: saved.allowLocalHTTP,
+                credentialGeneration: multi.credentialGeneration)
+            playbackController?.configureOffline(account: account)
+            downloadController?.configure(account: account)
+            downloadController?.setAutomaticDownloadContactPermitted(false)
+            librarySession?.open(account: Self.readerAccount(request: saved,
+                normalizedServerURL: saved.serverURL, providerInstanceID: id), mode: .deviceOnly)
+            publish(state: .libraryBrowse, destination: .listenNow, form: saved, status: .failed(failure))
+            restoreQueueFromCommittedLibrary(providerInstanceID: id)
+            retrySavedReconnect(after: failure)
+            return true
+        } catch { return false }
+    }
+
     public func confirmServerReplacement() {
         let continuation = pendingConnection
         pendingConnection = nil
@@ -1350,6 +1380,11 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                                          form: saved, status: .connected(account))
                         } else { self.openLibrary(reason: .connected) }
                     }
+                }
+            case let .failed(failure) where self.switchingToServerID != nil &&
+                (failure.kind == .transportUnreachable || failure.kind == .transportTimeout):
+                if !self.activateSavedServerOffline(after: failure) {
+                    self.publish(state: failure.kind.family.presentationState, form: request, status: .failed(failure))
                 }
             case let .failed(failure) where failure.kind == .transportCancelled:
                 self.publishSavedAccountOrIdle(form: request)
@@ -3020,7 +3055,8 @@ extension DulcetAccountDataSource: DulcetLibrarySessionProviding {
     /// reader mode -- a screen shows a window, not the library -- so it is always `.partial`,
     /// which cannot clear a saved queue for want of a track nobody has looked at.
     func restoreQueue(from tracks: [DulcetTrack]) {
-        guard currentSnapshot.accountConnection.isConnected, let providerInstanceID else { return }
+        guard currentSnapshot.accountConnection.isConnected || savedServerName != nil,
+              let providerInstanceID else { return }
         let fresh = tracks.filter {
             $0.id.providerInstanceID == providerInstanceID && restorationTrackIDs.insert($0.id).inserted
         }

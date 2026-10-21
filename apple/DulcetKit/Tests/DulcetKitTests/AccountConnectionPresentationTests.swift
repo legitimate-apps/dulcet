@@ -133,6 +133,7 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
         .malformedEnvelope: .accountErrorProtocol,
         .incompatibleProtocol: .accountErrorProtocol,
         .notASubsonicServer: .accountErrorProtocol,
+        .serverIdentityChanged: .accountErrorProtocol,
         // An answer larger than this build reads is a fault in what came back, not in reaching the
         // server or in the server's own verdict: a protocol error.
         .responseTooLarge: .accountErrorProtocol,
@@ -4708,7 +4709,11 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     controller.view.layoutIfNeeded()
     defer { window.isHidden = true }
     let root: NSObject = controller.view
+#if os(iOS)
+    let accountID = UIDevice.current.userInterfaceIdiom == .pad ? "dulcet.sidebar.settings" : "dulcet.tab.settings"
+#else
     let accountID = "dulcet.tab.settings"
+#endif
 #endif
     func element(_ id: String) async -> NSObject? {
         let end = ContinuousClock.now.advanced(by: .seconds(5))
@@ -4777,3 +4782,33 @@ private func savedServerAccessibilityActivate(_ object: NSObject) {
 #endif
 }
 #endif
+
+
+@Test @MainActor
+func savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible() throws {
+    let first = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid", username: "alice", password: "fixture-a", allowLocalHTTP: false)
+    let second = DulcetAccountConnectRequest(serverURL: "https://two.example.invalid", username: "bob", password: "fixture-b", allowLocalHTTP: false)
+    for failureKind in [DulcetAccountFailureKind.transportUnreachable, .invalidCredentials] {
+        let credentials = SavedServerMemoryCredentials()
+        try credentials.save(second, providerInstanceID: "server-b", serverIdentity: "dulcet")
+        try credentials.save(first, providerInstanceID: "server-a", serverIdentity: "navidrome")
+        let connector = ControlledAccountConnector()
+        let playback = ControlledPlaybackController()
+        let downloads = ControlledDownloadController()
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
+            credentialStore: credentials, playbackController: playback, downloadController: downloads))
+        connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: first.serverURL, canonicalUsername: first.username, serverIdentity: "navidrome")))
+        store.selectSavedServer("server-b")
+        connector.complete(.failed(accountFailure(failureKind)))
+        if failureKind == .transportUnreachable {
+            #expect(credentials.providerInstanceID == "server-b")
+            #expect(playback.offlineConfiguredProviderInstanceID == "server-b")
+            #expect(downloads.configuredAccount?.providerInstanceID == "server-b")
+            #expect(!downloads.automaticContactPermitted)
+            #expect(store.selectedDestination == .listenNow)
+        } else { #expect(credentials.providerInstanceID == "server-a") }
+        #expect(shownFailureKind(store) == failureKind)
+        #expect(downloads.removeAccountDataCount == 0)
+        #expect(credentials.savedProviderInstanceIDs.count == 2)
+    }
+}

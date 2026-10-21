@@ -1157,7 +1157,8 @@ private func readerModeStore(
     serverSearch: ForbiddenServerSearch? = nil,
     credentials: ReaderTestCredentials? = nil,
     reachability: ManualReachability? = nil,
-    delays: ManualDelays = ManualDelays()
+    delays: ManualDelays = ManualDelays(),
+    identityPolicy: DulcetAccountIdentityPolicy = .exact
 ) -> (DulcetPresentationStore, DulcetLibrarySession, ReaderTestCredentials) {
     let session = DulcetLibrarySession(factory: factory, reachability: reachability, delays: delays)
     let store = credentials ?? ReaderTestCredentials(persisted: persisted, providerInstanceID: providerInstanceID)
@@ -1168,7 +1169,8 @@ private func readerModeStore(
         serverSearch: serverSearch,
         providerInstanceIDFactory: { "provider-new" },
         librarySession: session,
-        reconnectDelays: delays
+        reconnectDelays: delays,
+        identityPolicy: identityPolicy
     ))
     return (presentation, session, store)
 }
@@ -1284,7 +1286,12 @@ func reconnectFromTheLibraryConnectsInPlaceAndSavesTheReachedAddress() throws {
     )
     let (store, session, credentials) = readerModeStore(
         persisted: saved, providerInstanceID: "provider-reader", factory: factory,
-        connector: connector, browser: browser)
+        connector: connector, browser: browser,
+        // Production injects SavedServerPolicy, whose common URL parser resolves this legacy
+        // raw address. The Kit fixture supplies that known result without duplicating the parser.
+        identityPolicy: .init(samePrincipal: { oldURL, oldUser, newURL, newUser in
+            oldUser == newUser && oldURL == "music.example.invalid" && newURL == "https://music.example.invalid"
+        }, isReplacement: { _, _ in false }))
     store.submitAccountConnection()
     store.navigate(to: .library)
     #expect(store.selectedDestination == .library, "Reconnect on the library connects where the person is")
