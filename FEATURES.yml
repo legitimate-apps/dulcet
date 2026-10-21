@@ -806,7 +806,12 @@
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-live-platform-replacement-download-consent",
+            "reason": "Promote after a live server replacement or typed rebind reaches the native counted dialog, Cancel retains the account, and confirmation retires playback before removal. Current native UI and AVPlayer adapter observations use injected authenticated outcomes."
+          }
         },
         "ios": {
           "status": "partial",
@@ -824,7 +829,12 @@
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-live-platform-replacement-download-consent",
+            "reason": "Promote after a live server replacement or typed rebind reaches the native counted dialog, Cancel retains the account, and confirmation retires playback before removal. Current native UI and AVPlayer adapter observations use injected authenticated outcomes."
+          }
         },
         "ipados": {
           "status": "partial",
@@ -842,7 +852,12 @@
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-live-platform-replacement-download-consent",
+            "reason": "Promote after a live server replacement or typed rebind reaches the native counted dialog, Cancel retains the account, and confirmation retires playback before removal. Current native UI and AVPlayer adapter observations use injected authenticated outcomes."
+          }
         },
         "tvos": {
           "status": "partial",
@@ -854,7 +869,12 @@
               "job": "apple-ci",
               "test": "DulcetKitTVOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-live-platform-replacement-download-consent",
+            "reason": "Promote after a live server replacement or typed rebind reaches the native counted dialog, Cancel retains the account, and confirmation retires playback before removal. Current native UI and AVPlayer adapter observations use injected authenticated outcomes."
+          }
         },
         "android": {
           "status": "partial",
@@ -872,7 +892,12 @@
               "job": "core-ci",
               "test": "AndroidAccountDataTest/replacementDownloadCountIncludesLegacyAndPendingItemsButExcludesCacheAndDuplicateProfiles"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-live-platform-replacement-download-consent",
+            "reason": "Promote after a live server replacement or typed rebind reaches the native counted dialog, Cancel retains the account, and confirmation retires playback before removal. Current native UI and AVPlayer adapter observations use injected authenticated outcomes."
+          }
         },
         "androidtv": {
           "status": "partial",
@@ -890,7 +915,12 @@
               "job": "core-ci",
               "test": "AndroidAccountDataTest/replacementDownloadCountIncludesLegacyAndPendingItemsButExcludesCacheAndDuplicateProfiles"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-live-platform-replacement-download-consent",
+            "reason": "Promote after a live server replacement or typed rebind reaches the native counted dialog, Cancel retains the account, and confirmation retires playback before removal. Current native UI and AVPlayer adapter observations use injected authenticated outcomes."
+          }
         }
       }
     },
@@ -917,7 +947,20 @@
               "job": "apple-ci",
               "test": "DulcetKitTests/serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "core-ci"
+              },
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
         },
         "ios": {
           "status": "partial",
@@ -935,7 +978,20 @@
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "core-ci"
+              },
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
         },
         "ipados": {
           "status": "partial",
@@ -953,7 +1009,20 @@
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "core-ci"
+              },
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
         },
         "tvos": {
           "status": "partial",
@@ -971,7 +1040,20 @@
               "job": "apple-ci",
               "test": "DulcetKitTVOSTests/serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "core-ci"
+              },
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
         },
         "android": {
           "status": "partial",
@@ -989,7 +1071,20 @@
               "job": "core-ci",
               "test": "SavedServerAccountsTest/typedCaseAndPasswordRefreshContinueWhenServerConfirmsTheSavedPrincipal"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "core-ci"
+              },
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
         },
         "androidtv": {
           "status": "partial",
@@ -1007,7 +1102,20 @@
               "job": "core-ci",
               "test": "SavedServerAccountsTest/typedCaseAndPasswordRefreshContinueWhenServerConfirmsTheSavedPrincipal"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "named",
+            "targets": [
+              {
+                "kind": "workflow",
+                "name": "core-ci"
+              },
+              {
+                "kind": "workflow",
+                "name": "apple-ci"
+              }
+            ]
+          }
         }
       }
     },
@@ -1052,7 +1160,12 @@
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-live-saved-server-platform-roundtrip",
+            "reason": "Promote after one integrated platform UI tour drives two disposable live saved servers A to B to A and observes library, downloads and queue restoration. Current evidence separately observes the rendered chooser and durable production adapters."
+          }
         },
         "ios": {
           "status": "partial",
@@ -1088,7 +1201,12 @@
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-live-saved-server-platform-roundtrip",
+            "reason": "Promote after one integrated platform UI tour drives two disposable live saved servers A to B to A and observes library, downloads and queue restoration. Current evidence separately observes the rendered chooser and durable production adapters."
+          }
         },
         "ipados": {
           "status": "partial",
@@ -1124,7 +1242,12 @@
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-live-saved-server-platform-roundtrip",
+            "reason": "Promote after one integrated platform UI tour drives two disposable live saved servers A to B to A and observes library, downloads and queue restoration. Current evidence separately observes the rendered chooser and durable production adapters."
+          }
         },
         "tvos": {
           "status": "partial",
@@ -1154,7 +1277,12 @@
               "job": "apple-ci",
               "test": "DulcetKitTVOSTests/savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-live-saved-server-platform-roundtrip",
+            "reason": "Promote after one integrated platform UI tour drives two disposable live saved servers A to B to A and observes library, downloads and queue restoration. Current evidence separately observes the rendered chooser and durable production adapters."
+          }
         },
         "android": {
           "status": "partial",
@@ -1178,7 +1306,12 @@
               "job": "core-ci",
               "test": "SavedServerSwitcherUiTest/accountMenuSwitchesSavedServersAndOffersAddWithoutSettingsNavigation"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-live-saved-server-platform-roundtrip",
+            "reason": "Promote after one integrated platform UI tour drives two disposable live saved servers A to B to A and observes library, downloads and queue restoration. Current evidence separately observes the rendered chooser and durable production adapters."
+          }
         },
         "androidtv": {
           "status": "partial",
@@ -1202,7 +1335,12 @@
               "job": "core-ci",
               "test": "TvSavedServerSwitcherTest/accountScreenSwitchesBothWaysWithRemoteSelectionAndOffersAddServer"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-live-saved-server-platform-roundtrip",
+            "reason": "Promote after one integrated platform UI tour drives two disposable live saved servers A to B to A and observes library, downloads and queue restoration. Current evidence separately observes the rendered chooser and durable production adapters."
+          }
         }
       }
     },
@@ -1241,7 +1379,12 @@
               "job": "apple-ci",
               "test": "DulcetKitTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "macos-native-restored-account-live-server-swap",
+            "reason": "Promote after a restored native account encounters both live product-swap directions at the same endpoint and reaches review before any old-ID request. Current evidence observes real JVM negotiation and shared barriers, plus native injected account transitions."
+          }
         },
         "ios": {
           "status": "partial",
@@ -1271,7 +1414,12 @@
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-native-restored-account-live-server-swap",
+            "reason": "Promote after a restored native account encounters both live product-swap directions at the same endpoint and reaches review before any old-ID request. Current evidence observes real JVM negotiation and shared barriers, plus native injected account transitions."
+          }
         },
         "ipados": {
           "status": "partial",
@@ -1301,7 +1449,12 @@
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-native-restored-account-live-server-swap",
+            "reason": "Promote after a restored native account encounters both live product-swap directions at the same endpoint and reaches review before any old-ID request. Current evidence observes real JVM negotiation and shared barriers, plus native injected account transitions."
+          }
         },
         "tvos": {
           "status": "partial",
@@ -1331,7 +1484,12 @@
               "job": "apple-ci",
               "test": "DulcetKitTVOSTests/serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-native-restored-account-live-server-swap",
+            "reason": "Promote after a restored native account encounters both live product-swap directions at the same endpoint and reaches review before any old-ID request. Current evidence observes real JVM negotiation and shared barriers, plus native injected account transitions."
+          }
         },
         "android": {
           "status": "partial",
@@ -1361,7 +1519,12 @@
               "job": "core-ci",
               "test": "SavedServerAccountsTest/navidromeToDulcetSwapRequiresConsentAndRotatesTheNamespace"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-native-restored-account-live-server-swap",
+            "reason": "Promote after a restored native account encounters both live product-swap directions at the same endpoint and reaches review before any old-ID request. Current evidence observes real JVM negotiation and shared barriers, plus native injected account transitions."
+          }
         },
         "androidtv": {
           "status": "partial",
@@ -1391,7 +1554,12 @@
               "job": "core-ci",
               "test": "SavedServerAccountsTest/navidromeToDulcetSwapRequiresConsentAndRotatesTheNamespace"
             }
-          ]
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-native-restored-account-live-server-swap",
+            "reason": "Promote after a restored native account encounters both live product-swap directions at the same endpoint and reaches review before any old-ID request. Current evidence observes real JVM negotiation and shared barriers, plus native injected account transitions."
+          }
         }
       }
     },
