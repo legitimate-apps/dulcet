@@ -43,6 +43,8 @@ public interface AccountCredentialStore {
     /** All encrypted saved accounts; switching never destroys another account's namespace. */
     fun remove(id: String) { if (activeAccountId() == id) delete() }
     fun savedAccounts(): List<StoredAccount> = listOfNotNull(load())
+    /** Strongest accepted lineage, including identity learned after a legacy credential was saved. */
+    fun acceptedServerIdentity(account: StoredAccount): String = account.serverIdentity
     fun savedAccountIds(): Set<String> = setOfNotNull(activeAccountId())
     fun activate(id: String): StoredAccount? = load()?.takeIf { it.id == id }
     /** Adds an authenticated server, keeping the accounts already saved. */
@@ -123,6 +125,12 @@ public class AndroidAccountCredentialStore public constructor(
         .filter { it.startsWith("account.") }.map { it.removePrefix("account.") }.toSet()
 
     override fun savedAccounts(): List<StoredAccount> = savedAccountIds().mapNotNull { id -> runCatching { load(id) }.getOrNull() }
+
+    override fun acceptedServerIdentity(account: StoredAccount): String = try {
+        com.legitimateapps.dulcet.core.AndroidServerIdentity.acceptedIdentity(applicationContext, account.id, account.serverIdentity)
+    } catch (failure: Exception) {
+        throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed, failure)
+    }
 
     override fun activate(id: String): StoredAccount? {
         if (id !in savedAccountIds()) return null

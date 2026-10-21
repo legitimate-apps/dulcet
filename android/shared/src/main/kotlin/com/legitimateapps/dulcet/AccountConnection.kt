@@ -53,12 +53,13 @@ public suspend fun connectAndSaveAccount(
                         (it.username == username || (it == previousActive && it.username == request.username && it.password == request.password))
                 }
                 if (store.load() != previousActive) return AccountConnectOutcome.Superseded
+                val previousIdentity = previous?.let(store::acceptedServerIdentity).orEmpty()
                 val confirmsSaved = previous != null && policy.canContinue(previous.serverUrl, previous.username,
-                    previous.serverIdentity, result.account.normalizedBaseUrl, username, result.account.serverIdentity)
+                    previousIdentity, result.account.normalizedBaseUrl, username, result.account.serverIdentity)
                 // Exact saved credentials can also learn a canonical spelling from getUser. An
                 // unrelated typed spelling only continues when the server confirms the saved name.
                 val learnsCanonical = previous != null && previous.username == request.username &&
-                    previous.password == request.password && !policy.isServerReplacement(previous.serverIdentity, result.account.serverIdentity)
+                    previous.password == request.password && !policy.isServerReplacement(previousIdentity, result.account.serverIdentity)
                 val continuesSaved = confirmsSaved || learnsCanonical
                 val confirmed = StoredAccount(previous?.id.orEmpty(), serverName, result.account.normalizedBaseUrl,
                     username, request.password, request.allowLocalHttp, result.account.serverIdentity)

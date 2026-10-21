@@ -720,6 +720,28 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    @Test fun aTransientIdentityProbeFailureKeepsTheDownloadRetryableAndThenCompletesNormally() = runBlocking {
+        val unavailable = java.util.concurrent.atomic.AtomicBoolean(true)
+        WireServer(identityType = "navidrome", identityStatus = { if (unavailable.get()) 503 else 200 }) { WireReply(200, AUDIO) }.use { server ->
+            val accountId = "identity-retry:${java.util.UUID.randomUUID()}"
+            var now = NOW
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks, serverId = accountId, wall = { now }, validateIdentityBeforeTransfer = true)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            assertEquals(AndroidDownloadRunOutcome.WillRetry, controller.runTask(tasks.started.single()))
+            assertFalse(AndroidServerIdentity.isRejected(accountId), "A temporary unavailable server is not a replacement")
+            assertTrue(server.lookups.isEmpty() && server.requests.isEmpty(), "The failed identity probe sends no song ID")
+            val retry = assertNotNull(controller.statuses.value[RAW_ID]?.retryNotBeforeWallClock)
+            assertTrue(retry > now && retry < Long.MAX_VALUE, "The normal retry boundary remains finite")
+            now = retry
+            unavailable.set(false)
+            controller.scheduleNext()
+            assertEquals(2, tasks.started.size)
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.last()))
+            assertContentEquals(AUDIO, File(assertNotNull(controller.localPlan(RAW_ID)).absolutePath).readBytes())
+        }
+    }
+
     @Test fun productionIdentityValidationRejectsBothProductSwapDirectionsBeforeAnyStoredSongId() = runBlocking {
         for ((oldType, newType) in listOf("navidrome" to "dulcet", "dulcet" to "navidrome")) {
             WireServer(identityType = newType) { WireReply(200, AUDIO) }.use { server ->
@@ -871,6 +893,7 @@ class AndroidDownloadControllerTest {
     private class WireServer(
         private val lookup: (WireRequest) -> WireReply = { songReply(it.query["id"].orEmpty().single()) },
         private val identityType: String? = null,
+        private val identityStatus: () -> Int = { 200 },
         private val respond: (WireRequest) -> WireReply,
     ) : AutoCloseable {
         private val socket = ServerSocket().apply { bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0)) }
@@ -898,7 +921,9 @@ class AndroidDownloadControllerTest {
             // counted apart, so every transfer assertion still counts only the transfer's requests.
             val reply = if (identityType != null && request.path == "/rest/ping.view") {
                 identityRequests += request
-                WireReply(200, """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"$identityType","serverVersion":"1.0.0"}}""".toByteArray(), contentType = "application/json")
+                val status = identityStatus()
+                if (status == 200) WireReply(status, """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"$identityType","serverVersion":"1.0.0"}}""".toByteArray(), contentType = "application/json")
+                else WireReply(status, "temporarily unavailable".toByteArray(), contentType = "text/plain")
             } else if (identityType != null && request.path == "/.well-known/dulcet") {
                 WireReply(200, """{"standard":"dulcet","server":{"instanceId":"fixture-instance"}}""".toByteArray(), contentType = "application/json")
             } else if (request.path.startsWith("/rest/getSong")) {

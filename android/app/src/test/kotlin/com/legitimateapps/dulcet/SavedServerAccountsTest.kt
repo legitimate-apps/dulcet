@@ -63,6 +63,42 @@ class SavedServerAccountsTest {
     @Test fun navidromeToDulcetSwapRequiresConsentAndRotatesTheNamespace() = swap("Navidrome", "Dulcet Server")
     @Test fun dulcetToNavidromeSwapRequiresConsentAndRotatesTheNamespace() = swap("Dulcet Server", "Navidrome")
 
+    @Test fun aLegacyUnknownRecordCannotForgetTheServerIdentityLearnedByTheReader() = learnedIdentityRequiresConsent(
+        savedType = "My music", savedIdentity = "", learnedIdentity = ServerIdentityPolicy.identity("navidrome"),
+        connectedType = "dulcet", connectedIdentity = ServerIdentityPolicy.identity("dulcet"))
+
+    @Test fun aProductOnlyRecordCannotForgetTheInstanceIdentityLearnedByTheReader() = learnedIdentityRequiresConsent(
+        savedType = "dulcet", savedIdentity = ServerIdentityPolicy.identity("dulcet"),
+        learnedIdentity = ServerIdentityPolicy.identity("dulcet", "original-instance"),
+        connectedType = "dulcet", connectedIdentity = ServerIdentityPolicy.identity("dulcet", "replacement-instance"))
+
+    private fun learnedIdentityRequiresConsent(savedType: String, savedIdentity: String, learnedIdentity: String,
+        connectedType: String, connectedIdentity: String) = runBlocking {
+        val original = store.saveAdditional(record("https://music.invalid", "alice").copy(
+            serverName = savedType, serverIdentity = savedIdentity))
+        // A background authenticated identity check can learn more than a legacy credential knows.
+        AndroidServerIdentity.accept(context, original.id, learnedIdentity)
+        val log = mutableListOf<String>()
+        val data = object : AccountDataGateway {
+            override suspend fun pendingChanges(account: StoredAccount): PendingChanges? = null
+            override suspend fun send(account: StoredAccount, changes: Boolean): PendingChanges? = null
+            override suspend fun removeAccountData(serverId: String) { log += "remove" }
+            override suspend fun sweep(activeAccountId: () -> String?): Set<String> = emptySet()
+        }
+        val replacement = AndroidAccountReplacement(context, store, PlaybackRelease { log += "retire"; true }, data,
+            countDownloads = { 8 })
+        val accepted = connected("alice", connectedType, "2").let { it.copy(account = it.account.copy(serverIdentity = connectedIdentity)) }
+        val pending = async { connectAndSaveAccount(AccountConnectionRequest(original.serverUrl, "alice", original.password, false),
+            { accepted }, store, replacement = replacement) }
+        yield()
+        assertEquals(8, replacement.offer.value?.downloadCount, "Accepted database lineage must survive stale credentials")
+        assertEquals(original, store.load(), "Identity lookup must not rewrite the credential or selection")
+        replacement.answer(false)
+        assertIs<AccountConnectOutcome.Superseded>(pending.await())
+        assertEquals(original, store.load())
+        assertTrue(log.isEmpty(), "Cancelling preserves playback and every local store")
+    }
+
     private fun swap(oldType: String, newType: String) = runBlocking {
         val original = store.saveAdditional(record("https://music.invalid", "alice").copy(
             serverName = oldType, serverIdentity = ServerIdentityPolicy.identity(oldType)))
