@@ -45,7 +45,12 @@ enum DulcetAppleProduction {
 
     #if os(iOS)
     static func makeIOSComposition() -> DulcetiOSProductionComposition {
-        let credentialStore = DulcetKeychainCredentialStore()
+        let credentialStore: any DulcetProviderInstanceCredentialStoring
+        #if DEBUG
+        credentialStore = DulcetDebugHandoffCredentialStore.whenProbing() ?? DulcetKeychainCredentialStore()
+        #else
+        credentialStore = DulcetKeychainCredentialStore()
+        #endif
         let downloads = DulcetCoreDownloadController.production()
         let artworkFetcher = DulcetCoreArtworkFetcher()
         let playbackController = DulcetCorePlaybackController(
@@ -68,7 +73,12 @@ enum DulcetAppleProduction {
 
     #if os(tvOS)
     static func makeTVComposition() -> DulcetTVProductionComposition {
-        let credentialStore = DulcetKeychainCredentialStore()
+        let credentialStore: any DulcetProviderInstanceCredentialStoring
+        #if DEBUG
+        credentialStore = DulcetDebugHandoffCredentialStore.whenProbing() ?? DulcetKeychainCredentialStore()
+        #else
+        credentialStore = DulcetKeychainCredentialStore()
+        #endif
         let artworkFetcher = DulcetCoreArtworkFetcher()
         let playbackController = DulcetCorePlaybackController(
             downloadController: nil,
