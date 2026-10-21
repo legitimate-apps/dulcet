@@ -93,13 +93,26 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         activate("listenNow.refresh")
                         // Anchor the lazy list on the logical shelf once. Repeated full-list
                         // searches can dispose an initially empty shelf before its live read arrives.
-                        compose.onNodeWithTag("listenNow.surface").performScrollToIndex(if (observer.state().hasSession) 3 else 2)
+                        if (!isTelevision()) compose.onNodeWithTag("listenNow.surface")
+                            .performScrollToIndex(if (observer.state().hasSession) 3 else 2)
+                        var moves = 0
+                        var lastMove = 0L
                         try {
                             compose.waitUntil("recent playlists shelf renders", 30_000) {
-                                compose.onAllNodes(hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists")))
+                                val found = compose.onAllNodes(hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists")))
                                     .fetchSemanticsNodes().isNotEmpty()
+                                // A TV must reveal lazy shelves by moving its focused control;
+                                // forcing a scroll while Refresh keeps focus can scroll back.
+                                val now = android.os.SystemClock.elapsedRealtime()
+                                if (!found && isTelevision() && moves < 12 && now - lastMove >= 500) {
+                                    InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                                    compose.waitForIdle()
+                                    moves++
+                                    lastMove = now
+                                }
+                                found
                             }
-                        } catch (failure: AssertionError) {
+                        } catch (failure: Throwable) {
                             println(compose.onRoot(useUnmergedTree = true).printToString())
                             throw failure
                         }

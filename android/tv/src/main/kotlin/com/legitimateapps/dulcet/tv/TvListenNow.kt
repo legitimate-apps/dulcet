@@ -19,6 +19,11 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
     val plays = rememberPlaybackBinding(playback)
     val state by remember(playback) { playback?.state ?: kotlinx.coroutines.flow.MutableStateFlow(AndroidPlaybackState()) }.collectAsState()
     val context = LocalContext.current
+    // Keep every Home window open while this route is shown, including empty/offscreen
+    // shelves, so Refresh cannot miss a shelf whose card has not been composed yet.
+    val shelves = ListenNowShelf.entries.associateWith { shelf ->
+        rememberSurface(session, shelf) { openListenNow(shelf) }
+    }
     LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"),
         contentPadding=PaddingValues(horizontal=56.dp, vertical=24.dp)) {
         item {
@@ -36,7 +41,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
             }
         }
         items(ListenNowShelf.entries,key={ it.wireName }) { shelf ->
-            val surface = rememberSurface(session,shelf) { openListenNow(shelf) }
+            val surface = shelves.getValue(shelf)
             val current by surface.state.collectAsState()
             val shown by rememberUpdatedState(current)
             if (current == null || current!!.items.isNotEmpty() || current!!.freshness != AndroidLibraryFreshness.Live) {
