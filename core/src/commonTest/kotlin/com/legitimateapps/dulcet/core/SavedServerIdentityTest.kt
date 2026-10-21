@@ -21,6 +21,7 @@ class SavedServerIdentityTest {
         assertTrue(ServerIdentityPolicy.isReplacement(dulcet, ServerIdentityPolicy.identity("dulcet", "history-2")))
         assertFalse(ServerIdentityPolicy.isReplacement(dulcet, dulcet))
         assertFalse(ServerIdentityPolicy.isReplacement("", dulcet), "legacy saved credentials learn identity")
+        assertFalse(ServerIdentityPolicy.isReplacement(ServerIdentityPolicy.identity(""), navidrome), "an older server gaining a product field is bootstrap, not proof of replacement")
         assertTrue(ServerIdentityPolicy.isReplacement(dulcet, ServerIdentityPolicy.identity("dulcet")), "lineage cannot silently downgrade")
     }
 

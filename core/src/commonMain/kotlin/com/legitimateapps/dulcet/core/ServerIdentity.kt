@@ -16,7 +16,7 @@ public object ServerIdentityPolicy {
         val new = decode(current) ?: return true
         // An older client knew only the implementation. Learning its advertised lineage is safe;
         // losing a previously known lineage is not permission to reuse its identifiers.
-        return old.first != new.first || (old.second.isNotEmpty() && old.second != new.second)
+        return (old.first.isNotEmpty() && old.first != new.first) || (old.second.isNotEmpty() && old.second != new.second)
     }
 
     internal fun requiresDiscovery(previous: String, serverType: String): Boolean =
