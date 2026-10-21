@@ -1642,8 +1642,9 @@ class LibraryReaderScenarios<A : ComponentActivity>(
      */
     fun conf82WhileTheServerScansPagesAppendUnguardedAndTheScanEndRebasesUnderAnUnchangedStamp() = withWindowPages {
         val stamp = server.scanStatus().getString("lastScan")
-        val presented = proxy.size()
         proxy.rewrite({ it.endpoint == "getScanStatus" }) { body -> scanStatus(body) { it.put("scanning", true) } }
+        // Startup reads already run: install the presentation before counting reads under it.
+        val presented = proxy.size()
         try {
             relaunchIntoAlbums()
             val grid = checkNotNull(albumsGrid())
