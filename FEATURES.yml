@@ -1426,6 +1426,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia"
+            },
+            {
+              "observes": "A real core download preparation is held while another production facade completes the same SQLite row with exact media bytes. Releasing the late result cannot send a new stream request for that completed row; a newly queued ordinary successor still fetches and promotes its exact bytes. The native adapter assertion runs in the download aggregate; process-replacement recovery has a separate app-hosted CI proof.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
             }
           ],
           "promotion_condition": {
@@ -1473,6 +1479,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia"
+            },
+            {
+              "observes": "A real core download preparation is held while another production facade completes the same SQLite row with exact media bytes. Releasing the late result cannot send a new stream request for that completed row; a newly queued ordinary successor still fetches and promotes its exact bytes. The native adapter assertion runs in the download aggregate; process-replacement recovery has a separate app-hosted CI proof.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
             }
           ],
           "promotion_condition": {
@@ -1520,6 +1532,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia"
+            },
+            {
+              "observes": "A real core download preparation is held while another production facade completes the same SQLite row with exact media bytes. Releasing the late result cannot send a new stream request for that completed row; a newly queued ordinary successor still fetches and promotes its exact bytes. The native adapter assertion runs in the download aggregate; process-replacement recovery has a separate app-hosted CI proof.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
             }
           ],
           "promotion_condition": {

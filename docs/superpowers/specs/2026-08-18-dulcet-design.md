@@ -7916,6 +7916,15 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-21 — Let secured delivery completion win asynchronous preparation.**
+Receipt reconciliation validates server identity before promoting secured background-download bytes.
+While those receipt validations are in flight, queue preparation waits for their results. A prepared
+download is permission to attempt a launch, not proof that its row is still pending: immediately
+before starting the native task, reread committed state and retire a preparation whose row has
+already become Complete or Stale. Finishing the last receipt validation resumes pending work. A
+completed receipt must not cause another transfer of the same download, and an ordinary queued
+successor must remain schedulable. Account-generation and media-binding guards still apply.
+
 **2026-10-21 — Fence playback replies and new byte requests after identity rejection.**
 Known replacement rejection closes remote playback even when a caller has no optional connection
 gate. Recheck that boundary after asynchronous metadata, current resolution and preload resolution,

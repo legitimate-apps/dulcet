@@ -138,3 +138,25 @@ The core CI evidence upload now includes its already executed JVM reports alongs
 The previous aggregate failed because JVM protocol evidence was absent from that artifact despite
 all four execution jobs passing. Replaying the actual downloaded artifact fails without JVM reports
 and passes with only the missing JVM reports added; no verifier or evidence requirement is weakened.
+
+
+## Secured delivery versus late download preparation
+
+OBSERVED in full Apple CI: the original process-replacement handoff oracle found two stream requests
+for the same download. The replacement first reconciled and promoted the expected exact bytes, then
+started and promoted the same requested task again. Async identity validation allowed receipt
+promotion and queue preparation to overlap; preparation did not reread the completed row before launch.
+
+OBSERVED fail-before in a deterministic native regression: hold a real core preparation result,
+complete the same SQLite download row through a second real facade with exact MP3 bytes, then
+release the result. An extra stream request reaches the actual loopback receiver (one versus zero).
+The corrected Swift scheduler waits for in-flight secured validations and rereads committed state
+before launch so Complete or Stale rows cannot be fetched again. The original process-handoff
+oracle remains unchanged and must pass in the final full Apple workflow. This native assertion is
+called by the existing Mac, iPhone and iPad download aggregates; no tvOS download-owner claim is made.
+
+The final focused native gate passes eight tests with zero failures (2.113 seconds), including the
+new race, an ordinary successor fetching and promoting after the suppressed duplicate, the three
+late-playback guards, download quarantine, persistent A → B → A isolation and preference controls.
+The five extracted Swift inbox controls also pass. The harness adds only the model helper needed by
+the newly called scheduling helper; no CI workflow, tools/ci file or Kotlin Apple facade is changed.
