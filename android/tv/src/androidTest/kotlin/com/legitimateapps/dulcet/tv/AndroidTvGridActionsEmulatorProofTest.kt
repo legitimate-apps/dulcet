@@ -11,6 +11,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.legitimateapps.dulcet.emulator.*
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,6 +25,12 @@ class AndroidTvGridActionsEmulatorProofTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         check(context.packageManager.hasSystemFeature("android.software.leanback"))
         val probe = DisposableServerProbe.fromInstrumentation()
+        val extensions = probe.call("getOpenSubsonicExtensions").getJSONArray("openSubsonicExtensions")
+        assumeTrue("Grid membership proof requires advertised dulcetLibrary v1", (0 until extensions.length()).any { index ->
+            val extension = extensions.getJSONObject(index)
+            extension.getString("name") == "dulcetLibrary" && (0 until extension.getJSONArray("versions").length())
+                .any { version -> extension.getJSONArray("versions").getInt(version) == 1 }
+        })
         val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "500"))
             .getJSONObject("albumList2").getJSONArray("album")
         val album = (0 until albums.length()).map(albums::getJSONObject).first { it.getString("name") == "Threshold Boundary" }

@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,7 +23,16 @@ import java.net.URLDecoder
 class PlaylistPlayContextEmulatorProofTest {
     @get:Rule val compose = createEmptyComposeRule()
 
-    @Test fun playlistThresholdSubmissionPopulatesRecentlyPlayedPlaylists() = PlaylistPlayContextProof(compose).run()
+    @Test fun playlistThresholdSubmissionPopulatesRecentlyPlayedPlaylists() {
+        val extensions = DisposableServerProbe.fromInstrumentation()
+            .call("getOpenSubsonicExtensions").getJSONArray("openSubsonicExtensions")
+        assumeTrue("Playlist context Home proof requires advertised dulcetHome v1", (0 until extensions.length()).any { index ->
+            val extension = extensions.getJSONObject(index)
+            extension.getString("name") == "dulcetHome" && (0 until extension.getJSONArray("versions").length())
+                .any { version -> extension.getJSONArray("versions").getInt(version) == 1 }
+        })
+        PlaylistPlayContextProof(compose).run()
+    }
 }
 
 /** Reused by the required Home proof after its ordinary navigation and screenshot assertions. */
