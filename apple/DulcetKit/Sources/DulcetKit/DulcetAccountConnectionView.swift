@@ -138,6 +138,35 @@ struct DulcetAccountConnectionView: View {
     }
 
     @ViewBuilder
+    private var savedServers: some View {
+        if !store.savedServers.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Servers").font(.headline)
+                ForEach(store.savedServers) { server in
+                    Button {
+                        store.selectSavedServer(server.id)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(URL(string: server.serverURL)?.host ?? server.serverURL)
+                                Text(server.username).font(.caption)
+                            }
+                            Spacer()
+                            if server.isActive { Image(systemName: "checkmark").accessibilityLabel("Current server") }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("dulcet.account.server.\(server.id)")
+                    .disabled(isConnecting)
+                }
+                Button("Add Server", systemImage: "plus") { store.addServer() }
+                    .accessibilityIdentifier("dulcet.account.add-server")
+                    .disabled(isConnecting)
+            }
+        }
+    }
+
+    @ViewBuilder
     private var accountSurface: some View {
 #if os(tvOS)
         ScrollView {
@@ -145,6 +174,7 @@ struct DulcetAccountConnectionView: View {
                 if store.snapshot.accountRemoval == .removing {
                     accountRemovalProgress
                 } else {
+                    savedServers
                     HStack(alignment: .top, spacing: 48) {
                         tvConnectionForm
                             .frame(maxWidth: .infinity)
@@ -173,6 +203,7 @@ struct DulcetAccountConnectionView: View {
                 if store.snapshot.accountRemoval == .removing {
                     Section { accountRemovalProgress }
                 } else {
+                    Section { savedServers }
                     Section {
                         connectionForm
                     } footer: {
@@ -198,6 +229,7 @@ struct DulcetAccountConnectionView: View {
                 if store.snapshot.accountRemoval == .removing {
                     Section { accountRemovalProgress }
                 } else {
+                    Section { savedServers }
                     accountCredentialsSection
                     accountStatusSection
                     DulcetStreamingQualitySection(store: store, inForm: true)

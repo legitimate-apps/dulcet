@@ -35,6 +35,8 @@ public struct DulcetOfflinePlaybackAsset: Sendable {
 @MainActor
 public protocol DulcetDownloadControlling: AnyObject {
     var downloadsEnabled: Bool { get }
+    /// Exact durable download count; nil refuses destructive replacement until readable.
+    var downloadCountToRemove: Int? { get }
     func setStatusHandler(
         _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
     )
@@ -67,6 +69,7 @@ public protocol DulcetDownloadControlling: AnyObject {
 }
 
 public extension DulcetDownloadControlling {
+    var downloadCountToRemove: Int? { 0 }
     func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool { false }
     func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {}
     func isSameMediaBinding(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool { false }

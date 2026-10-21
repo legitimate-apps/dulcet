@@ -685,6 +685,7 @@ enum DulcetStrings {
         case .forbidden: readerErrorForbidden
         case .serverBusy: readerErrorBusy
         case .tlsUntrusted, .security: readerErrorTLS
+        case .serverIdentityChanged: "The server at this address has changed. Open Account to review the connection."
         case .notFound: readerErrorNotFound
         case .internalFailure, .closed: readerReasonInternal
         case .protocol, .server, .playback, .input, .capability: readerErrorServer
