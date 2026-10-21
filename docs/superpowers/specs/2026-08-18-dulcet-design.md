@@ -7931,7 +7931,11 @@ Offline-created playlists without a server ID use a library source until resolve
 sessions are not relabeled. Android Home owns shelf windows for the route lifetime, including
 empty/offscreen shelves, so Refresh can observe a newly submitted playlist. Android TV full-grid
 and Home cards expose a separate remote-focusable More button for membership, pin and queue
-actions, preserving the card's normal activation and returning focus after the action.
+actions, preserving the card's normal activation and returning focus after the action. tvOS full-grid cards
+also retain normal Select activation and provide a separate focusable More button opening a
+native confirmation dialog with the existing item commands. Remote membership and primary
+navigation are observed independently. Native Menu focus failures in this grid do not establish
+that tvOS forbids context menus; the explicit launcher resolves the observed interaction gap.
 
 **2026-10-21 — Preserve media across authenticated saved-username confirmation.**
 A successful reconnect with the exact saved username and password may confirm a different username
@@ -14118,7 +14122,9 @@ The playing session and durable outbox retain the nullable playlist ID independe
 currently visible screen and delivery time; existing persisted submissions migrate to no context.
 Home Refresh keeps every shelf's reader window alive even while a lazy row is empty or offscreen.
 Android TV full-grid and Home cards offer a focusable More action for card commands alongside
-normal activation; the action does not require a native context-menu gesture.
+normal activation; the action does not require a native context-menu gesture. tvOS full-grid
+cards similarly offer a separate focusable More button and a native confirmation dialog,
+sharing the existing item commands while preserving primary Select navigation.
 
 ### 29.5 Lyrics
 

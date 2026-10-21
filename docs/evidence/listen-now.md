@@ -329,3 +329,9 @@ limitation above is historical: Android TV now has an explicit remote-focusable 
 on full-grid and Home cards. Its actual full-grid proof observes membership add/remove on the
 server, album queuing and restored focus. The tvOS result is recorded separately in that evidence
 report; an Android result does not establish tvOS behavior.
+
+The tvOS follow-up now also has its own passing full-grid proof: 1/1 in 31.915 seconds.
+An independently focusable More Button opens a native confirmation dialog with the shared item
+commands; remote Add reaches server membership and normal card Select still opens detail.
+The required TV membership test invokes this full-grid helper. The previous native Menu
+focus limitation is resolved through this explicit launcher, without claiming an OS prohibition.

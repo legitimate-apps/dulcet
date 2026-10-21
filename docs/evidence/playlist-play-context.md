@@ -39,8 +39,12 @@ OBSERVED 2026-10-21 against a local disposable Dulcet Server:
 | Android TV, API 34 | Same playlist-entry-to-rendered-Home chain, using real remote movement. Full-grid More also adds/removes membership (independent server reads), queues the album and restores focus. | Required Home plus `AndroidTvGridActionsEmulatorProofTest`: 2/2, 47.155 seconds. |
 | iPhone | Real playlist Play → relay cut → media threshold → no server playlist history → offline app termination/relaunch with cached Home and still no server history → reconnect/relaunch → exact playlist in independently read server Home and rendered card. | `DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch`: 1/1, 101.028 seconds; `serverHistory=true homeTile=true offlineRelaunch=true`. |
 | iPad | Real playlist Play → native player elapsed value advances → submitted threshold → exact playlist in independently read server Home → rendered Home playlist card. | `DulcetDesignTourUITests/testListenNowLaunchAlbumAndRelaunch`: 1/1, 100.488 seconds; `serverHistory=true homeTile=true offlineRelaunch=false`. |
+| Mac | Actual playlist Play → server playlist history → rendered Home card. Actual per-track Play Next and Add to Queue each submit their own playlist context to server history. | `DulcetMacRatingsAndPlaylistsAppTest/aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp`: 1/1, 17.784 seconds; `playlistTrackQueueMenusSubmitTheirOwnPlaylistContextThroughTheHostedMacApp`: 1/1, 35.557 seconds. |
+| tvOS | Actual playlist Play → media threshold → independently read server Home → rendered exact playlist card. | `DulcetTVUITests/testListenNowLaunchAlbumAndRelaunch`: 1/1, 79.346 seconds; `serverHistory=true homeTile=true offlineRelaunch=false`. |
 
-Each listed run has zero failures, errors or skips. The new capability-gated context branch
+These are exact-method results with no failures or skips in the cited methods. The tvOS Home
+method passed in a bundle that also contained a failed, discarded native-menu experiment;
+that bundle as a whole was not green. The new capability-gated context branch
 executes only when the authenticated server advertises `dulcetHome` version 1; the ordinary
 OpenSubsonic Home path still executes its existing controls. An optional local fixture proxy
 provides the Apple offline phase; ordinary hosted Home execution without that proxy does not
@@ -77,3 +81,28 @@ soak runner. Every linked run ends with the exact line `SOAK RESULT passed=20 fa
 | `TvCardOptionsTest` | [39633263175](https://github.com/legitimate-apps/dulcet/actions/runs/39633263175) |
 | `DownloadPolicyTest` | [39635131913](https://github.com/legitimate-apps/dulcet/actions/runs/39635131913) |
 | `PhoneListenNowWindowLifecycleTest` | [39635935469](https://github.com/legitimate-apps/dulcet/actions/runs/39635935469) |
+
+
+Mac and tvOS offline queued-play delivery across process relaunch remains unobserved. Their
+shipped Home cells claim the observed live chain. The Mac proof required temporary internal
+staging of runnable products/frameworks after an X8 dynamic-loader stall before main; build
+outputs and caches stayed on the external volume. A later fixture-navigation assertion was
+corrected by waiting for the advertised Browse catalog before selecting Playlists.
+
+
+## TV full-grid actions
+
+OBSERVED tvOS: `DulcetMyLibraryUITests/testFullGridMoreOpensAlbumActionsAndMembershipReachesServer`
+passes 1/1 in 31.915 seconds, with zero failures/skips and exact-method validation. Real remote
+movement focuses the separate More button; Select opens a native confirmation dialog; Add to
+Library reaches independently read server membership; the original tile's primary Select still
+opens album detail. The receipt is `remoteSelectMore=true membershipServer=true primarySelect=true`.
+The existing required `DulcetMyLibraryTVUITests/testBrowseAddRemoveRelaunchAndOfflineReplay`
+calls this same full-grid helper, retaining its further removal/relaunch/offline assertions.
+Native Menu focus attempts failed in this grid; this does not establish an API prohibition.
+The dialog driver recognizes the focused UIKit alias only at the target's exact label and frame.
+
+Android TV's corresponding local proof observes actual add/remove membership, album queuing
+and focus restoration. These claims have their own `home.tv_grid_actions` cells rather than
+being inferred from the Home playback results. Other retained card commands are not all claimed
+as independent runtime observations.
