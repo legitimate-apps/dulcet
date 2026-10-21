@@ -106,3 +106,9 @@ Android TV's corresponding local proof observes actual add/remove membership, al
 and focus restoration. These claims have their own `home.tv_grid_actions` cells rather than
 being inferred from the Home playback results. Other retained card commands are not all claimed
 as independent runtime observations.
+
+
+The required Android TV `AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline`
+invokes the same reusable `AndroidTvGridActionsProof` before its existing offline-library assertions.
+The standalone positive wrapper is capability-gated on ordinary servers and is not cited as the
+required Dulcet-phase execution. This preserves the existing case count and workflow selection.

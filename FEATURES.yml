@@ -4826,10 +4826,10 @@
               "observes": "Real remote movement focuses full-grid More, adds/removes album membership with independent server verification, queues that album and returns focus to the More control.",
               "workflow": "core-ci",
               "job": "core-ci",
-              "test": "AndroidTvGridActionsEmulatorProofTest/gridMoreOptionsAddsRemovesAndQueuesTheActualAlbum"
+              "test": "AndroidTvMyLibraryProofTest/automaticLibraryRetentionAndSameResponseCachePlayOffline"
             }
           ],
-          "reason": "OBSERVED 2026-10-21 on API 34 against the local disposable Dulcet Server: the combined required Home and full-grid proof passes 2/2 in 47.155 seconds, zero failures/errors/skips. Full-grid and Home cards expose explicit remote-focusable More actions. The live full-grid proof covers membership add/remove, album queue action and focus restoration; pin mapping has host/source evidence rather than an independent runtime claim. Ordinary servers skip only the Dulcet-library-specific positive wrapper after successful capability discovery. See docs/evidence/playlist-play-context.md."
+          "reason": "OBSERVED 2026-10-21 on API 34 against the local disposable Dulcet Server: the combined required Home and full-grid proof passes 2/2 in 47.155 seconds, zero failures/errors/skips. Full-grid and Home cards expose explicit remote-focusable More actions. The live full-grid proof covers membership add/remove, album queue action and focus restoration; pin mapping has host/source evidence rather than an independent runtime claim. Ordinary servers skip only the Dulcet-library-specific positive wrapper after successful capability discovery. See docs/evidence/playlist-play-context.md. The required Dulcet-only Library case invokes the same reusable grid proof before its unchanged offline-library assertions; the standalone wrapper is not the positive required-workflow evidence."
         }
       }
     },
