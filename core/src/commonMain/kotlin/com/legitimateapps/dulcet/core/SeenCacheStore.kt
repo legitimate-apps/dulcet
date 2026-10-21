@@ -60,10 +60,18 @@ internal class SeenCacheStore(
         val purged = database.transactionWithResult {
             val queries = database.seenCacheQueries
             val stored = queries.selectBinding(binding.serverId).executeAsOneOrNull()
+            val mediaEpoch = database.libraryDepthQueries
+                .selectEntry(binding.serverId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull()
+            val authenticatedUsernameContinuity = stored != null &&
+                matchesMediaBinding(mediaEpoch, DownloadMediaBinding(
+                    binding.serverId, stored.normalized_base_url, stored.username,
+                )) && matchesMediaBinding(mediaEpoch, DownloadMediaBinding(
+                    binding.serverId, binding.normalizedBaseUrl, binding.username,
+                ))
             val matches = stored != null &&
                 MediaBindingIdentity.sameEndpoint(stored.normalized_base_url, binding.normalizedBaseUrl) &&
-                stored.username == binding.username
-            if (stored != null && stored.username != binding.username) {
+                (stored.username == binding.username || authenticatedUsernameContinuity)
+            if (stored != null && stored.username != binding.username && !authenticatedUsernameContinuity) {
                 // Changes queued as another user must never be sent as this one (§16.10, §14.7).
                 // A server-address change for the same username keeps them.
                 val outbox = database.protectedReservedDataQueries

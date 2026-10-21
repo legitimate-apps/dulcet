@@ -58,6 +58,27 @@ class AndroidPlaybackBindingHandoffTest {
     @Test fun equivalentUrlSpellingKeepsCurrentPreloadAndFiles() =
         unchangedBinding { it.copy(normalizedBaseUrl = "HTTP://LOCALHOST:80/") }
 
+    @Test fun invalidReplacementDoesNotRetireCurrentOrPreloadBeforeItIsRejected() = runBlocking {
+        Fixture().use { f ->
+            f.startCurrentAndPreload()
+            val before = f.currentClears
+            val attempt = f.playback.state.value.attemptId
+            var deletes = 0
+            f.beforeDelete = { deletes++ }
+            val result = runCatching { f.open(f.account.copy(normalizedBaseUrl = "not a server URL")) }
+            assertTrue(result.isFailure, "The malformed candidate must be rejected")
+            assertEquals(before, f.currentClears, "Validation must precede playback retirement")
+            assertTrue(f.current.requested, "Rejected replacement keeps current play intent")
+            assertFalse(f.incoming.released, "Rejected replacement keeps the incoming decoder")
+            assertNotNull(f.incoming.listener)
+            assertEquals(attempt, f.playback.state.value.attemptId)
+            assertEquals(2, f.leaseCount)
+            assertEquals(setOf("current", "incoming"), f.protectedIds)
+            assertEquals(0, deletes)
+            assertTrue(f.mediaFiles.all(File::exists))
+        }
+    }
+
     private fun changedBinding(replacement: (PlaybackEndpointAccount) -> PlaybackEndpointAccount) = runBlocking {
         Fixture().use { f ->
             f.startCurrentAndPreload()

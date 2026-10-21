@@ -93,6 +93,40 @@ class DownloadExecutorTest {
         assertNotNull(controller.localPlan(RAW_ID))
     }
 
+    @Test fun authenticatedSavedUsernameSpellingKeepsLegacyExplicitBytesAndLocalPlaybackPlan(): Unit = runBlocking {
+        val controller = assertNotNull(AndroidDownloads.controller(context))
+        assertTrue(controller.awaitReconciled())
+        controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, 1_000)))
+        val task = awaitOneTask()
+        WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(task.id)
+        awaitDownloaded(controller)
+        assertEquals(WorkInfo.State.SUCCEEDED, awaitFinished(task.id))
+        val payload = root.walkTopDown().single { it.isFile }
+        assertContentEquals(AUDIO, payload.readBytes())
+        val old = account
+        val credentials = AndroidAccountCredentialStore(context)
+        val request = com.legitimateapps.dulcet.core.AccountConnectionRequest(old.serverUrl, old.username, old.password, old.allowLocalHttp)
+        val outcome = connectAndSaveAccount(request, { authenticated ->
+            assertEquals(old.username, authenticated.username, "The authenticated request must use the exact saved spelling")
+            assertEquals(old.password, authenticated.password)
+            com.legitimateapps.dulcet.core.AccountConnectionResult.Connected(com.legitimateapps.dulcet.core.ConnectedAccount(
+                old.serverUrl, old.allowLocalHttp, "1.16.1", false, "fixture", "1",
+                com.legitimateapps.dulcet.core.CapabilitySet(emptyMap(), com.legitimateapps.dulcet.core.UserPermissions(true, true, false, false, false), true),
+                emptyList(), old.username.uppercase()))
+        }, credentials)
+        assertTrue(outcome is AccountConnectOutcome.Connected)
+        val saved = assertNotNull(credentials.load())
+        account = saved // Teardown follows the actual saved identity, including on a failed assertion.
+        val reopened = assertNotNull(AndroidDownloads.controller(context))
+        assertTrue(reopened.awaitReconciled())
+        assertNotNull(reopened.localPlan(RAW_ID), "The authenticated canonical spelling must still resolve the legacy explicit payload")
+        assertEquals(old.id, saved.id, "Authenticated spelling adoption keeps the provider instance")
+        assertEquals(old.username.uppercase(), saved.username)
+        assertTrue(payload.exists())
+        assertContentEquals(AUDIO, payload.readBytes())
+        assertEquals(1, server.requests.size, "Local replay must not require a second audio fetch")
+    }
+
     @Test fun aRelaunchKeepsATaskWorkManagerStillHoldsAndRestartsOneItLost(): Unit = runBlocking {
         val first = assertNotNull(AndroidDownloads.controller(context))
         assertTrue(first.awaitReconciled())

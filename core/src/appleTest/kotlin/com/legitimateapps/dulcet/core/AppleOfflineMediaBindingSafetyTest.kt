@@ -52,6 +52,8 @@ class AppleOfflineMediaBindingSafetyTest {
     @Test fun defaultHttpPortKeepsExplicitBytesThroughTheExportedAdapter() = equivalentUrl("http://music.invalid:80/base/", "http://MUSIC.invalid/base")
     @Test fun punycodeCaseKeepsExplicitBytesThroughTheExportedAdapter() = equivalentUrl("https://XN--BCHER-KVA.invalid", "https://xn--bcher-kva.invalid/")
     @Test fun equivalentIpv6KeepsExplicitBytesThroughTheExportedAdapter() = equivalentUrl("https://[2001:0DB8:0:0:0:0:0:1]:443/base/", "https://[2001:db8::1]/base")
+    @Test fun percentTripletHexCaseKeepsExplicitBytesThroughTheExportedAdapter() = equivalentUrl("https://music.invalid/music%2fbase", "https://music.invalid/music%2Fbase")
+
     private fun equivalentUrl(before: String, after: String) = fixture { f ->
             val original = f.client(before)
             val path = f.explicit(before)

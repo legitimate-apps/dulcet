@@ -72,7 +72,7 @@ class OfflineMediaBindingSafetyTest {
         val policy = OfflineLibraryPolicy(f.store.database, engine)
         val changes = policy.reconcileFromSeenCache("account", 1, 2)
         assertTrue(changes.queued.isEmpty())
-        assertTrue(engine.records("account").isEmpty())
+        assertTrue(f.store.database.downloadsQueries.selectDownloadsForServer("account").executeAsList().isEmpty())
         assertTrue(policy.missingAutomaticDownloadAlbumIds("account").isEmpty())
         assertTrue(policy.missingAutomaticDownloadTrackIds("account").isEmpty())
         assertEquals(1L, library.selectItem("account", "artist", "artist-only").executeAsOne().member)
@@ -95,6 +95,8 @@ class OfflineMediaBindingSafetyTest {
     @Test fun punycodeDnsCaseKeepsLegacyExplicitBytes() = equivalentLegacyUrl("https://XN--BCHER-KVA.invalid:443/music", "https://xn--bcher-kva.invalid/music/")
     @Test fun equivalentIpv6KeepsLegacyExplicitBytes() = equivalentLegacyUrl("https://[2001:0DB8:0:0:0:0:0:1]:443/base/", "https://[2001:db8::1]/base")
     @Test fun escapedPathAndInteriorSlashesKeepLegacyExplicitBytes() = equivalentLegacyUrl("https://music.invalid/Some%2FPath//Inside/", "https://MUSIC.invalid:443/Some%2FPath//Inside")
+    @Test fun percentTripletHexCaseKeepsLegacyExplicitBytes() = equivalentLegacyUrl("https://music.invalid/music%2fbase%3a/", "https://music.invalid/music%2Fbase%3A")
+
     private fun equivalentLegacyUrl(legacy: String, canonical: String) = fixture { f ->
             // Seed the pre-upgrade JSON spelling explicitly; new encoders must not hide this case.
             val epoch = "[\"$legacy\",\"alice\",\"0123456789abcdef0123456789abcdef\"]"
@@ -131,7 +133,8 @@ class OfflineMediaBindingSafetyTest {
     }
 
     @Test fun invalidOrUnsupportedReplacementCannotDeleteTheCurrentOwnersExplicitFile() {
-        for (url in listOf("https://bücher.invalid", "https://bad.invalid/path?query=1", "not a server URL")) fixture { f ->
+        for (url in listOf("https://bücher.invalid", "https://bad.invalid/path?query=1", "not a server URL",
+            "https://bad.invalid/%zz", "https://bad.invalid/%", "https://bad.invalid/%2")) fixture { f ->
             val old = f.bound(DownloadMediaBinding("account", "https://music.invalid", "alice"))
             val row = promote(old, "kept-on-invalid-input")
             val plan = assertIs<OfflinePlaybackPlanResult.Available>(old.offlinePlaybackPlan(row.identity)).plan
@@ -151,6 +154,90 @@ class OfflineMediaBindingSafetyTest {
         assertFalse(FileSystem.SYSTEM.exists(path.toPath()))
     }
 
+    @Test fun authenticatedSavedSpellingAdoptionKeepsLegacyExplicitAndCachedBytesAndEpoch() = fixture { f ->
+        val legacy = "[\"https://MUSIC.invalid:443/\",\"Alice\",\"0123456789abcdef0123456789abcdef\"]"
+        f.store.database.libraryDepthQueries.putEntry("account", MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY, legacy, 0)
+        val previous = PlaybackEndpointAccount("account", "https://MUSIC.invalid:443/", "Alice", "saved-secret", false)
+        val confirmed = previous.copy(normalizedBaseUrl = "https://music.invalid", username = "alice")
+        val old = f.bound(DownloadMediaBinding("account", previous.normalizedBaseUrl, previous.username))
+        SeenCacheStore(f.store, SeenCacheWallClock { 1 }).bind(CacheBinding("account", previous.normalizedBaseUrl, previous.username))
+        val explicit = promote(old, "legacy-explicit")
+        val cache = OfflineLibraryPolicy(f.store.database, old)
+        val write = assertNotNull(cache.beginCacheWrite(request("legacy-cached"), 200))
+        assertTrue(cache.appendCacheWrite(write.writeId, AUDIO, 0))
+        assertIs<DownloadPromotionResult.Promoted>(cache.finishCacheWrite(write.writeId, response(), 3))
+        assertTrue(old.adoptAuthenticatedAccount(previous, confirmed), "successful saved-credential identity confirmation may adopt spelling")
+        val encoded = f.store.database.libraryDepthQueries.selectEntry("account", MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne()
+        assertEquals("0123456789abcdef0123456789abcdef", kotlinx.serialization.json.Json.parseToJsonElement(encoded).let {
+            (it as kotlinx.serialization.json.JsonArray)[2].let { value -> (value as kotlinx.serialization.json.JsonPrimitive).content }
+        }, "Authenticated adoption must preserve the durable epoch nonce")
+        for (binding in listOf(previous, confirmed, previous, confirmed)) {
+            // Either persisted credential spelling can be the next launch after an interrupted save.
+            val reopened = f.bound(DownloadMediaBinding("account", binding.normalizedBaseUrl, binding.username))
+            val policy = OfflineLibraryPolicy(f.store.database, reopened)
+            for (raw in listOf("legacy-explicit", "legacy-cached")) {
+                val plan = assertIs<OfflinePlaybackPlanResult.Available>(policy.offlinePlaybackPlan("account", raw, 4)).plan
+                assertContentEquals(AUDIO, FileSystem.SYSTEM.read(plan.absolutePath.toPath()) { readByteArray() })
+            }
+            assertEquals(explicit.downloadId, assertIs<OfflinePlaybackPlanResult.Available>(reopened.offlinePlaybackPlan(explicit.identity)).plan.downloadId)
+            assertTrue(old.isMediaBindingCurrent(), "same authenticated epoch must remain valid")
+            val seen = SeenCacheStore(f.store, SeenCacheWallClock { 5 }).bind(CacheBinding("account", binding.normalizedBaseUrl, binding.username))
+            assertFalse(seen.purgedOnBind, "Authenticated spelling must retain seen metadata for offline My Library")
+        }
+    }
+
+    @Test fun authenticatedAdoptionRefusesDifferentProviderOriginAndUnprovenPriorUsername() = fixture { f ->
+        val previous = PlaybackEndpointAccount("account", "https://music.invalid/base", "Alice", "saved-secret", false)
+        val old = f.bound(DownloadMediaBinding("account", previous.normalizedBaseUrl, previous.username))
+        val row = promote(old, "not-authorized")
+        val path = assertIs<OfflinePlaybackPlanResult.Available>(old.offlinePlaybackPlan(row.identity)).plan.absolutePath
+        for ((from, to) in listOf(
+            previous to previous.copy(providerInstanceId = "other", username = "alice"),
+            previous to previous.copy(normalizedBaseUrl = "https://other.invalid/base", username = "alice"),
+            previous to previous.copy(normalizedBaseUrl = "https://music.invalid/other", username = "alice"),
+            previous.copy(username = "someone-else") to previous.copy(username = "alice"),
+            previous to previous.copy(normalizedBaseUrl = "not a server URL", username = "alice"),
+        )) assertFalse(old.adoptAuthenticatedAccount(from, to), "Only the authenticated current principal at the same endpoint can be adopted")
+        assertTrue(old.isMediaBindingCurrent())
+        assertContentEquals(AUDIO, FileSystem.SYSTEM.read(path.toPath()) { readByteArray() })
+    }
+
+    @Test fun authenticatedAliasesDoNotAuthorizeAnotherTypedUsernameAndDoNotSurviveRealRebind() = fixture { f ->
+        val before = PlaybackEndpointAccount("account", "https://music.invalid", "Alice", "saved-secret", false)
+        val old = f.bound(DownloadMediaBinding("account", before.normalizedBaseUrl, before.username))
+        val row = promote(old, "adopted-then-rebound")
+        assertTrue(old.adoptAuthenticatedAccount(before, before.copy(username = "alice")))
+        val path = assertIs<OfflinePlaybackPlanResult.Available>(old.offlinePlaybackPlan(row.identity)).plan.absolutePath
+        val typed = f.bound(DownloadMediaBinding("account", before.normalizedBaseUrl, "ALICE"))
+        assertIs<OfflinePlaybackPlanResult.NotDownloaded>(typed.offlinePlaybackPlan(row.identity))
+        assertFalse(FileSystem.SYSTEM.exists(path.toPath()))
+        assertFalse(old.isMediaBindingCurrent())
+        val returned = f.bound(DownloadMediaBinding("account", before.normalizedBaseUrl, "alice"))
+        assertIs<OfflinePlaybackPlanResult.NotDownloaded>(returned.offlinePlaybackPlan(row.identity))
+        assertFalse(old.isMediaBindingCurrent(), "returning to a former spelling cannot revive the old epoch")
+    }
+
+    @Test fun unconfirmedReplacementCannotReuseAnAlreadyAcceptedBinding() = fixture { f ->
+        val binding = DownloadMediaBinding("account", "https://music.invalid", "Alice")
+        val old = f.bound(binding)
+        val row = promote(old, "unproven-accepted-spelling")
+        val path = assertIs<OfflinePlaybackPlanResult.Available>(old.offlinePlaybackPlan(row.identity)).plan.absolutePath
+        // A native account boundary has rejected saved-credential continuity. Even a spelling
+        // already accepted by this epoch cannot authorize retaining its bytes for that login.
+        val replacement = f.bound(binding, forceReplacement = true)
+        assertIs<OfflinePlaybackPlanResult.NotDownloaded>(replacement.offlinePlaybackPlan(row.identity))
+        assertFalse(FileSystem.SYSTEM.exists(path.toPath()))
+        assertFalse(old.isMediaBindingCurrent())
+    }
+
+    @Test fun authenticatedAdoptionWithNoBindingAndNoMediaDoesNotInventAnOwner() = fixture { f ->
+        val engine = DownloadPolicyEngine(f.store.database, f.files)
+        val previous = PlaybackEndpointAccount("account", "https://music.invalid", "Alice", "saved-secret", false)
+        assertTrue(engine.adoptAuthenticatedAccount(previous, previous.copy(username = "alice")))
+        assertNull(f.store.database.libraryDepthQueries.selectEntry("account", MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull())
+        assertTrue(f.store.database.downloadsQueries.selectDownloadsForServer("account").executeAsList().isEmpty())
+    }
+
     private fun promote(engine: DownloadPolicyEngine, id: String): DownloadRecord {
         val row = engine.enqueue(request(id))
         engine.writeCompletedTemporaryFile(row.downloadId, AUDIO)
@@ -167,8 +254,8 @@ class OfflineMediaBindingSafetyTest {
         finally { store.close(); FileSystem.SYSTEM.deleteRecursively(root, mustExist = false) }
     }
     private data class Fixture(val store: DulcetDatabaseStore, val files: DownloadFileStore) {
-        fun bound(binding: DownloadMediaBinding) = DownloadPolicyEngine(store.database, files).also {
-            it.bindMedia(binding)
+        fun bound(binding: DownloadMediaBinding, forceReplacement: Boolean = false) = DownloadPolicyEngine(store.database, files).also {
+            it.bindMedia(binding, forceReplacement = forceReplacement)
             it.reconcile(emptyList(), mapOf(binding.serverId to 1L))
         }
     }

@@ -26,6 +26,9 @@ public suspend fun connectAndSaveAccount(
     store: AccountCredentialStore,
     stillWanted: () -> Boolean = { true },
 ): AccountConnectOutcome {
+    // Preserve the exact credential snapshot that was actually authenticated. A server-confirmed
+    // spelling is not evidence of continuity for a different typed username or password.
+    val previous = try { store.load() } catch (_: CredentialStoreException) { null }
     val result = connect(request)
     // Checked after the connector returns and before anything is saved: an attempt the user
     // cancelled or replaced must never leave credentials behind, even when the server accepted them.
@@ -40,10 +43,25 @@ public suspend fun connectAndSaveAccount(
                     .ifBlank { result.account.normalizedBaseUrl }
             }
             try {
-                val saved = store.save(
+                val username = result.account.canonicalUsername ?: request.username
+                val identity = com.legitimateapps.dulcet.core.MediaBindingIdentity
+                val previousOrigin = previous?.let { identity.canonicalServerUrl(it.serverUrl) }
+                val continuesSaved = previous != null && previous.username == request.username &&
+                    previous.password == request.password && previousOrigin != null &&
+                    previousOrigin == identity.canonicalServerUrl(request.serverUrl) &&
+                    previousOrigin == identity.canonicalServerUrl(result.account.normalizedBaseUrl)
+                if (continuesSaved && store.load() != previous) return AccountConnectOutcome.Superseded
+                val continued = if (continuesSaved) {
+                    val authenticated = requireNotNull(previous)
+                    store.saveAuthenticatedContinuation(authenticated, StoredAccount(
+                        authenticated.id, serverName, result.account.normalizedBaseUrl,
+                        username, request.password, request.allowLocalHttp,
+                    ))
+                } else null
+                val saved = continued ?: store.save(
                     serverName = serverName,
                     serverUrl = result.account.normalizedBaseUrl,
-                    username = result.account.canonicalUsername ?: request.username,
+                    username = username,
                     password = request.password,
                     allowLocalHttp = request.allowLocalHttp,
                 )

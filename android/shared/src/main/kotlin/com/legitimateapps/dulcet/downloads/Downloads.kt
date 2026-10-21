@@ -46,6 +46,10 @@ public object AndroidDownloads {
     internal fun controller(context: Context, credentials: AccountCredentialStore): AndroidDownloadController? {
         val activeId = try { credentials.activeAccountId() } catch (_: CredentialStoreException) { null }
         val account = try { credentials.load() } catch (_: CredentialStoreException) { null }
+        // Validate raw saved state before constructing an endpoint or retiring either owner.
+        if (account != null && !com.legitimateapps.dulcet.core.MediaBindingIdentity.isValidBinding(
+                account.id, account.serverUrl, account.username,
+            )) return null
         val endpoint = account?.let { PlaybackEndpointAccount(it.id, it.serverUrl, it.username, it.password, it.allowLocalHttp) }
         // Acquire Main before the factory monitor. A download-first rebind synchronously releases
         // playback there; Main must never wait for a monitor held by a caller waiting for Main.

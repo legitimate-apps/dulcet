@@ -209,10 +209,12 @@ internal class DownloadPolicyEngine(
     private var explicitlyBound = false
 
     /** Acquire once, synchronously at controller creation, before any media use/reconciliation. */
-    fun bindMedia(binding: DownloadMediaBinding): DownloadMediaBindingResult {
+    fun bindMedia(binding: DownloadMediaBinding, forceReplacement: Boolean = false): DownloadMediaBindingResult {
         check(!reconciled && !explicitlyBound && mediaBindingEpochs.isEmpty()) { "media binding already acquired" }
         val previous = storedMediaBinding(binding.serverId)
-        val matches = matchesMediaBinding(previous, binding)
+        // An ordinary typed account change has no saved-credential continuity proof, even if
+        // its username was authenticated as an alias earlier in this ownership epoch.
+        val matches = !forceReplacement && matchesMediaBinding(previous, binding)
         // Validate the replacement before unlinking anything: unsupported adapter input must not
         // destroy the currently bound namespace and then fail to acquire its replacement.
         val epoch = if (matches) requireNotNull(previous) else encodeMediaBinding(binding)
@@ -235,7 +237,58 @@ internal class DownloadPolicyEngine(
     }
 
     /** A cheap revocation check; a stale controller must never reacquire its former binding. */
-    fun isMediaBindingCurrent(): Boolean = mediaBindingEpochs.all { (serverId, epoch) -> storedMediaBinding(serverId) == epoch }
+    fun isMediaBindingCurrent(): Boolean = mediaBindingEpochs.all { (serverId, epoch) ->
+        sameMediaBindingEpoch(epoch, storedMediaBinding(serverId))
+    }
+
+    /**
+     * Only the caller that authenticated the exact saved credentials may request this adoption.
+     * This operation precedes saving the confirmed username; neither step can strand the old
+     * saved spelling after a crash. It never binds an unowned namespace or deletes media.
+     */
+    fun adoptAuthenticatedAccount(previous: PlaybackEndpointAccount, confirmed: PlaybackEndpointAccount): Boolean = try {
+        if (!MediaBindingIdentity.isValidAccount(previous) || !MediaBindingIdentity.isValidAccount(confirmed) ||
+            previous.providerInstanceId != confirmed.providerInstanceId ||
+            !MediaBindingIdentity.sameEndpoint(previous.normalizedBaseUrl, confirmed.normalizedBaseUrl) ||
+            !ownsMediaServer(previous.providerInstanceId) || !isMediaBindingCurrent()
+        ) {
+            false
+        } else database.transactionWithResult {
+            val encoded = storedMediaBinding(previous.providerInstanceId)
+            if (!isMediaBindingCurrent()) false
+            // A new installation has no bytes to migrate. Do not establish a namespace here:
+            // normal configuration will bind after the saved credentials have been updated.
+            else if (encoded == null && store.forServer(previous.providerInstanceId).isEmpty()) true
+            else if (!matchesMediaBinding(encoded, DownloadMediaBinding(
+                    previous.providerInstanceId, previous.normalizedBaseUrl, previous.username,
+                ))
+            ) false
+            else {
+                val adopted = adoptingMediaBindingUsername(requireNotNull(encoded), confirmed.username)
+                if (adopted == null) false
+                else {
+                    if (adopted != encoded) database.libraryDepthQueries.putEntry(
+                        previous.providerInstanceId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY, adopted, 0,
+                    )
+                    true
+                }
+            }
+        }
+    } catch (_: Exception) { false }
+
+    /** Exact usernames compare equal here only when the current durable epoch authenticates both. */
+    fun isSameMediaBinding(first: PlaybackEndpointAccount, second: PlaybackEndpointAccount): Boolean = try {
+        if (!MediaBindingIdentity.isValidAccount(first) || !MediaBindingIdentity.isValidAccount(second) ||
+            first.providerInstanceId != second.providerInstanceId || !ownsMediaServer(first.providerInstanceId) ||
+            !MediaBindingIdentity.sameEndpoint(first.normalizedBaseUrl, second.normalizedBaseUrl) ||
+            !isMediaBindingCurrent()
+        ) false
+        else {
+            val encoded = storedMediaBinding(first.providerInstanceId)
+            matchesMediaBinding(encoded, DownloadMediaBinding(first.providerInstanceId, first.normalizedBaseUrl, first.username)) &&
+                matchesMediaBinding(encoded, DownloadMediaBinding(second.providerInstanceId, second.normalizedBaseUrl, second.username))
+        }
+    } catch (_: Exception) { false }
 
     internal fun ownsMediaServer(serverId: String): Boolean = !explicitlyBound || serverId in mediaBindingEpochs
 

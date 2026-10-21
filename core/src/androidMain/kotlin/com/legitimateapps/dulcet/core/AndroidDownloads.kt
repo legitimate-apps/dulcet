@@ -132,6 +132,8 @@ public class AndroidDownloadController internal constructor(
     fileSystem: okio.FileSystem = okio.FileSystem.SYSTEM,
     private var artworkRoot: File? = null,
 ) : AutoCloseable {
+    init { require(MediaBindingIdentity.isValidAccount(account)) { "Invalid media binding" } }
+
     public constructor(context: Context, account: PlaybackEndpointAccount, tasks: AndroidDownloadTasks) : this(
         account = account,
         openStore = { DulcetDriverFactory(context.applicationContext).openDulcetDatabase() },
@@ -146,14 +148,33 @@ public class AndroidDownloadController internal constructor(
 
     public val providerInstanceId: String get() = account.providerInstanceId
 
-    public fun matchesAccount(expected: PlaybackEndpointAccount): Boolean = MediaBindingIdentity.sameAccount(account, expected)
+    @Volatile private var acceptedMediaAccounts = listOf(account)
+
+    /** Queue eligibility calls this for every candidate: no database or file work here. */
+    public fun matchesAccount(expected: PlaybackEndpointAccount): Boolean =
+        !closed && acceptedMediaAccounts.any { MediaBindingIdentity.sameAccount(it, expected) }
+
+    /** Database executor only; learn an authenticated alias at an explicit ownership boundary. */
+    private fun acceptMediaAccount(expected: PlaybackEndpointAccount): Boolean {
+        if (closed || !engine.isMediaBindingCurrent() ||
+            !engine.isSameMediaBinding(account, expected)) return false
+        rememberMediaAccount(expected)
+        return true
+    }
+
+    private fun rememberMediaAccount(expected: PlaybackEndpointAccount) {
+        if (acceptedMediaAccounts.none { MediaBindingIdentity.sameAccount(it, expected) }) {
+            acceptedMediaAccounts = acceptedMediaAccounts + expected
+        }
+    }
 
     /** Same media namespace: keep leases/tasks and use refreshed credentials for future requests. */
     public fun refreshAccount(expected: PlaybackEndpointAccount): Boolean {
-        if (!matchesAccount(expected)) return false
+        if (!MediaBindingIdentity.isValidAccount(expected) ||
+            !runBlocking(database) { acceptMediaAccount(expected) }) return false
         AndroidPlaybackController.prepareForMediaBinding(expected)
         return runBlocking(database) {
-            if (closed || !engine.isMediaBindingCurrent() || !matchesAccount(expected)) return@runBlocking false
+            if (!acceptMediaAccount(expected)) return@runBlocking false
             if (account == expected) return@runBlocking true
             wire?.let { old -> retiredNetworkClients += old::close }
             requests?.let { old -> retiredNetworkClients += old::close }
@@ -183,8 +204,10 @@ public class AndroidDownloadController internal constructor(
         runBlocking(database) {
             // Retire a different binding before acquiring its epoch, including direct constructors.
             instances.filter { it.providerInstanceId == account.providerInstanceId &&
-                it.downloadRoot.absolutePath == downloadRoot.absolutePath && !it.matchesAccount(account) }
-                .forEach { it.close() }
+                it.downloadRoot.absolutePath == downloadRoot.absolutePath }.forEach { previous ->
+                if (previous.acceptMediaAccount(account)) rememberMediaAccount(previous.account)
+                else previous.close()
+            }
             engine.bindMedia(DownloadMediaBinding(account.providerInstanceId, account.normalizedBaseUrl, account.username))
         }
     }
@@ -590,7 +613,7 @@ public class AndroidDownloadController internal constructor(
         val resource = openTransfer?.invoke(plan)
             ?: AndroidHttpPlaybackResource(resourceAccount, plan,
                 requests ?: throw AndroidDownloadTransferFailure(DomainError.Transport.Cancelled)) {
-                if (!closed && MediaBindingIdentity.sameAccount(resourceAccount, account)) requests else null
+                if (!closed && AndroidMediaBindingIdentity.sameAccount(store, resourceAccount, account)) requests else null
             }
         val resumable = withContext(database) {
             (engine.resumeDecision(row.downloadId, wall()) as? DownloadResumeDecision.Resume)?.data
@@ -880,7 +903,7 @@ public class AndroidDownloadController internal constructor(
     }
 
     internal companion object {
-        private val databaseDispatcher = object : CoroutineDispatcher() {
+        internal val databaseDispatcher = object : CoroutineDispatcher() {
             private val serial = Dispatchers.IO.limitedParallelism(1)
             // Unconfined/main-immediate continuations may return inline from database work.
             // Synchronous lease/tee callbacks reenter that same serial turn instead of waiting

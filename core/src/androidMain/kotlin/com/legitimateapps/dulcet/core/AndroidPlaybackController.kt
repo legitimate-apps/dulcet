@@ -189,6 +189,8 @@ public class AndroidPlaybackController internal constructor(
     /** Null: the server may always be contacted, as for an account connected in this process. */
     private val serverContact: AndroidServerContact? = null,
 ) : AutoCloseable {
+    init { require(MediaBindingIdentity.isValidAccount(account)) { "Invalid media binding" } }
+
     public constructor(context: Context, account: PlaybackEndpointAccount) : this(context, account, boundaries = null, localPlans = null)
     public constructor(context: Context, account: PlaybackEndpointAccount, localPlans: AndroidLocalPlaybackSource?) :
         this(context, account, boundaries = null, localPlans = localPlans)
@@ -358,7 +360,7 @@ public class AndroidPlaybackController internal constructor(
     internal fun httpPlaybackResource(plan: RemotePlaybackWirePlan): AndroidPlaybackResource {
         val resourceAccount = account
         return AndroidHttpPlaybackResource(resourceAccount, plan, requests) {
-            if (!closed && MediaBindingIdentity.sameAccount(resourceAccount, account)) requests else null
+            if (!closed && AndroidMediaBindingIdentity.sameAccount(store, resourceAccount, account)) requests else null
         }
     }
 
@@ -1517,7 +1519,7 @@ public class AndroidPlaybackController internal constructor(
     /** Refresh future requests without replacing the current item, prepared item or their resources. */
     public fun refreshAccount(expected: PlaybackEndpointAccount): Boolean {
         check(Looper.myLooper() == Looper.getMainLooper())
-        if (closed || !MediaBindingIdentity.sameAccount(account, expected)) return false
+        if (closed || !MediaBindingIdentity.isValidAccount(expected) || !AndroidMediaBindingIdentity.sameAccount(store, account, expected)) return false
         if (account == expected) return true
         val oldWire = wire
         val oldRequests = requests
@@ -1565,7 +1567,7 @@ public class AndroidPlaybackController internal constructor(
         private val instances = java.util.concurrent.CopyOnWriteArraySet<AndroidPlaybackController>()
         /** Must complete before a download controller can unlink the former binding's files. */
         public fun prepareForMediaBinding(account: PlaybackEndpointAccount) {
-            if (instances.isEmpty()) return
+            if (!MediaBindingIdentity.isValidAccount(account) || instances.isEmpty()) return
             val prepare = {
                 instances.toList().forEach { controller ->
                     if (!controller.refreshAccount(account)) controller.close()

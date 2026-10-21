@@ -123,6 +123,50 @@ public class AppleOfflineLibraryChangeDto internal constructor(
     public val errorKind: String?,
 )
 
+/** Binding-only access never constructs an authenticated client or performs a network request. */
+public object AppleMediaBindingClient {
+    /** Opens a read/adoption context without acquiring a replacement binding or touching files. */
+    public fun adoptAuthenticatedAccount(
+        databaseName: String,
+        downloadRootPath: String,
+        previous: PlaybackEndpointAccount,
+        confirmed: PlaybackEndpointAccount,
+    ): Boolean = withPolicy(databaseName, downloadRootPath) { it.adoptAuthenticatedAccount(previous, confirmed) }
+
+    public fun isSameMediaBinding(
+        databaseName: String,
+        downloadRootPath: String,
+        first: PlaybackEndpointAccount,
+        second: PlaybackEndpointAccount,
+    ): Boolean = withPolicy(databaseName, downloadRootPath) { it.isSameMediaBinding(first, second) }
+
+    /**
+     * Establishes a fresh namespace for a typed account change without saved-credential proof.
+     * Native playback and download executors must be retired before this scoped replacement.
+     */
+    public fun replaceUnconfirmedAccount(
+        databaseName: String,
+        downloadRootPath: String,
+        confirmed: PlaybackEndpointAccount,
+    ): Boolean {
+        if (!MediaBindingIdentity.isValidAccount(confirmed)) return false
+        return withPolicy(databaseName, downloadRootPath) { policy ->
+            policy.bindMedia(DownloadMediaBinding(
+                confirmed.providerInstanceId, confirmed.normalizedBaseUrl, confirmed.username,
+            ), forceReplacement = true)
+            true
+        }
+    }
+
+    private fun withPolicy(databaseName: String, downloadRootPath: String, action: (DownloadPolicyEngine) -> Boolean): Boolean = try {
+        require(databaseName.isNotBlank() && downloadRootPath.isNotBlank())
+        val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+        try {
+            action(DownloadPolicyEngine(opened.database, DownloadFileStore(downloadRootPath, okio.FileSystem.SYSTEM)))
+        } finally { opened.close() }
+    } catch (_: Throwable) { false }
+}
+
 /**
  * Objective-C-compatible facade over the durable download policy.
  *
@@ -156,6 +200,15 @@ public class AppleDownloadClient(
 
     public fun isMediaBindingCurrent(): Boolean = try {
         !closed && !initializationFailed && engine?.isMediaBindingCurrent() == true
+    } catch (_: Throwable) { false }
+
+    /** The caller has authenticated the exact saved credentials; this never binds or purges. */
+    public fun adoptAuthenticatedAccount(previous: PlaybackEndpointAccount, confirmed: PlaybackEndpointAccount): Boolean = try {
+        !closed && !initializationFailed && engine?.adoptAuthenticatedAccount(previous, confirmed) == true
+    } catch (_: Throwable) { false }
+
+    public fun isSameMediaBinding(first: PlaybackEndpointAccount, second: PlaybackEndpointAccount): Boolean = try {
+        !closed && !initializationFailed && engine?.isSameMediaBinding(first, second) == true
     } catch (_: Throwable) { false }
 
     public fun reconcile(

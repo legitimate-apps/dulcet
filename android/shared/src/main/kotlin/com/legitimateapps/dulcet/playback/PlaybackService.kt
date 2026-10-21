@@ -124,6 +124,10 @@ class PlaybackService : MediaLibraryService() {
             unavailableReason = "Saved credentials are unavailable. Reconnect your account."
             return null
         } ?: run { releasePlayback(); return null }
+        if (!com.legitimateapps.dulcet.core.MediaBindingIdentity.isValidBinding(account.id, account.serverUrl, account.username)) {
+            unavailableReason = "Saved server details are invalid. Reconnect your account."
+            return null
+        }
         if (activeId != account.id) { releasePlayback(); return null }
         val endpoint = PlaybackEndpointAccount(account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp)
         playback?.let { existing ->
