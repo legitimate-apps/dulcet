@@ -584,9 +584,12 @@ public class AndroidDownloadController internal constructor(
         closeNetworkAccess()
         // The store is released on the database thread, after anything already queued there.
         CoroutineScope(database).launch {
-            localLeases.clear()
-            refreshProtection()
-            offline.close(); store.close()
+            try {
+                localLeases.clear()
+                refreshProtection()
+            } finally {
+                try { offline.close() } finally { store.close() }
+            }
         }
     }
 
@@ -875,7 +878,8 @@ public class AndroidDownloadController internal constructor(
             it.downloadRoot.absolutePath == downloadRoot.absolutePath && it.matchesAccount(account) &&
             it.engine.isMediaBindingCurrent() }
         val targets = peers.toMutableList()
-        if (policyReady && engine.isMediaBindingCurrent() && this !in targets) targets += this
+        // Retirement removes this controller's contribution; only surviving peers need a refresh.
+        if (!closed && policyReady && engine.isMediaBindingCurrent() && this !in targets) targets += this
         val source = targets.firstOrNull() ?: return
         val rawIds = peers.flatMapTo(mutableSetOf()) { it.protectedRawIds }
         val identities = peers.flatMapTo(mutableSetOf()) { it.localLeases.values }

@@ -222,7 +222,9 @@ public class AndroidAccountData internal constructor(
             artworkParent: File,
             downloadRoot: File,
             savedAccountIds: () -> Set<String>,
-        ): Set<String> = withContext(Dispatchers.IO) {
+        ): Set<String> = withContext(AndroidDownloadController.databaseDispatcher) {
+            // Revoke bindings only between download turns, never between a queued callback's
+            // ownership check and its file/policy work. The same boundary orders close cleanup.
             val files = downloadFiles(downloadRoot)
             val listedFiles = files.listFiles()
             val withRows = withStore(openStore) { store ->
@@ -258,7 +260,7 @@ public class AndroidAccountData internal constructor(
         }
 
         private suspend fun removeStored(serverId: String, openStore: () -> DulcetDatabaseStore, artworkRoot: File, downloadRoot: File) =
-            withContext(Dispatchers.IO) {
+            withContext(AndroidDownloadController.databaseDispatcher) {
                 // Before the directory goes, so an artwork load finishing after this cannot recreate it.
                 removed += serverId
                 if (artworkRoot.exists() && !artworkRoot.deleteRecursively()) {

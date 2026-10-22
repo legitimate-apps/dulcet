@@ -1,6 +1,10 @@
 package com.legitimateapps.dulcet.core
 
 import android.net.Uri
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlCursor
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlPreparedStatement
 import androidx.media3.common.C
 import androidx.media3.datasource.DataSpec
 import kotlinx.coroutines.CancellationException
@@ -9,6 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okio.FileSystem
 import okio.ForwardingFileSystem
@@ -30,6 +36,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.*
 
 /**
@@ -905,6 +912,77 @@ class AndroidDownloadControllerTest {
         return output.toByteArray()
     }
 
+    @Test fun closingAfterBindingRevocationReleasesItsStoreWithoutUncaughtMaintenanceFailure() = runBlocking {
+        val failures = CopyOnWriteArrayList<Throwable>()
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        val armed = AtomicBoolean(false)
+        val closed = AtomicBoolean(false)
+        val checkpoint = CountDownLatch(1)
+        val releaseRead = CountDownLatch(1)
+        val enteredExecutor = CountDownLatch(1)
+        val releaseExecutor = CountDownLatch(1)
+        val driver = DulcetDriverFactory(context, databaseName).createDriver()
+        val observedDriver = object : SqlDriver by driver {
+            override fun <R> executeQuery(
+                identifier: Int?, sql: String, mapper: (SqlCursor) -> QueryResult<R>, parameters: Int,
+                binders: (SqlPreparedStatement.() -> Unit)?,
+            ): QueryResult<R> {
+                val result = driver.executeQuery(identifier, sql, mapper, parameters, binders)
+                // Hold a genuine ownership read only after it captured the real old epoch. A
+                // correctly retired controller skips this read and reaches the close checkpoint.
+                if (sql.contains("FROM library_depth_entry") && armed.compareAndSet(true, false)) {
+                    checkpoint.countDown()
+                    check(releaseRead.await(10, TimeUnit.SECONDS)) { "test did not release the ownership read" }
+                }
+                return result
+            }
+            override fun close() {
+                if (closed.compareAndSet(false, true)) driver.close()
+                checkpoint.countDown()
+            }
+        }
+        var controller: AndroidDownloadController? = null
+        var blocker: kotlinx.coroutines.Job? = null
+        Thread.setDefaultUncaughtExceptionHandler { _, failure -> failures += failure }
+        try {
+            controller = AndroidDownloadController(
+                PlaybackEndpointAccount(SERVER_ID, "https://music.example.invalid", USER, PASSWORD, false),
+                { DulcetDatabaseStore.open(observedDriver) }, root, RecordingTasks(), { NOW },
+                { 10L * 1024 * 1024 * 1024 }, null, {},
+            )
+            assertTrue(controller.awaitReconciled())
+            blocker = launch(AndroidDownloadController.databaseDispatcher) {
+                enteredExecutor.countDown()
+                check(releaseExecutor.await(10, TimeUnit.SECONDS)) { "test did not release the download executor" }
+            }
+            assertTrue(enteredExecutor.await(10, TimeUnit.SECONDS))
+            controller.close()
+            armed.set(true)
+            releaseExecutor.countDown()
+            assertTrue(checkpoint.await(10, TimeUnit.SECONDS), "queued retirement reached a real ownership read or resource close")
+            withStore { store ->
+                DownloadPolicyEngine(store.database, DownloadFileStore(root.path, FileSystem.SYSTEM)).removeAccountData(SERVER_ID)
+            }
+            releaseRead.countDown()
+            withContext(AndroidDownloadController.databaseDispatcher) { Unit }
+            assertTrue(failures.isEmpty(), "retired maintenance escaped its scope: ${failures.joinToString { it.stackTraceToString() }}")
+            assertTrue(closed.get(), "retirement must close its actual database driver even when the binding was revoked")
+            withStore { store ->
+                assertNull(store.database.libraryDepthQueries.selectEntry(
+                    SERVER_ID, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull(),
+                    "retirement must never reacquire the revoked binding")
+            }
+        } finally {
+            releaseExecutor.countDown()
+            releaseRead.countDown()
+            controller?.close()
+            blocker?.join()
+            withContext(AndroidDownloadController.databaseDispatcher) { Unit }
+            observedDriver.close()
+            Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+        }
+    }
+
     private fun controller(
         server: WireServer,
         tasks: RecordingTasks,
@@ -928,6 +1006,11 @@ class AndroidDownloadControllerTest {
 
     // JDBC's process-wide DriverManager would retain a sandbox-loaded driver that ordinary host
     // tests cannot see, so this Robolectric test opens the production Android driver instead.
+    private inline fun <T> withStore(block: (DulcetDatabaseStore) -> T): T {
+        val store = openStore()
+        return try { block(store) } finally { store.close() }
+    }
+
     private fun openStore(): DulcetDatabaseStore =
         DulcetDatabaseStore.open(DulcetDriverFactory(context, databaseName).createDriver())
 

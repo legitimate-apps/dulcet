@@ -5,6 +5,36 @@ local random account ID, the latter is authenticated product type and, for an ad
 server, its origin's discovery instance ID. Software versions do not enter lineage. See spec §28
 for trust, migration and plain OpenSubsonic limits.
 
+## Android removal and queued retirement
+
+OBSERVED in core-ci run `39818140263`, TV job `119961936427`: CONF-52 had already
+advanced local playback to 1,520 ms from bytes identical to the explicit download, while the
+relay refused connections and the server received no playback request. Queued controller close
+then failed in `refreshProtection` because account removal revoked its media binding between
+ownership checks. The uncaught exception also contaminated the following UI tests.
+
+OBSERVED fail-before: `AndroidDownloadControllerTest/closingAfterBindingRevocationReleasesItsStoreWithoutUncaughtMaintenanceFailure`
+reproduces the same real policy stack and fails one test. The real SQL-driver checkpoint permits
+safe closure without requiring the retired ownership read. The two `AndroidAccountDataTest`
+controls, `removalWaitsForQueuedDownloadDatabaseWorkBeforeRevokingItsBinding` and
+`sweepWaitsForQueuedDownloadDatabaseWorkBeforeRevokingItsBinding`, enter the real deletion APIs
+while the shared download executor is positively held. Both fail because real media is already
+deleted before that executor is released. They also require the rows and binding to remain until
+release, followed by complete removal.
+
+Account removal and the sweep now share the controllers' database executor. Protection refresh
+excludes the closed controller's contribution while updating live peers; nested `finally` blocks
+release offline writers and the database store. No revoked binding is reacquired and no exception
+is caught to hide the race. These host regressions establish the ordering boundary; final device
+CONF-52 remains a separate observation.
+
+OBSERVED after the fix: the three unchanged regressions pass with zero failures, errors or skips.
+The close control executes once in 0.406 seconds; removal and sweep execute twice in 11.903 seconds
+in total, including first-use setup. Both executor-held controls and the post-release deletion
+assertions pass. Broader class results and Linux soak evidence are recorded separately.
+The complete adjacent suites also pass: 29 `AndroidDownloadControllerTest` cases and 19
+`AndroidAccountDataTest` cases, 48 executions with zero failures, errors or skips.
+
 ## Playlist capability discovery and account retirement
 
 OBSERVED fail-before on the merged playlist-context and server-identity implementation: the JVM

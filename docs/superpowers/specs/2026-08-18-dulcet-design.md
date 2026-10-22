@@ -7916,6 +7916,15 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-22 — Serialize Android media removal with download retirement.**
+Account removal and the launch sweep use the download controllers' shared database executor for
+file deletion and binding revocation. They cannot revoke a binding between a queued download
+maintenance operation's ownership check and its protected-media read. Closing a controller removes
+its own protection contribution without reading its retired policy; live controllers sharing the
+same binding retain their protections. Queued close cleanup releases its offline writer and database
+store even if protection refresh fails. This ordering does not authorize a retired controller to
+reacquire a binding or change the counted-consent requirement before media removal.
+
 **2026-10-22 — Recheck account authorization after playlist capability discovery.**
 Playlist extension discovery can suspend after the outbox's identity check. A sender retired during
 that suspension remains closed after the answer returns; capability invalidation cannot reopen it.

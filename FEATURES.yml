@@ -921,6 +921,24 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerAccountsTest/aLegacyUnknownRecordCannotForgetTheServerIdentityLearnedByTheReader"
+            },
+            {
+              "observes": "The real Android policy and SQL driver close after binding revocation without an uncaught maintenance failure or reacquiring the old binding; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/closingAfterBindingRevocationReleasesItsStoreWithoutUncaughtMaintenanceFailure"
+            },
+            {
+              "observes": "Real account removal retains media, rows and binding while the shared download executor is held, then removes them after queued work finishes; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidAccountDataTest/removalWaitsForQueuedDownloadDatabaseWorkBeforeRevokingItsBinding"
+            },
+            {
+              "observes": "The launch sweep retains real media, rows and binding while the shared download executor is held, then removes them after queued work finishes; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidAccountDataTest/sweepWaitsForQueuedDownloadDatabaseWorkBeforeRevokingItsBinding"
             }
           ],
           "promotion_condition": {
@@ -950,6 +968,24 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerAccountsTest/aLegacyUnknownRecordCannotForgetTheServerIdentityLearnedByTheReader"
+            },
+            {
+              "observes": "The real Android policy and SQL driver close after binding revocation without an uncaught maintenance failure or reacquiring the old binding; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/closingAfterBindingRevocationReleasesItsStoreWithoutUncaughtMaintenanceFailure"
+            },
+            {
+              "observes": "Real account removal retains media, rows and binding while the shared download executor is held, then removes them after queued work finishes; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidAccountDataTest/removalWaitsForQueuedDownloadDatabaseWorkBeforeRevokingItsBinding"
+            },
+            {
+              "observes": "The launch sweep retains real media, rows and binding while the shared download executor is held, then removes them after queued work finishes; Android host runtime.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidAccountDataTest/sweepWaitsForQueuedDownloadDatabaseWorkBeforeRevokingItsBinding"
             }
           ],
           "promotion_condition": {
