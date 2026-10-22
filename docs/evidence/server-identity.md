@@ -214,3 +214,12 @@ requires a passing final full run.
 The native HTTP fixture is shared by the Mac and iOS download integration sources; the iOS download
 test target includes the existing MP3 resource used by these controls. This small `project.yml` and
 generated-project seam supplies test fixtures only. It changes no product target or Apple CI workflow.
+
+OBSERVED in the full runs on `dd7afb0d` (iPhone) and `61268b1a` (iPad): the playlist-drag
+helper exhausted a combined ten-second readiness wait after closing the player. Captured
+accessibility trees show the dismissed player and visible mini-player; the iPad trace spends
+9.25 seconds on the missing Close-element query alone. The helper now waits for Close absence
+and then bar hittability in separate bounded phases, up to ten seconds each. Both required states,
+the drag action and queue assertions remain. The complete iOS UI-test target builds locally with
+this change. Runtime confirmation remains a final-full-run requirement; this is test readiness
+evidence, not a production dismissal-performance claim.
