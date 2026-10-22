@@ -7916,8 +7916,20 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-21 — Finish an authorized native transfer locally in device-only mode.**
+An Apple native transfer started after accepted server identity carries an in-memory authorization
+for that task and account generation. Its completed bytes may promote locally without a fresh
+identity request, including after new network contact becomes unavailable. This does not authorize
+another transfer. The current binding must still own the download; account retirement or known
+identity rejection invalidates the authorization, including a completion already delivered to the
+app. Consume the authorization at completion and never persist it or infer it from session task
+enumeration. Restored or otherwise unproven secured receipts still negotiate server identity before
+promotion. Device-only playback does not cause a new request merely to finish an already authorized
+transfer.
+
 **2026-10-21 — Let secured delivery completion win asynchronous preparation.**
-Receipt reconciliation validates server identity before promoting secured background-download bytes.
+Restored or otherwise unproven receipt reconciliation validates server identity before promoting
+secured background-download bytes.
 When validated remote access opens, register the durable secured inbox before yielding to task
 enumeration or allowing new scheduling. While those receipt validations are in flight, both queue
 preparation and delivery of already prepared native plans wait for their results. A prepared

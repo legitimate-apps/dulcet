@@ -187,3 +187,30 @@ eight controls and these three cases. All five extracted Swift inbox controls pa
 is called by the existing Mac, iPhone and iPad download aggregates. The original Mac killed-process
 oracle remains unchanged and still requires a passing final full Apple run; these deterministic
 tests do not replace it. No Kotlin, shared live fixture, Apple CI workflow or tools/ci file changed.
+
+OBSERVED in full Apple run `39705275864`: the original Mac killed-process handoff oracle now passes
+unchanged (67.885 seconds) with exactly one target stream. The following open-reader offline proof
+then exposes a separate completion boundary: exact local bytes and playback progress pass, but one
+unexpected HTTP request follows the switch to device-only mode. A deterministic native regression
+identifies that request as `/rest/ping.view`, issued while promoting the already-started native
+download. It fails before the correction with one assertion (1.131 seconds); the download itself
+still completes with the exact 24,334 bytes and only its original stream.
+
+The correction records process-local task authorization only when starting a native transfer after
+accepted identity. Completion consumes that authorization and can promote locally for the same
+account generation and owned download without fresh contact. Account retirement and known identity
+rejection discard it. Restored task enumeration and durable inbox metadata never manufacture that
+authorization; restored receipts continue to perform identity negotiation and use the receipt barrier.
+
+OBSERVED locally: 13 native controls pass with zero failures (5.943 seconds). The live completion
+control leaves transport open after promotion and verifies zero additional HTTP before closing it
+and checking exact playable bytes. A held actual native delivery followed by identity rejection
+cannot promote or initiate contact. Restored receipt controls explicitly observe identity pings.
+The previous receipt-ordering, two-validator, ordinary-successor, playback and account controls remain
+green. Six account-removal controls, five inbox controls, fifteen handoff diagnostics and static Mac
+contracts also pass. The original full-workflow offline-reader oracle remains unchanged and still
+requires a passing final full run.
+
+The native HTTP fixture is shared by the Mac and iOS download integration sources; the iOS download
+test target includes the existing MP3 resource used by these controls. This small `project.yml` and
+generated-project seam supplies test fixtures only. It changes no product target or Apple CI workflow.
