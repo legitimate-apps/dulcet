@@ -2363,6 +2363,17 @@ final class DulcetiOSUITests: XCTestCase {
     /// A regular-width window shows Up Next beside the player and has no toggle for it.
     @MainActor
     private func upNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool = true) -> [String]? {
+        var labels: [String]?
+        // The player may still carry the drag/menu animation counted by XCTest after Close.
+        // Read and dismiss by their explicit states, keeping the live uncovered-bar assertion.
+        withoutIdleWaits(app) {
+            labels = self.readUpNextLabels(openingFrom: bar, in: app, compact: compact)
+        }
+        return labels
+    }
+
+    @MainActor
+    private func readUpNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool) -> [String]? {
         bar.tap()
         if compact {
             let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch

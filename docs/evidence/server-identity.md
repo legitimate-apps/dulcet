@@ -270,3 +270,25 @@ the same 15-second readiness budget for finite, nonzero bounds and uses one capt
 all three operations. Any valid size is accepted immediately; the existing 700-point compact
 threshold still rejects an incorrect layout. Final-head full Apple execution must establish
 runtime confirmation. No production, shared Android fixture, timeout or workflow changed.
+
+OBSERVED 2026-10-22 in full Apple run `39751224292` on `07b45488`, attempts 1
+and 2: each iPhone attempt executes 19 XCTest cases with 18 passes and one failure in
+`testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone`. Attempt 1 leaves the track's
+context menu open after both synthesized drags and adds no queue entry. Its touch coordinates
+start inside the enabled track row and end inside the enabled mini-player; the missed lift's
+cause remains unresolved. Attempt 2 fails the helper's live bar-hittability wait after Close;
+its hierarchy and recording show the dismissed player and visible bar. The Close-existence
+query takes 9.30 seconds, followed by another slow live bar query. Unrelated animation
+quiescence contributing to this second failure is ASSUMED, not established by these artifacts.
+
+The Up Next helper now uses the existing interaction scope around its complete read and
+close sequence on the current application process. The prior body is retained unchanged:
+Close absence and actual bar hittability each retain their ten-second bounds, and the drag
+must still add exactly one track while preserving the original paused canary. OBSERVED
+locally on an iPhone 17 Pro simulator with iOS 26.5 and a disposable Navidrome 0.63.2 fixture:
+the unchanged baseline passes one test in 139.078 seconds; the scoped helper passes one test
+in 126.322 seconds. Both use one drag, leave no menu open and add exactly one track to empty
+Up Next. Both complete iOS UI-test builds pass. These controls establish preserved behavior,
+not fail-before evidence or a demonstrated cause of either intermittent CI failure. Final-head
+full Apple execution remains required; no product code, gesture, oracle, timeout or workflow
+changes here.
