@@ -54,7 +54,7 @@ class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private
         val uri=URI(baseUrl.trimEnd('/')+path+if(encoded.isEmpty()) "" else "?$encoded")
         return request(uri,maxBytes)
     }
-    internal suspend fun request(uri: URI, maxBytes: Int): UpstreamResponse {
+    internal suspend fun request(uri: URI, maxBytes: Int, pinned: java.net.InetAddress? = null): UpstreamResponse {
         val g=gate(uri)
         if(g.waiting.incrementAndGet()>65) { g.waiting.decrementAndGet(); throw UpstreamUnavailable() }
         try {
@@ -72,29 +72,26 @@ class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private
                 currentCoroutineContext().ensureActive(); checkBackoff()
                 g.lastStart=clock.monotonicNanos(); onRequest?.invoke()
                 try {
-                    withContext(Dispatchers.IO) {
+                    val response=if(pinned!=null) PinnedImageHttp.get(uri,pinned,maxBytes,userAgent) else withContext(Dispatchers.IO) {
                         val req=HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).header("User-Agent",userAgent).header("Accept","application/json, image/*").GET().build()
-                        val future=client.sendAsync(req,HttpResponse.BodyHandler { BoundedBody(maxBytes) }).orTimeout(10,java.util.concurrent.TimeUnit.SECONDS)
-                        val response=suspendCancellableCoroutine<HttpResponse<ByteArray>> { continuation ->
-                            continuation.invokeOnCancellation { future.cancel(true) }
+                        val sending=client.sendAsync(req,HttpResponse.BodyHandler { BoundedBody(maxBytes) })
+                        val future=sending.copy().orTimeout(10,java.util.concurrent.TimeUnit.SECONDS)
+                        val received=suspendCancellableCoroutine<HttpResponse<ByteArray>> { continuation ->
+                            continuation.invokeOnCancellation { sending.cancel(true) }
                             future.whenComplete { value,error ->
-                                if(error!=null) continuation.resumeWith(Result.failure(error))
+                                if(error!=null) { sending.cancel(true); continuation.resumeWith(Result.failure(error)) }
                                 else continuation.resumeWith(Result.success(value))
                             }
                         }
-                        val headers=response.headers().map().mapKeys { it.key.lowercase() }
-                        val status=response.statusCode()
-                        val delay=backoff(status,headers)
-                        if(delay!=null) g.blockedUntil=maxOf(g.blockedUntil,clock.monotonicNanos()+delay*1_000_000)
-                        response.body().let { bytes ->
-                            if(status==429 || status==503) throw UpstreamUnavailable(delay)
-                            val length=headers["content-length"]?.firstOrNull()?.toLongOrNull()
-                            if(length!=null && length>maxBytes) throw UpstreamUnavailable()
-                            
-                            if(bytes.size>maxBytes || (length!=null && length!=bytes.size.toLong())) throw UpstreamUnavailable()
-                            UpstreamResponse(status,headers,bytes)
-                        }
+                        UpstreamResponse(received.statusCode(),received.headers().map().mapKeys { it.key.lowercase() },received.body())
                     }
+                    val headers=response.headers
+                    val delay=backoff(response.status,headers)
+                    if(delay!=null) g.blockedUntil=maxOf(g.blockedUntil,clock.monotonicNanos()+delay*1_000_000)
+                    if(response.status==429 || response.status==503) throw UpstreamUnavailable(delay)
+                    val length=headers["content-length"]?.firstOrNull()?.toLongOrNull()
+                    if(response.body.size>maxBytes || (length!=null && length!=response.body.size.toLong())) throw UpstreamUnavailable()
+                    response
                 } catch(e: CancellationException) { throw e }
                   catch(e: UpstreamUnavailable) { throw e }
                   catch(_: Exception) { throw UpstreamUnavailable() }

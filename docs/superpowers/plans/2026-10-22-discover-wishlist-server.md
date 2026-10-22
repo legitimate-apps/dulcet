@@ -224,6 +224,8 @@ assertEquals(0, noSeedRequests.size)
 
 ### Task 6: Server-proxied artwork
 
+Implementation note: `PinnedImageHttp.kt` and the shared scheduler are extended here so DNS-validated addresses are used directly at connect time, including each redirect. `DiscoverIdentity` is defined alongside the artwork client and consumed by Task 12.
+
 **Files:**
 - Create: `server/src/main/kotlin/com/legitimateapps/dulcet/server/discover/CoverArtClient.kt`
 - Test: `server/src/test/kotlin/com/legitimateapps/dulcet/server/DiscoverArtworkTest.kt`
