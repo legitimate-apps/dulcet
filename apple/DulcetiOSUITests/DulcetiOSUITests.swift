@@ -2398,8 +2398,15 @@ final class DulcetiOSUITests: XCTestCase {
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
         // The bar remains in the accessibility tree beneath the full-screen player on iPad.
         // Its existence alone let a read return while the player still obscured the drag source.
-        let dismissed = NSPredicate { _, _ in !close.exists && bar.isHittable }
-        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: dismissed, object: nil)], timeout: 10) == .completed else {
+        // A missing-element query alone has taken 9.25 s on CI. Polling it together
+        // with a second accessibility query exhausted one deadline despite a dismissed
+        // player and visible bar. Wait for each required state in its own bounded phase.
+        guard close.waitForNonExistence(timeout: 10) else {
+            XCTFail("Closing the player must dismiss it: " + app.debugDescription)
+            return nil
+        }
+        let uncovered = NSPredicate(format: "hittable == true")
+        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: uncovered, object: bar)], timeout: 10) == .completed else {
             XCTFail("Closing the player must dismiss it and uncover the bar: " + app.debugDescription)
             return nil
         }
