@@ -7427,7 +7427,7 @@ components:
       required: [id, type, timestamp, data]
       properties:
         id: {type: string, description: Equal to the `webhook-id` header; a receiver dedupes on it.}
-        type: {type: string, description: 'Known values: `play.recorded`, `nowPlaying.changed`, `itemState.changed`, `playlist.changed`, `queue.changed`, `catalog.changed`, `scan.completed`, `ping`.'}
+        type: {type: string, description: 'Known values: `wishlist.changed` (user:read, owner only), `wishlist.requested` (admin, all owners), `play.recorded`, `nowPlaying.changed`, `itemState.changed`, `playlist.changed`, `queue.changed`, `catalog.changed`, `scan.completed`, `ping`.'}
         timestamp: {type: string, format: date-time}
         userId: {type: string}
         data:
@@ -7445,7 +7445,7 @@ components:
         url: {type: string, format: uri}
         events:
           type: array
-          description: 'Known values: `play.recorded`, `nowPlaying.changed`, `itemState.changed`, `playlist.changed`, `queue.changed`, `catalog.changed`, `scan.completed`, `ping`. `*` for all the creating token may read.'
+          description: 'Known values: `wishlist.changed` (user:read, owner only), `wishlist.requested` (admin, all owners), `play.recorded`, `nowPlaying.changed`, `itemState.changed`, `playlist.changed`, `queue.changed`, `catalog.changed`, `scan.completed`, `ping`. `*` for all the creating token may read.'
           items: {type: string}
         description: {type: string}
         active: {type: boolean}
@@ -8020,3 +8020,19 @@ components:
       required:
       - libraryItem
       - operationId
+
+    WishlistChangedEvent:
+      type: object
+      required: [op, id, revision]
+      description: Owner-only wishlist.changed webhook data. Actual mutations only; delete omits wish. Signed through the durable outbox.
+      properties:
+        op: {type: string, description: 'Known values: upsert, delete.'}
+        id: {type: string}
+        revision: {type: string}
+        wish: {$ref: '#/components/schemas/Wish'}
+    WishlistRequestedEvent:
+      type: object
+      required: [wish]
+      description: Admin-only wishlist.requested webhook data. One per actual new wish, including an intentional re-add with a new id. The owner is wish.userId; the outer webhook userId remains the subscriber.
+      properties:
+        wish: {$ref: '#/components/schemas/Wish'}

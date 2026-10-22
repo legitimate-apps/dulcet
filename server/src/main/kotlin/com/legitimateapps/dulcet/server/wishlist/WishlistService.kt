@@ -47,6 +47,13 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
     private fun Db.Session.advance(user:String,kind:String,mbid:String,time:Long,removed:Boolean) {
         execute("INSERT INTO wishlist_target_clock VALUES(?,?,?,?,?) ON CONFLICT(user_id,kind,mbid) DO UPDATE SET action_time=excluded.action_time,removed=excluded.removed",user,kind,mbid,time,removed)
     }
+    private fun Db.Session.changed(user:String,id:String,deleted:Boolean=false,requested:Boolean=false) {
+        val wish=if(deleted)null else store.read(this,user,id)?.let(::present)
+        val data=if(deleted)j("op" to "delete","id" to id,"revision" to ctx.journal.revision("wish",id,user))
+            else j("op" to "upsert","id" to id,"revision" to wish!!.revision,"wish" to wishJson(wish))
+        ctx.apiEvents.publish(user,"wishlist.changed",data,setOf("user:read"))
+        if(requested)ctx.apiEvents.publish(null,"wishlist.requested",j("wish" to wishJson(wish!!)),setOf("admin"))
+    }
     fun add(userId:String,input:AddWish):WishMutation {
         if(!ctx.config.discover.wishlistEnabled)throw ApiProblem(404,"not-found")
         val a=canonical(input);val fp=fingerprint(a);val target=a.externalIds.getValue(a.kind.registryKey)
@@ -72,6 +79,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             val id="wi_"+UUID.randomUUID();val now=clock()
             execute("""INSERT INTO wishlist_wish(id,user_id,kind,canonical_mbid,external_ids,title,artist,year,artwork_id,source_type,source_id,added,state,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'wanted',?)""",id,userId,a.kind.wire,target,json(a.externalIds).toString(),a.snapshot.title,a.snapshot.artist,a.snapshot.year,a.snapshot.artworkId,a.source.type,a.source.id,time,now)
             save(userId,a.operationId,"add",fp,id,a.kind.wire,target,time,null,false)
+            changed(userId,id,requested=true)
             WishMutation(true,store.read(this,userId,id),false)
         }
     }
@@ -102,6 +110,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             execute("DELETE FROM wishlist_wish WHERE user_id=? AND id=?",userId,wish.id)
             advance(userId,kind,mbid,time,true)
             save(userId,r.operationId,"remove",fp,wish.id,kind,mbid,time,r.addOperationId,true)
+            changed(userId,wish.id,deleted=true)
             WishMutation(true,null,true)
         }
     }
@@ -133,6 +142,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             if(wish.state!=state || wish.note!=note) {
                 val now=clock()
                 execute("UPDATE wishlist_wish SET state=?,note=?,note_at=?,updated=? WHERE id=?",state,note,if(note==null)null else now,now,wishId)
+                changed(wish.userId,wishId)
             }
             store.read(this,wish.userId,wishId)!!
         }
@@ -158,7 +168,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             val now=clock()
             val inserted=execute("INSERT OR IGNORE INTO wishlist_rejected_match VALUES(?,?,?,?,?,?)",userId,target.kind.wire,mbid,libraryItem.type,libraryItem.id,now)>0
             val reopen=linked && ctx.config.discover.wishlistEnabled
-            if(reopen)execute("UPDATE wishlist_wish SET state='wanted',note=NULL,note_at=NULL,fulfilled=NULL,library_id=NULL,library_type=NULL,availability='{}',updated=? WHERE id=?",now,wish!!.id)
+            if(reopen) {execute("UPDATE wishlist_wish SET state='wanted',note=NULL,note_at=NULL,fulfilled=NULL,library_id=NULL,library_type=NULL,availability='{}',updated=? WHERE id=?",now,wish!!.id);changed(userId,wish.id)}
             save(userId,op,"reject",fp,wish?.id,target.kind.wire,mbid,now,null,wishId!=null && wish==null)
             WishMutation(inserted || reopen,wish?.let { store.read(this,userId,it.id) },false)
         }
@@ -167,7 +177,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
     internal fun updateAvailability(userId:String,wishId:String,expectedRevision:String,expectedScanStamp:String,availability:Availability):Boolean = db.write {
         val wish=store.read(this,userId,wishId) ?: return@write false
         if(wish.state=="fulfilled" || wish.revision!=expectedRevision || string("SELECT value FROM meta WHERE key='discover_scan_stamp'")!=expectedScanStamp)return@write false
-        if(wish.availability!=availability)execute("UPDATE wishlist_wish SET availability=?,updated=? WHERE id=?",encodeAvailability(availability),clock(),wishId)
+        if(wish.availability!=availability) {execute("UPDATE wishlist_wish SET availability=?,updated=? WHERE id=?",encodeAvailability(availability),clock(),wishId);changed(userId,wishId)}
         true
     }
     internal fun fulfil(userId:String,wishId:String,libraryItem:LibraryRef,expectedWishRevision:String,expectedScanStamp:String,availability:Availability):Boolean = db.write {
@@ -182,6 +192,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             execute("INSERT INTO api_library_receipt(user_id,item_id,at) SELECT ?,?,CAST(value AS INTEGER) FROM meta WHERE key=? ON CONFLICT(user_id,item_id) DO UPDATE SET at=excluded.at",userId,libraryItem.id,"library_changed:$userId")
         }
         execute("UPDATE wishlist_wish SET state='fulfilled',fulfilled=?,library_id=?,library_type=?,availability=?,updated=? WHERE id=?",now,libraryItem.id,libraryItem.type,encodeAvailability(availability),now,wishId)
+        changed(userId,wishId)
         true
     }
 
