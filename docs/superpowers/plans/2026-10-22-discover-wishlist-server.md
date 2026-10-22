@@ -1,6 +1,6 @@
 # Discover and Wishlist Server Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution review, 2026-10-22:** Implement directly in the owning thread, task by task, test first and commit each task. The app-specific superpowers execution sub-skill does not apply. Independent review follows the PR and is arranged by the owning session. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver design §7 step 1: server-only discovery, per-user wishes and scan fulfilment, with complete Dulcet API and OpenSubsonic extension contracts.
 
@@ -23,7 +23,7 @@
 - Album arrival means every track of at least one edition, not a matching id or count alone. Partial albums report e.g. `8` of `12`. Artist fulfilment requires an album.
 - Arrived wishes leave the default list 30 days after fulfilment but remain readable through API/history/sync.
 - “Dulcet API v1 is additive.” Use existing `catalog:read`, `user:read`, `user:write`, `user:delete`, `admin` and `account`; no new auth path.
-- Public text describes Dulcet only. GitHub text contains no em dashes. Use the supplied commit identity/trailers. One eventual implementation PR from `feat/discover-server` supersedes docs-only #352. This planning turn does not push.
+- Public text describes Dulcet only. GitHub text contains no em dashes. Use the supplied commit identity/trailers. One eventual implementation PR from `feat/discover-server` supersedes docs-only #352. The approved execution authorizes push, PR and CI, but no merge or review requests.
 
 ## Review Focus
 
@@ -37,7 +37,7 @@
 
 ## Repository map and execution conventions
 
-Read both specs, `CORPUS.md` and `CLAUDE.md` before implementation. Reconcile #349's actual main merge before editing overlapping files. No Gradle run is needed for this plan-only turn.
+Read both specs, `CORPUS.md` and `CLAUDE.md` before implementation. Build on this branch base while #349 remains open. Before opening the PR, fetch origin and merge origin/main with a merge commit, reconcile actual changes, compile integrations and rerun the server suite. Do not anticipate #349 edits. No Gradle run is needed for this plan-only turn.
 
 OBSERVED documentation checked 2026-10-22: [MusicBrainz API](https://musicbrainz.org/doc/MusicBrainz_API) documents browse paging, maximum 100 rows, and shortened release pages under its 500-track budget. Advance offsets by returned rows. [ListenBrainz API source](https://github.com/metabrainz/listenbrainz-server/blob/master/docs/users/api/index.rst) documents one request per second and `X-RateLimit-{Limit,Remaining,Reset-In,Reset}`. [Labs similar artists](https://labs.api.listenbrainz.org/similar-artists?algorithm=session_based_days_7500_session_300_contribution_5_threshold_10_limit_100_filter_True_skip_30&artist_mbids=8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11) exposes the algorithm selected below. These are upstream documentation, not fixture evidence. The lane brief supplies the other live shapes. Design §10 terms/thumbnail-caching checks remain PROD conditions.
 
@@ -47,7 +47,7 @@ Use these shell helpers for task commands. Acquire/release build capacity around
 
 ```sh
 server_test() {
-  ./gradlew :server:test --tests "com.legitimateapps.dulcet.server.$1" --rerun-tasks
+  ./gradlew :server:test --rerun --tests "com.legitimateapps.dulcet.server.$1"
 }
 commit_lane() {
   message=$1; shift
@@ -230,18 +230,18 @@ assertEquals(0, noSeedRequests.size)
 
 **Interfaces:** `CoverArtClient(http:PoliteHttp,cache:DiscoverCache,settings:DiscoverSettings)` produces `suspend thumbnail(groupMbid:String):DiscoverImage`, `DiscoverImage(bytes:ByteArray,contentType:String,age:CacheAge,placeholder:Boolean)`. Persist `discover_identity` mapping opaque item/artwork ids to kind/MBID. The service resolves artwork id; callers cannot supply URLs.
 
-- [ ] **Step 1: Write failing tests.** `redirectImageStaysOnServerAndCachesThirtyDays`: CAA `/release-group/{mbid}/front-250`, 307 fixture redirect, server-returned bytes, no device redirect and one repeat fetch. `redirectDoesNotForwardAuthAndRejectsDowngradeLoopOrOversize`: maximum 3 hops, HTTPS downgrade refusal, 5 MiB cap, auth/header canaries absent. `missingArtGetsPlaceholderButOutageRetainsCachedBytes`: 404 differs from temporary error, malformed JSON never served as image. Fixture artwork generated, never recorded. `privateRedirectTargetCannotReachMetadataOrLoopback` refuses private/link-local/metadata redirect targets except the explicitly configured mirror/fixture origin; address validation holds at connect time.
+- [ ] **Step 1: Write failing tests.** `redirectImageStaysOnServerAndCachesThirtyDays`: CAA `/release-group/{mbid}/front-250`, 307 fixture redirect, server-returned bytes, no device redirect and one repeat fetch. `redirectDoesNotForwardAuthAndRejectsDowngradeLoopOrOversize`: maximum 5 redirect hops, HTTPS downgrade refusal, 5 MiB cap, auth/header canaries absent. `missingArtGetsPlaceholderButOutageRetainsCachedBytes`: 404 differs from temporary error, malformed JSON never served as image. Fixture artwork generated, never recorded. `privateRedirectTargetCannotReachMetadataOrLoopback` refuses private/link-local/metadata redirect targets except the explicitly configured mirror/fixture origin; address validation holds at connect time.
 Assertion anchors (Kotlin; arrange the named scenarios above):
 
 ```kotlin
 assertContentEquals(first.bytes, cached.bytes)
-assertEquals("image/jpeg", cached.contentType)
+assertEquals(first.contentType, cached.contentType)
 assertEquals(1, thumbnailFetches)
 assertTrue(missingImage.placeholder)
 ```
 
 - [ ] **Step 2: Verify red.** Run `server_test DiscoverArtworkTest`.
-- [ ] **Step 3: Implement.** Explicit bounded redirects through scheduler, no userinfo/credentials, fixed first path, HTTPS preserved. Validate decoded image, at most 4,096 px per edge, resize to 250 px maximum and cache JPEG. Generated placeholder only on definitive absence. Cached bytes survive outage; uncached temporary failure is unavailable. Discover off returns existing bytes/placeholder without network. No full URLs/query strings in errors/logs. Redirect address policy permits public image hosts and the explicitly configured mirror origin; it does not inherit arbitrary private-network access from a public redirect.
+- [ ] **Step 3: Implement.** Explicit bounded redirects through scheduler, no userinfo/credentials, fixed first path, HTTPS preserved. Pass through thumbnail bytes without decoding or resizing. Require a positive JPEG, PNG, GIF or WebP magic-byte signature and the 5 MiB cap; otherwise fail without serving the bytes. Cache the validated bytes and signature-derived content type. The front-250 endpoint already sizes thumbnails; no ImageIO parser or dimension rule applies. Generated placeholder only on definitive absence. Cached bytes survive outage; uncached temporary failure is unavailable. Discover off returns existing bytes/placeholder without network. No full URLs/query strings in errors/logs. Redirect address policy permits public image hosts and the explicitly configured mirror origin; it does not inherit arbitrary private-network access from a public redirect.
 - [ ] **Step 4: Verify green.** Run `server_test DiscoverArtworkTest`; assert TTL `2_592_000_000L`, missing TTL `86_400_000L`, bytes/content type, close and cancellation. Every redirect in tests stays on the fixture server. Assert address validation holds at connect time using the webhook address-policy precedent, with no new private-target setting.
 - [ ] **Step 5: Commit.** Message `feat(server): proxy and cache discovery cover thumbnails`.
 

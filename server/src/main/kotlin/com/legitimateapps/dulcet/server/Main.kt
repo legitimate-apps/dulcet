@@ -56,6 +56,7 @@ data class Config(
     val webhookAllowPrivateTargets: Boolean = false,
     val webhookAllowOtherPorts: Boolean = false,
     val trustedProxies: List<String> = emptyList(),
+    val discover: com.legitimateapps.dulcet.server.discover.DiscoverSettings = com.legitimateapps.dulcet.server.discover.DiscoverSettings(),
 ) {
     internal val clientAddresses = com.legitimateapps.dulcet.server.auth.ClientAddresses(trustedProxies)
 
@@ -78,6 +79,7 @@ data class Config(
                 testMode = value("test-mode", "false")=="true",
                 webhookAllowPrivateTargets = value("webhook-allow-private-targets", "false")=="true",
                 webhookAllowOtherPorts = value("webhook-allow-other-ports", "false")=="true",
+                discover = com.legitimateapps.dulcet.server.discover.DiscoverSettings.load { name, default -> value(name, default) },
                 trustedProxies = value("trusted-proxies")?.trim()?.takeIf(String::isNotEmpty)?.split(',') ?: emptyList(),
                 publicUrl = value("public-url")?.trimEnd('/')?.also { url ->
                     val uri = java.net.URI(url)
