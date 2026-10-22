@@ -1643,7 +1643,9 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     fun conf82WhileTheServerScansPagesAppendUnguardedAndTheScanEndRebasesUnderAnUnchangedStamp() = withWindowPages {
         val stamp = server.scanStatus().getString("lastScan")
         proxy.rewrite({ it.endpoint == "getScanStatus" }) { body -> scanStatus(body) { it.put("scanning", true) } }
-        // Startup reads already run: install the presentation before counting reads under it.
+        // Install the presentation before its arrival fence. The proxy logs each arrival before
+        // choosing its rewrite rule, so every request counted from here must see the installed rule.
+        // A fence taken first can count a startup status that selected the previous rule in between.
         val presented = proxy.size()
         try {
             relaunchIntoAlbums()
@@ -1961,14 +1963,18 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
     private fun CountingProxy.Seen.offset(): Int = parameters.getValue("offset").toInt()
 
-    /** The albums grid's cards on screen (any part of them inside the grid), by index into what it draws. */
+    /**
+     * The visible album cells, by index into what the grid draws. A TV cell includes its cover and
+     * More button: either part can be the only visible part at a clipped viewport boundary.
+     */
     private fun visibleAlbums(): List<Int> {
         val bounds = compose.onNodeWithTag("library.albums").fetchSemanticsNode().boundsInRoot
-        return compose.onAllNodes(SemanticsMatcher("an album card") {
-            it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith(ALBUM_CARD)
+        return compose.onAllNodes(SemanticsMatcher("an album cell part") {
+            ALBUM_CELL_PART.matches(it.config.getOrElse(SemanticsProperties.TestTag) { "" })
         }).fetchSemanticsNodes()
             .filter { it.boundsInRoot.overlaps(bounds) }
-            .map { it.config[SemanticsProperties.TestTag].removePrefix(ALBUM_CARD).toInt() }
+            .map { checkNotNull(ALBUM_CELL_PART.matchEntire(it.config[SemanticsProperties.TestTag])).groupValues[1].toInt() }
+            .distinct()
             .sorted()
     }
 
@@ -2110,7 +2116,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
          */
         const val WINDOW_PAGE = 1
         const val SENTINEL = "0001-01-01T00:00:00Z"
-        const val ALBUM_CARD = "library.albums.item."
+        val ALBUM_CELL_PART = Regex("library\\.albums\\.item\\.(\\d+)(?:\\.more)?")
 
         /**
          * Longer than the reader's next retry wait after two retries (8 s: 2 s doubling, ASSUMED

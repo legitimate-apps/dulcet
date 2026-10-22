@@ -167,8 +167,69 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         try await waitUntil(timeout: .seconds(20), "playback must progress; phase=\(String(describing: app.store.snapshot.nowPlaying?.phase))") {
             app.store.snapshot.nowPlaying?.progressBegan == true
         }
+        let extensions = try await server.call("getOpenSubsonicExtensions", [])["openSubsonicExtensions"] as? [[String: Any]] ?? []
+        if extensions.contains(where: { $0["name"] as? String == "dulcetHome" && ($0["versions"] as? [Int] ?? []).contains(1) }) {
+            // This unique playlist has never been submitted by any other client. A passing
+            // now-playing report alone cannot populate this shelf.
+            var submitted = false
+            let deliveryDeadline = ContinuousClock.now.advanced(by: .seconds(50))
+            repeat {
+                let shelf = try await server.call("getDulcetHome", [URLQueryItem(name: "shelf", value: "recentPlaylists")])["dulcetHome"] as? [String: Any]
+                submitted = (shelf?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlistID }
+                if !submitted { try await Task.sleep(for: .milliseconds(250)) }
+            } while !submitted && ContinuousClock.now < deliveryDeadline
+            XCTAssertTrue(submitted, "The playlist play must reach server history")
+            try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.listenNow")
+            var refresh: Any?
+            try await waitUntil(timeout: .seconds(15), "Home Refresh must appear") {
+                refresh = app.windowFirstElement { app.identifier($0) == "dulcet.listenNow.refresh" }
+                return refresh != nil
+            }
+            try app.press(try XCTUnwrap(refresh), named: "Home Refresh")
+            try await waitUntil(timeout: .seconds(20), "Home must render the playlist this client just played") {
+                app.windowFirstElement { app.identifier($0) == "dulcet.library.playlist" && (app.label($0) ?? "").hasPrefix(name) } != nil
+            }
+            print("PLAYLIST CONTEXT PROOF idiom=macos rawPlaylist=\(playlistID) serverHistory=\(submitted) homeTile=true source=actual-playlist-play")
+        }
         print("DULCET MAC PLAYLIST PLAY PROOF PASS first=\(order[0].debugDescription)"
             + " queue=\(nowPlaying.queue.map(\.title)) source=\((nowPlaying.sourceDisplayName ?? "nil").debugDescription)")
+    }
+
+    /// The track's queue menu must keep the playlist origin even though the track itself also
+    /// belongs to an album. Either action on an empty player starts the inserted entry.
+    func playlistTrackQueueMenusSubmitTheirOwnPlaylistContextThroughTheHostedMacApp() async throws {
+        let server = try disposableServer()
+        let extensions = try await server.call("getOpenSubsonicExtensions", [])["openSubsonicExtensions"] as? [[String: Any]] ?? []
+        guard extensions.contains(where: { $0["name"] as? String == "dulcetHome" && ($0["versions"] as? [Int] ?? []).contains(1) }) else {
+            throw XCTSkip("Requires the disposable Dulcet Server playlist-history receiver")
+        }
+        let songID = try await server.songID("UI Playback Canary", album: "Threshold Boundary")
+        for action in ["Play Next", "Add to Queue"] {
+            let name = "Context Mac " + action + " " + UUID().uuidString.prefix(8)
+            let playlistID = try await server.createPlaylist(name, songIDs: [songID])
+            addTeardownBlock { try? await server.deletePlaylist(playlistID) }
+            let app = try await HostedApp(serverURL: server.baseURL, username: username, password: password, toolbar: true)
+            defer { app.close() }
+            try await openPlaylist(name, in: app)
+            let row = try await app.element(timeout: .seconds(20), described: "the playlist track") {
+                app.identifier($0) == "dulcet.reader.track"
+            }
+            try await app.chooseMenuItem(action, described: "the playlist track context menu") { try app.rightClick(row) }
+            try await waitUntil(timeout: .seconds(20), "The inserted track must start from its playlist") {
+                app.store.snapshot.nowPlaying?.current.id.rawID == songID
+                    && app.store.snapshot.nowPlaying?.sourceDisplayName == name
+                    && app.store.snapshot.nowPlaying?.progressBegan == true
+            }
+            var submitted = false
+            let deadline = ContinuousClock.now.advanced(by: .seconds(50))
+            repeat {
+                let shelf = try await server.call("getDulcetHome", [URLQueryItem(name: "shelf", value: "recentPlaylists")])["dulcetHome"] as? [String: Any]
+                submitted = (shelf?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlistID }
+                if !submitted { try await Task.sleep(for: .milliseconds(250)) }
+            } while !submitted && ContinuousClock.now < deadline
+            XCTAssertTrue(submitted, "The queued playlist track must submit its raw playlist ID")
+            print("PLAYLIST TRACK QUEUE PROOF idiom=macos action=\(action) rawPlaylist=\(playlistID) serverHistory=\(submitted)")
+        }
     }
 
     /// Every playlist edit the Mac offers, made through the rendered views and read back from the
@@ -426,6 +487,11 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
     }
 
     private func openPlaylist(_ name: String, in app: HostedApp) async throws {
+        // A Dulcet Server separates the owned library from the server catalog. Wait briefly
+        // for the advertised capability to publish its Browse row before choosing a catalog section.
+        if await app.element(identifiedBy: "dulcet.sidebar.browse", within: .seconds(2)) != nil {
+            try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.browse")
+        }
         try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.section.playlists")
         let row = try await app.element(timeout: .seconds(30), described: "the \(name) row") {
             app.identifier($0) == "dulcet.library.playlist" && (app.label($0) ?? "").hasPrefix(name)

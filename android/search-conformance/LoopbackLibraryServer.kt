@@ -65,6 +65,10 @@ class LoopbackLibraryServer : AutoCloseable {
      * songs, as the contract says), and `dulcetInLibrary` on every ordinary element it returns.
      */
     @Volatile var dulcetLibrary = false
+    /** Optional Home feed, with mutable recent playlists for offscreen refresh proofs. */
+    @Volatile var dulcetHome = false
+    @Volatile var homePlaylists: List<Pair<String, String>> = emptyList()
+
     private val libraryAlbumIds = LinkedHashMap<String, Long>()
     private val libraryArtistIds = LinkedHashMap<String, Long>()
     private val librarySongIds = LinkedHashMap<String, Long>()
@@ -160,8 +164,20 @@ class LoopbackLibraryServer : AutoCloseable {
             "getScanStatus" -> """"scanStatus":{"scanning":false,"count":6,"lastScan":"2026-09-01T00:00:00Z"}"""
             "getMusicFolders" -> """"musicFolders":{"musicFolder":[{"id":1,"name":"Music"}]}"""
             "getStarred2" -> """"starred2":{}"""
-            "getOpenSubsonicExtensions" -> if (dulcetLibrary)
-                """"openSubsonicExtensions":[{"name":"dulcetLibrary","versions":[1]}]""" else null
+            "getOpenSubsonicExtensions" -> listOfNotNull(
+                "dulcetLibrary".takeIf { dulcetLibrary }, "dulcetHome".takeIf { dulcetHome },
+            ).takeIf { it.isNotEmpty() }?.joinToString(",", "\"openSubsonicExtensions\":[", "]") {
+                """{"name":${quote(it)},"versions":[1]}"""
+            }
+            "getDulcetHome" -> if (!dulcetHome) null else {
+                val shelf = parameters["shelf"].orEmpty()
+                val content = if (shelf == "recentPlaylists") homePlaylists.joinToString(",", "\"playlist\":[", "]") { (id, name) ->
+                    """{"id":${quote(id)},"name":${quote(name)},"owner":"u","songCount":1}"""
+                } else (1..2).joinToString(",", "\"album\":[", "]") { index ->
+                    """{"id":"$shelf-$index","name":${quote(albumTitle(shelf, index))},"artist":"Fixture Artist","songCount":1}"""
+                }
+                "\"dulcetHome\":{$content}"
+            }
             "getDulcetLibrary" -> dulcetLibraryRead()
             "getAlbumList2" -> {
                 val type = parameters["type"].orEmpty()

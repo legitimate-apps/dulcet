@@ -36,6 +36,7 @@ class AndroidTvMyLibraryProofTest {
         // This proof requires the extension server; the ordinary Navidrome matrix still
         // exercises catalog fallback through myLibrarySplit below.
         org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("dulcetExpectSplit") == "true")
+        AndroidTvGridActionsProof(compose).run()
         AndroidTvOfflineLibraryProofTest().runOfflineProof(compose)
     }
 

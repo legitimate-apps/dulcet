@@ -1,9 +1,11 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlin.test.Test
+import kotlin.test.assertIs
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -533,6 +535,56 @@ class ApplePlaybackQueueFacadeTest {
             assertEquals(5, transport.parameters.size, "Nothing is sent for a dropped play")
         } finally {
             delivery.close()
+        }
+    }
+
+    @Test
+    fun networkReconnectInvalidatesTheInstalledSendersPositiveAndNegativeAdvertisements() = runTest {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        val positions = PersistentResumePositionStore(database)
+        val client = ApplePlaybackQueueClient(database,
+            PlaybackQueueController(PersistentQueueStore(database), positions, PlaybackIdentitySource { it }),
+            positions, StandardTestDispatcher(testScheduler))
+        var offered = true
+        var discoveries = 0
+        val sent = mutableListOf<Map<String, String>>()
+        val sender = ScrobbleEndpointSender(object : ScrobbleEndpointTransport {
+            override suspend fun extensions(): AuthenticatedEndpointResponse {
+                discoveries++
+                val extensions = if (offered) """[{"name":"dulcetHome","versions":[1]}]""" else "[]"
+                return envelope("""{"subsonic-response":{"status":"ok","openSubsonicExtensions":$extensions}}""")
+            }
+            override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse {
+                sent += parameters
+                return okEnvelope()
+            }
+        })
+        try {
+            client.installDelivery(ServerId("server"), sender,
+                PersistentScrobbleOutbox(database, OutboxWallClock { 1_788_000_000_000 }))
+            val event = RecordedPlaybackEvent.SubmittedPlay(ProviderItemId("server", "song"),
+                PlaybackWallClockTime(1_788_000_000_000), ProviderItemId("server", "playlist"))
+            suspend fun send(expected: String?) {
+                assertIs<ScrobbleSendResult.Sent>(sender.send(ScrobbleEndpointRequest(event)))
+                assertEquals(expected, sent.last()["dulcetContextId"])
+            }
+            send("playlist")
+            assertEquals(1, discoveries)
+            offered = false
+            client.setNetworkAvailable(false)
+            client.setNetworkAvailable(true)
+            send(null)
+            assertEquals(2, discoveries)
+            offered = true
+            client.setNetworkAvailable(true)
+            send("playlist")
+            assertEquals(3, discoveries)
+            send("playlist")
+            assertEquals(3, discoveries, "Ordinary plays reuse the connection's answer")
+        } finally {
+            client.close()
+            driver.close()
         }
     }
 

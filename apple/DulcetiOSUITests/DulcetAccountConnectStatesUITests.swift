@@ -587,6 +587,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         setLocalFixtureServer(running: true)
         XCTAssertNotNil(proxy.control("POST", "state=off", path: "/__dulcet/outage"))
         guard awaitSignOut(in: app, compact: compact) else { return }
+        // awaitSignOut can scroll the form past its upper status label. Reveal that same
+        // connected status before asserting it; reconnection still occurs without a UI action.
+        XCTAssertTrue(reveal(connected, in: app), "Recovered account status must be visible")
         XCTAssertTrue(connected.waitForExistence(timeout: 60), "Transient backoff must recover without a tap")
         print("DULCET ACCOUNT STATE reached=saved-offline-recovered")
 

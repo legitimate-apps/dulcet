@@ -42,6 +42,7 @@ internal data class PlaybackSessionStart(
     val attemptId: AttemptId,
     val itemId: ProviderItemId,
     val initialDuration: Duration? = null,
+    val playlistContextId: ProviderItemId? = null,
 )
 
 internal enum class PlaybackAttemptPhase {
@@ -275,6 +276,7 @@ internal class PlaybackCoreStateMachine {
                 attemptId = attemptId,
                 itemId = outgoing.itemId,
                 initialDuration = outgoing.accumulator.durationKnown,
+                playlistContextId = sessions.getValue(outgoing.playbackSessionId).start.playlistContextId,
             ),
         )
     }
@@ -640,6 +642,7 @@ internal class PlaybackCoreStateMachine {
                 RecordedPlaybackEvent.SubmittedPlay(
                     session.start.itemId,
                     effect.sessionStartWallClock,
+                    session.start.playlistContextId,
                 ),
             )
             is ScrobbleAccumulatorEffect.DiscontinuityDiscarded -> {

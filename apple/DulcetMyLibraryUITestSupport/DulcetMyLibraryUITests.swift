@@ -37,6 +37,43 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private let navidrome = "http://127.0.0.1:4785"
 
+#if os(tvOS)
+    @MainActor
+    func testFullGridMoreOpensAlbumActionsAndMembershipReachesServer() throws {
+        continueAfterFailure = false
+        try setOffline(false)
+        let album = try fixtureAlbum()
+        try removeAlbum(album.id)
+        defer { try? removeAlbum(album.id) }
+        try launch()
+        try select("browse")
+        try addFromFullGridMore(album)
+    }
+
+    private func addFromFullGridMore(_ album: (id: String, title: String)) throws {
+        try openAlbumList()
+        let tile = albumTile(album.title)
+        XCTAssertTrue(tile.waitForExistence(timeout: 30), "The full album grid must render the fixture")
+        focus(tile)
+        XCTAssertTrue(tile.hasFocus, "The full-grid tile must hold remote focus")
+        let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
+        let more = app.buttons["dulcet.library.item.more.\(album.id)"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        focus(more)
+        XCTAssertTrue(more.hasFocus, "The grid's More control must take independent remote focus")
+        try capture("TV-Full-Grid-More")
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "Select on More must open the full-grid tile's actions: " + app.debugDescription)
+        activate(add)
+        try awaitServerMembership(album.id, added: true)
+        // The same tile's primary Select action must still open its detail after dismissal.
+        focus(tile)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20))
+        print("TV FULL GRID MENU PROOF remoteSelectMore=true membershipServer=true primarySelect=true")
+    }
+#endif
+
     @MainActor
     func testBrowseAddRemoveRelaunchAndOfflineReplay() throws {
         continueAfterFailure = false
@@ -48,17 +85,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
         try select("browse")
 #if os(tvOS)
-        let tile = try focusBrowseShelfAlbum(album.title)
-        let contextAdd = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
-        // As in the TV design tour, the first hold can leave the album focused without
-        // opening its native menu. Retry a longer real hold only on that same focused tile.
-        for duration in [1.5, 3.0] {
-            guard tile.exists, tile.hasFocus else { break }
-            XCUIRemote.shared.press(.select, forDuration: duration)
-            if contextAdd.waitForExistence(timeout: 4) { break }
-        }
-        XCTAssertTrue(contextAdd.waitForExistence(timeout: 10), "Remote press and hold offers membership: \(app.debugDescription)")
-        activate(contextAdd)
+        try addFromFullGridMore(album)
         try select("library")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
@@ -722,6 +749,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private func isFocused(_ target: XCUIElement) -> Bool {
         if target.hasFocus { return true }
+        // Native confirmation dialogs expose an identified action and a focused UIKit
+        // alias at the same label/frame. The alias carries focus, the identified one does not.
+        let button = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        if button.exists, button.label == target.label, button.frame == target.frame { return true }
         // tvOS context-menu actions sit inside a focused cell rather than holding focus themselves.
         let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
         return cell.exists && cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))

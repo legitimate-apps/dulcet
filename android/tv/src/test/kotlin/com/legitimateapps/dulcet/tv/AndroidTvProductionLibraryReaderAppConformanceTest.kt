@@ -98,7 +98,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             /** As a remote reaches the list's status lines: Up until focus leaves the cards for the grid's header. */
             override fun showListStatus() {
                 repeat(64) {
-                    if (focusedAlbum() == null) {
+                    if (focusedAlbumControl() == null) {
                         // The taller header now has Load More below status. Reaching that button
                         // does not reveal the status yet. Settle its retry focus before the shared
                         // scenario decides whether moving here left the window's end. That move
@@ -112,34 +112,42 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                     }
                     key(Key.DirectionUp)
                 }
-                error("The remote did not leave the album cards; focus is on ${focusedAlbum()}")
+                error("The remote did not leave the album controls; focus is on ${focusedAlbumControl()}")
             }
 
             /**
              * As a remote moves through a grid: from the card that has focus (or the first card drawn),
-             * Down a row a press and then Right along the row, until the card at [index] has focus;
-             * the grid scrolls to keep focus in view. A step that overshoots goes back Up.
+             * Down through each card's More button to the next row, then Right along the row,
+             * until the primary card at [index] has focus. The grid scrolls to keep focus in view;
+             * a step that overshoots goes back Up through the same real focus stops.
              */
             override fun showAlbum(index: Int) {
-                if (focusedAlbum() == null) {
+                if (focusedAlbumControl() == null) {
                     val first = compose.onAllNodes(albumCard()).fetchSemanticsNodes()
                         .minOf { it.config[SemanticsProperties.TestTag].removePrefix(ALBUM_CARD).toInt() }
                     compose.onNodeWithTag("$ALBUM_CARD$first").performSemanticsAction(SemanticsActions.RequestFocus)
                     compose.waitForIdle()
                 }
                 var downward = true
-                repeat(64) {
-                    val focused = checkNotNull(focusedAlbum()) { "no album card has focus" }
-                    if (focused == index) return
+                repeat(128) {
+                    val control = checkNotNull(focusedAlbumControl()) { "no album control has focus" }
+                    val (focused, more) = control
+                    if (focused == index && !more) {
+                        compose.onNodeWithTag("$ALBUM_CARD$index").assertIsFocused()
+                        return
+                    }
                     val step = when {
+                        focused == index && more -> Key.DirectionUp
                         focused > index -> Key.DirectionUp.also { downward = false }
                         downward -> Key.DirectionDown
                         else -> Key.DirectionRight
                     }
                     key(step)
-                    if (step == Key.DirectionDown && focusedAlbum() == focused) downward = false
+                    // Down crosses the More button before reaching the next row. Only a
+                    // step that leaves the exact same control focused means the grid ended.
+                    if (step == Key.DirectionDown && focusedAlbumControl() == control) downward = false
                 }
-                error("The remote did not reach album card $index; focus is on ${focusedAlbum()}")
+                error("The remote did not reach primary album card $index; focus is on ${focusedAlbumControl()}")
             }
 
             /** A TV has no touch: focus on the node, then the remote's centre key. */
@@ -190,7 +198,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     }
 
     private fun albumCard() = SemanticsMatcher("an album card") {
-        it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith(ALBUM_CARD)
+        ALBUM_CARD_TAG.matches(it.config.getOrElse(SemanticsProperties.TestTag) { "" })
     }
 
     /** The album card that has focus, by its index, if one has. */
@@ -198,9 +206,20 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         .firstOrNull { it.config.getOrElse(SemanticsProperties.Focused) { false } }
         ?.config?.get(SemanticsProperties.TestTag)?.removePrefix(ALBUM_CARD)?.toInt()
 
+    /** Both focus stops participate in remote traversal; only the cover is a primary card. */
+    private fun focusedAlbumControl(): Pair<Int, Boolean>? = compose.onAllNodes(SemanticsMatcher("an album focus stop") {
+        ALBUM_CONTROL_TAG.matches(it.config.getOrElse(SemanticsProperties.TestTag) { "" })
+    }).fetchSemanticsNodes().firstOrNull { it.config.getOrElse(SemanticsProperties.Focused) { false } }
+        ?.config?.get(SemanticsProperties.TestTag)?.let { tag ->
+            val match = checkNotNull(ALBUM_CONTROL_TAG.matchEntire(tag))
+            match.groupValues[1].toInt() to tag.endsWith(".more")
+        }
+
     private companion object {
         val TRACK_ROW = Regex("album\\.track\\.(\\d+)")
         const val ALBUM_CARD = "library.albums.item."
+        val ALBUM_CARD_TAG = Regex("library\\.albums\\.item\\.(\\d+)")
+        val ALBUM_CONTROL_TAG = Regex("library\\.albums\\.item\\.(\\d+)(?:\\.more)?")
     }
 
     @Test fun conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline() =

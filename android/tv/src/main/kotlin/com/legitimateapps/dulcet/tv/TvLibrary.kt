@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.tv
 
 import com.legitimateapps.dulcet.library.playPlaylist
+import com.legitimateapps.dulcet.library.queuePlaylistTrack
 import com.legitimateapps.dulcet.library.playlistEditLine
 import com.legitimateapps.dulcet.library.playlistOwnerLine
 import com.legitimateapps.dulcet.library.playlistPendingLine
@@ -317,7 +318,7 @@ internal fun TvLibraryEntry(
                             TvMyLibraryHome(account, session, myLibrarySession, playback, navigator)
                         top == ROUTE_LIBRARY -> TvLibraryHome(account, session, playback, navigator)
                         top == ROUTE_BROWSE -> TvLibraryHome(account, session, playback, navigator)
-                        top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator)
+                        top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator, playback)
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
                         top == ROUTE_SONGS -> TvDeviceSongs(account, session, playback, navigator, false, playingRawId)
                         top == ROUTE_DOWNLOADED -> TvDeviceSongs(account, session, playback, navigator, true, playingRawId)
@@ -831,7 +832,7 @@ internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolea
  * leaves the remote on the button chosen.
  */
 @Composable
-private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator) {
+private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator, playback: AndroidPlaybackController?) {
     val depth by session.depth.collectAsState()
     if (depth == null) { TvStatement("…", "library.albums.loading"); return }
     val filters = com.legitimateapps.dulcet.library.rememberLibraryCategory(session, "albums")
@@ -839,7 +840,7 @@ private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, naviga
     val sort = rememberAlbumSort(session)
     val order = sort.value
     val surface = rememberSurface(session, ROUTE_ALBUMS + ":" + order) { openAlbums(order) }
-    TvBrowseGrid(account, session, surface, "library.albums", R.string.tv_library_albums,
+    TvBrowseGrid(account, session, surface, "library.albums", R.string.tv_library_albums, playback = playback,
         controls = { TvAlbumSortRow(order, sort::choose); TvLibraryCategoryControls(filters, showSort = false) }) { item ->
         if (item is AndroidLibraryItem.Album) navigator.openAlbum(item.rawId)
     }
@@ -897,7 +898,7 @@ private fun TvArtistsGrid(account: SearchAccount, session: LibrarySession, navig
 
 @Composable
 private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surface: LibrarySurface, tag: String, title: Int,
-                         controls: (@Composable () -> Unit)? = null, open: (AndroidLibraryItem) -> Unit) {
+                         controls: (@Composable () -> Unit)? = null, playback: AndroidPlaybackController? = null, open: (AndroidLibraryItem) -> Unit) {
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
     val current = publication
@@ -934,7 +935,7 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
             }
         }
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
-            TvCard(account, item, "$tag.item.$position", default = position == 0, width = null) { open(item) }
+            TvContextCard(account, session, playback, item, "$tag.item.$position", default = position == 0, width = null) { open(item) }
         }
     }
 }
@@ -1372,12 +1373,15 @@ internal fun tvTrackAddition(
     provider: String,
     track: AndroidLibraryItem.Track,
     album: AndroidLibraryItem.Album?,
+    playlist: AndroidLibraryItem.Playlist? = null,
 ): TvQueueAddition? {
     // Hidden while no playback service is bound, rather than offered and then refused (spec §14.1).
     if (playback == null || !track.canBeQueued()) return null
     val library = context.getString(R.string.tv_library_title)
     fun add(insertion: AndroidQueueInsertion) {
-        if (!queueTrack(playback, provider, track, insertion, library, album)) queueEditRefused(context)
+        val accepted = if (playlist == null) queueTrack(playback, provider, track, insertion, library, album)
+            else queuePlaylistTrack(playback, provider, track, playlist, insertion)
+        if (!accepted) queueEditRefused(context)
     }
     return TvQueueAddition(track.title.orEmpty(), { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) },
         TvPlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty()))
@@ -1635,7 +1639,7 @@ private fun TvPlaylistScreen(
                         onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                         tagPrefix = "playlist.entry",
                         byPosition = true,
-                        onQueue = tvTrackAddition(context, playback, provider, item, null)?.let { addition -> { adding = addition } },
+                        onQueue = tvTrackAddition(context, playback, provider, item, null, playlist)?.let { addition -> { adding = addition } },
                     )
                 }
             }

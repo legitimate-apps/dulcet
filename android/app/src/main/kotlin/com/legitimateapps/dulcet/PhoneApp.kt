@@ -51,6 +51,7 @@ import com.legitimateapps.dulcet.library.playAlbum
 import com.legitimateapps.dulcet.library.playArtist
 import com.legitimateapps.dulcet.library.playTracks
 import com.legitimateapps.dulcet.library.playPlaylist
+import com.legitimateapps.dulcet.library.queuePlaylistTrack
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.MyLibraryAvailability
@@ -170,6 +171,9 @@ internal fun PhoneApp(
         },
         queueTrack = { track, insertion, album ->
             if (!queueTrack(playback, provider, track, insertion, libraryName, album)) queueEditRefused(context)
+        },
+        queuePlaylistTrack = { track, playlist, insertion ->
+            if (!queuePlaylistTrack(playback, provider, track, playlist, insertion)) queueEditRefused(context)
         },
         openGenre = { routes += "genre:$it" },
         playTracksFrom = { items, rawId, source, shuffle ->
@@ -363,6 +367,8 @@ internal class PhoneActions(
     val queueAlbum: (AndroidLibraryPublication, AndroidQueueInsertion) -> Unit = { _, _ -> },
     /** Play Next or Add to Queue for one track, shown on the album given, if any. */
     val queueTrack: (AndroidLibraryItem.Track, AndroidQueueInsertion, AndroidLibraryItem.Album?) -> Unit = { _, _, _ -> },
+    /** A playlist entry inserted next or later retains its real playlist source. */
+    val queuePlaylistTrack: (AndroidLibraryItem.Track, AndroidLibraryItem.Playlist, AndroidQueueInsertion) -> Unit = { _, _, _ -> },
     /** Opens a genre's songs, by the genre's name. */
     val openGenre: (String) -> Unit = {},
     /**
@@ -376,6 +382,11 @@ internal class PhoneActions(
      */
     val queueEditing: Boolean = true,
 ) {
+    fun playlistTrackQueue(track: AndroidLibraryItem.Track, playlist: AndroidLibraryItem.Playlist?): TrackQueue? =
+        if (!queueEditing || !track.canBeQueued() || playlist == null) null
+        else TrackQueue({ queuePlaylistTrack(track, playlist, AndroidQueueInsertion.PlayNext) },
+            { queuePlaylistTrack(track, playlist, AndroidQueueInsertion.AddToQueue) })
+
     /** A row's Play Next and Add to Queue, or null for a track that cannot be queued now. */
     fun trackQueue(track: AndroidLibraryItem.Track, album: AndroidLibraryItem.Album?): TrackQueue? =
         if (!queueEditing || !track.canBeQueued()) null

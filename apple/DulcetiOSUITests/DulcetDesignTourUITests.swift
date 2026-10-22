@@ -81,6 +81,7 @@ final class DulcetDesignTourUITests: XCTestCase {
 
     @MainActor
     func testListenNowLaunchAlbumAndRelaunch() throws {
+        continueAfterFailure = false
         let environment = ProcessInfo.processInfo.environment
         guard environment["DULCET_HOME_PROOF"] == "1" else { throw XCTSkip("Requires a disposable home fixture") }
         let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
@@ -118,6 +119,95 @@ final class DulcetDesignTourUITests: XCTestCase {
         XCTAssertTrue(openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact))
         XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
         XCTAssertTrue(home.waitForExistence(timeout: 10))
+        try provePlaylistContextIfAdvertised(in: app, compact: compact, environment: environment)
+    }
+
+    /// The ordinary-server Home proof remains unchanged. On the advertised disposable server,
+    /// a brand-new playlist cannot appear in history until this client actually submits its play.
+    @MainActor
+    private func provePlaylistContextIfAdvertised(in app: XCUIApplication, compact: Bool,
+                                                   environment: [String: String]) throws {
+        let server = TourServer(url: try (environment["DULCET_PLAYLIST_CONTEXT_UPSTREAM"] ?? XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])),
+                                username: try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+                                password: try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"]))
+        let extensions = rest("getOpenSubsonicExtensions", [], server)?["openSubsonicExtensions"] as? [[String: Any]] ?? []
+        guard extensions.contains(where: { $0["name"] as? String == "dulcetHome" && ($0["versions"] as? [Int] ?? []).contains(1) }) else { return }
+        let songs = (rest("search3", [URLQueryItem(name: "query", value: "UI Playback Canary"),
+                                    URLQueryItem(name: "songCount", value: "20")], server)?["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? []
+        let song = try XCTUnwrap(songs.first { $0["title"] as? String == "UI Playback Canary" })
+        let songID = try XCTUnwrap(song["id"] as? String)
+        let idiom = UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone"
+        let name = "Context " + idiom + " " + UUID().uuidString.prefix(8)
+        let made = rest("createPlaylist", [URLQueryItem(name: "name", value: name),
+                                           URLQueryItem(name: "songId", value: songID)], server)?["playlist"] as? [String: Any]
+        let playlistID = try XCTUnwrap(made?["id"] as? String)
+        defer { _ = rest("deletePlaylist", [URLQueryItem(name: "id", value: playlistID)], server) }
+        func historyContainsPlaylist() -> Bool {
+            let home = rest("getDulcetHome", [URLQueryItem(name: "shelf", value: "recentPlaylists")], server)?["dulcetHome"] as? [String: Any]
+            return (home?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlistID }
+        }
+        XCTAssertFalse(historyContainsPlaylist(), "Creating or reading the playlist must not supply a play")
+        if !compact {
+            // The wide shell can already own its playlist window before this external fixture
+            // create. Reconnect the actual app so that window revalidates its first publication.
+            app.terminate()
+            app.launchArguments = ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url",
+                                   try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"]),
+                                   "-dulcet-debug-account-username", server.username,
+                                   "-dulcet-debug-account-password", server.password]
+            launchInInteractionScope(app)
+            XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        }
+        XCTAssertTrue(openPlaylists(in: app, compact: compact), app.debugDescription)
+        let row = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(scrollIntoView(row, in: app))
+        row.tap()
+        let play = app.buttons["dulcet.playlist.play"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 20))
+        XCTAssertTrue(waitFor(timeout: 20) { play.isEnabled })
+        XCTAssertFalse(historyContainsPlaylist(), "Playlist reads must still leave history empty")
+        play.tap()
+        let miniPlayer = app.buttons["dulcet.mini-player.open"].firstMatch
+        XCTAssertTrue(miniPlayer.waitForExistence(timeout: 15), "Playlist Play must open a real player: " + app.debugDescription)
+        miniPlayer.tap()
+        let elapsed = app.staticTexts["Elapsed"].firstMatch
+        XCTAssertTrue(elapsed.waitForExistence(timeout: 15), "A player must report progressing media time: " + app.debugDescription)
+        let initialElapsed = elapsed.value as? String
+        XCTAssertTrue(waitFor(timeout: 8) { (elapsed.value as? String) != initialElapsed }, "Elapsed media time must advance before the delivery proof")
+        var offlineRelaunch = false
+        if let proxy = environment["DULCET_PLAYLIST_CONTEXT_OFFLINE_PROXY"] {
+            func setOffline(_ offline: Bool) throws {
+                let url = try XCTUnwrap(URL(string: proxy + "/fixture/network?offline=" + (offline ? "1" : "0")))
+                XCTAssertEqual(String(data: try Data(contentsOf: url), encoding: .utf8), offline ? "offline" : "online")
+            }
+            // The fixture proxy buffers this 31-second local file before serving it. Block
+            // new requests only after the real player's elapsed media time has advanced.
+            try setOffline(true)
+            defer { try? setOffline(false) }
+            Thread.sleep(forTimeInterval: 23)
+            XCTAssertFalse(historyContainsPlaylist(), "The failed submission must remain local while offline")
+            app.terminate(); app.launchArguments = []; launchInInteractionScope(app)
+            XCTAssertTrue(app.descendants(matching: .any)["dulcet.listenNow"].firstMatch.waitForExistence(timeout: 20), "Saved Home must reopen offline")
+            XCTAssertFalse(historyContainsPlaylist(), "Offline relaunch must not fabricate delivery")
+            try setOffline(false)
+            app.terminate(); launchInInteractionScope(app)
+            offlineRelaunch = true
+        }
+        XCTAssertTrue(waitFor(timeout: 50) { historyContainsPlaylist() }, "A real playlist play must reach the server with its raw playlist ID")
+        if app.buttons["dulcet.now-playing.close"].firstMatch.exists { closePlayer(in: app) }
+        dismissOverlay(in: app)
+        XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
+        let refresh = app.buttons["dulcet.listenNow.refresh"].firstMatch
+        XCTAssertTrue(scrollIntoView(refresh, in: app))
+        refresh.tap()
+        let recent = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        XCTAssertTrue(recent.waitForExistence(timeout: 30), "Home must render the playlist this client just played: " + app.debugDescription)
+        XCTAssertTrue(scrollIntoView(recent, in: app))
+        shoot("playlist-context-" + idiom, app)
+        print("PLAYLIST CONTEXT PROOF idiom=\(idiom) rawPlaylist=\(playlistID) serverHistory=true homeTile=true offlineRelaunch=\(offlineRelaunch) source=actual-playlist-play")
     }
 
     @MainActor
@@ -604,7 +694,9 @@ final class DulcetDesignTourUITests: XCTestCase {
 
     @MainActor
     private func openPlaylists(in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
+        let hasBrowse = compact ? app.tabBars.buttons["Browse"].firstMatch.exists
+            : app.staticTexts["dulcet.sidebar.browse"].firstMatch.exists
+        guard openDestination(hasBrowse ? "Browse" : "Library", sidebar: hasBrowse ? "dulcet.sidebar.browse" : "dulcet.sidebar.library", in: app, compact: compact) else { return false }
         if !compact { return tapSidebarSection("playlists", in: app) }
         let link = app.buttons["dulcet.reader.section.playlists"].firstMatch
         guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else { return false }

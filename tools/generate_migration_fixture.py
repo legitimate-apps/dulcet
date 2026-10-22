@@ -24,7 +24,7 @@ it are written down. This tool is those steps:
                                                            # every version with a seed (CI)
 
 Fixtures v1-v3 were written with SQLite 3.50.6, v4-v9 with SQLite 3.51.0, and v10-v11 with
-SQLite 3.54.0, by Python's sqlite3 module; none reserves bytes per page. Writing and --check
+SQLite 3.54.0, and v12 with SQLite 3.53.4, by Python's sqlite3 module; none reserves bytes per page. Writing and --check
 require the SQLite version recorded for that fixture and refuse a result that reserves bytes, because
 a different build lays pages out differently and a regeneration would then differ for reasons that
 have nothing to do with the schema. --check is
@@ -50,7 +50,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tools/migration-fixtures"
 MIGRATIONS = ROOT / "core/src/commonMain/sqldelight/migrations"
 SQLITE_VERSION = "3.51.0"
-SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0", 11: "3.54.0"}
+SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0", 11: "3.54.0", 12: "3.53.4"}
 PAGE_SIZE = 4096
 
 
@@ -252,7 +252,17 @@ def seed_v11(connection):
     )
 
 
-SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11}
+def seed_v12(connection):
+    """Keep a submitted playlist context alongside pre-upgrade song-only events."""
+    connection.execute(
+        "INSERT INTO scrobble_outbox (server_id, raw_id, session_start_wall_clock, "
+        "created_at_wall_clock, attempt_count, playlist_raw_id) VALUES (?, ?, ?, ?, ?, ?)",
+        ("server:fixture-alpha", "track:playlist-play", 1_788_000_100_000,
+         1_788_000_100_100, 2, "playlist:opaque/context"),
+    )
+
+
+SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11, 12: seed_v12}
 
 
 def require_sqlite_version(version):

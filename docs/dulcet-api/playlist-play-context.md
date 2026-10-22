@@ -1,9 +1,10 @@
 # Playlist play context: client integration contract
 
-The Home server receiver is implemented. The submitted-play outbox owner must implement the
-client propagation below before a playlist played in the app appears in Recently Played
-Playlists. Reading Home or a playlist does not supply this signal. This document defines the
-handoff; it does not claim that client propagation is already implemented.
+The Home server receiver and shared submitted-play outbox carry playlist provenance. Native
+playlist actions supply the raw server playlist ID to each queue entry; progressing playback
+captures it in the session and persists it before delivery. Reading Home or a playlist does not
+supply this signal. Platform runtime coverage and remaining evidence gaps are recorded in
+`FEATURES.yml` and `docs/evidence/playlist-play-context.md`.
 
 ## Fields and where they are set
 
@@ -18,14 +19,16 @@ editing its membership, or playing a recommendation mix is not playlist provenan
 
 Apple's `ApplePlaybackQueueRequestDto` / `ApplePlaybackQueueInsertionDto` already accept
 `sourceKind = "playlist"`, `sourceRawId`, and `sourceDisplayName`; their facade converts these
-to the core context. Android's `AndroidQueueSource` currently lacks `Playlist`: add that case
-and pass the raw playlist ID from the playlist action through the controller's queue mapping.
+to the core context. Android's `AndroidQueueSource.Playlist` passes the raw playlist ID from the playlist action
+through the controller's queue mapping.
 Do not substitute a title, a queue-entry ID, an album ID, a local cache key, or a fabricated
 playlist for the raw server playlist ID.
+An offline-created playlist that has no server ID yet uses a library source with no playlist
+context. A server playlist with pending edits retains its real server ID. Resolving a local
+create later does not retroactively assign context to a session already started.
 
 At the session's actual submitted-play threshold, snapshot the **playing entry's** context,
-not the then-visible screen or the queue's current selection after advancement. The proposed
-additive event/outbox shape is:
+not the then-visible screen or the queue's current selection after advancement. The additive event/outbox shape is:
 
 ```kotlin
 // Existing track identity and session timestamp remain unchanged.
@@ -55,7 +58,15 @@ the versions array; a different version, hostname, server brand, or a Home UI vi
 negotiation. Cache the result for that connection, invalidate it on reconnect/account change,
 and serialize concurrent discovery. The Home reader's private `ListenNowTransport.offered`
 is not a public playback capability; use an account-scoped shared capability result or
-perform the same negotiation in the outbox composition. Do not couple delivery to Home loading.
+perform the same negotiation in the outbox composition. Do not couple delivery to Home loading. The playback availability path also invalidates the
+sender's answer on a reachable/revalidated report, including a foreground report without a
+preceding unreachable report. This changes no queue entry, playback session or attempt and
+sends no discovery request until a submitted play with context needs it.
+On Android, a successful library-reader reconnect (`ReaderConnectionOutcome.Read`) also
+revalidates that account's playback sender, even when the OS network never changes. Its
+availability notification is serialized on the controller's delivery dispatcher; another
+account's notification does not invalidate this sender. OS network-setter invalidation remains
+independent of the reader signal.
 
 A valid absence, or discovery endpoint unsupported (Subsonic 70 / HTTP 404 / 501), means
 ordinary scrobbling. Authentication, transport and malformed discovery failures are not

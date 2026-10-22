@@ -1209,6 +1209,8 @@ internal class PlaybackQueueController(
         attemptId = AttemptId(identities.next("attempt")),
         itemId = entry.providerItemId,
         initialDuration = knownDurations[entry.queueEntryId],
+        playlistContextId = entry.sourceContext.sourceId
+            .takeIf { entry.sourceContext.kind == QueueSourceKind.Playlist },
     )
 
     /** A start plays from the top unless it [resume]s the listen its saved position belongs to. */
