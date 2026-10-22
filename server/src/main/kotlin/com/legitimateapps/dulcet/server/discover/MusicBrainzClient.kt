@@ -83,6 +83,6 @@ class MusicBrainzClient(private val http:PoliteHttp,private val cache:DiscoverCa
                 EditionTrack(disc,position,mbidOrNull(recording.text("id")),track.text("title") ?: recording.requiredText("title"),track.artistCredit().ifBlank { recording.artistCredit().ifBlank { root.artistCredit() } },track.text("length")?.toLongOrNull() ?: recording.text("length")?.toLongOrNull())
             }
         }
-        return Edition(canonicalMbid(root.requiredText("id")),group,tracks,root.relationLinks())
+        return Edition(canonicalMbid(root.requiredText("id")),group,tracks,root.relationLinks(),root.text("date"))
     }
 }

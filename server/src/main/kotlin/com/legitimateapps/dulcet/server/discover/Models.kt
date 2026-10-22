@@ -20,15 +20,18 @@ data class CacheAge(val fetchedAt: Long, val ageSeconds: Long, val stale: Boolea
 data class DiscoverPage<T>(val items: List<T>, val nextCursor: String?, val age: CacheAge)
 data class PageRequest(val limit: Int = 20, val cursor: String? = null) { init { require(limit in 1..100) { "Limit must be 1..100" } } }
 data class UpstreamPage<T>(val items: List<T>, val total: Int, val offset: Int)
-data class Edition(val releaseMbid:String,val releaseGroupMbid:String,val tracks:List<EditionTrack>,val links:List<ExternalLink> = emptyList())
+data class Edition(val releaseMbid:String,val releaseGroupMbid:String,val tracks:List<EditionTrack>,val links:List<ExternalLink> = emptyList(),val releaseDate:String? = null)
 data class EditionTrack(val disc:Int,val position:Int,val recordingMbid:String?,val title:String,val artist:String,val durationMillis:Long?)
-fun <T,R> Cached<T>.map(transform:(T)->R)=Cached(transform(value),age,generation)
+fun <T,R> Cached<T>.map(transform:(T)->R)=Cached(transform(value),age,generation,dependencies)
 fun <T> combineCached(parts:List<Cached<*>>,value:T):Cached<T> {
     require(parts.isNotEmpty())
     val age=parts.minBy { it.age.fetchedAt }.age.copy(stale=parts.any { it.age.stale })
     val generation=java.security.MessageDigest.getInstance("SHA-256").digest(parts.joinToString(":") { it.generation }.toByteArray()).joinToString("") { "%02x".format(it) }
-    return Cached(value,age,generation)
+    return Cached(value,age,generation,parts.flatMap { it.dependencies.entries }.associate { it.key to it.value })
 }
 data class PlaylistSummary(val id:String,val title:String,val creator:String?,val trackCount:Int?)
 data class PlaylistEntry(val position:Int,val item:DiscoverItem)
 data class DiscoverPlaylist(val summary:PlaylistSummary,val entries:List<PlaylistEntry>)
+data class DiscoverArtistPage(val item:DiscoverItem,val albums:DiscoverPage<DiscoverItem>)
+data class DiscoverAlbumPage(val item:DiscoverItem,val editions:List<Edition>,val selectedReleaseId:String?,val tracks:DiscoverPage<DiscoverItem>)
+data class DiscoverPlaylistPage(val summary:PlaylistSummary,val entries:DiscoverPage<PlaylistEntry>)

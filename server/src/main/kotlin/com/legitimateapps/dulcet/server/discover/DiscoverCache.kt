@@ -8,7 +8,7 @@ import java.security.MessageDigest
 import java.util.UUID
 
 class UpstreamNotFound : RuntimeException("Discovery item not found")
-data class Cached<T>(val value:T,val age:CacheAge,val generation:String)
+data class Cached<T>(val value:T,val age:CacheAge,val generation:String,val dependencies:Map<String,String> = emptyMap())
 data class CacheKey(val baseUrl:String,val path:String,val query:Map<String,String>,val parserVersion:Int=1) {
     internal fun digest():String {
         // Length framing avoids collisions between delimiters inside query values.
@@ -45,7 +45,7 @@ class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDisc
                 if(entry.status==404) throw UpstreamNotFound()
                 if(previous!=null) {
                     db.write { execute("UPDATE discover_cache SET accessed=? WHERE key=?",now,digest) }
-                    return@withLock Cached(previous,CacheAge(entry.fetched,age/1000,false),entry.generation)
+                    return@withLock Cached(previous,CacheAge(entry.fetched,age/1000,false),entry.generation,mapOf(digest to entry.generation))
                 }
             }
             try {
@@ -59,22 +59,27 @@ class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDisc
                 }
                 if(response.status==404) throw UpstreamNotFound()
                 @Suppress("UNCHECKED_CAST")
-                Cached(value as T,CacheAge(fetched,0,false),generation)
+                Cached(value as T,CacheAge(fetched,0,false),generation,mapOf(digest to generation))
             } catch(e:CancellationException) { throw e }
               catch(e:UpstreamNotFound) { throw e }
               catch(e:Exception) {
-                if(previous!=null && entry!=null && clock.wallMillis()-entry.fetched<=MAX_AGE) Cached(previous,CacheAge(entry.fetched,(clock.wallMillis()-entry.fetched).coerceAtLeast(0)/1000,true),entry.generation)
+                if(previous!=null && entry!=null && clock.wallMillis()-entry.fetched<=MAX_AGE) Cached(previous,CacheAge(entry.fetched,(clock.wallMillis()-entry.fetched).coerceAtLeast(0)/1000,true),entry.generation,mapOf(digest to entry.generation))
                 else throw (e as? UpstreamUnavailable ?: UpstreamUnavailable())
             }
         }
+    }
+    fun contains(dependencies:Map<String,String>):Boolean = db.read {
+        dependencies.all { (key,generation) -> long("SELECT count(*) FROM discover_cache WHERE key=? AND generation=? AND fetched>=?",key,generation,clock.wallMillis()-MAX_AGE)==1L }
     }
     fun prune() { db.write { pruneIn(this,clock.wallMillis()) } }
     private fun pruneIn(session:Db.Session,now:Long) = with(session) {
         execute("DELETE FROM discover_cache WHERE fetched<?",now-MAX_AGE)
         var size=long("SELECT coalesce(sum(bytes),0) FROM discover_cache")
-        if(size>byteBudget) for((key,bytes) in query("SELECT key,bytes FROM discover_cache ORDER BY accessed,key") { it.string("key") to it.long("bytes") }) {
+        val snapshotBytes=if(long("SELECT count(*) FROM sqlite_master WHERE name='discover_snapshot'")>0)long("SELECT coalesce(sum(length(CAST(data AS BLOB))+length(CAST(dependencies AS BLOB))),0) FROM discover_snapshot") else 0L
+        val available=(byteBudget-snapshotBytes).coerceAtLeast(0)
+        if(size>available) for((key,bytes) in query("SELECT key,bytes FROM discover_cache ORDER BY accessed,key") { it.string("key") to it.long("bytes") }) {
             execute("DELETE FROM discover_cache WHERE key=?",key); size-=bytes
-            if(size<=byteBudget) break
+            if(size<=available) break
         }
     }
 }

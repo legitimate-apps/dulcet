@@ -196,7 +196,11 @@ class DulcetApi(private val ctx: ServerContext) {
                         if(result.status==204) call.respond(HttpStatusCode.NoContent) else call.respondText(result.body,ContentType.Application.Json,HttpStatusCode.fromValue(result.status))
                     }
                 } finally { posts.unlock() }
-            } catch (e: ApiProblem) { call.problem(e); finish() }
+            } catch(e:com.legitimateapps.dulcet.server.discover.UpstreamUnavailable) {
+                e.retryAfterMillis?.let { call.response.headers.append(HttpHeaders.RetryAfter,((it+999)/1000).toString()) }
+                call.problem(ApiProblem(503,"upstream-unavailable"));finish()
+            } catch(_:com.legitimateapps.dulcet.server.discover.UpstreamNotFound) {call.problem(ApiProblem(404,"not-found"));finish()}
+            catch (e: ApiProblem) { call.problem(e); finish() }
             catch (_: IllegalArgumentException) { call.problem(ApiProblem(400,"invalid-request")); finish() }
             catch (_: Exception) { call.problem(ApiProblem(500,"server-error")); finish() }
         }
@@ -210,7 +214,7 @@ class DulcetApi(private val ctx: ServerContext) {
             get("/capabilities") {
                 val header=call.request.headers[HttpHeaders.Authorization]
                 val p=header?.let { call.principal(ctx) }
-                val fields=j("apiVersion" to "1.0","server" to serverInfo(),"capabilities" to j("dulcet.sync" to j("versions" to listOf(1)),"dulcet.home" to j("versions" to listOf(1))),"limits" to j("maxPageSize" to 500,"maxBatchSize" to 500,"maxAlbumTracks" to 500,"syncRetentionDays" to 90,"maxTokenLifetimeDays" to 365,"mediaUrlTtlSeconds" to 21600,"artworkUrlTtlSeconds" to 604800),"auth" to j("flows" to listOf("authorization_code","device_code","refresh_token","personal_token"),"scopes" to API_SCOPES.toList()))
+                val fields=j("apiVersion" to "1.0","server" to serverInfo(),"capabilities" to j("dulcet.sync" to j("versions" to listOf(1)),"dulcet.home" to j("versions" to listOf(1))).let { kotlinx.serialization.json.JsonObject(it + (if(ctx.config.discover.enabled) j("dulcet.discover" to j("versions" to listOf(1))) else j()) + (if(ctx.config.discover.wishlistEnabled) j("dulcet.wishlist" to j("versions" to listOf(1))) else j())) },"limits" to j("maxPageSize" to 500,"maxBatchSize" to 500,"maxAlbumTracks" to 500,"syncRetentionDays" to 90,"maxTokenLifetimeDays" to 365,"mediaUrlTtlSeconds" to 21600,"artworkUrlTtlSeconds" to 604800),"auth" to j("flows" to listOf("authorization_code","device_code","refresh_token","personal_token"),"scopes" to API_SCOPES.toList()))
                 call.send(if(p==null) fields else JsonObject(fields+j("permissions" to j("scopes" to p.scopes.toList(),"download" to ("media:read" in p.scopes && ctx.apiUsers.download(p.user.id)),"admin" to ("admin" in p.scopes)))))
             }
             get("/openapi.yaml") { call.respondText(DulcetApi::class.java.classLoader.getResourceAsStream("dulcet-api/openapi.yaml")!!.bufferedReader().use { it.readText() },ContentType.parse("application/yaml")) }
@@ -226,6 +230,7 @@ class DulcetApi(private val ctx: ServerContext) {
                 }
                 call.send(j("shelves" to shelves))
             }
+            ctx.apiDiscover.install(this)
             ctx.apiCatalog.install(this)
             ctx.apiUserData.install(this)
             ctx.apiMedia.install(this)

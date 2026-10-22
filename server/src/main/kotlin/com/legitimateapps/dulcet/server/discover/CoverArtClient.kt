@@ -73,7 +73,7 @@ class DiscoverIdentity(private val db:com.legitimateapps.dulcet.server.db.Db) {
         val mbid=item.externalIds[item.kind.registryKey] ?: return item.copy(wishable=false)
         return db.write {
             execute("INSERT OR IGNORE INTO discover_identity(kind,mbid,id,artwork_id) VALUES(?,?,?,?)",item.kind.wire,canonicalMbid(mbid),"di_"+java.util.UUID.randomUUID(),if(item.kind==DiscoverKind.Album) "da_"+java.util.UUID.randomUUID() else null)
-            single("SELECT id,artwork_id FROM discover_identity WHERE kind=? AND mbid=?",item.kind.wire,canonicalMbid(mbid)) { item.copy(id=it.string("id"),artworkId=it.stringOrNull("artwork_id")) }!!
+            single("SELECT id,artwork_id FROM discover_identity WHERE kind=? AND mbid=?",item.kind.wire,canonicalMbid(mbid)) { item.copy(id=it.string("id"),artworkId=item.artworkId ?: it.stringOrNull("artwork_id")) }!!
         }
     }
     fun item(id:String):Pair<DiscoverKind,String>?=db.read { single("SELECT kind,mbid FROM discover_identity WHERE id=?",id) { DiscoverKind.parse(it.string("kind")) to it.string("mbid") } }

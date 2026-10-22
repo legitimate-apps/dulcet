@@ -53,6 +53,8 @@ security:
   - personalToken: []
 
 tags:
+  - name: Discover
+    description: Optional public metadata discovery through Dulcet Server.
   - name: Discovery
     description: Finding a server's API versions, capabilities and authorization server.
   - name: Auth
@@ -205,6 +207,8 @@ paths:
                   instanceId: srv_9f2c41d0
                 capabilities:
                   dulcet.home: {versions: [1]}
+                  dulcet.discover: {versions: [1]}
+                  dulcet.wishlist: {versions: [1]}
                   dulcet.sync: {versions: [1]}
                   dulcet.events: {versions: [1]}
                   dulcet.webhooks: {versions: [1]}
@@ -4286,6 +4290,678 @@ paths:
         default:
           $ref: '#/components/responses/Default'
 
+  /discover/search:
+    get:
+      tags:
+      - Discover
+      operationId: searchDiscover
+      summary: Search outside this server
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: kind
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - artist
+          - album
+          - song
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 500
+        description: Public metadata query. Never include credentials or private account details.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverItemPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/shelves/{shelfId}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverShelf
+      summary: Read a Discover shelf
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: shelfId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: trendingArtists, trendingAlbums, trendingSongs, newReleases, similarArtists or publicPlaylists.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverShelfPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/artists/{mbid}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverArtist
+      summary: Read an outside artist and first discography page
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverArtist'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/artists/{mbid}/albums:
+    get:
+      tags:
+      - Discover
+      operationId: listDiscoverArtistAlbums
+      summary: Page the full artist discography newest first
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverItemPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/albums/{mbid}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverAlbum
+      summary: Read a release group with selectable editions
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - name: releaseId
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+        description: Edition to select. Default is earliest dated edition, with release UUID breaking ties and
+          undated editions last.
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverAlbum'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/albums/{mbid}/tracks:
+    get:
+      tags:
+      - Discover
+      operationId: listDiscoverAlbumTracks
+      summary: Page every track slot of one edition
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - name: releaseId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverItemPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/playlists:
+    get:
+      tags:
+      - Discover
+      operationId: searchDiscoverPlaylists
+      summary: Search public ListenBrainz playlists
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 0
+          maxLength: 500
+        description: Public metadata query. Never include credentials or private account details.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverPlaylistSummaryPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/playlists/{mbid}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverPlaylist
+      summary: Read a public playlist without losing repeated slots
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverPlaylistPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/artwork/{artworkId}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverArtwork
+      summary: Read server-proxied cover thumbnail bytes
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. Returns image bytes, never a redirect to an upstream host. Static SVG is used only for
+        a missing-art placeholder.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: artworkId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Opaque artworkId returned by Discover. Never an upstream URL.
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/svg+xml:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+
 webhooks:
   delivery:
     post:
@@ -4350,6 +5026,11 @@ components:
         operation apply to personal tokens too.
 
   parameters:
+    DiscoverLimit:
+      name: limit
+      in: query
+      description: Discover page size; default 20, maximum 100.
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
     Cursor:
       name: cursor
       in: query
@@ -6360,3 +7041,268 @@ components:
           properties:
             code: {type: integer}
             message: {type: string}
+
+    DiscoverLink:
+      type: object
+      required:
+      - relation
+      - url
+      properties:
+        relation:
+          type: string
+        url:
+          type: string
+          format: uri
+          description: Explicit HTTP(S) link to open outside the app, never an artwork source URL.
+    DiscoverAvailability:
+      type: object
+      required:
+      - status
+      - libraryItems
+      - completeness
+      properties:
+        status:
+          type: string
+          description: 'Open set: held, partlyHeld, notHeld.'
+        libraryItems:
+          type: array
+          items:
+            type: object
+            required:
+            - id
+            - type
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+                description: artist, album or track; only visible local resources.
+        completeness:
+          type: string
+          description: 'Open set: known or unknown. Unknown totals are omitted.'
+        matchedBy:
+          type: string
+          description: 'Open set: mbid or name.'
+        matchedTrackCount:
+          type: integer
+          minimum: 0
+        totalTrackCount:
+          type: integer
+          minimum: 1
+        editionReleaseId:
+          type: string
+          format: uuid
+      description: Album completeness requires every slot of one edition within one local album, one file per slot.
+        Extra tracks are allowed. Never pool editions or infer completeness from equal counts. Name fallback applies
+        only to local candidates without the relevant MBID and preserves live, remix, demo, acoustic and instrumental
+        words.
+    DiscoverCacheAge:
+      type: object
+      required:
+      - fetchedAt
+      - ageSeconds
+      - stale
+      properties:
+        fetchedAt:
+          type: string
+          format: date-time
+        ageSeconds:
+          type: integer
+          minimum: 0
+        stale:
+          type: boolean
+    DiscoverItem:
+      type: object
+      required:
+      - id
+      - kind
+      - title
+      - externalIds
+      - links
+      - wishable
+      - availability
+      properties:
+        id:
+          type: string
+          description: Persisted opaque server id, not a MusicBrainz id.
+        kind:
+          type: string
+          description: 'Open set: artist, album, song.'
+        title:
+          type: string
+        artist:
+          type: string
+        year:
+          type: integer
+        releaseDate:
+          type: string
+          description: 'Source precision preserved: YYYY, YYYY-MM or YYYY-MM-DD.'
+        externalIds:
+          $ref: '#/components/schemas/ExternalIds'
+        artworkId:
+          type: string
+          description: Opaque id for GET /discover/artwork/{artworkId}; never an outside image URL.
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoverLink'
+        wishable:
+          type: boolean
+          description: False for playlist/edition slots with no canonical MBID.
+        availability:
+          $ref: '#/components/schemas/DiscoverAvailability'
+        disc:
+          type: integer
+          minimum: 1
+        position:
+          type: integer
+          minimum: 1
+        listenCount:
+          type: integer
+          minimum: 0
+        artistMbids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        primaryType:
+          type: string
+          description: Open MusicBrainz release-group primary type.
+    DiscoverPlaylistSummary:
+      type: object
+      required:
+      - id
+      - title
+      - creator
+      - trackCount
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ListenBrainz playlist UUID.
+        title:
+          type: string
+        creator:
+          type:
+          - string
+          - 'null'
+        trackCount:
+          type:
+          - integer
+          - 'null'
+    DiscoverPlaylistEntry:
+      type: object
+      required:
+      - position
+      - item
+      properties:
+        position:
+          type: integer
+          minimum: 1
+        item:
+          $ref: '#/components/schemas/DiscoverItem'
+    DiscoverEdition:
+      type: object
+      required:
+      - releaseId
+      - releaseDate
+      - trackCount
+      - links
+      properties:
+        releaseId:
+          type: string
+          format: uuid
+        releaseDate:
+          type:
+          - string
+          - 'null'
+        trackCount:
+          type: integer
+          minimum: 0
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoverLink'
+    DiscoverItemPage:
+      allOf:
+      - $ref: '#/components/schemas/PageInfo'
+      - $ref: '#/components/schemas/DiscoverCacheAge'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/DiscoverItem'
+    DiscoverPlaylistSummaryPage:
+      allOf:
+      - $ref: '#/components/schemas/PageInfo'
+      - $ref: '#/components/schemas/DiscoverCacheAge'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/DiscoverPlaylistSummary'
+    DiscoverPlaylistEntryPage:
+      allOf:
+      - $ref: '#/components/schemas/PageInfo'
+      - $ref: '#/components/schemas/DiscoverCacheAge'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/DiscoverPlaylistEntry'
+    DiscoverShelfPage:
+      oneOf:
+      - $ref: '#/components/schemas/DiscoverItemPage'
+      - $ref: '#/components/schemas/DiscoverPlaylistSummaryPage'
+    DiscoverArtist:
+      type: object
+      required:
+      - item
+      - albums
+      properties:
+        item:
+          $ref: '#/components/schemas/DiscoverItem'
+        albums:
+          $ref: '#/components/schemas/DiscoverItemPage'
+    DiscoverAlbum:
+      type: object
+      required:
+      - item
+      - editions
+      - selectedReleaseId
+      - tracks
+      properties:
+        item:
+          $ref: '#/components/schemas/DiscoverItem'
+        editions:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoverEdition'
+        selectedReleaseId:
+          type:
+          - string
+          - 'null'
+        tracks:
+          $ref: '#/components/schemas/DiscoverItemPage'
+    DiscoverPlaylistPage:
+      $ref: '#/components/schemas/DiscoverPlaylist'
+
+    DiscoverPlaylist:
+      type: object
+      required:
+      - summary
+      - entries
+      properties:
+        summary:
+          $ref: '#/components/schemas/DiscoverPlaylistSummary'
+        entries:
+          $ref: '#/components/schemas/DiscoverPlaylistEntryPage'

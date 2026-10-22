@@ -376,6 +376,8 @@ assertEquals(0, unrelatedReleaseLookups)
 
 ### Task 12: Dulcet API discovery and capability plumbing
 
+Implementation note: `DiscoverJson.kt` owns shared JSON projections for API, REST and MCP. `Cached.dependencies` records raw cache-key generations for strict cursor eviction/refresh checks. List snapshots freeze order before caller matching and retain at most 32 per user for one hour, with a global 16 MiB snapshot bound included in the 256 MiB cache budget. MusicBrainz search fills 100-row chunks lazily, pins each participating answer and the first-page generation, and never treats its index as an upstream transactional snapshot. A refresh or eviction of a participating answer expires the continuation. Release dates are retained on Edition for deterministic default-edition selection.
+
 **Files:**
 - Create: `server/src/main/kotlin/com/legitimateapps/dulcet/server/discover/DiscoverService.kt`
 - Create: `server/src/main/kotlin/com/legitimateapps/dulcet/server/v1/Discover.kt`
