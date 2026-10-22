@@ -127,7 +127,11 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                             throw failure
                         }
                         activate(compose.onNode(hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists"))))
-                        awaitTag("playlist.title")
+                        // TV renders the tagged title before its asynchronous playlist read finishes.
+                        compose.waitUntil("Home opens the expected playlist", 30_000) {
+                            compose.onAllNodes(hasTestTag("playlist.title") and hasText(name))
+                                .fetchSemanticsNodes().isNotEmpty()
+                        }
                         compose.onNodeWithTag("playlist.title").assertTextEquals(name)
                         println("PLAYLIST CONTEXT OBSERVED platform=$platform trigger=playlist-entry progressing-media=true submitted-context=true now-playing-context=false server-home=true rendered-home=true home-opens-playlist=true")
                     }
