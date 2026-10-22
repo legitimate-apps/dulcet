@@ -29,3 +29,12 @@ internal fun decodeAvailability(text:String):Availability {
     val a=Json.parseToJsonElement(text).jsonObject
     return Availability(a["status"]?.jsonPrimitive?.contentOrNull ?: "notHeld",(a["libraryItems"] as? JsonArray).orEmpty().map { LibraryRef(it.jsonObject["id"]!!.jsonPrimitive.content,it.jsonObject["type"]!!.jsonPrimitive.content) },a["matchedBy"]?.jsonPrimitive?.contentOrNull,a["matchedTrackCount"]?.jsonPrimitive?.intOrNull,a["totalTrackCount"]?.jsonPrimitive?.intOrNull,a["editionReleaseId"]?.jsonPrimitive?.contentOrNull,a["completeness"]?.jsonPrimitive?.contentOrNull ?: "unknown")
 }
+
+/** Equality-only per-user receipt clock, independent of scan and membership clocks. */
+fun Db.Session.markWishlistChanged(userId:String,receivedAt:Long):Long {
+    val key="wishlist_changed:$userId"
+    val prior=string("SELECT value FROM meta WHERE key=?",key)?.toLongOrNull() ?: 0
+    val next=maxOf(receivedAt,prior+1)
+    execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",key,next.toString())
+    return next
+}

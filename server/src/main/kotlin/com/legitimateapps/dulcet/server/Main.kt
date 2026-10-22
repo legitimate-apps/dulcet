@@ -141,13 +141,14 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
         "transcoding" to listOf(1),
         "dulcetLibrary" to listOf(1),
         "dulcetHome" to listOf(1),
-    )
+    ) + (if(config.discover.enabled)mapOf("dulcetDiscover" to listOf(1)) else emptyMap()) +
+        (if(config.discover.wishlistEnabled)mapOf("dulcetWishlist" to listOf(1)) else emptyMap())
 
     fun lastScanMillis(): Long? = db.read { string("SELECT value FROM meta WHERE key = 'last_scan'") }?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
 
     fun requestScan() = launchBackground { scanner.scan() }
 
-    fun handlers(): Map<String, Handler> = (browseHandlers(this) + userDataHandlers(this) + mediaHandlers(this)).mapValues { (_, handler) ->
+    fun handlers(): Map<String, Handler> = (browseHandlers(this) + userDataHandlers(this) + mediaHandlers(this) + com.legitimateapps.dulcet.server.api.discoverHandlers(this) + com.legitimateapps.dulcet.server.api.wishlistHandlers(this)).mapValues { (_, handler) ->
         { call -> com.legitimateapps.dulcet.server.api.authorizeRest(this, call); handler(call) }
     }
 

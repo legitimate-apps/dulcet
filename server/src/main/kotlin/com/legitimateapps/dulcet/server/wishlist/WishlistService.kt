@@ -48,6 +48,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
         execute("INSERT INTO wishlist_target_clock VALUES(?,?,?,?,?) ON CONFLICT(user_id,kind,mbid) DO UPDATE SET action_time=excluded.action_time,removed=excluded.removed",user,kind,mbid,time,removed)
     }
     private fun Db.Session.changed(user:String,id:String,deleted:Boolean=false,requested:Boolean=false) {
+        markWishlistChanged(user,clock())
         val wish=if(deleted)null else store.read(this,user,id)?.let(::present)
         val data=if(deleted)j("op" to "delete","id" to id,"revision" to ctx.journal.revision("wish",id,user))
             else j("op" to "upsert","id" to id,"revision" to wish!!.revision,"wish" to wishJson(wish))

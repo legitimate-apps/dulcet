@@ -43,8 +43,10 @@ class ApiWishlist(private val ctx:ServerContext) {
         if(limit !in 1..100)throw ApiProblem(400,"invalid-request")
         val owner=if(allUsers)params["userId"] else actor.user.id
         val binding=j("allUsers" to allUsers,"userId" to owner,"kind" to kind?.wire,"state" to state,"history" to history).toString()
+        val generation=ctx.db.read {long("SELECT coalesce(max(seq),0) FROM api_revision WHERE type='wish' AND (? OR user_id=?)",allUsers,actor.user.id)}
         val cursor=params["cursor"]?.let(cursors::decode)
         if(cursor!=null && (cursor["kind"]?.jsonPrimitive?.content!="wishes" || cursor["user"]?.jsonPrimitive?.content!=actor.user.id || cursor["binding"]?.jsonPrimitive?.content!=binding))throw ApiProblem(400,"invalid-request","Cursor filter mismatch")
+        if(cursor!=null && cursor["generation"]?.jsonPrimitive?.longOrNull!=generation)throw ApiProblem(410,"cursor-expired")
         val wishes=if(!allUsers)ctx.wishlist.list(actor.user.id,WishFilter(kind,state,history)) else ctx.db.read {
             query("SELECT * FROM wishlist_wish ORDER BY added DESC,id",map=ctx.wishlist.store::row)
         }.filter { (owner==null || it.userId==owner) && (kind==null || it.kind==kind) && (state==null || it.state==state) && (history || it.state!="fulfilled" || (it.fulfilledAt ?: 0)>System.currentTimeMillis()-30*DiscoverCache.DAY) }.map(ctx.wishlist::present)
@@ -52,7 +54,7 @@ class ApiWishlist(private val ctx:ServerContext) {
         val afterId=cursor?.get("id")?.jsonPrimitive?.content
         val ordered=wishes.filter { after==null || it.addedAt<after || (it.addedAt==after && it.id>afterId!!) }
         val selected=ordered.take(limit)
-        val next=if(ordered.size>limit)selected.last().let { cursors.encode(j("kind" to "wishes","user" to actor.user.id,"binding" to binding,"added" to it.addedAt,"id" to it.id)) } else null
+        val next=if(ordered.size>limit)selected.last().let { cursors.encode(j("kind" to "wishes","user" to actor.user.id,"binding" to binding,"generation" to generation,"added" to it.addedAt,"id" to it.id)) } else null
         return j("items" to selected.map(::wishJson),"nextCursor" to next)
     }
     suspend fun replayAdd(call:ApplicationCall,p:Principal,body:JsonObject) {
