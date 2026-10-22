@@ -310,3 +310,22 @@ passes one test with zero failures in 76.476 seconds. It taps Connection at 7.59
 querying Sign Out at 10.20 seconds, then one drag adds all three expected album tracks to empty
 Up Next with no menu left open. The complete iOS UI-test target builds. This establishes the
 corrected query ordering and preserved queue assertions locally; final-head full CI remains required.
+
+OBSERVED in the core leg of full Apple run `39799345915` on `70caed4d`: 39 XCTest
+executions produce 38 passes and one failure. The iPad CONF-86 independent-home-rows case
+fails in 1.841 seconds: favourites has published its server failure, but the last polled proxy
+ledger still marks `getStarred2` unanswered. The test's wait checked that row failure and the
+held most-played request's presence, then asserted a 500 in that earlier ledger snapshot. The
+proxy sends the 500 before recording its acknowledgement, and a control poll can also capture
+the ledger before that write; the row and ledger therefore need an explicit observation barrier.
+
+The existing 30-second wait now also requires an answered `getStarred2` with status 500.
+Its original assertions remain: recently added and recently played are live, favourites is
+failed, most played has asked but remains unanswered and loading, and releasing that held
+request makes only most played live while favourites stays failed. No production or proxy
+behavior changes. OBSERVED locally on an iPad Pro 13-inch (M5) simulator with iOS 26.5 and
+a disposable Navidrome 0.63.2 plus its fault proxy: the exact native AppHost case passes one
+test with zero failures in 0.944 seconds, with the expected independent-row publications.
+The complete iOS AppHost/UI-test target builds. The CI failure establishes the stale-snapshot
+interleaving; this local pass checks the corrected barrier and retained assertions. Final-head
+full CI remains required.
