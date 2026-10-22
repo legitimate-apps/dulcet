@@ -412,3 +412,37 @@ passes one test with zero failures in 146.243 seconds. One actual drag adds all 
 tracks, in album order, to empty Up Next and leaves no menu open. This run connects without a
 retry, so it confirms preserved end-to-end behavior; the extracted controls cover the retry
 branch. Final-head full Apple execution remains required.
+
+### iPhone tab-selection acknowledgement (2026-10-22)
+
+OBSERVED in the phone leg of full Apple run `39833641465` on `2ba9dc9f`: seven
+My Library XCTest executions produce six passes and one failure. The pin-and-offline case
+fails in 126.981 seconds on its final return to Browse. Its initial Browse/pin, offline
+relaunch with the Pinned heading and album, Downloaded destination, and Songs sort control
+all pass first. The event archive records the final Browse tap at `(200, 822)`, inside that
+tab's `(163, 795, 74, 54)` bounds; the subsequent hierarchy still shows Library selected.
+Independent Opus 5.5 medium review of recording frames at 77 and 86 seconds observes the same
+Library Songs screen and an unobstructed Browse tab in both. This supports an unacknowledged
+tab activation rather than a hierarchy-only discrepancy; why it was not acknowledged remains
+unproven. No host-pressure or production-navigation cause is established.
+
+The phone selector now observes selection in short polls within its existing ten-second
+post-activation budget and permits at most two ordinary retaps while the tab is unselected
+and live-hittable. It checks the deadline again after that live query before sending another
+event. A slow accessibility query may overrun wall time, but cannot authorize a late retap.
+The actual selected-state oracle, pin/unpin behavior, offline assertions and fixture routes
+are unchanged. The extracted actual phone branch fails an independent ignored-first-tap
+control before this change and passes afterward. Four companion controls retain immediate
+success, permanent-failure rejection, no retap on an unhittable control, and the deadline with
+slow retaps: five controls, one failure before and zero afterward. A separate sixth control
+exposes the query-order gap before its correction: a three-second poll plus an eight-second
+hittability query sends a late event at eleven seconds. After correction, all six controls
+pass and that query sends no extra event.
+
+OBSERVED locally on an iPhone 17 Pro simulator with iOS 26.5 and fresh disposable Dulcet
+Server/Navidrome 0.63.2 fixtures: the complete iOS UI-test target builds, and the exact pin-and-
+offline case passes one test with zero failures in 65.478 seconds. It retains the pinned album
+across the offline relaunch, reaches Downloaded and Songs, then returns to Browse and unpins
+through the original assertions. No retap was needed in this run: it establishes ordinary
+end-to-end preservation, while the independent controls exercise unacknowledged activation
+and the deadline boundary. Final-head full Apple execution remains required.
