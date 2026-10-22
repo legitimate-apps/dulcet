@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.server.wishlist
 
+import com.legitimateapps.dulcet.server.api.markLibraryChanged
 import com.legitimateapps.dulcet.server.ServerContext
 import com.legitimateapps.dulcet.server.db.Db
 import com.legitimateapps.dulcet.server.discover.*
@@ -153,6 +154,27 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             save(userId,op,"reject",fp,wish?.id,target.kind.wire,mbid,now,null,wishId!=null && wish==null)
             WishMutation(inserted || reopen,wish?.let { store.read(this,userId,it.id) },false)
         }
+    }
+
+    internal fun updateAvailability(userId:String,wishId:String,expectedRevision:String,expectedScanStamp:String,availability:Availability):Boolean = db.write {
+        val wish=store.read(this,userId,wishId) ?: return@write false
+        if(wish.state=="fulfilled" || wish.revision!=expectedRevision || string("SELECT value FROM meta WHERE key='discover_scan_stamp'")!=expectedScanStamp)return@write false
+        if(wish.availability!=availability)execute("UPDATE wishlist_wish SET availability=?,updated=? WHERE id=?",encodeAvailability(availability),clock(),wishId)
+        true
+    }
+    internal fun fulfil(userId:String,wishId:String,libraryItem:LibraryRef,expectedWishRevision:String,expectedScanStamp:String,availability:Availability):Boolean = db.write {
+        if(!ctx.config.discover.wishlistEnabled)return@write false
+        val wish=store.read(this,userId,wishId) ?: return@write false
+        if(wish.state=="fulfilled" || wish.revision!=expectedWishRevision || string("SELECT value FROM meta WHERE key='discover_scan_stamp'")!=expectedScanStamp)return@write false
+        if(availability.status!="held" || libraryItem !in availability.libraryItems || libraryItem.type!=wish.kind.catalogType || !ctx.access.canReadCatalog(userId,libraryItem.type,libraryItem.id) || isRejected(userId,ExternalTarget(wish.kind,wish.externalIds),libraryItem))return@write false
+        val now=clock();val type=if(libraryItem.type=="track")"song" else libraryItem.type
+        val inserted=execute("INSERT OR IGNORE INTO library_item(user_id,item_type,item_id,added) VALUES(?,?,?,?)",userId,type,libraryItem.id,now)>0
+        if(inserted) {
+            markLibraryChanged(userId,now)
+            execute("INSERT INTO api_library_receipt(user_id,item_id,at) SELECT ?,?,CAST(value AS INTEGER) FROM meta WHERE key=? ON CONFLICT(user_id,item_id) DO UPDATE SET at=excluded.at",userId,libraryItem.id,"library_changed:$userId")
+        }
+        execute("UPDATE wishlist_wish SET state='fulfilled',fulfilled=?,library_id=?,library_type=?,availability=?,updated=? WHERE id=?",now,libraryItem.id,libraryItem.type,encodeAvailability(availability),now,wishId)
+        true
     }
 
 }

@@ -5,7 +5,7 @@ import kotlinx.serialization.json.*
 class ListenBrainzClient(private val http:PoliteHttp,private val cache:DiscoverCache,private val settings:DiscoverSettings) {
     companion object { const val SIMILAR_ALGORITHM="session_based_days_7500_session_300_contribution_5_threshold_10_limit_100_filter_True_skip_30" }
     private suspend fun <T> load(path:String,query:Map<String,String>,ttl:Long,base:String=settings.listenBrainzUrl,decode:(JsonElement)->T)=
-        cache.read(CacheKey(base,path,query),ttl,{ decode(Json.parseToJsonElement(it.decodeToString())) }) { http.get(base,path,query) }
+        cache.read(CacheKey(base,path,query),ttl,{ decode(Json.parseToJsonElement(it.decodeToString())) }) { if(!settings.enabled)throw UpstreamUnavailable(); http.get(base,path,query) }
     suspend fun trending(kind:DiscoverKind):Cached<List<DiscoverItem>> {
         val entity=when(kind) { DiscoverKind.Artist->"artists"; DiscoverKind.Album->"release-groups"; DiscoverKind.Song->"recordings" }
         return load("/1/stats/sitewide/$entity",mapOf("range" to "week"),6*DiscoverCache.HOUR) { element ->

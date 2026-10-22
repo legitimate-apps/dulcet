@@ -348,6 +348,8 @@ assertEquals(1, existingMembershipCount)
 
 ### Task 11: Post-scan fulfilment into My Library
 
+Implementation note: pending candidate ids coalesce into one SQLite row instead of accumulating per-scan rows. The scan UUID guards both worker cleanup and fulfilment. MusicBrainz and ListenBrainz fetch lambdas also enforce the Discover switch, allowing cache-only work while disabled. CLI drains the same persisted queue synchronously after the scanner returns.
+
 **Files:**
 - Create: `server/src/main/kotlin/com/legitimateapps/dulcet/server/wishlist/WishFulfilment.kt`
 - Modify: `server/src/main/kotlin/com/legitimateapps/dulcet/server/wishlist/WishlistService.kt`

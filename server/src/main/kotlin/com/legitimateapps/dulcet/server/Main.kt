@@ -91,7 +91,7 @@ data class Config(
 }
 
 /** Everything a handler needs, built once per process (and once per test). */
-class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitimateapps.dulcet.server.lyrics.LyricsProvider? = null) {
+class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitimateapps.dulcet.server.lyrics.LyricsProvider? = null) : AutoCloseable {
     private val key: ByteArray = PasswordVault.keyFromDataFolder(config.dataFolder)
     init {
         db.write {
@@ -115,7 +115,16 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val dulcetApi = com.legitimateapps.dulcet.server.v1.DulcetApi(this)
     val catalog = Catalog(db, access)
     val home = HomeRecommendations(this)
-    val scanner = Scanner(db, config.musicFolder, Probe(config.ffprobe))
+    val discoverHttp = com.legitimateapps.dulcet.server.discover.PoliteHttp()
+    val discoverCache = com.legitimateapps.dulcet.server.discover.DiscoverCache(db)
+    val musicBrainz = com.legitimateapps.dulcet.server.discover.MusicBrainzClient(discoverHttp,discoverCache,config.discover)
+    val listenBrainz = com.legitimateapps.dulcet.server.discover.ListenBrainzClient(discoverHttp,discoverCache,config.discover)
+    val discoverArtwork = com.legitimateapps.dulcet.server.discover.CoverArtClient(discoverHttp,discoverCache,config.discover)
+    val wishlist = com.legitimateapps.dulcet.server.wishlist.WishlistService(this)
+    val discoverMatcher = com.legitimateapps.dulcet.server.discover.DiscoverMatcher(db,access) { user,item,pair -> wishlist.isRejected(user,com.legitimateapps.dulcet.server.wishlist.ExternalTarget(item.kind,item.externalIds),pair) }
+    val wishFulfilment = com.legitimateapps.dulcet.server.wishlist.WishFulfilment(this)
+    val scanner = Scanner(db, config.musicFolder, Probe(config.ffprobe),afterCatalogCommit=wishFulfilment::enqueue)
+    override fun close() { wishFulfilment.close();discoverHttp.close() }
     val artwork = Artwork(db, config.musicFolder, config.dataFolder.resolve("cache"), config.ffmpeg, access)
     val transcoder = Transcoder(config.ffmpeg)
     val transcodeParams = TranscodeParams(java.security.MessageDigest.getInstance("SHA-256").digest(key + "transcodeParams".toByteArray()))
@@ -144,6 +153,8 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
 
 fun Application.dulcetModule(ctx: ServerContext) {
     ctx.testing.markServed()
+    ctx.wishFulfilment.start(this)
+    monitor.subscribe(io.ktor.server.application.ApplicationStopping) { ctx.close() }
     launch(kotlinx.coroutines.Dispatchers.IO) {
         while(isActive) {
             delay(1000)
@@ -177,10 +188,11 @@ fun main(argv: Array<String>) {
     Files.createDirectories(config.dataFolder)
     val db = Db.open(config.dataFolder.resolve("dulcet.db"))
     val ctx = ServerContext(config, db)
-    when (positional.firstOrNull() ?: "serve") {
+    try { when (positional.firstOrNull() ?: "serve") {
         "serve" -> serve(ctx)
         "scan" -> {
             val result = ctx.scanner.scan()
+            kotlinx.coroutines.runBlocking { ctx.wishFulfilment.drain() }
             println("scan: $result")
         }
         "user" -> userCommand(ctx, positional.drop(1), options)
@@ -190,6 +202,7 @@ fun main(argv: Array<String>) {
             exitProcess(2)
         }
     }
+    } finally { ctx.close();db.close() }
 }
 
 private fun serve(ctx: ServerContext) {
