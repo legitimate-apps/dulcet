@@ -1438,12 +1438,6 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
-            },
-            {
-              "observes": "The production Swift playback adapter calls the real persistence-only queue delivery boundary exactly once across repeated identity rejection and passive reachability, preserving the saved song and playlist source. Executed on a Mac host; no rendered swap UI claim. The emitted download aggregate invokes testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue.",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
             }
           ],
           "promotion_condition": {
@@ -1503,12 +1497,6 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
-            },
-            {
-              "observes": "The production Swift playback adapter calls the real persistence-only queue delivery boundary exactly once across repeated identity rejection and passive reachability, preserving the saved song and playlist source. Executed on a Mac host; no rendered swap UI claim. The emitted download aggregate invokes testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue.",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
             }
           ],
           "promotion_condition": {
@@ -1568,12 +1556,6 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
-            },
-            {
-              "observes": "The production Swift playback adapter calls the real persistence-only queue delivery boundary exactly once across repeated identity rejection and passive reachability, preserving the saved song and playlist source. Executed on a Mac host; no rendered swap UI claim. The emitted download aggregate invokes testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue.",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
             }
           ],
           "promotion_condition": {
