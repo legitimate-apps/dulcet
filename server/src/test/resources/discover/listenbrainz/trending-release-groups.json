@@ -1,0 +1,15 @@
+{
+  "payload": {
+    "release_groups": [
+      {
+        "release_group_mbid": "11111111-1111-4111-8111-111111111111",
+        "release_group_name": "Album",
+        "artist_name": "Fixture",
+        "artist_mbids": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "listen_count": 42
+      }
+    ]
+  }
+}
