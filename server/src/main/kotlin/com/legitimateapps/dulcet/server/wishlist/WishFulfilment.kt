@@ -26,6 +26,7 @@ class WishFulfilment(private val ctx:ServerContext,private val clock:()->Long=Sy
     private suspend fun safeDrain() {
         try { drain() } catch(e:CancellationException) { throw e } catch(_:Exception) { org.slf4j.LoggerFactory.getLogger(WishFulfilment::class.java).warn("wish fulfilment deferred; pending work retained") }
     }
+    fun wake() {if(!closed)wakeups.trySend(Unit)}
     fun enqueue(delta:ScanDelta) { if(!closed)wakeups.trySend(Unit) }
     suspend fun drain() = lock.withLock {
         if(closed || !ctx.config.discover.wishlistEnabled)return@withLock

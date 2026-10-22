@@ -105,12 +105,20 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             WishMutation(true,null,true)
         }
     }
-    fun get(userId:String,wishId:String):Wish?=db.read { store.read(this,userId,wishId) }
+    fun get(userId:String,wishId:String):Wish?=db.read { store.read(this,userId,wishId) }?.let(::present)
     fun list(userId:String,filter:WishFilter=WishFilter()):List<Wish> {
         if(filter.state!=null && filter.state !in setOf("wanted","requested","searching","unavailable","fulfilled"))throw ApiProblem(400,"invalid-request")
         return db.read { query("SELECT * FROM wishlist_wish WHERE user_id=? ORDER BY added DESC,id",userId,map=store::row) }.filter {
             (filter.kind==null || it.kind==filter.kind) && (filter.state==null || it.state==filter.state) && (filter.includeFulfilledHistory || it.state!="fulfilled" || (it.fulfilledAt ?: 0)>clock()-30*DiscoverCache.DAY)
-        }
+        }.map(::present)
+    }
+    fun wasRemoved(userId:String,id:String)=db.read { long("SELECT count(*) FROM wishlist_operation WHERE user_id=? AND type='add' AND wish_id=?",userId,id)>0 && store.read(this,userId,id)==null }
+    fun present(wish:Wish):Wish {
+        val refs=wish.availability.libraryItems.filter { ctx.access.canReadCatalog(wish.userId,it.type,it.id) }
+        val linked=wish.libraryItem?.takeIf { ctx.access.canReadCatalog(wish.userId,it.type,it.id) }
+        val availability=if(refs.size==wish.availability.libraryItems.size && (wish.libraryItem==null || linked!=null))wish.availability
+            else Availability(if(refs.isEmpty())"notHeld" else "partlyHeld",refs,if(refs.isEmpty())null else wish.availability.matchedBy)
+        return wish.copy(libraryItem=linked,availability=availability)
     }
     fun setState(actor:Principal,wishId:String,state:String,note:String?,expectedRevision:String?):Wish {
         if(!ctx.config.discover.wishlistEnabled)throw ApiProblem(404,"not-found")

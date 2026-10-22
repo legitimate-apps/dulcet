@@ -53,6 +53,8 @@ security:
   - personalToken: []
 
 tags:
+  - name: Wishlist
+    description: Optional per-user wishes for outside music, with scan fulfilment.
   - name: Discover
     description: Optional public metadata discovery through Dulcet Server.
   - name: Discovery
@@ -3375,7 +3377,7 @@ paths:
           Discard derived state (keep unsent writes) and start again.
 
         Scopes: catalog types (`artist`, `album`, `track`, `genre`, `source`) need `catalog:read`;
-        user types (`itemState`, `playlist`, `play`, `queue`) need `user:read`. Asking for a type the
+        user types (`itemState`, `playlist`, `play`, `queue`, `wish`) need `user:read`. Asking for a type the
         token cannot read answers `403`; the default `types` is every type the token can read.
       security:
         - oauth2: [catalog:read]
@@ -3394,8 +3396,8 @@ paths:
           in: query
           description: |
             Comma-separated entity types to include; default all the token may read. Must equal the
-            value the cursor was created with. Known values: `artist`, `album`, `track`, `genre`,
-            `source`, `itemState`, `playlist`, `play`, `queue`.
+            value the cursor was created with. Omitted types on continuation retain the original verified filter, including cursors issued before wish support. Known values: `artist`, `album`, `track`, `genre`,
+            `source`, `itemState`, `playlist`, `play`, `queue`, `wish`.
           schema: {type: string}
           example: itemState,playlist
         - name: limit
@@ -4961,6 +4963,493 @@ paths:
                 $ref: '#/components/schemas/Problem'
         default:
           $ref: '#/components/responses/Default'
+
+  /me/wishes:
+    get:
+      tags:
+      - Wishlist
+      operationId: listWishes
+      summary: listWishes
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404. Ordered addedAt descending then id. Default excludes
+        fulfilled older than 30 days; state=fulfilled includes all history. History aging is not deletion.
+      security:
+      - oauth2:
+        - user:read
+      - personalToken:
+        - user:read
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '304':
+          description: Unchanged private representation.
+      parameters:
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: kind
+        in: query
+        schema:
+          type: string
+          description: 'Known values: artist, album, song. Open output set.'
+      - name: state
+        in: query
+        schema:
+          type: string
+      - name: includeFulfilledHistory
+        in: query
+        schema:
+          type: boolean
+          default: false
+      - $ref: '#/components/parameters/IfNoneMatch'
+    post:
+      tags:
+      - Wishlist
+      operationId: addWish
+      summary: addWish
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:write
+      - personalToken:
+        - user:write
+      responses:
+        '201':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+      parameters:
+      - $ref: '#/components/parameters/ActionTime'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishAdd'
+  /me/wishes/{wishId}:
+    get:
+      tags:
+      - Wishlist
+      operationId: getWish
+      summary: getWish
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:read
+      - personalToken:
+        - user:read
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '304':
+          description: Unchanged private representation.
+      parameters:
+      - name: wishId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfNoneMatch'
+    delete:
+      tags:
+      - Wishlist
+      operationId: removeWish
+      summary: removeWish
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:delete
+      - personalToken:
+        - user:delete
+      responses:
+        '204':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+      parameters:
+      - name: wishId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: operationId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/ActionTime'
+  /me/wishes/cancellations:
+    post:
+      tags:
+      - Wishlist
+      operationId: cancelWishAdd
+      summary: cancelWishAdd
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:delete
+      - personalToken:
+        - user:delete
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+      parameters:
+      - $ref: '#/components/parameters/ActionTime'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishRemove'
+  /me/wishes/{wishId}/reject-match:
+    post:
+      tags:
+      - Wishlist
+      operationId: rejectWishMatch
+      summary: rejectWishMatch
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:write
+      - personalToken:
+        - user:write
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+      parameters:
+      - name: wishId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishRejectMatch'
+  /discover/rejected-matches:
+    post:
+      tags:
+      - Wishlist
+      operationId: rejectDiscoverMatch
+      summary: rejectDiscoverMatch
+      description: Requires Discover OR Wishlist enabled, user:write. target is required here. Persist a per-user
+        external-target/local-item rejection without creating a wish. A linked fulfilled wish reopens wanted only
+        when Wishlist is enabled. My Library membership stays.
+      security:
+      - oauth2:
+        - user:write
+      - personalToken:
+        - user:write
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishRejectMatch'
+  /admin/wishes:
+    get:
+      tags:
+      - Wishlist
+      operationId: listAllWishes
+      summary: listAllWishes
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - admin
+      - personalToken:
+        - admin
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '304':
+          description: Unchanged private representation.
+      parameters:
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: kind
+        in: query
+        schema:
+          type: string
+          description: 'Known values: artist, album, song. Open output set.'
+      - name: state
+        in: query
+        schema:
+          type: string
+      - name: includeFulfilledHistory
+        in: query
+        schema:
+          type: boolean
+          default: false
+      - name: userId
+        in: query
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfNoneMatch'
+  /admin/wishes/{wishId}:
+    patch:
+      tags:
+      - Wishlist
+      operationId: setWishState
+      summary: setWishState
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - admin
+      - personalToken:
+        - admin
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '412':
+          description: If-Match revision changed.
+        '409':
+          description: Fulfilled wish cannot leave fulfilled through admin.
+      parameters:
+      - name: wishId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishStateUpdate'
 
 webhooks:
   delivery:
@@ -6818,7 +7307,7 @@ components:
       required: [op, type, id, revision, at]
       properties:
         op: {type: string, description: '`upsert` (the entity now looks like `resource`) or `delete` (a tombstone). Open set; skip an op you do not know.'}
-        type: {type: string, description: 'Known values: `artist`, `album`, `track`, `genre`, `source`, `itemState`, `playlist`, `play`, `queue`. Open set; skip a type you do not know.'}
+        type: {type: string, description: 'Known values: `artist`, `album`, `track`, `genre`, `source`, `itemState`, `playlist`, `play`, `queue`, `wish`. Open set; skip a type you do not know.'}
         id: {type: string, description: 'The entity''s id. For `itemState`, the item''s id; for `queue`, the literal `queue`.'}
         revision: {type: string, description: The entity's `revision` after this change.}
         at: {type: string, format: date-time}
@@ -6829,7 +7318,7 @@ components:
             catalog entities without `userState`, a `playlist` without entries, the `queue` without
             entries. A `playlist` or `queue` upsert with a new revision means its entries changed or
             may have: re-read `/playlists/{id}/items` or `/me/queue/entries`. A server may coalesce
-            several changes to one entity into its latest state.
+            several changes to one entity into its latest state. A `wish` upsert carries Wish, including all fulfilled history. Wish deletions retain owner-only tombstones even when the capability is disabled. Hidden library references are redacted without reopening fulfilled wishes.
         reason:
           type: string
           description: 'On `delete`. Known values: `deleted` (gone for good), `merged` (see `replacedBy`), `hidden` (no longer visible to this user; it may come back as an `upsert`). Open set; treat an unknown reason as `deleted`.'
@@ -7306,3 +7795,228 @@ components:
           $ref: '#/components/schemas/DiscoverPlaylistSummary'
         entries:
           $ref: '#/components/schemas/DiscoverPlaylistEntryPage'
+
+    WishSnapshot:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        artist:
+          type: string
+          maxLength: 500
+        year:
+          type: integer
+        artworkId:
+          type: string
+          description: Opaque server artwork id, never a URL.
+      required:
+      - title
+    WishSource:
+      type: object
+      properties:
+        type:
+          type: string
+          description: 'Known values: search, shelf, artist, album, playlist, api. No
+            private upstream account.'
+        id:
+          type: string
+          maxLength: 500
+      required:
+      - type
+    Wish:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        kind:
+          type: string
+          description: 'Known values: artist, album, song. Open output set.'
+        externalIds:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Canonical MusicBrainz UUID for the kind: musicbrainzArtistId, musicbrainzReleaseGroupId or musicbrainzRecordingId.'
+        snapshot:
+          $ref: '#/components/schemas/WishSnapshot'
+        source:
+          $ref: '#/components/schemas/WishSource'
+        addedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        state:
+          type: string
+          description: 'Open set: wanted, requested, searching, unavailable, fulfilled. Only complete local matches
+            can fulfil; admins may set the first four.'
+        note:
+          type:
+          - string
+          - 'null'
+        noteAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        fulfilledAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        libraryItem:
+          oneOf:
+          - type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+            required:
+            - id
+            - type
+          - type: 'null'
+        availability:
+          $ref: '#/components/schemas/DiscoverAvailability'
+        revision:
+          type: string
+      required:
+      - id
+      - userId
+      - kind
+      - externalIds
+      - snapshot
+      - source
+      - addedAt
+      - updatedAt
+      - state
+      - note
+      - noteAt
+      - fulfilledAt
+      - libraryItem
+      - availability
+      - revision
+    WishPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Wish'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+      required:
+      - items
+      - nextCursor
+    WishAdd:
+      type: object
+      properties:
+        kind:
+          type: string
+          description: 'Known values: artist, album, song. Open output set.'
+        externalIds:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Canonical MusicBrainz UUID for the kind: musicbrainzArtistId, musicbrainzReleaseGroupId or musicbrainzRecordingId.'
+        snapshot:
+          $ref: '#/components/schemas/WishSnapshot'
+        source:
+          $ref: '#/components/schemas/WishSource'
+        operationId:
+          type: string
+          format: uuid
+      required:
+      - kind
+      - externalIds
+      - snapshot
+      - source
+      - operationId
+    WishRemove:
+      type: object
+      properties:
+        addOperationId:
+          type: string
+          format: uuid
+        operationId:
+          type: string
+          format: uuid
+      required:
+      - addOperationId
+      - operationId
+    WishMutation:
+      type: object
+      properties:
+        applied:
+          type: boolean
+        wish:
+          oneOf:
+          - $ref: '#/components/schemas/Wish'
+          - type: 'null'
+        removed:
+          type: boolean
+      required:
+      - applied
+      - wish
+      - removed
+    WishStateUpdate:
+      type: object
+      properties:
+        state:
+          type: string
+          enum:
+          - wanted
+          - requested
+          - searching
+          - unavailable
+        note:
+          type:
+          - string
+          - 'null'
+          maxLength: 1000
+      required:
+      - state
+    WishRejectMatch:
+      type: object
+      properties:
+        target:
+          type: object
+          properties:
+            kind:
+              type: string
+              description: 'Known values: artist, album, song. Open output set.'
+            externalIds:
+              type: object
+              additionalProperties:
+                type: string
+              description: 'Canonical MusicBrainz UUID for the kind: musicbrainzArtistId, musicbrainzReleaseGroupId
+                or musicbrainzRecordingId.'
+          required:
+          - kind
+          - externalIds
+        libraryItem:
+          type: object
+          properties:
+            id:
+              type: string
+            type:
+              type: string
+              enum:
+              - artist
+              - album
+              - track
+          required:
+          - id
+          - type
+        operationId:
+          type: string
+          format: uuid
+      required:
+      - libraryItem
+      - operationId

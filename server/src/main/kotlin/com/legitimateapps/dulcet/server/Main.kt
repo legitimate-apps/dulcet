@@ -124,6 +124,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val discoverMatcher = com.legitimateapps.dulcet.server.discover.DiscoverMatcher(db,access) { user,item,pair -> wishlist.isRejected(user,com.legitimateapps.dulcet.server.wishlist.ExternalTarget(item.kind,item.externalIds),pair) }
     val wishFulfilment = com.legitimateapps.dulcet.server.wishlist.WishFulfilment(this)
     val discover = com.legitimateapps.dulcet.server.discover.DiscoverService(this)
+    val apiWishlist = com.legitimateapps.dulcet.server.v1.ApiWishlist(this)
     val apiDiscover = com.legitimateapps.dulcet.server.v1.ApiDiscover(this)
     val scanner = Scanner(db, config.musicFolder, Probe(config.ffprobe),afterCatalogCommit=wishFulfilment::enqueue)
     override fun close() { wishFulfilment.close();discoverHttp.close() }

@@ -68,7 +68,7 @@ fun ApplicationCall.principal(ctx: ServerContext, vararg scopes: String): Princi
 }
 fun syncTypes(p: Principal): String = buildList {
     if ("catalog:read" in p.scopes) addAll(listOf("artist","album","track","genre","source"))
-    if ("user:read" in p.scopes) addAll(listOf("itemState","playlist","play","queue"))
+    if ("user:read" in p.scopes) addAll(listOf("itemState","playlist","play","queue","wish"))
 }.sorted().joinToString(",")
 fun ApplicationCall.stamp(ctx: ServerContext, p: Principal) {
     attributes.put(syncKey, ctx.journal.cursor(p.user.id, syncTypes(p)))
@@ -160,6 +160,8 @@ class DulcetApi(private val ctx: ServerContext) {
                 try { UUID.fromString(key) } catch (_:Exception) { throw ApiProblem(400,"invalid-request","Idempotency-Key must be a UUID") }
                 val operation=path.removePrefix("/dulcet/v1")
                 val scopes=when {
+                    operation=="/me/wishes/cancellations" -> arrayOf("user:delete")
+                    operation=="/me/wishes" || operation.startsWith("/me/wishes/") || operation=="/discover/rejected-matches" -> arrayOf("user:write")
                     operation=="/me/tokens" || operation=="/me/password" -> arrayOf("account")
                     operation=="/playlists" || operation=="/me/batch" || operation.startsWith("/playlists/") -> if(operation=="/me/batch") emptyArray() else arrayOf("user:write")
                     operation=="/me/plays" -> arrayOf("plays:write")
@@ -170,6 +172,7 @@ class DulcetApi(private val ctx: ServerContext) {
                     else -> emptyArray()
                 }
                 val p = call.principal(ctx,*scopes)
+                if(operation.startsWith("/me/wishes") || operation=="/discover/rejected-matches")ctx.apiWishlist.requireEnabled(operation)
                 val body = if(operation=="/admin/scans" && (call.request.headers["Content-Length"]=="0" || call.request.headers["Content-Type"]==null)) j() else call.body()
                 val fingerprint = hash(p.tokenId+"|"+p.scopes.sorted().joinToString(" ")+"|"+operation + "|" + body.toString())
                 posts.lock()
@@ -177,6 +180,9 @@ class DulcetApi(private val ctx: ServerContext) {
                     val saved = ctx.db.read { single("SELECT * FROM api_idempotency WHERE user_id=? AND key=? AND at>=?",p.user.id,key,System.currentTimeMillis()-86400000) { Triple(it.string("fingerprint"),it.int("status"),it.string("body") to it.string("headers")) } }
                     if(saved!=null) {
                         if(saved.first!=fingerprint) throw ApiProblem(422,"idempotency-key-reused")
+                        if(operation=="/me/wishes") {
+                            ctx.apiWishlist.replayAdd(call,p,body);finish();return@intercept
+                        }
                         Json.parseToJsonElement(saved.third.second).jsonObject.forEach { (name,value) -> if(name.lowercase() !in setOf("content-type","content-length","access-control-allow-origin","access-control-expose-headers")) call.response.headers.append(name,value.jsonPrimitive.content) }
                         call.respondText(vault.open(Base64.getDecoder().decode(saved.third.first)),ContentType.Application.Json,HttpStatusCode.fromValue(saved.second)); finish()
                     } else {
@@ -230,6 +236,7 @@ class DulcetApi(private val ctx: ServerContext) {
                 }
                 call.send(j("shelves" to shelves))
             }
+            ctx.apiWishlist.install(this)
             ctx.apiDiscover.install(this)
             ctx.apiCatalog.install(this)
             ctx.apiUserData.install(this)

@@ -12,16 +12,23 @@ class ApiSync(private val ctx:ServerContext) {
     fun install(route:Route) { route.get("/sync/changes") {
         val p=call.principal(ctx)
         val q=call.request.queryParameters
-        val types=(q["types"]?.split(',') ?: syncTypes(p).split(',')).filter(String::isNotEmpty).distinct().sorted()
+        val cursor=q["cursor"]
+        val bound=if(q["types"]==null && cursor!=null) {
+            if(cursor.startsWith("c_")) {
+                val decoded=codec.decode(cursor)
+                if(decoded["user"]?.jsonPrimitive?.content!=p.user.id)throw ApiProblem(400,"invalid-request")
+                decoded["types"]?.jsonPrimitive?.content ?: throw ApiProblem(400,"invalid-request")
+            } else try {ctx.journal.boundTypes(p.user.id,cursor)} catch(e:Journal.CursorException) {throw ApiProblem(if(e.expired)410 else 400,if(e.expired)"cursor-expired" else "invalid-request")}
+        } else null
+        val types=((q["types"] ?: bound ?: syncTypes(p)).split(',')).filter(String::isNotEmpty).distinct().sorted()
         if(types.isEmpty()) throw ApiProblem(403,"insufficient-scope",extra=j("requiredScopes" to listOf("catalog:read","user:read")))
         types.forEach { type ->
-            val scope=when(type) {"artist","album","track","genre","source"->"catalog:read";"itemState","playlist","play","queue"->"user:read";else->throw ApiProblem(400,"invalid-request","Unknown change type")}
+            val scope=when(type) {"artist","album","track","genre","source"->"catalog:read";"itemState","playlist","play","queue","wish"->"user:read";else->throw ApiProblem(400,"invalid-request","Unknown change type")}
             if(scope !in p.scopes) throw ApiProblem(403,"insufficient-scope",extra=j("requiredScopes" to listOf(scope)))
         }
         val filter=types.joinToString(",")
         val limit=q["limit"]?.let { it.toIntOrNull() ?: throw ApiProblem(400,"invalid-request","Invalid limit") } ?: 500
         if(limit !in 1..500) throw ApiProblem(400,"invalid-request","Invalid limit")
-        val cursor=q["cursor"]
         if(cursor!=null && q["start"]!=null) throw ApiProblem(400,"invalid-request","Choose cursor or start")
         val page=ctx.db.read {
             ctx.journal.prune()
@@ -54,14 +61,15 @@ class ApiSync(private val ctx:ServerContext) {
             "playlist" -> query("SELECT id FROM playlist WHERE owner_id=? OR public=1 ORDER BY id",p.user.id) { it.string("id") }
             "play" -> query("SELECT id FROM api_play WHERE user_id=? AND payload IS NOT NULL ORDER BY id",p.user.id) { it.string("id") }
             "queue" -> listOf("queue")
+            "wish" -> query("SELECT id FROM wishlist_wish WHERE user_id=? ORDER BY id",p.user.id) {it.string("id")}
             else -> ctx.apiCatalog.ids(type,p)
         }
     }
-    private fun resource(p:Principal,type:String,id:String):JsonObject? = if(type=="queue") ctx.apiQueue.resource(p) else if(type in setOf("itemState","playlist","play")) ctx.apiUserData.resource(type,id,p) else ctx.apiCatalog.resource(type,id,p)?.let { JsonObject(it.filterKeys { key->key!="userState" }) }
+    private fun resource(p:Principal,type:String,id:String):JsonObject? = if(type=="wish")ctx.apiWishlist.resource(p.user.id,id) else if(type=="queue") ctx.apiQueue.resource(p) else if(type in setOf("itemState","playlist","play")) ctx.apiUserData.resource(type,id,p) else ctx.apiCatalog.resource(type,id,p)?.let { JsonObject(it.filterKeys { key->key!="userState" }) }
     private fun snapshot(p:Principal,types:List<String>,head:Long,after:String,limit:Int):JsonObject {
         val keys=types.flatMap { type->allIds(p,type).map { type to it } }.sortedBy { it.first+":"+it.second }.filter { it.first+":"+it.second>after }
         val selected=keys.take(limit)
-        val changes=selected.mapNotNull { (type,id)->resource(p,type,id)?.let { value->j("op" to "upsert","type" to type,"id" to id,"revision" to (value["revision"] ?: json(ctx.journal.revision(type,id,if(type in setOf("itemState","play"))p.user.id else null))),"at" to iso(System.currentTimeMillis()),"resource" to value) } }
+        val changes=selected.mapNotNull { (type,id)->resource(p,type,id)?.let { value->j("op" to "upsert","type" to type,"id" to id,"revision" to (value["revision"] ?: json(ctx.journal.revision(type,id,if(type in setOf("itemState","play","wish"))p.user.id else null))),"at" to iso(System.currentTimeMillis()),"resource" to value) } }
         val more=keys.size>limit
         val next=if(more)codec.encode(j("user" to p.user.id,"types" to types.joinToString(","),"head" to head,"after" to (selected.last().first+":"+selected.last().second))) else ctx.journal.cursor(p.user.id,types.joinToString(","),head)
         // Final snapshot page still hasMore, because the changes phase must always be visited.
