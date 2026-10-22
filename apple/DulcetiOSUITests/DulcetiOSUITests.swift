@@ -808,8 +808,19 @@ final class DulcetiOSUITests: XCTestCase {
                 retries += 1
                 print("ACCOUNT CONNECT RETRY \(retries): account setup reached its request limit")
                 tryAgain.tap()
-                // One more request limit, and the time a loaded host takes to show the outcome.
-                if signOut.waitForExistence(timeout: 45) { return true }
+                // A successful retry can navigate to Listen Now while its state is queried.
+                // Revisit Connection within the same request-limit/readiness budget.
+                let retryDeadline = Date().addingTimeInterval(45)
+                repeat {
+                    guard openDestination(
+                        "Connection",
+                        sidebarIdentifier: "dulcet.sidebar.settings",
+                        in: app,
+                        compact: compact
+                    ) else { return false }
+                    let remaining = max(0, retryDeadline.timeIntervalSince(Date()))
+                    if signOut.waitForExistence(timeout: min(10, remaining)) { return true }
+                } while Date() < retryDeadline
             }
         } while Date() < deadline
         return false

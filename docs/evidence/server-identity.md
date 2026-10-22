@@ -383,3 +383,32 @@ playback against the server's 96 kbps transcoded stream from the higher-bitrate 
 and restores both choices to Original. The complete iOS UI-test target builds. This checks
 the stronger target preconditions and retained end-to-end behavior; it does not establish
 the underlying activation-point cause. Final-head full CI remains required.
+
+### Account connection after a timed-out retry (2026-10-22)
+
+OBSERVED in the iPad leg of full Apple run `39818131357` on `169ef6f4`: 17 XCTest
+executions produce 16 passes and one failure. The album-tile drag case fails before any drag
+in 343.720 seconds. At 232.55 seconds, its hierarchy shows Connection selected with the
+server-request timeout and Try Again. The test retries once, then waits globally for Sign Out.
+At 337.88 seconds, the hierarchy shows Listen Now selected, the Navidrome account Online and
+populated fixture albums. The retry connected successfully and navigated away from Connection,
+but the helper returned failure without reopening the destination that offers Sign Out.
+The first request timeout's cause remains unproven; slow accessibility queries and host pressure
+were also observed, without establishing which caused that request to time out.
+
+The retry retains its existing 45-second budget and the two retries limited to a request timeout.
+Within that budget, it revisits Connection before each connected-state poll and caps each poll
+at the smaller of ten seconds and the remaining budget. Sign Out still proves connection, and
+all album order, exact queue-addition and menu-dismissal assertions remain unchanged. An
+extracted-helper host control reproduces the departed-Connection failure for both compact and
+regular layouts before the change; those two controls pass afterward. Its persistent-timeout
+control still fails connection after two retries, and its already-connected control succeeds
+without retrying: four controls, two failures before and zero afterward. These controls establish
+the navigation branch; they do not reproduce the initial network timeout or XCTest's delays.
+
+OBSERVED locally on an iPad Pro 13-inch (M5) simulator with iOS 26.5 and a fresh disposable
+Navidrome 0.63.2 fixture: the complete iOS UI-test target builds, and the exact album-tile case
+passes one test with zero failures in 146.243 seconds. One actual drag adds all three expected
+tracks, in album order, to empty Up Next and leaves no menu open. This run connects without a
+retry, so it confirms preserved end-to-end behavior; the extracted controls cover the retry
+branch. Final-head full Apple execution remains required.
