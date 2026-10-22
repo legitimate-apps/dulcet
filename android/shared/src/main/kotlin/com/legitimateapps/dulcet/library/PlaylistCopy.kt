@@ -9,6 +9,8 @@ import com.legitimateapps.dulcet.core.AndroidOperationFailure
 import com.legitimateapps.dulcet.core.AndroidPlaylistEditRecord
 import com.legitimateapps.dulcet.core.AndroidPlaylistEditResult
 import com.legitimateapps.dulcet.core.AndroidPlaylistOutcome
+import com.legitimateapps.dulcet.core.AndroidPlaybackController
+import com.legitimateapps.dulcet.core.AndroidQueueInsertion
 import com.legitimateapps.dulcet.core.AndroidQueueSource
 import com.legitimateapps.dulcet.core.AndroidTrack
 import com.legitimateapps.dulcet.core.DomainError
@@ -106,7 +108,7 @@ public fun AndroidLibraryPublication.playlistView(): List<String>? {
 }
 
 /** A playlist queue: its tracks, in the playlist's order, and the index to start at. */
-public data class PlaylistQueue(val name: String, val tracks: List<AndroidTrack>, val start: Int)
+public data class PlaylistQueue(val name: String, val tracks: List<AndroidTrack>, val start: Int, val rawId: String?)
 
 /**
  * The playlist in [publication] as a queue from the entry at [position] (an index into its items), in
@@ -125,12 +127,12 @@ public fun AndroidLibraryPublication.playlistQueue(providerInstanceId: String, p
     if (tracks.isEmpty()) return null
     // Duplicates are separate entries: the start is found by position, never by id.
     val start = playable.indexOfFirst { it.index >= position }.takeIf { it >= 0 } ?: 0
-    return PlaylistQueue(playlist.name, tracks, start)
+    return PlaylistQueue(playlist.name, tracks, start, playlist.rawId.takeUnless { playlist.local })
 }
 
 /**
- * The playlist in [publication] played from the entry at [position] ([playlistQueue]), as a library
- * queue named for the playlist. False, and nothing played, when nothing can play. Held until the
+ * The playlist in [publication] played from the entry at [position] ([playlistQueue]), with its server playlist
+ * source. A playlist not yet saved on the server has no playlist context. False, and nothing played, when nothing can play. Held until the
  * service binds, as for [playAlbum]; [started] runs when it is played.
  */
 public fun playPlaylist(
@@ -143,8 +145,25 @@ public fun playPlaylist(
 ): Boolean {
     val queue = publication.playlistQueue(providerInstanceId, position) ?: return false
     playback.play { controller ->
-        controller.playQueue(queue.tracks, queue.start, AndroidQueueSource.Library, queue.name, shuffle = shuffle)
+        controller.playQueue(queue.tracks, queue.start,
+            if (queue.rawId == null) AndroidQueueSource.Library else AndroidQueueSource.Playlist,
+            queue.name, queue.rawId, shuffle = shuffle)
         started()
     }
     return true
+}
+
+/** A playlist entry added next or later keeps that playlist, rather than its album, as its source. */
+public fun queuePlaylistTrack(
+    playback: AndroidPlaybackController?,
+    providerInstanceId: String,
+    track: AndroidLibraryItem.Track,
+    playlist: AndroidLibraryItem.Playlist,
+    insertion: AndroidQueueInsertion,
+): Boolean {
+    if (playback == null || !track.canBeQueued()) return false
+    val queued = track.toTrack(providerInstanceId) ?: return false
+    val rawId = playlist.rawId.takeUnless { playlist.local }
+    return playback.addToQueue(listOf(queued), insertion,
+        if (rawId == null) AndroidQueueSource.Library else AndroidQueueSource.Playlist, playlist.name, rawId)
 }

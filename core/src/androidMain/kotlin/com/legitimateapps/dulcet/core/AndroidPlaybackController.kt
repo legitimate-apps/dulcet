@@ -173,7 +173,7 @@ public data class AndroidQueueEntry(val queueEntryId: String, val track: Android
 /** An edit that has taken effect, claimed once by the foreground surface. */
 public data class AndroidQueueConfirmation(val sequence: Long, val insertion: AndroidQueueInsertion, val trackCount: Int)
 
-public enum class AndroidQueueSource { Album, Artist, Library, Search }
+public enum class AndroidQueueSource { Album, Artist, Playlist, Library, Search }
 
 /** Where [AndroidPlaybackController.addToQueue] puts tracks: straight after the current entry, or at the end. */
 public enum class AndroidQueueInsertion { PlayNext, AddToQueue }
@@ -238,8 +238,12 @@ public class AndroidPlaybackController internal constructor(
         account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp), "playback.scrobble")
     // Keep the delivery worker's retry/refusal state when credentials refresh; each future send
     // obtains the current client, while an already running send retains its original client.
-    private val sender = ScrobbleEndpointSender(ScrobbleEndpointTransport { parameters ->
-        scrobbleRequests.request("scrobble", parameters)
+    private val sender = ScrobbleEndpointSender(object : ScrobbleEndpointTransport {
+        override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse =
+            scrobbleRequests.request("scrobble", parameters)
+
+        override suspend fun extensions(): AuthenticatedEndpointResponse =
+            scrobbleRequests.request("getOpenSubsonicExtensions", emptyMap())
     })
     private val wall = OutboxWallClock(System::currentTimeMillis)
     private val outbox = PersistentScrobbleOutbox(store.database, wall)
@@ -543,7 +547,14 @@ public class AndroidPlaybackController internal constructor(
 
     /** What the current network costs, as the service reads it from the OS. */
     /** Platform reachability for the shared queue's offline continuation policy. */
-    public fun setNetworkAvailable(available: Boolean) { networkAvailable = available }
+    public fun setNetworkAvailable(available: Boolean) {
+        // Connectivity callbacks arrive off-main; serialize capability generations with delivery.
+        scope.launch {
+            if (closed) return@launch
+            if (available) sender.invalidateCapabilities()
+            networkAvailable = available
+        }
+    }
 
     public fun setNetworkCostClass(network: NetworkCostClass) {
         streamingQuality.setNetwork(network)
@@ -561,7 +572,7 @@ public class AndroidPlaybackController internal constructor(
     /**
      * Replaces the queue with [tracks] and starts [startIndex]. Every track must belong to this
      * service's account; a foreign identity is refused rather than played with the wrong credentials.
-     * An album or artist queue names its source by opaque [sourceRawId]; library and search do not.
+     * An album, artist or playlist queue names its source by opaque [sourceRawId]; library and search do not.
      */
     public fun playQueue(
         tracks: List<AndroidTrack>,
@@ -572,8 +583,8 @@ public class AndroidPlaybackController internal constructor(
         shuffle: Boolean = false,
     ) {
         if (!live()) return
-        val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist
-        require(named == !sourceRawId.isNullOrBlank()) { "Album and artist queues, and only they, name a source" }
+        val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist || source == AndroidQueueSource.Playlist
+        require(named == !sourceRawId.isNullOrBlank()) { "Album, artist and playlist queues, and only they, name a source" }
         if (tracks.isEmpty() || startIndex !in tracks.indices ||
             tracks.any { it.providerInstanceId != account.providerInstanceId }) {
             failure = DomainError.Auth.Forbidden; publish(); return
@@ -617,6 +628,7 @@ public class AndroidPlaybackController internal constructor(
                 val kind = when (source) {
                     AndroidQueueSource.Album -> QueueSourceKind.Album
                     AndroidQueueSource.Artist -> QueueSourceKind.Artist
+                    AndroidQueueSource.Playlist -> QueueSourceKind.Playlist
                     AndroidQueueSource.Library -> QueueSourceKind.Library
                     AndroidQueueSource.Search -> QueueSourceKind.Search
                 }
@@ -807,8 +819,8 @@ public class AndroidPlaybackController internal constructor(
         sourceRawId: String? = null,
     ): Boolean {
         if (!live()) return false
-        val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist
-        require(named == !sourceRawId.isNullOrBlank()) { "Album and artist queues, and only they, name a source" }
+        val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist || source == AndroidQueueSource.Playlist
+        require(named == !sourceRawId.isNullOrBlank()) { "Album, artist and playlist queues, and only they, name a source" }
         if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId }) return false
         if (queueLoading()) {
             heldAdditions += HeldAddition(tracks.toList(), insertion, source, sourceName, sourceRawId)
@@ -955,6 +967,7 @@ public class AndroidPlaybackController internal constructor(
     private fun AndroidQueueSource.kind(): QueueSourceKind = when (this) {
         AndroidQueueSource.Album -> QueueSourceKind.Album
         AndroidQueueSource.Artist -> QueueSourceKind.Artist
+        AndroidQueueSource.Playlist -> QueueSourceKind.Playlist
         AndroidQueueSource.Library -> QueueSourceKind.Library
         AndroidQueueSource.Search -> QueueSourceKind.Search
     }
@@ -1520,7 +1533,10 @@ public class AndroidPlaybackController internal constructor(
     public fun refreshAccount(expected: PlaybackEndpointAccount): Boolean {
         check(Looper.myLooper() == Looper.getMainLooper())
         if (closed || !MediaBindingIdentity.isValidAccount(expected) || !AndroidMediaBindingIdentity.sameAccount(store, account, expected)) return false
-        if (account == expected) return true
+        if (account == expected) {
+            sender.invalidateCapabilities()
+            return true
+        }
         val oldWire = wire
         val oldRequests = requests
         val oldScrobbles = scrobbleRequests
@@ -1537,6 +1553,7 @@ public class AndroidPlaybackController internal constructor(
             expected.normalizedBaseUrl, expected.username, expected.password, expected.allowLocalHttp), "playback.resource")
         scrobbleRequests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
             expected.normalizedBaseUrl, expected.username, expected.password, expected.allowLocalHttp), "playback.scrobble")
+        sender.invalidateCapabilities()
         if (boundaries == null) artwork = AndroidArtworkRepository(playbackContext, expected)
         return true
     }
@@ -1577,7 +1594,15 @@ public class AndroidPlaybackController internal constructor(
             else runBlocking(Dispatchers.Main.immediate) { prepare() }
         }
         internal fun notifyServerAvailable(serverId: String, available: Boolean) {
-            instances.filter { it.account.providerInstanceId == serverId }.forEach { it.serverAvailable = available }
+            instances.filter { it.account.providerInstanceId == serverId }.forEach { controller ->
+                // The library reader reconnects on its own thread, independently of OS reachability.
+                // Order its revalidation with delivery just like a network availability report.
+                controller.scope.launch {
+                    if (controller.closed) return@launch
+                    if (available) controller.sender.invalidateCapabilities()
+                    controller.serverAvailable = available
+                }
+            }
         }
     }
 

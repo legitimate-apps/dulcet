@@ -7913,6 +7913,51 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-21 — Bind Android reader reconnect to playlist capability revalidation.**
+A successful Android library-reader reconnect reports `ReaderConnectionOutcome.Read` through
+the matching account's playback server-availability notification. That notification now
+invalidates the installed sender's cached positive or negative `dulcetHome` answer on the
+controller's delivery dispatcher, before applying the reachable state. It does not require an
+OS network loss/arrival, replace the current session or attempt, or affect another account's
+sender. The independent OS network availability setter continues to invalidate too. This
+corrects the missed reader binding in the preceding availability change; it adds no wire fields
+or eager discovery and leaves the existing reconnect contract intact.
+
+**2026-10-21 — Bind playlist capability invalidation to playback availability.**
+A reachable/revalidated playback availability report invalidates the installed scrobble sender's
+cached `dulcetHome` answer, even when the previous report was also reachable (foreground
+revalidation). Both a positive advertisement and valid absence must be discovered again before
+the next context-bearing submission. The callback does not replace the current entry, session
+or attempt and performs no eager request. Android handles the availability report on the delivery
+owner's main dispatcher so invalidation and suspended discovery share the same ordering. The
+account-refresh/replacement paths continue to invalidate or replace the sender too. This corrects
+the platform binding to the existing reconnect contract; it does not change `/rest` fields or the
+submitted-play threshold.
+
+**2026-10-21 — Persist and negotiate each submitted play's playlist provenance.**
+The shared queue snapshots a real playlist source into its playback session, including restored
+queues, repeat and preloaded entries. A submitted play retains that nullable provider-scoped
+playlist ID through synchronous outbox persistence, process recreation, retry and timestamp
+clamping; schema 12 adds a nullable raw playlist column and migrates existing events to no context.
+The account-bound sender negotiates `dulcetHome` version 1 independently of Home loading and
+serializes discovery per connection. Valid absence and unsupported discovery (70/404/501) keep
+ordinary scrobbling; authentication, malformed and transport failures retain the durable event
+for retry. Reconnect invalidates the advertisement. Only positively negotiated playlist submissions
+add `dulcetContextType=playlist` and `dulcetContextId`; now-playing and non-playlist submissions
+retain their existing wire parameters. Playlist track queue actions retain the playlist source;
+tracks inserted from another surface keep their own source. The three playback identities and
+progressing-media threshold policy are unchanged. See `docs/dulcet-api/playlist-play-context.md`
+for the wire contract and `docs/evidence/playlist-play-context.md` for observed platform coverage.
+Offline-created playlists without a server ID use a library source until resolved; already-started
+sessions are not relabeled. Android Home owns shelf windows for the route lifetime, including
+empty/offscreen shelves, so Refresh can observe a newly submitted playlist. Android TV full-grid
+and Home cards expose a separate remote-focusable More button for membership, pin and queue
+actions, preserving the card's normal activation and returning focus after the action. tvOS full-grid cards
+also retain normal Select activation and provide a separate focusable More button opening a
+native confirmation dialog with the existing item commands. Remote membership and primary
+navigation are observed independently. Native Menu focus failures in this grid do not establish
+that tvOS forbids context menus; the explicit launcher resolves the observed interaction gap.
+
 **2026-10-21 — Preserve media across authenticated saved-username confirmation.**
 A successful reconnect with the exact saved username and password may confirm a different username
 spelling through authenticated `getUser`. When the stable provider instance, submitted endpoint
@@ -14093,6 +14138,14 @@ The same extension accepts optional `dulcetContextType=playlist` and `dulcetCont
 count is manufactured. Invalid, private, deleted and non-member contexts are ignored without
 rejecting the ordinary song scrobble. Playlist reads and now-playing reports do not create
 history. API playlist contexts and these REST annotations merge into one deduplicated shelf.
+
+The playing session and durable outbox retain the nullable playlist ID independently of the
+currently visible screen and delivery time; existing persisted submissions migrate to no context.
+Home Refresh keeps every shelf's reader window alive even while a lazy row is empty or offscreen.
+Android TV full-grid and Home cards offer a focusable More action for card commands alongside
+normal activation; the action does not require a native context-menu gesture. tvOS full-grid
+cards similarly offer a separate focusable More button and a native confirmation dialog,
+sharing the existing item commands while preserving primary Select navigation.
 
 ### 29.5 Lyrics
 

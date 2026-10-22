@@ -69,6 +69,15 @@ class PlaylistAndLyricsPresentationTest {
         assertEquals(listOf("a", "b", "a", "c"), queue.tracks.map { it.rawId }, "duplicates kept, in the playlist's order")
         assertEquals(2, queue.start)
         assertEquals("Mix", queue.name)
+        assertEquals("pl-1", queue.rawId, "the queue names the actual server playlist, never its display name")
+    }
+
+    @Test
+    fun aPlaylistNotYetSavedOnTheServerHasNoServerPlaylistContext() {
+        val original = publication(listOf(track("a")))
+        val local = AndroidLibraryPublication(1, AndroidLibraryFreshness.Live, null, 1, 0, playlist(local = true),
+            original.items, AndroidLibraryItemsState.Present, AndroidLibraryItemsOrder.Server, null, null)
+        assertNull(assertNotNull(local.playlistQueue("provider", 0)).rawId)
     }
 
     @Test

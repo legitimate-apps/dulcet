@@ -27,6 +27,7 @@ internal data class ScrobbleOutboxEntry(
     val sessionStartWallClock: PlaybackWallClockTime,
     val createdAtWallClock: PlaybackWallClockTime,
     val attemptCount: Long,
+    val playlistRawId: String? = null,
 ) {
     init {
         require(rawId.isNotBlank())
@@ -37,6 +38,7 @@ internal data class ScrobbleOutboxEntry(
         RecordedPlaybackEvent.SubmittedPlay(
             itemId = ProviderItemId(serverId.value, rawId),
             sessionStartWallClock = sessionStartWallClock,
+            playlistContextId = playlistRawId?.let { ProviderItemId(serverId.value, it) },
         )
 }
 
@@ -107,6 +109,7 @@ internal class PersistentScrobbleOutbox(
             raw_id = event.itemId.rawId,
             session_start_wall_clock = event.sessionStartWallClock.epochMilliseconds,
             created_at_wall_clock = wallClock.nowEpochMilliseconds(),
+            playlist_raw_id = event.playlistContextId?.rawId,
         )
     }
 
@@ -179,12 +182,14 @@ internal class PersistentScrobbleOutbox(
         sessionStart: Long,
         createdAt: Long,
         attemptCount: Long,
+        playlistRawId: String?,
     ): ScrobbleOutboxEntry = ScrobbleOutboxEntry(
         serverId = ServerId(serverId),
         rawId = rawId,
         sessionStartWallClock = PlaybackWallClockTime(sessionStart),
         createdAtWallClock = PlaybackWallClockTime(createdAt),
         attemptCount = attemptCount,
+        playlistRawId = playlistRawId,
     )
 }
 
@@ -307,10 +312,7 @@ internal class ScrobbleOutboxDeliveryWorker(
                             submittedAtWallClock = submittedAt,
                         ),
                     )
-                    RecordedPlaybackEvent.SubmittedPlay(
-                        itemId = ProviderItemId(entry.serverId.value, entry.rawId),
-                        sessionStartWallClock = submittedAt,
-                    )
+                    entry.toSubmittedPlay().copy(sessionStartWallClock = submittedAt)
                 } else {
                     entry.toSubmittedPlay()
                 }

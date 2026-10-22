@@ -15,6 +15,11 @@ import com.legitimateapps.dulcet.search.SearchAccount
 
 @Composable
 internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, actions: PhoneActions, playbackState: AndroidPlaybackState, playback: AndroidPlaybackController?) {
+    // Home owns its independent shelf windows for its whole lifetime. A lazy row may be
+    // empty or offscreen when Refresh is pressed; it must still receive the live read.
+    val shelves = ListenNowShelf.entries.associateWith { shelf ->
+        rememberSurface(session, shelf) { openListenNow(shelf) }
+    }
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding().testTag("listenNow.surface"), contentPadding = PaddingValues(vertical=20.dp)) {
         item {
             Column(Modifier.padding(horizontal=16.dp).padding(bottom=24.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -33,7 +38,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
             }
         }
         items(ListenNowShelf.entries, key={ it.wireName }) { shelf ->
-            val surface = rememberSurface(session, shelf) { openListenNow(shelf) }
+            val surface = shelves.getValue(shelf)
             val publication by surface.state.collectAsState()
             val current = publication
             if (current == null || current.items.isNotEmpty() || current.freshness != AndroidLibraryFreshness.Live) {

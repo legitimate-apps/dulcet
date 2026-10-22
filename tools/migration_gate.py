@@ -101,6 +101,7 @@ PROTECTED_COLUMNS = {
         "session_start_wall_clock",
         "created_at_wall_clock",
         "attempt_count",
+        "playlist_raw_id",
     ),
     "mutation_outbox": (
         "server_id",
@@ -306,7 +307,13 @@ def reconcile_runtime_metadata(
 
 def canonical_rows(connection: sqlite3.Connection, table: str) -> list[dict[str, object]]:
     columns = PROTECTED_COLUMNS[table]
-    selected = ", ".join(f'"{column}"' for column in columns)
+    available = {row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')}
+    # Schema 12's additive field is unknown in earlier submitted plays. Missing any other
+    # protected field remains an error rather than being silently replaced with a default.
+    selected = ", ".join(
+        "NULL" if table == "scrobble_outbox" and column == "playlist_raw_id" and column not in available
+        else f'"{column}"' for column in columns
+    )
     rows = []
     for raw_row in connection.execute(f'SELECT {selected} FROM "{table}"'):
         row: dict[str, object] = {}
@@ -377,6 +384,12 @@ def protected_schema(connection: sqlite3.Connection, version: int) -> dict[str, 
             ],
             "indexes": sorted(indexes, key=lambda index: str(index["name"])),
         }
+    if version < 12 and "scrobble_outbox" in tables:
+        # Compare the pre-12 protected structure, allowing only the specified additive column.
+        # The full post-upgrade schema is independently compared with the fresh install below.
+        outbox = tables["scrobble_outbox"]
+        outbox["columns"] = [column for column in outbox["columns"] if column[1] != "playlist_raw_id"]
+        outbox["sql"] = normalized_sql(re.sub(r", playlist_raw_id text(?= ,| \))", "", outbox["sql"]))
     triggers = [
         {
             "name": name,
@@ -1365,8 +1378,12 @@ def main() -> None:
     prove_negative_controls(fixtures[depth_version], depth_version, current, LIBRARY_DEPTH_NEGATIVE_CONTROLS)
     offline_version = PROTECTED_SINCE_VERSION["offline_media_retention"]
     prove_negative_controls(fixtures[offline_version], offline_version, current, OFFLINE_LIBRARY_NEGATIVE_CONTROLS)
+    context_controls = (("playlist_context_erased", "UPDATE scrobble_outbox SET playlist_raw_id = NULL;",
+                         ("scrobble_outbox: protected rows changed",)),)
+    prove_negative_controls(fixtures[current], current, current, context_controls)
     control_count = (
-        len(NEGATIVE_CONTROLS)
+        len(context_controls)
+        +         len(NEGATIVE_CONTROLS)
         + len(PIN_NEGATIVE_CONTROLS)
         + len(PROTECTED_PIN_NEGATIVE_CONTROLS)
         + len(UPGRADE_NEGATIVE_CONTROLS)

@@ -584,6 +584,13 @@ extension DulcetReaderItem {
     /// A playlist the person can edit: their own, or one the server says is not read-only.
     public var isEditable: Bool { kind == .playlist && editable }
     public var isLocalPlaylist: Bool { kind == .playlist && local }
+    /// A pending create has a device cache ID until the server returns its real identity.
+    /// Keep its display source, but never report that cache key as a server playlist context.
+    var playbackSourceID: DulcetProviderItemID? { isLocalPlaylist ? nil : id }
+    var playbackSourceKind: DulcetPlaybackQueueSourceKind {
+        if kind == .playlist { return isLocalPlaylist ? .library : .playlist }
+        return kind == .album ? .album : .library
+    }
     public var hasPendingChanges: Bool { kind == .playlist && pendingChanges }
 }
 

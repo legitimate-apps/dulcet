@@ -315,7 +315,12 @@ public sealed interface RecordedPlaybackEvent {
     public data class SubmittedPlay(
         override val itemId: ProviderItemId,
         val sessionStartWallClock: PlaybackWallClockTime,
-    ) : RecordedPlaybackEvent
+        val playlistContextId: ProviderItemId? = null,
+    ) : RecordedPlaybackEvent {
+        init {
+            require(playlistContextId == null || playlistContextId.providerInstanceId == itemId.providerInstanceId)
+        }
+    }
 }
 
 /** The provider seam consumes core policy effects; v1 has no alternate timeline-reporting path. */

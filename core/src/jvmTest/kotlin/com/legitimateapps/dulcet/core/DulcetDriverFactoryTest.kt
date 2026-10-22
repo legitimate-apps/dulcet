@@ -125,6 +125,20 @@ class DulcetDriverFactoryTest {
                     """.trimIndent(),
                 )
                 statement.execute("INSERT INTO schema_meta VALUES (1, 2, 1, 42)")
+                // v2 shipped this table too. v11 -> v12 adds its nullable playlist context,
+                // so the interruption must occur after real migrations, not at missing fixture DDL.
+                statement.execute(
+                    """
+                    CREATE TABLE scrobble_outbox (
+                      server_id TEXT NOT NULL,
+                      raw_id TEXT NOT NULL,
+                      session_start_wall_clock INTEGER NOT NULL,
+                      created_at_wall_clock INTEGER NOT NULL,
+                      attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+                      PRIMARY KEY (server_id, raw_id, session_start_wall_clock)
+                    )
+                    """.trimIndent(),
+                )
                 // v2 already shipped the protected download table. The original interruption
                 // fixture omitted it because v2 -> v3 did not read it; v3 -> v4 legitimately does.
                 statement.execute(

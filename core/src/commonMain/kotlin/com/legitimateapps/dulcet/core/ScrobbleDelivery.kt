@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -23,6 +25,9 @@ public sealed interface ScrobbleSendResult {
 
 internal fun interface ScrobbleEndpointTransport {
     suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse
+
+    /** Null is the ordinary-server seam for transports without extension negotiation. */
+    suspend fun extensions(): AuthenticatedEndpointResponse? = null
 }
 
 /** Low-level sender shared by ephemeral now-playing and the later durable outbox worker. */
@@ -42,6 +47,44 @@ public class ScrobbleEndpointSender private constructor(
 
     internal constructor(transport: ScrobbleEndpointTransport) : this(transport, null)
 
+    private val discovery = Mutex()
+    private var capabilityGeneration = 0L
+    private var offered: Pair<Long, Boolean>? = null
+
+    /** A refreshed connection must authenticate its own advertisement, including valid absence. */
+    internal fun invalidateCapabilities() {
+        capabilityGeneration += 1
+        offered = null
+    }
+
+    private suspend fun playlistContextOffered(): Boolean = discovery.withLock {
+        while (true) {
+            val generation = capabilityGeneration
+            offered?.takeIf { it.first == generation }?.let { return@withLock it.second }
+            val response = transport.extensions()
+            val available = when {
+                response == null -> false
+                response.statusCode == 404 || response.statusCode == 501 -> false
+                else -> {
+                    val parsed = parseScrobbleEnvelope(response.body)
+                    if (response.statusCode in 200..299 && parsed?.status == "failed" && parsed.errorCode == 70) {
+                        false
+                    } else {
+                        val result = response.toScrobbleSendResult()
+                        if (result is ScrobbleSendResult.Failed) throw AuthenticatedEndpointFailure(result.error)
+                        1 in parseOpenSubsonicExtensionVersions(response.body.decodeToString(), "dulcetHome")
+                    }
+                }
+            }
+            // A reconnect during discovery cannot seed the new connection with an old answer.
+            if (generation != capabilityGeneration) continue
+            offered = generation to available
+            return@withLock available
+        }
+        @Suppress("UNREACHABLE_CODE")
+        false
+    }
+
     suspend fun send(request: ScrobbleEndpointRequest): ScrobbleSendResult = try {
         val parameters = when (val event = request.event) {
             is RecordedPlaybackEvent.NowPlaying -> linkedMapOf(
@@ -52,13 +95,20 @@ public class ScrobbleEndpointSender private constructor(
                 "id" to event.itemId.rawId,
                 "time" to event.sessionStartWallClock.epochMilliseconds.toString(),
                 "submission" to "true",
-            )
+            ).apply {
+                if (event.playlistContextId != null && playlistContextOffered()) {
+                    put("dulcetContextType", "playlist")
+                    put("dulcetContextId", event.playlistContextId.rawId)
+                }
+            }
         }
         val response = transport.request(parameters)
         response.toScrobbleSendResult()
     } catch (_: CancellationException) {
         ScrobbleSendResult.Failed(DomainError.Transport.Cancelled)
     } catch (failure: AuthenticatedEndpointFailure) {
+        ScrobbleSendResult.Failed(failure.error)
+    } catch (failure: LibraryRequestFailure) {
         ScrobbleSendResult.Failed(failure.error)
     } catch (failure: Throwable) {
         ScrobbleSendResult.Failed(mapAccountConnectionFailure(failure))
@@ -136,6 +186,9 @@ private class KtorScrobbleEndpointTransport(
     override suspend fun request(
         parameters: Map<String, String>,
     ): AuthenticatedEndpointResponse = client.request("scrobble", parameters)
+
+    override suspend fun extensions(): AuthenticatedEndpointResponse =
+        client.request("getOpenSubsonicExtensions", emptyMap())
 
     fun close() {
         client.close()

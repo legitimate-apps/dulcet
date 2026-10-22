@@ -241,7 +241,11 @@ public class ApplePlaybackQueueClient private constructor(
     )
 
     /** Network reachability changes queue eligibility without changing or deleting queue entries. */
-    public fun setNetworkAvailable(available: Boolean) { availability?.online = available }
+    public fun setNetworkAvailable(available: Boolean) {
+        // A reachable/foreground report revalidates the connection even without a prior outage.
+        if (available) delivery?.sender?.invalidateCapabilities()
+        availability?.online = available
+    }
 
     public fun configureDelivery(
         account: PlaybackEndpointAccount,
