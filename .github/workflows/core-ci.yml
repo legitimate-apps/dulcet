@@ -113,8 +113,11 @@ jobs:
         run: |
           . /etc/os-release
           test "$ID:$VERSION_ID" = "ubuntu:24.04"
-          # Run 39831584121 exhausted the 25-minute build job in an unresponsive Ubuntu mirror.
-          # Bound each request so APT can try the configured fallback before tests lose their budget.
+          # Runs 39831584121 and 39836200785 exhausted the build budget in the Azure mirror:
+          # first metadata stalled, then progressing package downloads stayed near 40 kB/s.
+          # Prefer the existing official HTTPS fallback without changing package/signature checks.
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          # Bound failed requests as well; a progressing slow transfer does not hit these timeouts.
           sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 update
           sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
           test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
@@ -338,8 +341,11 @@ jobs:
         run: |
           . /etc/os-release
           test "$ID:$VERSION_ID" = "ubuntu:24.04"
-          # Run 39831584121 exhausted the 25-minute build job in an unresponsive Ubuntu mirror.
-          # Bound each request so APT can try the configured fallback before tests lose their budget.
+          # Runs 39831584121 and 39836200785 exhausted the build budget in the Azure mirror:
+          # first metadata stalled, then progressing package downloads stayed near 40 kB/s.
+          # Prefer the existing official HTTPS fallback without changing package/signature checks.
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          # Bound failed requests as well; a progressing slow transfer does not hit these timeouts.
           sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 update
           sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
           test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
