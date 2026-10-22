@@ -35,6 +35,21 @@ that ordinary plays reuse the answer; the Android proof preserves session/attemp
 and keeps now-playing context-free. These are controller/facade binding observations, separate
 from the platform Home UI observations below.
 
+OBSERVED Android reader-reconnect correction: the earlier Android availability regression
+exercised only the OS network setter and missed the library reader's independent reconnect.
+`AndroidPlaybackControllerTest/readerReconnectRediscoversPlaylistContextWithoutAnOsNetworkChange`
+now calls the real `AndroidLibraryReader.reconnect()`, obtains a successful epoch read through
+its production reconnect observer, and observes the installed playback sender over a real HTTP
+socket. No OS availability setter is called. Before the correction, its one case fails with
+`expected:<null> but was:<playlist-id>` after the reader's successful reconnect. After routing the
+matching account's notification onto the delivery owner's main dispatcher and invalidating the
+sender before applying availability, all 67 Android controller cases pass, with zero failures,
+errors or skips. The new case observes positive-to-absent-to-positive negotiation, cache reuse
+without another reconnect, no invalidation for another account's notification, preserved session
+and attempt identities, and context-free now-playing. The existing OS-setter invalidation remains
+covered independently. These are host binding checks with an in-process epoch transport and a
+real scrobble socket, not an additional emulator/offline-relaunch claim.
+
 These shared checks establish core behavior. They do not alone establish any platform's UI,
 engine playback, process-death behavior or rendered Home result. Platform observations and test
 counts are recorded below only when the corresponding runtime has executed.

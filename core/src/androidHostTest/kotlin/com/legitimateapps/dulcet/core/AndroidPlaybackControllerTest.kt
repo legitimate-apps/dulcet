@@ -1896,29 +1896,8 @@ class AndroidPlaybackControllerTest {
     @Test fun networkReconnectRediscoversPositiveAndNegativePlaylistContextWithoutReplacingPlayback() {
         ScrobbleReceiver().use { receiver ->
             Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
-                fun play(rawId: String, expectedContext: String?) {
-                    f.probe.position = 0
-                    f.controller.playQueue(album(rawId), 0, AndroidQueueSource.Playlist, "Mix", "playlist-id")
-                    f.probe.state = androidx.media3.common.Player.STATE_READY
-                    f.probe.events()
-                    repeat(46) {
-                        f.probe.position += 500
-                        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
-                    }
-                    val outbox = PersistentScrobbleOutbox(f.store.database, OutboxWallClock { System.currentTimeMillis() })
-                    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
-                    while ((receiver.requests.none { it["id"] == rawId && it["submission"] == "true" } ||
-                            outbox.pending(ServerId(OWNER)).isNotEmpty()) && System.nanoTime() < deadline) {
-                        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100))
-                        Thread.sleep(10)
-                    }
-                    val sent = receiver.requests.single { it["id"] == rawId && it["submission"] == "true" }
-                    assertEquals(expectedContext, sent["dulcetContextId"])
-                    assertEquals(if (expectedContext == null) null else "playlist", sent["dulcetContextType"])
-                    assertTrue(outbox.pending(ServerId(OWNER)).isEmpty())
-                }
                 receiver.advertiseContext = true
-                play("positive", "playlist-id")
+                f.submitPlaylist(receiver, "positive", "playlist-id")
                 assertEquals(1, receiver.extensionRequests.get())
                 val playing = f.controller.state.value
                 receiver.advertiseContext = false
@@ -1926,18 +1905,106 @@ class AndroidPlaybackControllerTest {
                 f.controller.setNetworkAvailable(true)
                 assertEquals(playing.playbackSessionId, f.controller.state.value.playbackSessionId)
                 assertEquals(playing.attemptId, f.controller.state.value.attemptId)
-                play("negative", null)
+                f.submitPlaylist(receiver, "negative", null)
                 assertEquals(2, receiver.extensionRequests.get(), "Reconnect must discard a positive advertisement")
                 receiver.advertiseContext = true
                 // A foreground/revalidated connection can report true without a preceding outage.
                 f.controller.setNetworkAvailable(true)
-                play("renewed", "playlist-id")
+                f.submitPlaylist(receiver, "renewed", "playlist-id")
                 assertEquals(3, receiver.extensionRequests.get(), "Reconnect must discard valid absence too")
-                play("cached", "playlist-id")
+                f.submitPlaylist(receiver, "cached", "playlist-id")
                 assertEquals(3, receiver.extensionRequests.get(), "Ordinary plays still share the connection's answer")
                 assertTrue(receiver.requests.filter { it["submission"] == "false" }.all { it["dulcetContextId"] == null })
             }
         }
+    }
+
+    /** A server can reconnect while the OS network stays unchanged. Drive the real reader observer. */
+    @Test fun readerReconnectRediscoversPlaylistContextWithoutAnOsNetworkChange() {
+        ScrobbleReceiver().use { receiver ->
+            Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
+                val reader = AndroidLibraryReader(
+                    account = AndroidLibraryReaderAccount(OWNER, receiver.url,
+                        "controller-canary", "controller-password-canary", true),
+                    compose = { scope, foreground ->
+                        AndroidLibraryReaderComposition(LibraryReaderSession(
+                            f.store.database,
+                            SeenCacheStore(f.store, ManualWallClock(now = 2_000_000)).bind(
+                                CacheBinding(OWNER, receiver.url, "controller-canary")),
+                            SessionTestServer(), scope,
+                            LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+                            formPost = false, foreground = foreground))
+                    },
+                    readerDispatcher = newLibraryReaderDispatcher(),
+                    mainDispatcher = Dispatchers.Main.immediate,
+                    initiallyForeground = false,
+                )
+                try {
+                    fun reconnect() {
+                        val completed = java.util.concurrent.LinkedBlockingQueue<AndroidLibraryConnection>()
+                        reader.reconnect { completed.put(it) }
+                        val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30)
+                        while (completed.isEmpty() && System.nanoTime() < deadline) {
+                            mainScheduler.runCurrent()
+                            shadowOf(Looper.getMainLooper()).idle()
+                            Thread.sleep(10)
+                        }
+                        assertTrue(assertNotNull(completed.poll(), "The real reader reconnect completed").epochRead,
+                            "A successful epoch read must drive ReaderConnectionOutcome.Read")
+                    }
+                    receiver.advertiseContext = true
+                    f.submitPlaylist(receiver, "reader-positive", "playlist-id")
+                    assertEquals(1, receiver.extensionRequests.get())
+                    // Another account's report must not discard this account's cached answer.
+                    AndroidPlaybackController.notifyServerAvailable("other-provider", true)
+                    f.submitPlaylist(receiver, "reader-foreign", "playlist-id")
+                    assertEquals(1, receiver.extensionRequests.get())
+                    val playing = f.controller.state.value
+                    receiver.advertiseContext = false
+                    reconnect() // No OS loss/arrival and no playback availability setter.
+                    assertEquals(playing.playbackSessionId, f.controller.state.value.playbackSessionId)
+                    assertEquals(playing.attemptId, f.controller.state.value.attemptId)
+                    f.submitPlaylist(receiver, "reader-negative", null)
+                    assertEquals(2, receiver.extensionRequests.get(), "Reader Read discards cached support")
+                    receiver.advertiseContext = true
+                    val beforeReconnect = f.controller.state.value
+                    reconnect() // Successful revalidation, even without a preceding failure.
+                    assertEquals(beforeReconnect.playbackSessionId, f.controller.state.value.playbackSessionId)
+                    assertEquals(beforeReconnect.attemptId, f.controller.state.value.attemptId)
+                    f.submitPlaylist(receiver, "reader-renewed", "playlist-id")
+                    assertEquals(3, receiver.extensionRequests.get(), "Reader Read discards cached absence")
+                    f.submitPlaylist(receiver, "reader-cached", "playlist-id")
+                    assertEquals(3, receiver.extensionRequests.get(), "Plays without reconnect reuse the answer")
+                    assertTrue(receiver.requests.filter { it["submission"] == "false" }
+                        .all { it["dulcetContextId"] == null && it["dulcetContextType"] == null })
+                } finally {
+                    reader.close()
+                    kotlinx.coroutines.runBlocking { kotlinx.coroutines.withTimeout(30_000) { reader.awaitTermination() } }
+                }
+            }
+        }
+    }
+
+    private fun Fixture.submitPlaylist(receiver: ScrobbleReceiver, rawId: String, expectedContext: String?) {
+        probe.position = 0
+        controller.playQueue(album(rawId), 0, AndroidQueueSource.Playlist, "Mix", "playlist-id")
+        probe.state = androidx.media3.common.Player.STATE_READY
+        probe.events()
+        repeat(46) {
+            probe.position += 500
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        }
+        val outbox = PersistentScrobbleOutbox(store.database, OutboxWallClock { System.currentTimeMillis() })
+        val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+        while ((receiver.requests.none { it["id"] == rawId && it["submission"] == "true" } ||
+                outbox.pending(ServerId(OWNER)).isNotEmpty()) && System.nanoTime() < deadline) {
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100))
+            Thread.sleep(10)
+        }
+        val sent = receiver.requests.single { it["id"] == rawId && it["submission"] == "true" }
+        assertEquals(expectedContext, sent["dulcetContextId"])
+        assertEquals(if (expectedContext == null) null else "playlist", sent["dulcetContextType"])
+        assertTrue(outbox.pending(ServerId(OWNER)).isEmpty())
     }
 
     /** Receives real HTTP from the production sender. No controller handoff or sender is replaced. */

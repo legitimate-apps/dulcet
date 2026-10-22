@@ -62,6 +62,11 @@ perform the same negotiation in the outbox composition. Do not couple delivery t
 sender's answer on a reachable/revalidated report, including a foreground report without a
 preceding unreachable report. This changes no queue entry, playback session or attempt and
 sends no discovery request until a submitted play with context needs it.
+On Android, a successful library-reader reconnect (`ReaderConnectionOutcome.Read`) also
+revalidates that account's playback sender, even when the OS network never changes. Its
+availability notification is serialized on the controller's delivery dispatcher; another
+account's notification does not invalidate this sender. OS network-setter invalidation remains
+independent of the reader signal.
 
 A valid absence, or discovery endpoint unsupported (Subsonic 70 / HTTP 404 / 501), means
 ordinary scrobbling. Authentication, transport and malformed discovery failures are not

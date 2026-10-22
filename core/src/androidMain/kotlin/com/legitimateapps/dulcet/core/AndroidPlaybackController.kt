@@ -1594,7 +1594,15 @@ public class AndroidPlaybackController internal constructor(
             else runBlocking(Dispatchers.Main.immediate) { prepare() }
         }
         internal fun notifyServerAvailable(serverId: String, available: Boolean) {
-            instances.filter { it.account.providerInstanceId == serverId }.forEach { it.serverAvailable = available }
+            instances.filter { it.account.providerInstanceId == serverId }.forEach { controller ->
+                // The library reader reconnects on its own thread, independently of OS reachability.
+                // Order its revalidation with delivery just like a network availability report.
+                controller.scope.launch {
+                    if (controller.closed) return@launch
+                    if (available) controller.sender.invalidateCapabilities()
+                    controller.serverAvailable = available
+                }
+            }
         }
     }
 

@@ -7913,6 +7913,16 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-21 — Bind Android reader reconnect to playlist capability revalidation.**
+A successful Android library-reader reconnect reports `ReaderConnectionOutcome.Read` through
+the matching account's playback server-availability notification. That notification now
+invalidates the installed sender's cached positive or negative `dulcetHome` answer on the
+controller's delivery dispatcher, before applying the reachable state. It does not require an
+OS network loss/arrival, replace the current session or attempt, or affect another account's
+sender. The independent OS network availability setter continues to invalidate too. This
+corrects the missed reader binding in the preceding availability change; it adds no wire fields
+or eager discovery and leaves the existing reconnect contract intact.
+
 **2026-10-21 — Bind playlist capability invalidation to playback availability.**
 A reachable/revalidated playback availability report invalidates the installed scrobble sender's
 cached `dulcetHome` answer, even when the previous report was also reachable (foreground
