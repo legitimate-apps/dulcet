@@ -450,3 +450,18 @@ and the deadline boundary. Final-head full Apple execution remains required.
 ### TV initial library navigation (2026-10-22)
 
 OBSERVED: TV LIVE soak 39833691291 on 2ba9dc9f completed 540 executions over 20 repetitions, with 2 failures and 0 skips (`SOAK RESULT passed=18 failed=2`). Both retained XML failures stopped at the first Library section navigation with `UP did not reveal the library sections`, before playlist mutation or network loss; their actual failed focus state was not retained. The two workflows now wait for the same initial home-card focus used by neighboring TV scenarios, and the unchanged three-UP failure includes focus/tag diagnostics. Local Robolectric/real disposable-server validation passed all 3 original tests (remote playlist additions, offline pending/reconnect addition, album-play control), with 0 failures/errors/skips in 45.103 s; exact server playlist order and playback assertions remain intact. The local baseline and an exact-boundary delayed initial-home-response control also passed before the change, so no reproduced RED or proven original timing-cause claim is made. Fresh Linux 20x TV LIVE soak remains required on the final head.
+## 2026-10-22 — Ubuntu media-tool installation infrastructure
+
+Core CI run [39855394273](https://github.com/legitimate-apps/dulcet/actions/runs/39855394273)
+on `641eed7b` reached its 25-minute core-job timeout in all three attempts while
+downloading packages from `azure.archive.ubuntu.com`. Core tests, Android builds,
+and Android host tests had passed first; server and API tests had not run. Those
+attempts do not supply passing server/API evidence. The completed logs show
+package payloads trickling until cancellation, consistent with the
+[runner-image issue](https://github.com/actions/runner-images/issues/14823).
+The two pinned media-tool installation steps now remove the Azure entry from the
+runner's existing APT mirror list, retaining its official Ubuntu archive and
+security fallbacks. The Ubuntu 24.04 check, exact FFmpeg package pin, APT signature
+verification, and job timeouts remain unchanged. The filter was checked against
+the actual `ubuntu24/20261012.334` runner-image mirror configuration; this local
+check establishes mirror selection, not a successful package installation.
