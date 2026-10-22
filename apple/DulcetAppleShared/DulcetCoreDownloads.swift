@@ -32,12 +32,15 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var pendingTracks: [DulcetTrack] = []
     // Tests can retain a completed core prepare while a secured delivery wins the race.
     var preparedDownloadDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
+    var completedDownloadDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
     var remoteTaskEnumerationDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
     var securedDownloadValidationDelivery: (@MainActor (String, @escaping @MainActor () -> Void) -> Void)?
     // Like pending tracks, a preference belongs to the configured URL/user binding. Repeated
     // same-binding reconciliation must not discard the listener's latest choice.
     private var pendingAutomaticDownloadsEnabled: Bool?
     private var completedTaskIdentifiers: Set<Int> = []
+    // Only tasks started here after accepted identity carry this process-local proof.
+    private var authorizedTaskGenerations: [Int: Int] = [:]
     private var resumedTaskIdentifiers: Set<Int> = []
     private var removedTaskIdentifiers: Set<Int> = []
     // Includes restored tasks before any membership change can schedule cancellation.
@@ -230,6 +233,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         automaticDownloadContactPermitted = false
         reconciliationGeneration += 1
         deferredPreparations = []
+        authorizedTaskGenerations = [:]
         reconciled = false
         pendingAutomaticDownloadsEnabled = nil
         cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
@@ -294,6 +298,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         }
         reconciliationGeneration += 1
         deferredPreparations = []
+        authorizedTaskGenerations = [:]
         let generation = reconciliationGeneration
         reconciled = false
         prepareOperations.values.forEach { $0.cancel() }
@@ -479,6 +484,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         guard !identityRejected else { return }
         identityRejected = true
         deferredPreparations = []
+        authorizedTaskGenerations = [:]
         remoteEligible = false
         client?.rejectServerIdentity()
         // Retain the policy/local plans. Only remote work and its late completions are retired.
@@ -647,6 +653,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         pendingAutomaticDownloadsEnabled = nil
         reconciliationGeneration += 1
         deferredPreparations = []
+        authorizedTaskGenerations = [:]
         reconciled = false
         cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
         cacheWrites = [:]
@@ -677,6 +684,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         pendingAutomaticDownloadsEnabled = nil
         reconciliationGeneration += 1
         deferredPreparations = []
+        authorizedTaskGenerations = [:]
         let removalGeneration = reconciliationGeneration
         reconciled = false
         cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
@@ -920,6 +928,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         task.taskDescription = prepared.downloadIdentifier
         knownTaskIdentifiers[task.taskIdentifier] = prepared.downloadIdentifier
         publish(.downloading, for: itemID)
+        authorizedTaskGenerations[task.taskIdentifier] = reconciliationGeneration
         task.resume()
         probe("task-started download=\(prepared.downloadIdentifier) item=\(itemID.rawID)")
     }
@@ -932,25 +941,39 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             try? FileManager.default.removeItem(at: location)
             return
         }
+        let authorizedGeneration = authorizedTaskGenerations.removeValue(forKey: task.taskIdentifier)
         guard let secured = secureDownloadedFile(task: task, location: location) else { return }
         probe(
             "delivered download=\(task.taskDescription ?? "none") "
                 + "status=\(secured.statusCode.map(String.init) ?? "none") bytes=\(secured.deliveredFileLength)"
         )
         completedTaskIdentifiers.insert(task.taskIdentifier)
-        _ = processSecuredDownload(secured)
+        let deliver = { @MainActor [weak self] in
+            _ = self?.processSecuredDownload(secured, authorizedGeneration: authorizedGeneration)
+        }
+        if let completedDownloadDelivery { completedDownloadDelivery(deliver) }
+        else { deliver() }
     }
 
     @discardableResult
-    private func processSecuredDownload(_ secured: DulcetSecuredDownload) -> Bool {
+    private func processSecuredDownload(_ secured: DulcetSecuredDownload, authorizedGeneration: Int? = nil) -> Bool {
         guard UUID(uuidString: secured.identifier) != nil, let client else { return false }
         guard let identifier = secured.downloadIdentifier else { return removeSecuredDownload(secured) }
         // Orphan cleanup is local and cannot promote anything, so it remains available offline.
         if client.fileTarget(downloadIdentifier: identifier).errorKind == "unknownDownload" {
             return removeSecuredDownload(secured)
         }
-        guard !identityRejected, secured.identityRejected != true, remoteEligible,
-              !validatingDeliveries.contains(secured.identifier) else { return false }
+        guard !identityRejected, secured.identityRejected != true else { return false }
+        if let authorizedGeneration, authorizedGeneration != reconciliationGeneration { return false }
+        // Finishing an already-authorized transfer is local work even when new contact is
+        // closed. Restored tasks and inbox metadata never manufacture this in-memory proof.
+        if authorizedGeneration == reconciliationGeneration,
+           client.ownsDownloadTask(downloadIdentifier: identifier) {
+            let promoted = promoteSecuredDownload(secured)
+            if promoted { resumePendingDownloads() }
+            return promoted
+        }
+        guard remoteEligible, !validatingDeliveries.contains(secured.identifier) else { return false }
         validatingDeliveries.insert(secured.identifier)
         validateRemoteAccess { [weak self] valid in
             guard let self else { return }
@@ -1056,6 +1079,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     private func handleTaskCompletion(task: URLSessionTask, error: Error?) {
+        authorizedTaskGenerations[task.taskIdentifier] = nil
         redirectsByTaskIdentifier[task.taskIdentifier] = nil
         knownTaskIdentifiers[task.taskIdentifier] = nil
         if removedTaskIdentifiers.remove(task.taskIdentifier) != nil {

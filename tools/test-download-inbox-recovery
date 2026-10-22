@@ -55,6 +55,7 @@ struct Outcome { var state = "downloaded"; var retryNotBeforeWallClock: NSNumber
     var targets: [String: Target] = [:]
     var finishes: [String] = []
     init(_ root: URL) { targetRoot = root }
+    func ownsDownloadTask(downloadIdentifier: String) -> Bool { targets[downloadIdentifier] != nil }
     func fileTarget(downloadIdentifier: String) -> Target {
         targets[downloadIdentifier] ?? Target(errorKind: "unknownDownload")
     }
@@ -98,6 +99,8 @@ extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
     var removedTaskIdentifiers: Set<Int> = []
     var knownTaskIdentifiers: [Int: String] = [:]
     var completedTaskIdentifiers: Set<Int> = []
+    var authorizedTaskGenerations: [Int: Int] = [:]
+    var completedDownloadDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
     var reconciliationGeneration = 1
     var stateRefreshHandler: (() -> Void)?
     var securedAttempts = 0

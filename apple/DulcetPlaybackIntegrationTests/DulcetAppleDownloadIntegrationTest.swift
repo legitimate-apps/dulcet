@@ -2,6 +2,7 @@ import DulcetCore
 @testable import DulcetKit
 import AVFoundation
 import Foundation
+import Network
 import SQLite3
 import XCTest
 #if os(iOS)
@@ -209,6 +210,68 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         XCTAssertEqual(server.requestQueries.count, 1, "Only the new ordinary track may fetch after delivery reconciliation")
     }
 
+    func testAnAuthorizedNativeDeliveryPromotesOfflineWithoutAnotherIdentityRequest() async throws {
+        try await proveAuthorizedNativeDelivery(rejectBeforePromotion: false)
+    }
+
+    func testKnownReplacementRejectsAnAlreadyDeliveredAuthorizedNativeTask() async throws {
+        try await proveAuthorizedNativeDelivery(rejectBeforePromotion: true)
+    }
+
+    private func proveAuthorizedNativeDelivery(rejectBeforePromotion: Bool) async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let audio = try Data(contentsOf: audioURL)
+        let server = try ProductionPathLoopbackServer(audio: audio, answersIdentity: true, holdStreams: true)
+        defer { server.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-offline-delivery-\(UUID())")
+        let name = "dulcet-offline-delivery-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1)
+        let downloads = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        let playback = DulcetCorePlaybackController(databaseName: name, downloadController: downloads)
+        defer { playback.disconnect(); downloads.disconnect(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name) }
+        var delivery: (() -> Void)?
+        if rejectBeforePromotion { downloads.completedDownloadDelivery = { delivery = $0 } }
+        downloads.configure(account: account)
+        downloads.setAutomaticDownloadsEnabled(false)
+        let track = rejectionTrack("offline-delivery")
+        downloads.requestDownload(track)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Native task did not reach the held real stream") {
+            server.requestQueries.count == 1 && downloads.status(for: track.id) == .downloading
+        }
+        // Match the hosted reader proof: playback becomes device-only while its existing
+        // authenticated native transfer remains held; no new contact may follow that boundary.
+        playback.configureOffline(account: account)
+        downloads.setAutomaticDownloadContactPermitted(false)
+        let baseline = server.requestPaths.count
+        server.releaseStreams()
+        if rejectBeforePromotion {
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Real native delivery did not reach the held completion") { delivery != nil }
+            downloads.rejectServerIdentity()
+            try XCTUnwrap(delivery)()
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertFalse(downloads.status(for: track.id).isLocallyPlayable, "Known rejection must fence even an already-delivered authorized task")
+            XCTAssertNil(downloads.offlinePlaybackAsset(for: track))
+            XCTAssertEqual(Array(server.requestPaths.dropFirst(baseline)), [], "Rejected delivery must not initiate replacement contact")
+            return
+        }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "The already-authorized receipt did not promote locally") {
+            downloads.status(for: track.id) == .downloaded
+        }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(Array(server.requestPaths.dropFirst(baseline)), [],
+                       "Promotion must not schedule new contact after publishing Complete")
+        downloads.closeNetworkAccessForTesting()
+        let asset = try XCTUnwrap(downloads.offlinePlaybackAsset(for: track))
+        let local = await load(resource: asset.resource, range: .init(start: 0, endInclusive: Int64(audio.count - 1)))
+        if case let .loaded(bytes, _) = local { XCTAssertEqual(bytes, audio) }
+        else { XCTFail("Offline promotion must retain the exact delivered bytes") }
+        let additional = Array(server.requestPaths.dropFirst(baseline))
+        XCTAssertEqual(additional, [], "Already-authorized native delivery must promote without new HTTP; paths=\(additional)")
+        XCTAssertEqual(server.requestQueries.count, 1, "Offline promotion must keep the original single stream")
+    }
+
     func testRestoredReceiptWinsBeforeRemoteTaskEnumerationReturns() async throws {
         try await provePendingReceiptWins(restored: true)
     }
@@ -281,6 +344,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             companionID = String(cString: try XCTUnwrap(sqlite3_column_text(companionStatement, 0)))
             try writeReceipt(try XCTUnwrap(companionID))
         }
+        let identityRequestsBeforeReceipt = server.requestPaths.filter { $0 == "/rest/ping.view" }.count
         var validations: [String: () -> Void] = [:]
         controller.securedDownloadValidationDelivery = { validations[$0] = $1 }
         if restored {
@@ -296,6 +360,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             controller.processSecuredDownloads()
         }
         try await waitUntil(timeout: .seconds(5), failureMessage: "Receipt did not reach real identity validation") { validations.count == (companion ? 2 : 1) }
+        XCTAssertGreaterThan(server.requestPaths.filter { $0 == "/rest/ping.view" }.count, identityRequestsBeforeReceipt,
+                             "A receipt without current-process authorization must still negotiate identity")
         if !restored { try XCTUnwrap(prepared)() }
         try await Task.sleep(for: .milliseconds(250))
         XCTAssertEqual(server.requestQueries.count, 0, "A prepared URL must wait while its secured receipt is validating")
@@ -1151,6 +1217,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary()
         try await testKnownServerReplacementQuarantinesLateMediaAndKeepsOfflinePlayback()
         try await testACompletedDeliveryWinsAgainstALatePreparedDownload()
+        try await testAnAuthorizedNativeDeliveryPromotesOfflineWithoutAnotherIdentityRequest()
+        try await testKnownReplacementRejectsAnAlreadyDeliveredAuthorizedNativeTask()
         try await testRestoredReceiptWinsBeforeRemoteTaskEnumerationReturns()
         try await testPendingReceiptWinsAgainstAnAlreadyPreparedDownload()
         try await testPreparedDownloadWaitsForTheFinalSecuredReceiptValidator()
@@ -2064,4 +2132,199 @@ private final class RejectionPlaybackEngine: DulcetCorePlaybackEngine, @unchecke
     func setRemoteCommandRouter(_ router: (any DulcetRemotePlaybackCommandRouting)?) {}
     func updateRemoteCommandCapabilities(_ capabilities: DulcetRemoteCommandCapabilities,
         for sessionID: DulcetPlaybackSessionID) -> Bool { true }
+}
+
+final class ProductionPathLoopbackServer: @unchecked Sendable {
+    private let audio: Data
+    private let answersIdentity: Bool
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.production-http")
+    private let lock = NSLock()
+    private var rangeStorage: [String?] = []
+    private var queryStorage: [String] = []
+    private var pathStorage: [String] = []
+    private var holdingStreams: Bool
+    private var heldResponses: [@Sendable () -> Void] = []
+
+    var requestQueries: [String] { lock.withLock { queryStorage } }
+    var requestPaths: [String] { lock.withLock { pathStorage } }
+
+    func releaseStreams() {
+        let responses = lock.withLock {
+            holdingStreams = false
+            let pending = heldResponses
+            heldResponses = []
+            return pending
+        }
+        responses.forEach { $0() }
+    }
+
+    var baseURL: URL {
+        URL(string: "http://127.0.0.1:\(listener.port!.rawValue)")!
+    }
+
+    var rangeHeaders: [String?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return rangeStorage
+    }
+
+    init(audio: Data, answersIdentity: Bool = false, holdStreams: Bool = false) throws {
+        self.audio = audio
+        self.answersIdentity = answersIdentity
+        holdingStreams = holdStreams
+        listener = try NWListener(using: .tcp, on: .any)
+        let startup = ProductionPathLoopbackStartup()
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                startup.complete()
+            case let .failed(error):
+                startup.complete(error: error)
+            default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.accept(connection)
+        }
+        listener.start(queue: queue)
+        guard startup.wait(timeout: 5) else {
+            listener.cancel()
+            throw ProductionPathLoopbackError.startupTimedOut
+        }
+        if let startupError = startup.error {
+            listener.cancel()
+            throw startupError
+        }
+        guard listener.port != nil else {
+            listener.cancel()
+            throw ProductionPathLoopbackError.missingPort
+        }
+    }
+
+    func stop() {
+        releaseStreams()
+        listener.cancel()
+    }
+
+    private func accept(_ connection: NWConnection) {
+        connection.start(queue: queue)
+        receive(from: connection, accumulated: Data())
+    }
+
+    private func receive(from connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
+            [weak self, weak connection] data, _, isComplete, error in
+            guard let self, let connection else { return }
+            var requestData = accumulated
+            if let data { requestData.append(data) }
+            if requestData.range(of: Data("\r\n\r\n".utf8)) != nil {
+                respond(to: connection, requestData: requestData)
+            } else if error != nil || isComplete {
+                connection.cancel()
+            } else {
+                receive(from: connection, accumulated: requestData)
+            }
+        }
+    }
+
+    private func respond(to connection: NWConnection, requestData: Data) {
+        let request = String(decoding: requestData, as: UTF8.self)
+        let path = request.split(separator: " ").dropFirst().first?
+            .split(separator: "?").first.map(String.init) ?? ""
+        lock.withLock { pathStorage.append(path) }
+        let rangeHeader = request
+            .split(separator: "\r\n")
+            .first { $0.lowercased().hasPrefix("range:") }
+            .map { String($0.dropFirst("range:".count)).trimmingCharacters(in: .whitespaces) }
+        if answersIdentity, request.split(separator: " ").dropFirst().first?.contains("/ping") == true {
+            let body = Data(#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"test"}}"#.utf8)
+            var response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+            response.append(body)
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+        lock.lock()
+        rangeStorage.append(rangeHeader)
+        queryStorage.append(request.split(separator: " ").dropFirst().first.map(String.init) ?? "")
+        lock.unlock()
+
+        let bounds = requestedBounds(from: rangeHeader)
+        let body = audio.subdata(in: bounds.start..<(bounds.endInclusive + 1))
+        let status = rangeHeader == nil ? "200 OK" : "206 Partial Content"
+        var headers = [
+            "HTTP/1.1 \(status)",
+            "Content-Type: audio/mpeg",
+            "Content-Length: \(body.count)",
+            "Accept-Ranges: bytes",
+            "Connection: close",
+        ]
+        if rangeHeader != nil {
+            headers.append(
+                "Content-Range: bytes \(bounds.start)-\(bounds.endInclusive)/\(audio.count)"
+            )
+        }
+        var response = Data((headers.joined(separator: "\r\n") + "\r\n\r\n").utf8)
+        response.append(body)
+        let responseBytes = response
+        let send: @Sendable () -> Void = {
+            connection.send(content: responseBytes, completion: .contentProcessed { _ in connection.cancel() })
+        }
+        let held = lock.withLock {
+            if holdingStreams { heldResponses.append(send); return true }
+            return false
+        }
+        if !held { send() }
+    }
+
+    private func requestedBounds(from rangeHeader: String?) -> (start: Int, endInclusive: Int) {
+        guard let rangeHeader,
+              rangeHeader.lowercased().hasPrefix("bytes="),
+              let separator = rangeHeader.firstIndex(of: "-") else {
+            return (0, audio.count - 1)
+        }
+        let startText = rangeHeader[rangeHeader.index(rangeHeader.startIndex, offsetBy: 6)..<separator]
+        let endText = rangeHeader[rangeHeader.index(after: separator)...]
+        let start = min(Int(startText) ?? 0, audio.count - 1)
+        let requestedEnd = Int(endText) ?? (audio.count - 1)
+        return (start, min(max(start, requestedEnd), audio.count - 1))
+    }
+}
+
+private final class ProductionPathLoopbackStartup: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var completed = false
+    private var errorStorage: Error?
+
+    var error: Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        return errorStorage
+    }
+
+    func complete(error: Error? = nil) {
+        lock.lock()
+        guard !completed else {
+            lock.unlock()
+            return
+        }
+        completed = true
+        errorStorage = error
+        lock.unlock()
+        semaphore.signal()
+    }
+
+    func wait(timeout: TimeInterval) -> Bool {
+        semaphore.wait(timeout: .now() + timeout) == .success
+    }
+}
+
+enum ProductionPathLoopbackError: Error {
+    case lifecycleTimedOut
+    case missingFixture
+    case missingPort
+    case resolveFailed
+    case startupTimedOut
 }
