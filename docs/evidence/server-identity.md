@@ -150,13 +150,40 @@ promotion and queue preparation to overlap; preparation did not reread the compl
 OBSERVED fail-before in a deterministic native regression: hold a real core preparation result,
 complete the same SQLite download row through a second real facade with exact MP3 bytes, then
 release the result. An extra stream request reaches the actual loopback receiver (one versus zero).
-The corrected Swift scheduler waits for in-flight secured validations and rereads committed state
+The first correction waits for in-flight secured validations and rereads committed state
 before launch so Complete or Stale rows cannot be fetched again. The original process-handoff
 oracle remains unchanged and must pass in the final full Apple workflow. This native assertion is
 called by the existing Mac, iPhone and iPad download aggregates; no tvOS download-owner claim is made.
 
-The final focused native gate passes eight tests with zero failures (2.113 seconds), including the
+That focused native gate passed eight tests with zero failures (2.113 seconds), including the
 new race, an ordinary successor fetching and promoting after the suppressed duplicate, the three
 late-playback guards, download quarantine, persistent A → B → A isolation and preference controls.
 The five extracted Swift inbox controls also pass. The harness adds only the model helper needed by
 the newly called scheduling helper; no CI workflow, tools/ci file or Kotlin Apple facade is changed.
+
+OBSERVED recurrence in full Apple run `39692066008`: the unchanged Mac killed-process oracle again
+counted two streams instead of one (68.159 seconds). Both restored files were already secured before
+reconciliation, but a native transfer started while receipt validation was pending, 93 milliseconds
+before the original receipt promoted. The completed-row reread covered a promotion that had already
+committed; it could not cover this earlier interval. Opening remote eligibility before the asynchronous
+task-enumeration callback scanned the inbox also left a scheduling window.
+
+The second correction synchronously registers secured inbox validators when remote access opens,
+before yielding to task enumeration. Already prepared native plans wait while any receipt validator
+remains. The final validator promotes first, then drains those plans through the existing durable
+Complete/Stale check. Generation changes and sticky identity rejection discard deferred plans.
+
+OBSERVED locally on the native Mac test target: two deterministic real-core regressions fail against
+the previous scheduler with seven assertions (3.428 seconds), then pass unchanged with zero failures
+(1.934 seconds). They use real SQLite rows, the durable secured receipt format with exact MP3 bytes,
+authenticated loopback identity validation and actual HTTP stream counts. One holds remote task
+enumeration after restoration; the other delivers an already prepared plan during held receipt
+validation. Neither may fetch the target before or after promotion. Each must still fetch and promote
+an ordinary successor once. A third control holds two receipt validations, completes the unrelated
+receipt first, and verifies that the target remains blocked until the final receipt promotes.
+
+The bounded native suite passes 11 tests with zero failures (5.457 seconds), including the previous
+eight controls and these three cases. All five extracted Swift inbox controls pass. The shared proof
+is called by the existing Mac, iPhone and iPad download aggregates. The original Mac killed-process
+oracle remains unchanged and still requires a passing final full Apple run; these deterministic
+tests do not replace it. No Kotlin, shared live fixture, Apple CI workflow or tools/ci file changed.
