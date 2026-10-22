@@ -446,3 +446,7 @@ across the offline relaunch, reaches Downloaded and Songs, then returns to Brows
 through the original assertions. No retap was needed in this run: it establishes ordinary
 end-to-end preservation, while the independent controls exercise unacknowledged activation
 and the deadline boundary. Final-head full Apple execution remains required.
+
+### TV initial library navigation (2026-10-22)
+
+OBSERVED: TV LIVE soak 39833691291 on 2ba9dc9f completed 540 executions over 20 repetitions, with 2 failures and 0 skips (`SOAK RESULT passed=18 failed=2`). Both retained XML failures stopped at the first Library section navigation with `UP did not reveal the library sections`, before playlist mutation or network loss; their actual failed focus state was not retained. The two workflows now wait for the same initial home-card focus used by neighboring TV scenarios, and the unchanged three-UP failure includes focus/tag diagnostics. Local Robolectric/real disposable-server validation passed all 3 original tests (remote playlist additions, offline pending/reconnect addition, album-play control), with 0 failures/errors/skips in 45.103 s; exact server playlist order and playback assertions remain intact. The local baseline and an exact-boundary delayed initial-home-response control also passed before the change, so no reproduced RED or proven original timing-cause claim is made. Fresh Linux 20x TV LIVE soak remains required on the final head.
