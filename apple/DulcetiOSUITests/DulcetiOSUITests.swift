@@ -4190,9 +4190,21 @@ final class DulcetiOSUITests: XCTestCase {
             return false
         }
         picker.tap()
-        let item = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", option, identifier)).firstMatch
-        guard item.waitForExistence(timeout: 5) else {
-            XCTFail("The picker must offer \(option): " + app.debugDescription)
+        // Resolve the native menu's option, rather than an identically labelled Form picker.
+        // Existence alone does not establish a usable native menu activation target.
+        let item = app.collectionViews.buttons.matching(NSPredicate(
+            format: "label == %@ AND identifier != %@ AND identifier != %@", option,
+            "dulcet.streaming-quality.unmetered", "dulcet.streaming-quality.metered"
+        )).firstMatch
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard item.exists else { return false }
+            let frame = item.frame
+            return frame.origin.x.isFinite && frame.origin.y.isFinite
+                && frame.width.isFinite && frame.height.isFinite
+                && frame.width > 0 && frame.height > 0 && item.isHittable
+        }, object: item)
+        guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
+            XCTFail("The picker must offer a hittable \(option): " + app.debugDescription)
             return false
         }
         item.tap()

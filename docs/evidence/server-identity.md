@@ -329,3 +329,27 @@ test with zero failures in 0.944 seconds, with the expected independent-row publ
 The complete iOS AppHost/UI-test target builds. The CI failure establishes the stale-snapshot
 interleaving; this local pass checks the corrected barrier and retained assertions. Final-head
 full CI remains required.
+
+### Native quality-menu targeting (2026-10-22)
+
+OBSERVED in the phone leg of full Apple run `39799345915` on `70caed4d`: 32 XCTest
+executions, 31 passes and one failure. The streaming-quality case reached the first
+restore-to-Original menu after its capped-playback assertions, then failed in XCTest's
+normal tap with an infinite-origin, zero-size activation target. Its recording shows the
+Original option visibly inside the open native menu; all three failure accessibility
+snapshots show that sole Original button at the same finite 250-by-42-point bounds. Both
+background picker rows still show their capped choices. An offscreen picker, a duplicate
+Original match, and an option merely awaiting layout were not established by this evidence;
+the discrepancy between event targeting and the snapshots remains unexplained.
+
+The test helper now queries the native menu collection's exact-label button, excludes both
+background picker identifiers, and requires existence, finite positive bounds and live
+hittability within its existing single five-second option budget. It still performs the
+ordinary tap and reads the chosen picker value back. No production behavior, deadline or
+stream assertion changes. OBSERVED locally on an iPhone 17 Pro simulator with iOS 26.5
+and disposable Navidrome 0.63.2: the exact streaming-quality case passes one test with zero
+failures in 143.360 seconds. It selects cellular 128 kbps and Wi-Fi 96 kbps, proves capped
+playback against the server's 96 kbps transcoded stream from the higher-bitrate source,
+and restores both choices to Original. The complete iOS UI-test target builds. This checks
+the stronger target preconditions and retained end-to-end behavior; it does not establish
+the underlying activation-point cause. Final-head full CI remains required.
