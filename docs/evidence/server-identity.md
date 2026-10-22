@@ -260,3 +260,13 @@ and then bar hittability in separate bounded phases, up to ten seconds each. Bot
 the drag action and queue assertions remain. The complete iOS UI-test target builds locally with
 this change. Runtime confirmation remains a final-full-run requirement; this is test readiness
 evidence, not a production dismissal-performance claim.
+
+OBSERVED in full Apple run `39732043039` on merged source `8078f5d6`: platform,
+iPhone and core pass; iPad executes 20 XCTest cases with 19 passes and one account-states
+failure. That failure classifies an initial window frame `{{inf, inf}, {0, 0}}` as compact;
+the subsequent diagnostic reads report the regular `1032 × 1376` frame. The test previously
+resolved the live frame separately for classification, logging and failure. It now waits within
+the same 15-second readiness budget for finite, nonzero bounds and uses one captured frame for
+all three operations. Any valid size is accepted immediately; the existing 700-point compact
+threshold still rejects an incorrect layout. Final-head full Apple execution must establish
+runtime confirmation. No production, shared Android fixture, timeout or workflow changed.
