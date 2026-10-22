@@ -790,7 +790,8 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func awaitLiveAccountConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
-        if signOut.waitForExistence(timeout: 5) { return true }
+        // A connecting launch can navigate to Listen Now during a global Sign Out query.
+        // Route to Connection in the bounded loop before querying its connected-state control.
         let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
         let tryAgain = app.buttons["Try Again"].firstMatch
         var retries = 0

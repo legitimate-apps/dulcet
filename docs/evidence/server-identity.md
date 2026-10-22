@@ -292,3 +292,21 @@ Up Next. Both complete iOS UI-test builds pass. These controls establish preserv
 not fail-before evidence or a demonstrated cause of either intermittent CI failure. Final-head
 full Apple execution remains required; no product code, gesture, oracle, timeout or workflow
 changes here.
+
+OBSERVED in the iPad leg of full Apple run `39779874095` on `a7f5aac4`: 17 XCTest
+executions produce 16 passes and one failure. The album-tile drag case fails before navigation
+or any drag, at the initial global Sign Out query in `awaitLiveAccountConnection`
+(116.208 seconds). The recording shows Connection still connecting at 18 seconds and Listen
+Now online at 50 seconds. The query spans that automatic navigation, retries at 52.37 and
+83.40 seconds, then times out evaluating matching snapshots. Initial Library traversal and an
+animation-quiescence cause are not established by this recording.
+
+The helper removes only that preliminary five-second global query. Its existing bounded loop
+opens Connection before querying Sign Out, matching the account-state proof's route. The
+35-second loop, ten-second connected-state check, two retries limited to a server-request timeout,
+actual Sign Out oracle and ordinary event waits remain unchanged. OBSERVED locally on an iPad
+Pro 13-inch (M5) simulator with iOS 26.5 and disposable Navidrome 0.63.2: the exact album-tile case
+passes one test with zero failures in 76.476 seconds. It taps Connection at 7.59 seconds before
+querying Sign Out at 10.20 seconds, then one drag adds all three expected album tracks to empty
+Up Next with no menu left open. The complete iOS UI-test target builds. This establishes the
+corrected query ordering and preserved queue assertions locally; final-head full CI remains required.
