@@ -150,3 +150,28 @@ The legacy rule uses an unconfined test dispatcher. Assertions, remote actions, 
 dependencies are unchanged. Both instrumentation classes compile; runtime confirmation requires
 the subsequent complete TV emulator job. The source scheduling distinction is documented in the
 [pinned AndroidX test-rule source archive](https://dl.google.com/dl/android/maven2/androidx/compose/ui/ui-test-junit4-android/1.11.4/ui-test-junit4-android-1.11.4-sources.jar).
+
+**2026-10-22 — Android TV playlist proof readiness and remote traversal.** OBSERVED in
+[`core-ci` run `39779874129`, attempt 1](https://github.com/legitimate-apps/dulcet/actions/runs/39779874129/attempts/1):
+the real submitted playlist play and independent server Home assertions pass, but the rendered
+shelf wait fails with focus on Random at the lazy list's exact bottom. The helper's one-way
+Down sweep could not revisit the upper Recent Playlists row. The precise live-response timing
+is ASSUMED. Attempt 2 fails earlier waiting for the Browse Playlists category; its header being
+offscreen is ASSUMED because that wait did not retain an accessibility dump.
+
+The shared proof now awaits Browse readiness, reveals its category header with real Up presses,
+and revisits Home shelves with paced bidirectional remote movement and focus-progress checks.
+Each wait retains its existing 30-second bound; target checks occur on every poll. Failure dumps
+retain the accessibility tree. A focused local TV run then exposed a distinct content-readiness
+failure: the Playlists container existed before any live playlist row, so scrolling immediately
+could not find the newly created playlist. The proof now waits for the first actual row before
+its unchanged exact-name scroll and activation. Phone scrolling and all server/playback oracles
+are retained.
+
+OBSERVED on a fresh Android 34 TV emulator and disposable Dulcet Server: the required
+`ListenNowEmulatorProofTest.homeLaunchAlbumAndCachedRelaunch` passes **1/1 in 45.8 seconds**, zero
+failures/skips, including its original album/relaunch checks and the actual playlist playback
+chain. The receipt is `progressing-media=true submitted-context=true now-playing-context=false
+server-home=true rendered-home=true home-opens-playlist=true`. Both phone and TV instrumentation
+integrations compile. This is focused local runtime evidence; the subsequent complete CI job
+provides the final-head gate.
