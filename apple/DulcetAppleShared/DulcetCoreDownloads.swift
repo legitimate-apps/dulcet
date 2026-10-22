@@ -504,7 +504,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         session.getAllTasks { [weak self] tasks in
             Task { @MainActor [weak self] in
                 guard let self, generation == reconciliationGeneration, identityRejected else { return }
-                for task in tasks where task.taskDescription.map({ client?.ownsDownloadTask(downloadIdentifier: $0) == true }) ?? false {
+                for task in tasks where task.taskDescription.map({ self.client?.ownsDownloadTask(downloadIdentifier: $0) == true }) ?? false {
                     removedTaskIdentifiers.insert(task.taskIdentifier)
                     task.cancel()
                 }
@@ -793,7 +793,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                     let deliver = { @MainActor [weak self] in
                         guard let self, generation == reconciliationGeneration, remoteEligible, !identityRejected else { return }
                         for task in tasks where !removedTaskIdentifiers.contains(task.taskIdentifier)
-                            && (task.taskDescription.map { client?.ownsDownloadTask(downloadIdentifier: $0) == true } ?? false) {
+                            && (task.taskDescription.map { self.client?.ownsDownloadTask(downloadIdentifier: $0) == true } ?? false) {
                             if task.state == .suspended { task.resume() }
                         }
                         processSecuredDownloads()
