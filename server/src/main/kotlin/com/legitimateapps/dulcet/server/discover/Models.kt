@@ -20,3 +20,12 @@ data class CacheAge(val fetchedAt: Long, val ageSeconds: Long, val stale: Boolea
 data class DiscoverPage<T>(val items: List<T>, val nextCursor: String?, val age: CacheAge)
 data class PageRequest(val limit: Int = 20, val cursor: String? = null) { init { require(limit in 1..100) { "Limit must be 1..100" } } }
 data class UpstreamPage<T>(val items: List<T>, val total: Int, val offset: Int)
+data class Edition(val releaseMbid:String,val releaseGroupMbid:String,val tracks:List<EditionTrack>,val links:List<ExternalLink> = emptyList())
+data class EditionTrack(val disc:Int,val position:Int,val recordingMbid:String?,val title:String,val artist:String,val durationMillis:Long?)
+fun <T,R> Cached<T>.map(transform:(T)->R)=Cached(transform(value),age,generation)
+fun <T> combineCached(parts:List<Cached<*>>,value:T):Cached<T> {
+    require(parts.isNotEmpty())
+    val age=parts.minBy { it.age.fetchedAt }.age.copy(stale=parts.any { it.age.stale })
+    val generation=java.security.MessageDigest.getInstance("SHA-256").digest(parts.joinToString(":") { it.generation }.toByteArray()).joinToString("") { "%02x".format(it) }
+    return Cached(value,age,generation)
+}
