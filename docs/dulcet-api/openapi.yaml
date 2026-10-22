@@ -7422,6 +7422,21 @@ components:
       description: '`heartbeat`: sent at least every 30 seconds so dead connections are noticed.'
 
     WebhookEvent:
+      allOf:
+        - if:
+            properties:
+              type: {const: wishlist.changed}
+            required: [type]
+          then:
+            properties:
+              data: {$ref: '#/components/schemas/WishlistChangedEvent'}
+        - if:
+            properties:
+              type: {const: wishlist.requested}
+            required: [type]
+          then:
+            properties:
+              data: {$ref: '#/components/schemas/WishlistRequestedEvent'}
       type: object
       description: The body of every webhook delivery. Unknown `type` values are skipped by receivers.
       required: [id, type, timestamp, data]

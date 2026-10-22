@@ -188,3 +188,7 @@ Fixed during bring-up, each found by a suite:
 Optional independent version 1 extensions: [dulcetDiscover](dulcet-discover-extension.md) and
 [dulcetWishlist](dulcet-wishlist-extension.md). The contracts include methods, payloads, paging,
 errors, settings and durable offline operation sequences for client implementations.
+
+Server-only verification for these contracts is recorded in
+[Discover and Wishlist evidence](../evidence/discover-wishlist-server.md). The seven feature rows
+retain planned app cells until the later core and native lanes supply their own evidence.

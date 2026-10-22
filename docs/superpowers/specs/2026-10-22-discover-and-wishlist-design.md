@@ -1,7 +1,13 @@
 # Discover and Wishlist: design
 
-**Status:** proposed, 2026-10-22. Not yet approved; nothing is built.
+**Status:** approved 2026-10-22. Server step 1 is implemented with fixture evidence; core and app steps remain later lanes.
 **Touches:** Dulcet Server (§29), Dulcet API (§30), the core, all six app surfaces, `FEATURES.yml`.
+
+Server step 1 implementation evidence (2026-10-22):
+[Discover/Wishlist server](../../evidence/discover-wishlist-server.md), including source clients,
+cache/matching, wishes/scans, API/feed/webhooks, MCP and complete REST contracts. Core, native
+reader/outbox, application UI and the Navidrome client control remain later lanes. Section 10
+remains a PROD condition; server fixture tests do not settle those release checks.
 
 ## 1. Intent
 

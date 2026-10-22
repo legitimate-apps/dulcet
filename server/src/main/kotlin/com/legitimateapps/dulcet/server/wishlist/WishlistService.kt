@@ -60,7 +60,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
         val a=canonical(input);val fp=fingerprint(a);val target=a.externalIds.getValue(a.kind.registryKey)
         return db.write {
             replay(userId,a.operationId,"add",fp)?.let { return@write it }
-            val time=a.actionTime ?: clock();val previous=targetClock(userId,a.kind.wire,target)
+            val time=(a.actionTime ?: clock()).coerceAtMost(clock());val previous=targetClock(userId,a.kind.wire,target)
             val existing=store.target(this,userId,a.kind,target)
             val cancellation=single("SELECT action_time FROM wishlist_operation WHERE user_id=? AND type='remove' AND add_operation_id=?",userId,a.operationId) { it.long("action_time") }
             if(cancellation!=null) {
@@ -90,7 +90,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
         val r=input.copy(operationId=uuid(input.operationId),addOperationId=input.addOperationId?.let(::uuid));val fp=fingerprint(r)
         return db.write {
             replay(userId,r.operationId,"remove",fp)?.let { return@write it }
-            val time=r.actionTime ?: clock()
+            val time=(r.actionTime ?: clock()).coerceAtMost(clock())
             val addReceipt=r.addOperationId?.let { receipt(userId,it) }
             if(addReceipt!=null && addReceipt.type!="add")throw ApiProblem(409,"operation-conflict")
             val wishId=r.wishId ?: addReceipt?.wish

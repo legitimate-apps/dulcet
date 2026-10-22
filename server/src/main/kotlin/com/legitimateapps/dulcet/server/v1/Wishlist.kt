@@ -19,7 +19,7 @@ internal fun JsonObject.wishString(name:String,required:Boolean=false):String? {
 }
 internal fun JsonObject.wishObject(name:String):JsonObject=get(name) as? JsonObject ?: throw ApiProblem(400,"invalid-request","$name must be an object")
 internal fun wishIds(value:JsonObject):ExternalIds=value.mapValues { (_,v) -> (v as? JsonPrimitive)?.takeIf { it.isString }?.content ?: throw ApiProblem(400,"invalid-request","External ids must be strings") }
-fun wishActionTime(value:String?):Long?=value?.let { try { Instant.parse(it).toEpochMilli().coerceAtMost(System.currentTimeMillis()) } catch(_:Exception) { throw ApiProblem(400,"invalid-request","Invalid action time") } }
+fun wishActionTime(value:String?):Long?=value?.let { try { Instant.parse(it).toEpochMilli() } catch(_:Exception) { throw ApiProblem(400,"invalid-request","Invalid action time") } }
 fun addWishInput(body:JsonObject,actionTime:Long?=null):AddWish {
     val snapshot=body.wishObject("snapshot");val source=body.wishObject("source")
     val year=snapshot["year"]?.takeIf { it!=JsonNull }?.let { value -> (value as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull ?: throw ApiProblem(400,"invalid-request","year must be an integer") }
