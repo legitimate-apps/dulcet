@@ -137,3 +137,16 @@ The required Android TV `AndroidTvMyLibraryProofTest/automaticLibraryRetentionAn
 invokes the same reusable `AndroidTvGridActionsProof` before its existing offline-library assertions.
 The standalone positive wrapper is capability-gated on ordinary servers and is not cited as the
 required Dulcet-phase execution. This preserves the existing case count and workflow selection.
+
+**2026-10-22 — Android TV instrumentation composition scheduling.** OBSERVED in
+`core-ci` run `39732020145`, job `119668986345`: the required combined TV proof first
+throws `CalledFromWrongThreadException` while the Compose test frame clock applies node
+removal from `DefaultDispatcher-worker-5` (06:16:24.295 UTC). Composition then stops idling;
+activity destruction exposes the later `SlotWriter` bounds exception (06:16:50.622 UTC).
+The grid-action and offline-library completion markers are absent, so this run proves neither
+chain. The proof classes now use the existing pinned Compose 1.11.4
+`junit4.v2.createEmptyComposeRule`, whose standard test dispatcher queues composition work.
+The legacy rule uses an unconfined test dispatcher. Assertions, remote actions, timeouts and
+dependencies are unchanged. Both instrumentation classes compile; runtime confirmation requires
+the subsequent complete TV emulator job. The source scheduling distinction is documented in the
+[pinned AndroidX test-rule source archive](https://dl.google.com/dl/android/maven2/androidx/compose/ui/ui-test-junit4-android/1.11.4/ui-test-junit4-android-1.11.4-sources.jar).
