@@ -30,6 +30,18 @@ capability-reconnect controls and the unchanged held-discovery regressions. Fres
 tvOS frameworks and iOS common-test compilation pass; build success is separate from the test
 observations above.
 
+OBSERVED on the merged source: all 14 native Swift download/playback adapter controls pass
+(zero failures, 5.960 seconds), including the rejection-to-persistence-only regression. The
+standalone playback-restoration compiler reports zero failures. Mac, iOS, iOS download integration
+and tvOS targets all build for testing against the fresh frameworks.
+
+The preceding full Apple run's tvOS pending-add failure occurred before membership actions:
+its accessibility dump contains a counted replacement dialog for a saved direct-server account
+when the test launches its fault-proxy endpoint. Six debug-credential launch sites now use
+per-test/per-endpoint fixture UUIDs; three saved-only relaunches retain that UUID without injected
+credentials. The intentional unseeded launch and real-Keychain proofs remain unchanged. This
+fixture correction compiles locally; runtime confirmation belongs to the final full Apple run.
+
 ## Shared core
 
 - OBSERVED on parent revision `271dd44e`: four JVM `ServerIdentityNegotiationTest` cases fail.
