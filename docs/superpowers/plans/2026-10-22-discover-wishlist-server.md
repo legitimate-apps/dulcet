@@ -487,6 +487,12 @@ assertEquals(0, unauthorizedDeliveries.size)
 
 ### Task 15: REST extensions and complete client contract documents
 
+Implementation note: the shared wish page cursor in `v1/Wishlist.kt` also binds the list revision,
+so a concurrent mutation expires both API and REST continuations. REST app adds require Discover
+but accept the displayed item snapshot without an upstream call in the mutation transaction,
+as required by design §6.2. The actual settings use `DULCET_DISCOVER=on|off` and
+`DULCET_WISHLIST=on|off`, following LRCLIB's existing switch syntax.
+
 **Files:**
 - Create: `server/src/main/kotlin/com/legitimateapps/dulcet/server/api/DiscoverApi.kt`
 - Create: `server/src/main/kotlin/com/legitimateapps/dulcet/server/api/WishlistApi.kt`
@@ -536,6 +542,14 @@ assertTrue(xml.contains("<dulcetWishlist"))
 - [ ] **Step 5: Commit.** Message `feat(rest): publish Discover and Wishlist extensions version one`.
 
 ### Task 16: MCP tools and public guides
+
+Implementation note: the existing runnable DA-MCP-3 check derives its expected tools from the
+shared registry. It must also filter optional capability/version metadata, so Task 16 additionally
+updates `dulcet-api-conformance/src/main/kotlin/com/legitimateapps/dulcet/apiconformance/Realtime.kt`,
+`ChecksMcp.kt`, its `src/test/kotlin/com/legitimateapps/dulcet/apiconformance/MockServer.kt`, and adds
+`McpCapabilityTest.kt` in that test package. This is existing-profile compatibility, not a new
+Discover/Wishlist conformance profile. `ApiMcpTest.kt` becomes capability aware while retaining its
+scope, origin, revocation and message assertions.
 
 **Files:**
 - Modify: `server/src/main/kotlin/com/legitimateapps/dulcet/server/v1/ApiMcp.kt`

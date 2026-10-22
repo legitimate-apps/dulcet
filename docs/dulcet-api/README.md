@@ -1020,3 +1020,61 @@ things this standard needs are changes to its foundations, not additions:
 
 Fixing those in OpenSubsonic would break the compatibility that makes it valuable. A separate
 standard can get them right from the start, and a server can, like Dulcet Server, serve both.
+
+## Optional Discover and Wishlist, version 1
+
+`dulcet.discover` and `dulcet.wishlist` are independent optional capabilities, each with
+`versions: [1]`. Discover sends public metadata requests from the server, applies local visibility
+and matching after shared-cache reads, and serves thumbnails itself. Credit: **Data from MusicBrainz
+and ListenBrainz**; trending is **Trending on ListenBrainz**. Similar shelves share cached answers
+by seed artist, never a user identity upstream. There are no previews, acquisition or LB Radio.
+
+| Resource or tool | Scope | Capability |
+|---|---|---|
+| GET `/discover/search`, `/discover/shelves/{shelfId}` | catalog:read | dulcet.discover |
+| GET `/discover/artists/{mbid}` and `/albums`, `/discover/albums/{mbid}` and `/tracks` | catalog:read | dulcet.discover |
+| GET `/discover/playlists`, `/discover/playlists/{mbid}`, `/discover/artwork/{artworkId}` | catalog:read | dulcet.discover |
+| GET `/me/wishes`, `/me/wishes/{wishId}` | user:read | dulcet.wishlist |
+| POST `/me/wishes` and `/{wishId}/reject-match` | user:write | dulcet.wishlist |
+| DELETE `/me/wishes/{wishId}`, POST `/me/wishes/cancellations` | user:delete | dulcet.wishlist |
+| POST `/discover/rejected-matches` | user:write | either capability |
+| GET `/admin/wishes`, PATCH `/admin/wishes/{wishId}` | admin | dulcet.wishlist |
+| `wish` change-feed snapshots, upserts and delete tombstones | user:read | retained data remains syncable when disabled |
+| `wishlist.changed` webhook | user:read | owner only |
+| `wishlist.requested` webhook | admin | actual new wishes from all owners |
+| MCP `search_discover` | catalog:read | dulcet.discover |
+| MCP `list_wishes`, `add_wish` | user:read, user:write respectively | dulcet.wishlist |
+
+The [OpenAPI](openapi.yaml) defines every field and response. Discover pages default to 20 and max
+100, carry fetchedAt/ageSeconds/stale and opaque generation-bound cursors. Stale data is usable
+for up to 90 days on source failure. No usable cache means 503 upstream-unavailable, not an empty
+page. A refreshed/evicted generation means 410 cursor-expired. Artwork is a server-only proxy with
+positive image signature, 5 MiB cap and five safe redirects, without decoding or resizing.
+
+Wish kinds are artist, album and song, keyed per owner/kind/canonical MusicBrainz UUID. API adds
+supply their own snapshot and perform no outside lookup, including with Discover off. Preserve the
+UUID operationId and Dulcet-Action-Time across retries. Latest action wins, removal wins ties;
+removal by addOperationId can arrive before its add. Receipts persist until user deletion, beyond
+the 24-hour HTTP response cache. Removed adds return terminal removed state on replay. A deliberate
+re-add uses a new operation UUID, time and wish id. See the [durable operation sequences](../dulcet-server/dulcet-wishlist-extension.md#durable-offline-operations).
+
+The open state set is wanted, requested, searching, unavailable and fulfilled. Admins can set the
+first four with a note up to 1000 Unicode code points and optional If-Match; only a complete local
+match fulfils and adds to My Library atomically after a scan. A partial 8-of-12 album stays open.
+Unknown edition metadata cannot fulfil an album. Fulfilled is historical even after local deletion;
+only a rejected linked match reopens wanted. Fulfilled older than 30 days leaves the default list,
+but remains directly readable and in snapshots. Hidden local references/counts are redacted.
+
+`wishlist.requested` data is `{wish}` with the true owner at wish.userId; the outer event userId
+still identifies the subscriber. `wishlist.changed` data is `{op,id,revision,wish?}` and deletion
+omits wish. Both use the existing signed durable outbox. No new SSE type: `changes` hints name
+`wish`. Old sync cursors with omitted types retain their verified original filter. To add wish to
+an old feed, begin a separate snapshot or start a new feed.
+
+MCP definitions carrying `x-dulcet-capability` are optional: list and invoke only with that
+capability at version 1 AND the declared scope. Listing replaces that field with
+`_meta["dulcet/capability"]`; scope stays in `_meta["dulcet/scopes"]`. Existing definitions retain
+their scope-only behavior. Search/list are read-only; add is a non-destructive idempotent write.
+No admin Wishlist tool exists. Client `/rest` contracts are
+[dulcetDiscover](../dulcet-server/dulcet-discover-extension.md) and
+[dulcetWishlist](../dulcet-server/dulcet-wishlist-extension.md).

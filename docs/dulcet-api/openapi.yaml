@@ -7436,6 +7436,8 @@ components:
             `play.recorded`: a `Play`. `nowPlaying.changed`: a `NowPlayingEvent`. `itemState.changed`:
             an `ItemState`. `playlist.changed`: a `Playlist`. `queue.changed`: a `QueueEvent`.
             `catalog.changed`: a `ChangesEvent`. `scan.completed`: a `Scan`. `ping`: empty.
+            `wishlist.changed`: a `WishlistChangedEvent` (user:read, owner only).
+            `wishlist.requested`: a `WishlistRequestedEvent` (admin, all owners).
 
     Webhook:
       type: object

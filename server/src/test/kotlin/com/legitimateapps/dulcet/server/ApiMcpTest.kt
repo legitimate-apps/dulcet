@@ -31,8 +31,8 @@ class ApiMcpTest {
             assertEquals(HttpStatusCode.OK,initialized.status)
             val session=assertNotNull(initialized.headers["Mcp-Session-Id"])
             val listed=client.post("/dulcet/v1/mcp") { mcp(token,session);setBody(request("tools/list")) }.value()["result"]!!.jsonObject["tools"]!!.jsonArray
-            val expected=ctx.apiMcp.definitions.filter { it["x-dulcet-scope"]!!.jsonPrimitive.content in scopes }.map { definition ->
-                JsonObject(definition.filterKeys { it != "x-dulcet-scope" } + j("_meta" to j("dulcet/scopes" to listOf(definition["x-dulcet-scope"]!!))))
+            val expected=ctx.apiMcp.definitions.filter { it["x-dulcet-scope"]!!.jsonPrimitive.content in scopes && it["x-dulcet-capability"]!=JsonPrimitive("dulcet.discover") }.map { definition ->
+                JsonObject(definition.filterKeys { it !in setOf("x-dulcet-scope","x-dulcet-capability") } + j("_meta" to JsonObject(j("dulcet/scopes" to listOf(definition["x-dulcet-scope"]!!)) + (definition["x-dulcet-capability"]?.let {j("dulcet/capability" to it)} ?: j()))))
             }
             assertEquals(JsonArray(expected),listed)
             listed.forEach { definition ->
