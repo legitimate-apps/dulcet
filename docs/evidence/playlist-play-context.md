@@ -175,3 +175,24 @@ chain. The receipt is `progressing-media=true submitted-context=true now-playing
 server-home=true rendered-home=true home-opens-playlist=true`. Both phone and TV instrumentation
 integrations compile. This is focused local runtime evidence; the subsequent complete CI job
 provides the final-head gate.
+
+**2026-10-22 — Reusable TV grid proof category readiness.** OBSERVED on published head
+`70caed4d`, [`core-ci` run `39799344375`, attempt 1](https://github.com/legitimate-apps/dulcet/actions/runs/39799344375/attempts/1):
+the required Dulcet Home case passes 1/1, zero failures/skips, in 39.636 seconds. Its actual
+playlist-context receipt confirms progressing media, submitted context, independent server Home,
+rendered Home and reopening the expected playlist; now-playing carries no context. The later
+automatic/offline My Library case fails its separate grid helper's passive
+`library.view.albums` wait before any grid or offline completion receipt. A hidden header is
+ASSUMED because that helper retained no failure accessibility dump. The separate core-build
+job times out downloading Ubuntu media packages before server tests; it is not a test failure.
+
+The reusable grid helper now awaits Browse's surface and reveals an absent category with paced
+real Up presses inside the existing 30-second wait, retaining an accessibility dump on failure.
+Grid, membership, queue and offline assertions are unchanged. OBSERVED on a fresh Android 34 TV
+emulator and disposable Dulcet Server: the exact
+`AndroidTvMyLibraryProofTest.automaticLibraryRetentionAndSameResponseCachePlayOffline` case passes
+**1/1 in 17.816 seconds**, zero failures/skips. The actual receipts confirm remote More/menu,
+server add/remove membership, album queueing and restored focus; four automatically downloaded
+songs; explicit downloads surviving removal and disabling automatic downloads; and 24,334 cached
+bytes replayed locally with zero server bytes, followed by cache-file removal. The affected TV
+instrumentation integration compiles. Final-head CI confirmation remains a separate gate.
