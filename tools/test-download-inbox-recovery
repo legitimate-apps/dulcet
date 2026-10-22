@@ -24,7 +24,8 @@ source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{path}'], 
 
 
 def method(name):
-    start = source.index(f'    private func {name}(')
+    prefix = '    private func ' if f'    private func {name}(' in source else '    func '
+    start = source.index(f'{prefix}{name}(')
     end = source.index('\n    }', start) + len('\n    }')
     return source[start:end].replace('    private func ', '    func ', 1)
 
@@ -103,6 +104,7 @@ extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
     var identityRejected = false
     var remoteEligible = true
     var validatingDeliveries: Set<String> = []
+    var securedDownloadValidationDelivery: (@MainActor (String, @escaping @MainActor () -> Void) -> Void)?
     var identityValidationSucceeds = true
     var identityValidations = 0
     init(_ root: URL) { downloadInboxURL = root.appendingPathComponent(".incoming"); client = Client(root) }

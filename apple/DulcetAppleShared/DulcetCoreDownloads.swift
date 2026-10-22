@@ -32,6 +32,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var pendingTracks: [DulcetTrack] = []
     // Tests can retain a completed core prepare while a secured delivery wins the race.
     var preparedDownloadDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
+    var remoteTaskEnumerationDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
+    var securedDownloadValidationDelivery: (@MainActor (String, @escaping @MainActor () -> Void) -> Void)?
     // Like pending tracks, a preference belongs to the configured URL/user binding. Repeated
     // same-binding reconciliation must not discard the listener's latest choice.
     private var pendingAutomaticDownloadsEnabled: Bool?
@@ -53,6 +55,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var identityRejected = false
     private var identityValidationOperation: (any AppleDownloadOperation)?
     private var validatingDeliveries: Set<String> = []
+    private var deferredPreparations: [(outcome: AppleDownloadPreparationOutcomeDto,
+        itemID: DulcetProviderItemID?, generation: Int)] = []
     private var cacheBudgetRevision = 0
 
     private var credentialGeneration: Int64 {
@@ -225,6 +229,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         mediaBindingWillBeReplacedHandler?()
         automaticDownloadContactPermitted = false
         reconciliationGeneration += 1
+        deferredPreparations = []
         reconciled = false
         pendingAutomaticDownloadsEnabled = nil
         cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
@@ -288,6 +293,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             updatePlaybackProtection()
         }
         reconciliationGeneration += 1
+        deferredPreparations = []
         let generation = reconciliationGeneration
         reconciled = false
         prepareOperations.values.forEach { $0.cancel() }
@@ -472,6 +478,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     func rejectServerIdentity() {
         guard !identityRejected else { return }
         identityRejected = true
+        deferredPreparations = []
         remoteEligible = false
         client?.rejectServerIdentity()
         // Retain the policy/local plans. Only remote work and its late completions are retired.
@@ -639,6 +646,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     func disconnect() {
         pendingAutomaticDownloadsEnabled = nil
         reconciliationGeneration += 1
+        deferredPreparations = []
         reconciled = false
         cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
         cacheWrites = [:]
@@ -668,6 +676,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         guard !Task.isCancelled else { return false }
         pendingAutomaticDownloadsEnabled = nil
         reconciliationGeneration += 1
+        deferredPreparations = []
         let removalGeneration = reconciliationGeneration
         reconciled = false
         cacheWrites.values.forEach { client?.abortStreamingCache(writeId: $0.identifier) }
@@ -766,16 +775,24 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         validateRemoteAccess { [weak self] valid in
             guard let self, valid, !identityRejected else { return }
             remoteEligible = true
+            // Register every already-secured receipt before opening any asynchronous window
+            // in which membership changes or explicit requests could prepare a replacement.
+            processSecuredDownloads()
             let generation = reconciliationGeneration
             session.getAllTasks { [weak self] tasks in
                 Task { @MainActor [weak self] in
                     guard let self, generation == reconciliationGeneration, remoteEligible, !identityRejected else { return }
-                    for task in tasks where !removedTaskIdentifiers.contains(task.taskIdentifier)
-                        && (task.taskDescription.map { client?.ownsDownloadTask(downloadIdentifier: $0) == true } ?? false) {
-                        if task.state == .suspended { task.resume() }
+                    let deliver = { @MainActor [weak self] in
+                        guard let self, generation == reconciliationGeneration, remoteEligible, !identityRejected else { return }
+                        for task in tasks where !removedTaskIdentifiers.contains(task.taskIdentifier)
+                            && (task.taskDescription.map { client?.ownsDownloadTask(downloadIdentifier: $0) == true } ?? false) {
+                            if task.state == .suspended { task.resume() }
+                        }
+                        processSecuredDownloads()
+                        resumePendingDownloads()
                     }
-                    processSecuredDownloads()
-                    resumePendingDownloads()
+                    if let remoteTaskEnumerationDelivery { remoteTaskEnumerationDelivery(deliver) }
+                    else { deliver() }
                 }
             }
         }
@@ -783,6 +800,11 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
 
     private func resumePendingDownloads() {
         guard remoteEligible, !identityRejected, validatingDeliveries.isEmpty else { return }
+        let prepared = deferredPreparations
+        deferredPreparations = []
+        for value in prepared where value.generation == reconciliationGeneration {
+            handlePreparationOutcome(value.outcome, fallbackItemID: value.itemID)
+        }
         let queued = pendingTracks
         pendingTracks = []
         queued.forEach(requestDownload)
@@ -795,6 +817,12 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     ) {
         guard remoteEligible, !identityRejected else { return }
         if outcome.errorKind == "serverIdentityChanged" { rejectServerIdentity(); return }
+        // Preparation can have started before a restored receipt registered its validator.
+        // Retain its result until the receipts commit, then reread the durable row in startTask.
+        if outcome.prepared != nil, !validatingDeliveries.isEmpty {
+            deferredPreparations.append((outcome, fallbackItemID, reconciliationGeneration))
+            return
+        }
         if let prepared = outcome.prepared,
            let url = URL(string: prepared.url),
            let account {
@@ -926,10 +954,16 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         validatingDeliveries.insert(secured.identifier)
         validateRemoteAccess { [weak self] valid in
             guard let self else { return }
-            validatingDeliveries.remove(secured.identifier)
-            guard valid, !identityRejected else { return }
-            _ = promoteSecuredDownload(secured)
-            resumePendingDownloads()
+            let generation = reconciliationGeneration
+            let deliver = { @MainActor [weak self] in
+                guard let self, generation == reconciliationGeneration else { return }
+                validatingDeliveries.remove(secured.identifier)
+                guard valid, !identityRejected else { return }
+                _ = promoteSecuredDownload(secured)
+                resumePendingDownloads()
+            }
+            if let securedDownloadValidationDelivery { securedDownloadValidationDelivery(identifier, deliver) }
+            else { deliver() }
         }
         return false
     }
@@ -1111,7 +1145,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         }
     }
 
-    private func processSecuredDownloads() {
+    func processSecuredDownloads() {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: downloadInboxURL,
             includingPropertiesForKeys: nil

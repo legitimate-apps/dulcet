@@ -209,6 +209,125 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         XCTAssertEqual(server.requestQueries.count, 1, "Only the new ordinary track may fetch after delivery reconciliation")
     }
 
+    func testRestoredReceiptWinsBeforeRemoteTaskEnumerationReturns() async throws {
+        try await provePendingReceiptWins(restored: true)
+    }
+
+    func testPendingReceiptWinsAgainstAnAlreadyPreparedDownload() async throws {
+        try await provePendingReceiptWins(restored: false)
+    }
+
+    func testPreparedDownloadWaitsForTheFinalSecuredReceiptValidator() async throws {
+        try await provePendingReceiptWins(restored: false, companion: true)
+    }
+
+    private func provePendingReceiptWins(restored: Bool, companion: Bool = false) async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let audio = try Data(contentsOf: audioURL)
+        let server = try ProductionPathLoopbackServer(audio: audio, answersIdentity: true)
+        defer { server.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-pending-receipt-\(UUID())")
+        let name = "dulcet-pending-receipt-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1)
+        var controller = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer { controller.disconnect(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name) }
+        var prepared: (() -> Void)?
+        controller.preparedDownloadDelivery = { prepared = $0 }
+        controller.configure(account: account)
+        controller.setAutomaticDownloadsEnabled(false)
+        let track = rejectionTrack("pending-receipt")
+        controller.requestDownload(track)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Real core preparation did not finish") { prepared != nil }
+        if companion {
+            var companionPrepared: (() -> Void)?
+            controller.preparedDownloadDelivery = { companionPrepared = $0 }
+            controller.requestDownload(rejectionTrack("companion-receipt"))
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Companion core preparation did not finish") { companionPrepared != nil }
+        }
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(name)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT download_id FROM download WHERE raw_id='pending-receipt'", -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+        let downloadID = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 0)))
+        if restored {
+            controller.disconnect()
+            controller = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        }
+        // The durable inbox pair is the same format written synchronously by the OS delegate.
+        let inbox = root.appendingPathComponent(".incoming")
+        try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+        func writeReceipt(_ id: String) throws {
+            let receiptID = UUID().uuidString
+            try audio.write(to: inbox.appendingPathComponent("\(receiptID).download"))
+            let receipt: [String: Any] = ["identifier": receiptID, "downloadIdentifier": id,
+                "statusCode": 200, "contentType": "audio/mpeg", "contentLength": String(audio.count),
+                "deliveredFileLength": audio.count]
+            try JSONSerialization.data(withJSONObject: receipt).write(to: inbox.appendingPathComponent("\(receiptID).json"))
+        }
+        try writeReceipt(downloadID)
+        var companionID: String?
+        if companion {
+            var companionStatement: OpaquePointer?
+            XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT download_id FROM download WHERE raw_id='companion-receipt'", -1, &companionStatement, nil), SQLITE_OK)
+            defer { sqlite3_finalize(companionStatement) }
+            XCTAssertEqual(sqlite3_step(companionStatement), SQLITE_ROW)
+            companionID = String(cString: try XCTUnwrap(sqlite3_column_text(companionStatement, 0)))
+            try writeReceipt(try XCTUnwrap(companionID))
+        }
+        var validations: [String: () -> Void] = [:]
+        controller.securedDownloadValidationDelivery = { validations[$0] = $1 }
+        if restored {
+            var enumeration: (() -> Void)?
+            controller.remoteTaskEnumerationDelivery = { enumeration = $0 }
+            controller.configure(account: account)
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Remote task enumeration did not return") { enumeration != nil }
+            controller.requestDownload(track)
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertEqual(server.requestQueries.count, 0, "A restored receipt must block streams before enumeration delivery")
+            try XCTUnwrap(enumeration)()
+        } else {
+            controller.processSecuredDownloads()
+        }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Receipt did not reach real identity validation") { validations.count == (companion ? 2 : 1) }
+        if !restored { try XCTUnwrap(prepared)() }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.requestQueries.count, 0, "A prepared URL must wait while its secured receipt is validating")
+        if let companionID {
+            try XCTUnwrap(validations.removeValue(forKey: companionID))()
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertTrue(controller.status(for: rejectionTrack("companion-receipt").id).isLocallyPlayable)
+            XCTAssertFalse(controller.status(for: track.id).isLocallyPlayable)
+            XCTAssertEqual(server.requestQueries.count, 0, "An unrelated validator must not drain the target's prepared URL")
+        }
+        controller.securedDownloadValidationDelivery = nil
+        validations.values.forEach { $0() }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Validated receipt did not promote") {
+            controller.status(for: track.id).isLocallyPlayable
+        }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.requestQueries.count, 0, "Promoted receipt must never be fetched again")
+        XCTAssertEqual(controller.status(for: track.id), .downloaded)
+        let asset = try XCTUnwrap(controller.offlinePlaybackAsset(for: track))
+        let local = await load(resource: asset.resource, range: .init(start: 0, endInclusive: Int64(audio.count - 1)))
+        if case let .loaded(bytes, _) = local { XCTAssertEqual(bytes, audio) }
+        else { XCTFail("Promoted receipt must retain its exact playable bytes") }
+        controller.preparedDownloadDelivery = nil
+        controller.remoteTaskEnumerationDelivery = nil
+        let ordinary = rejectionTrack("ordinary-after-receipt")
+        controller.requestDownload(ordinary)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Ordinary successor was starved") {
+            controller.status(for: ordinary.id).isLocallyPlayable
+        }
+        XCTAssertEqual(server.requestQueries.count, 1, "Only the ordinary successor may fetch")
+    }
+
     func testKnownReplacementRejectsLateCurrentResolve() async throws {
         try await proveRejectedPlaybackResolve(preload: false)
     }
@@ -1032,6 +1151,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary()
         try await testKnownServerReplacementQuarantinesLateMediaAndKeepsOfflinePlayback()
         try await testACompletedDeliveryWinsAgainstALatePreparedDownload()
+        try await testRestoredReceiptWinsBeforeRemoteTaskEnumerationReturns()
+        try await testPendingReceiptWinsAgainstAnAlreadyPreparedDownload()
+        try await testPreparedDownloadWaitsForTheFinalSecuredReceiptValidator()
         try await testKnownReplacementRejectsLateCurrentResolve()
         try await testKnownReplacementRejectsLatePreloadResolve()
         try await testKnownReplacementBlocksAnInstalledResourcesNextHTTPRange()
