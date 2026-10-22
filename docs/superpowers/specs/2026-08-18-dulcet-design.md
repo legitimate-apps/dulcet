@@ -7916,6 +7916,17 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-22 — Recheck account authorization after playlist capability discovery.**
+Playlist extension discovery can suspend after the outbox's identity check. A sender retired during
+that suspension remains closed after the answer returns; capability invalidation cannot reopen it.
+Android also checks the account's sticky identity rejection and contact authorization before
+discovery, after its response and immediately before sending a scrobble. Apple identity rejection
+switches the existing queue delivery composition to persistence only, cancelling retries and closing
+its sender while retaining submitted plays and playlist provenance. Passive reachability reports
+cannot restore that retired sender. A newly authenticated delivery composition may drain the same
+durable event. This adds no identity request per scrobble and preserves the reconnect capability
+invalidation, ordinary-server fallback and schema 12 playlist-context migration.
+
 **2026-10-21 — Bind Android reader reconnect to playlist capability revalidation.**
 A successful Android library-reader reconnect reports `ReaderConnectionOutcome.Read` through
 the matching account's playback server-availability notification. That notification now

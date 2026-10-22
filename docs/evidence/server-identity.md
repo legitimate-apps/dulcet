@@ -1,9 +1,34 @@
-# Server identity and saved accounts — 2026-10-21
+# Server identity and saved accounts — 2026-10-22
 
 The implementation distinguishes a saved provider namespace from server lineage: the former is a
 local random account ID, the latter is authenticated product type and, for an advertised Dulcet
 server, its origin's discovery instance ID. Software versions do not enter lineage. See spec §28
 for trust, migration and plain OpenSubsonic limits.
+
+## Playlist capability discovery and account retirement
+
+OBSERVED fail-before on the merged playlist-context and server-identity implementation: the JVM
+sender, real Android controller and native Apple queue facade each send the old song and playlist
+after a held extension response returns despite sender retirement or known identity rejection.
+The isolated JVM, Android-host and macosArm64 regressions each execute one test and fail its
+no-send assertion. A fourth native Swift adapter regression executes one test and fails because
+identity rejection does not retire network delivery; its saved-queue assertions already pass.
+
+The sender now checks logical retirement and account authorization around suspended discovery
+and before sending. Apple rejection installs persistence-only delivery. The native queue control
+also reconnects a fresh sender and verifies that it delivers the original song and playlist once.
+These boundaries preserve the durable event without allowing a retired sender to disclose its IDs.
+The sender, Android controller and emitted Swift aggregate are named in the
+`account.server_identity` cells. The additional native facade test is
+`ApplePlaybackQueueFacadeTest/offlineConfigurationRetiresASenderSuspendedInPlaylistDiscoveryWithoutDeletingThePlay`.
+These observations do not establish a rendered server-swap tour on each platform.
+
+OBSERVED after the guards on the merged source: 1,199 JVM and 1,444 core Android-host tests
+pass, together with phone DEV/PROD 239 each and TV 94. Native macosArm64 executes 1,285 tests
+across 95 suites with zero failures, errors or skips. This includes existing positive and negative
+capability-reconnect controls and the unchanged held-discovery regressions. Fresh Mac, iOS and
+tvOS frameworks and iOS common-test compilation pass; build success is separate from the test
+observations above.
 
 ## Shared core
 

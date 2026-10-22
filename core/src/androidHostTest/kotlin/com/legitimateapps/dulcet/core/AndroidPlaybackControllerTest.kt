@@ -2120,6 +2120,41 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun identityRejectionDuringPlaylistDiscoveryCannotSendTheRetainedAccountsSongOrPlaylistIds() {
+        ScrobbleReceiver(holdExtensions = true).use { receiver ->
+            receiver.advertiseContext = true
+            val owner = "provider:${java.util.UUID.randomUUID()}"
+            Fixture(accountOwner = owner, baseUrl = receiver.url, onDelivery = null,
+                pendingPlays = listOf("retained-song"), pendingPlaylistId = "retained-playlist").use { f ->
+                val outbox = PersistentScrobbleOutbox(f.store.database, OutboxWallClock { System.currentTimeMillis() })
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                while (receiver.extensionEntered.count > 0 && System.nanoTime() < deadline) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    Thread.sleep(10)
+                }
+                assertEquals(0L, receiver.extensionEntered.count, "Setup: the real controller's authenticated discovery is held")
+                assertEquals("retained-playlist", outbox.pending(ServerId(owner)).single().playlistRawId)
+                kotlinx.coroutines.runBlocking {
+                    assertEquals(DomainError.Protocol.ServerIdentityChanged,
+                        AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged })
+                }
+                receiver.releaseExtensions.countDown()
+                val completed = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                while (receiver.requests.isEmpty() && outbox.pending(ServerId(owner)).singleOrNull()?.attemptCount == 0L &&
+                    System.nanoTime() < completed) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    Thread.sleep(10)
+                }
+                assertTrue(receiver.requests.isEmpty(),
+                    "Known rejection must fence the actual HTTP scrobble after a held extension answer")
+                val retained = outbox.pending(ServerId(owner)).single()
+                assertEquals("retained-song", retained.rawId)
+                assertEquals("retained-playlist", retained.playlistRawId)
+                assertEquals(1, receiver.extensionRequests.get(), "No rejected rediscovery may follow")
+            }
+        }
+    }
+
     @Test fun networkReconnectRediscoversPositiveAndNegativePlaylistContextWithoutReplacingPlayback() {
         ScrobbleReceiver().use { receiver ->
             Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
@@ -2238,7 +2273,10 @@ class AndroidPlaybackControllerTest {
     private class ScrobbleReceiver(
         private val refuseFirstSubmissions: Int = 0,
         private val goneId: String? = null,
+        private val holdExtensions: Boolean = false,
     ) : AutoCloseable {
+        val extensionEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseExtensions = java.util.concurrent.CountDownLatch(1)
         @Volatile var advertiseContext = false
         val extensionRequests = java.util.concurrent.atomic.AtomicInteger()
         private val refused = java.util.concurrent.atomic.AtomicInteger()
@@ -2268,7 +2306,12 @@ class AndroidPlaybackControllerTest {
                             assertEquals("controller-canary", query["u"])
                             val salt = assertNotNull(query["s"])
                             assertEquals(AccountConnectionContract.saltedToken("controller-password-canary", salt), query["t"])
-                            if (extensions) extensionRequests.incrementAndGet() else if (!identityProbe) requests += query
+                            if (extensions) {
+                                extensionRequests.incrementAndGet()
+                                extensionEntered.countDown()
+                                if (holdExtensions) assertTrue(releaseExtensions.await(30, java.util.concurrent.TimeUnit.SECONDS),
+                                    "The held extension fixture must be released")
+                            } else if (!identityProbe) requests += query
                             val refuse = !identityProbe && !extensions && query["submission"] == "true" && refused.getAndIncrement() < refuseFirstSubmissions
                             val gone = !identityProbe && !extensions && query["submission"] == "true" && query["id"] == goneId
                             val body = (if (identityProbe) """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.60.0"}}"""
@@ -2286,6 +2329,7 @@ class AndroidPlaybackControllerTest {
             }
         }
         override fun close() {
+            releaseExtensions.countDown()
             socket.close(); executor.shutdown()
             assertTrue(executor.awaitTermination(6, java.util.concurrent.TimeUnit.SECONDS))
             assertTrue(failures.isEmpty(), "Scrobble receiving fixture failed: $failures")
@@ -2326,6 +2370,7 @@ class AndroidPlaybackControllerTest {
         localPlans: AndroidLocalPlaybackSource? = null,
         /** Plays left in the outbox by an earlier run, by raw id, before the controller exists. */
         pendingPlays: List<String> = emptyList(),
+        pendingPlaylistId: String? = null,
         serverContact: AndroidServerContact? = null,
         overlapPlayer: (() -> androidx.media3.common.Player)? = null,
         accountOwner: String = OWNER,
@@ -2350,7 +2395,8 @@ class AndroidPlaybackControllerTest {
             val outbox = PersistentScrobbleOutbox(store.database, OutboxWallClock { System.currentTimeMillis() })
             pendingPlays.forEachIndexed { index, rawId ->
                 outbox.persistSynchronously(RecordedPlaybackEvent.SubmittedPlay(
-                    ProviderItemId(accountOwner, rawId), PlaybackWallClockTime(System.currentTimeMillis() - 60_000 + index)))
+                    ProviderItemId(accountOwner, rawId), PlaybackWallClockTime(System.currentTimeMillis() - 60_000 + index),
+                    pendingPlaylistId?.let { ProviderItemId(accountOwner, it) }))
             }
             controller = AndroidPlaybackController(RuntimeEnvironment.getApplication(),
                 PlaybackEndpointAccount(accountOwner, baseUrl, "controller-canary", "controller-password-canary", true),

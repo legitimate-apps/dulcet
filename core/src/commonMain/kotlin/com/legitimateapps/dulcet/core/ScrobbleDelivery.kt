@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlin.concurrent.Volatile
 
 public data class ScrobbleEndpointRequest(
     val event: RecordedPlaybackEvent,
@@ -34,6 +35,7 @@ internal fun interface ScrobbleEndpointTransport {
 public class ScrobbleEndpointSender private constructor(
     private val transport: ScrobbleEndpointTransport,
     private val closeTransport: (() -> Unit)?,
+    private val authorizeRequest: () -> DomainError?,
 ) {
     constructor(
         account: PlaybackEndpointAccount,
@@ -43,10 +45,15 @@ public class ScrobbleEndpointSender private constructor(
     ) : this(
         transport = KtorScrobbleEndpointTransport(account, saltSource, logSink, hostResolver),
         closeTransport = null,
+        authorizeRequest = { null },
     )
 
-    internal constructor(transport: ScrobbleEndpointTransport) : this(transport, null)
+    internal constructor(
+        transport: ScrobbleEndpointTransport,
+        authorizeRequest: () -> DomainError? = { null },
+    ) : this(transport, null, authorizeRequest)
 
+    @Volatile private var closed = false
     private val discovery = Mutex()
     private var capabilityGeneration = 0L
     private var offered: Pair<Long, Boolean>? = null
@@ -59,9 +66,11 @@ public class ScrobbleEndpointSender private constructor(
 
     private suspend fun playlistContextOffered(): Boolean = discovery.withLock {
         while (true) {
+            requireAuthorizedRequest()
             val generation = capabilityGeneration
             offered?.takeIf { it.first == generation }?.let { return@withLock it.second }
             val response = transport.extensions()
+            requireAuthorizedRequest()
             val available = when {
                 response == null -> false
                 response.statusCode == 404 || response.statusCode == 501 -> false
@@ -86,6 +95,7 @@ public class ScrobbleEndpointSender private constructor(
     }
 
     suspend fun send(request: ScrobbleEndpointRequest): ScrobbleSendResult = try {
+        requireAuthorizedRequest()
         val parameters = when (val event = request.event) {
             is RecordedPlaybackEvent.NowPlaying -> linkedMapOf(
                 "id" to event.itemId.rawId,
@@ -102,6 +112,8 @@ public class ScrobbleEndpointSender private constructor(
                 }
             }
         }
+        // Discovery may suspend while this account is rejected or its sender is retired.
+        requireAuthorizedRequest()
         val response = transport.request(parameters)
         response.toScrobbleSendResult()
     } catch (_: CancellationException) {
@@ -115,8 +127,15 @@ public class ScrobbleEndpointSender private constructor(
     }
 
     fun close() {
+        if (closed) return
+        closed = true
         closeTransport?.invoke()
         (transport as? KtorScrobbleEndpointTransport)?.close()
+    }
+
+    private fun requireAuthorizedRequest() {
+        if (closed) throw AuthenticatedEndpointFailure(DomainError.Transport.Cancelled)
+        authorizeRequest()?.let { throw AuthenticatedEndpointFailure(it) }
     }
 }
 

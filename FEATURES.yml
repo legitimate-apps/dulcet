@@ -1432,6 +1432,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
+            },
+            {
+              "observes": "The shared sender is closed while playlist extension discovery is held; releasing the response sends no stored song or playlist IDs and preserves the exact durable event. Executed on JVM; no native UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
+            },
+            {
+              "observes": "The production Swift playback adapter calls the real persistence-only queue delivery boundary exactly once across repeated identity rejection and passive reachability, preserving the saved song and playlist source. Executed on a Mac host; no rendered swap UI claim. The emitted download aggregate invokes testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically"
             }
           ],
           "promotion_condition": {
@@ -1482,6 +1494,18 @@
             },
             {
               "observes": "A real core download preparation is held while another production facade completes the same SQLite row with exact media bytes. Releasing the late result cannot send a new stream request for that completed row; a newly queued ordinary successor still fetches and promotes its exact bytes. The native adapter assertion runs in the download aggregate; process-replacement recovery has a separate app-hosted CI proof.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
+            },
+            {
+              "observes": "The shared sender is closed while playlist extension discovery is held; releasing the response sends no stored song or playlist IDs and preserves the exact durable event. Executed on JVM; no native UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
+            },
+            {
+              "observes": "The production Swift playback adapter calls the real persistence-only queue delivery boundary exactly once across repeated identity rejection and passive reachability, preserving the saved song and playlist source. Executed on a Mac host; no rendered swap UI claim. The emitted download aggregate invokes testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue.",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIOS"
@@ -1538,6 +1562,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
+            },
+            {
+              "observes": "The shared sender is closed while playlist extension discovery is held; releasing the response sends no stored song or playlist IDs and preserves the exact durable event. Executed on JVM; no native UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
+            },
+            {
+              "observes": "The production Swift playback adapter calls the real persistence-only queue delivery boundary exactly once across repeated identity rejection and passive reachability, preserving the saved song and playlist source. Executed on a Mac host; no rendered swap UI claim. The emitted download aggregate invokes testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS"
             }
           ],
           "promotion_condition": {
@@ -1585,6 +1621,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTVOSTests/detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia"
+            },
+            {
+              "observes": "The shared sender is closed while playlist extension discovery is held; releasing the response sends no stored song or playlist IDs and preserves the exact durable event. Executed on JVM; no native UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
             }
           ],
           "promotion_condition": {
@@ -1692,6 +1734,18 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidPlaybackControllerTest/identityRejectionDuringAutoplayCannotAppendReplacementServerIds"
+            },
+            {
+              "observes": "The shared sender is closed while playlist extension discovery is held; releasing the response sends no stored song or playlist IDs and preserves the exact durable event. Executed on JVM; no native UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
+            },
+            {
+              "observes": "The real Android playback controller is suspended in authenticated extension discovery when its account identity is rejected. The receiving socket observes no subsequent scrobble, while the song and playlist remain in the outbox. Android host runtime, not emulator execution.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringPlaylistDiscoveryCannotSendTheRetainedAccountsSongOrPlaylistIds"
             }
           ],
           "promotion_condition": {
@@ -1799,6 +1853,18 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidPlaybackControllerTest/identityRejectionDuringAutoplayCannotAppendReplacementServerIds"
+            },
+            {
+              "observes": "The shared sender is closed while playlist extension discovery is held; releasing the response sends no stored song or playlist IDs and preserves the exact durable event. Executed on JVM; no native UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
+            },
+            {
+              "observes": "The real Android playback controller is suspended in authenticated extension discovery when its account identity is rejected. The receiving socket observes no subsequent scrobble, while the song and playlist remain in the outbox. Android host runtime, not emulator execution.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringPlaylistDiscoveryCannotSendTheRetainedAccountsSongOrPlaylistIds"
             }
           ],
           "promotion_condition": {

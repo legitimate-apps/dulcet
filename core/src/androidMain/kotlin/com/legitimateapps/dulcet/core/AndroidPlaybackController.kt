@@ -247,6 +247,12 @@ public class AndroidPlaybackController internal constructor(
 
         override suspend fun extensions(): AuthenticatedEndpointResponse =
             scrobbleRequests.request("getOpenSubsonicExtensions", emptyMap())
+    }, authorizeRequest = {
+        when {
+            AndroidServerIdentity.isRejected(account.providerInstanceId) -> DomainError.Protocol.ServerIdentityChanged
+            closed || !contactOpen() -> DomainError.Transport.Cancelled
+            else -> null
+        }
     })
     private val wall = OutboxWallClock(System::currentTimeMillis)
     private val outbox = PersistentScrobbleOutbox(store.database, wall)

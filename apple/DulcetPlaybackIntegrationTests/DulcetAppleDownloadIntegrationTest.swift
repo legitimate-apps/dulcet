@@ -394,6 +394,32 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         XCTAssertEqual(server.requestQueries.count, 1, "Only the ordinary successor may fetch")
     }
 
+    func testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue() throws {
+        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        defer { queue.close() }
+        var offlineConfigurations = 0
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: RejectionPlaybackEngine(),
+            catalog: [], configureOfflineDelivery: {
+                offlineConfigurations += 1
+                return queue.configureOfflineDelivery()
+            })
+        defer { controller.disconnect() }
+        controller.configure(account: .init(providerInstanceID: "loopback-provider",
+            normalizedServerURL: "http://127.0.0.1:9", username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        XCTAssertNil(queue.replaceAndStart(request: ApplePlaybackQueueRequestDto(
+            items: [ApplePlaybackQueueItemDto(providerInstanceId: "loopback-provider", rawId: "saved-song", durationMilliseconds: 120_000)],
+            sourceKind: "playlist", sourceRawId: "saved-playlist", sourceDisplayName: "Saved playlist",
+            startIndex: 0, shuffle: false)).errorKind)
+        controller.rejectServerIdentity()
+        controller.rejectServerIdentity()
+        controller.setNetworkAvailable(true)
+        controller.setServerAvailable(true)
+        XCTAssertEqual(offlineConfigurations, 1, "Known lineage rejection must retire network delivery exactly once")
+        XCTAssertEqual(queue.snapshot().snapshot?.entries.map(\.rawId), ["saved-song"], "Quarantine must keep the saved queue")
+        XCTAssertEqual(queue.snapshot().snapshot?.entries.map(\.sourceDisplayName), ["Saved playlist"])
+    }
+
     func testKnownReplacementRejectsLateCurrentResolve() async throws {
         try await proveRejectedPlaybackResolve(preload: false)
     }
@@ -1222,6 +1248,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await testRestoredReceiptWinsBeforeRemoteTaskEnumerationReturns()
         try await testPendingReceiptWinsAgainstAnAlreadyPreparedDownload()
         try await testPreparedDownloadWaitsForTheFinalSecuredReceiptValidator()
+        try testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue()
         try await testKnownReplacementRejectsLateCurrentResolve()
         try await testKnownReplacementRejectsLatePreloadResolve()
         try await testKnownReplacementBlocksAnInstalledResourcesNextHTTPRange()

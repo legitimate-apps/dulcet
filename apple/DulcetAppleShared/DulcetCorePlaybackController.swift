@@ -439,6 +439,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         identityRejected = true
         serverAvailable = false
         wireAccessEnabled = false
+        // Keep submitted plays durable, but retire a sender suspended in capability discovery.
+        _ = configureOfflineDelivery()
         if resolveOperation != nil, let activeDirectiveIdentity {
             pendingStarts[activeDirectiveIdentity] = nil
         }
