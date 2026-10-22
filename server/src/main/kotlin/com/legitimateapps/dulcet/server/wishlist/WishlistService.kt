@@ -111,4 +111,48 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             (filter.kind==null || it.kind==filter.kind) && (filter.state==null || it.state==filter.state) && (filter.includeFulfilledHistory || it.state!="fulfilled" || (it.fulfilledAt ?: 0)>clock()-30*DiscoverCache.DAY)
         }
     }
+    fun setState(actor:Principal,wishId:String,state:String,note:String?,expectedRevision:String?):Wish {
+        if(!ctx.config.discover.wishlistEnabled)throw ApiProblem(404,"not-found")
+        requireScopes(actor,"admin")
+        text(note,1000)
+        return db.write {
+            if(!ctx.apiAuth.isActive(actor) || "admin" !in ctx.apiAuth.currentScopes(actor.tokenId).orEmpty() || long("SELECT is_admin FROM user WHERE id=?",actor.user.id)!=1L)throw ApiProblem(403,"permission-denied")
+            if(state !in setOf("wanted","requested","searching","unavailable"))throw ApiProblem(422,"invalid-state")
+            val wish=single("SELECT * FROM wishlist_wish WHERE id=?",wishId,map=store::row) ?: throw ApiProblem(404,"not-found")
+            if(wish.state=="fulfilled")throw ApiProblem(409,"wish-fulfilled")
+            if(expectedRevision!=null && expectedRevision!=wish.revision)throw ApiProblem(412,"precondition-failed")
+            if(wish.state!=state || wish.note!=note) {
+                val now=clock()
+                execute("UPDATE wishlist_wish SET state=?,note=?,note_at=?,updated=? WHERE id=?",state,note,if(note==null)null else now,now,wishId)
+            }
+            store.read(this,wish.userId,wishId)!!
+        }
+    }
+    fun isRejected(userId:String,target:ExternalTarget,libraryItem:LibraryRef):Boolean {
+        val mbid=target.externalIds[target.kind.registryKey]?.let { runCatching { canonicalMbid(it) }.getOrNull() } ?: return false
+        return db.read { long("SELECT count(*) FROM wishlist_rejected_match WHERE user_id=? AND kind=? AND mbid=? AND library_type=? AND library_id=?",userId,target.kind.wire,mbid,libraryItem.type,libraryItem.id)>0 }
+    }
+    fun rejectMatch(userId:String,target:ExternalTarget,libraryItem:LibraryRef,wishId:String?,operationId:String):WishMutation {
+        if(!ctx.config.discover.enabled && !ctx.config.discover.wishlistEnabled)throw ApiProblem(404,"not-found")
+        val mbid=target.externalIds[target.kind.registryKey]?.let { runCatching { canonicalMbid(it) }.getOrNull() } ?: throw ApiProblem(400,"invalid-request")
+        val op=uuid(operationId)
+        val fp=fingerprint(j("kind" to target.kind.wire,"mbid" to mbid,"libraryType" to libraryItem.type,"libraryId" to libraryItem.id,"wishId" to wishId))
+        return db.write {
+            replay(userId,op,"reject",fp)?.let { return@write it }
+            val wish=if(wishId!=null)store.read(this,userId,wishId) ?: throw ApiProblem(404,"not-found") else store.target(this,userId,target.kind,mbid)
+            if(wish!=null && (wish.kind!=target.kind || wish.externalIds[wish.kind.registryKey]!=mbid))throw ApiProblem(404,"not-found")
+            if(libraryItem.type!=target.kind.catalogType)throw ApiProblem(404,"not-found")
+            val linked=wish?.state=="fulfilled" && wish.libraryItem==libraryItem
+            val table=target.kind.catalogType
+            val exists=long("SELECT count(*) FROM $table WHERE id=?",libraryItem.id)>0
+            if(!ctx.access.canReadCatalog(userId,table,libraryItem.id) && !(linked && !exists))throw ApiProblem(404,"not-found")
+            val now=clock()
+            val inserted=execute("INSERT OR IGNORE INTO wishlist_rejected_match VALUES(?,?,?,?,?,?)",userId,target.kind.wire,mbid,libraryItem.type,libraryItem.id,now)>0
+            val reopen=linked && ctx.config.discover.wishlistEnabled
+            if(reopen)execute("UPDATE wishlist_wish SET state='wanted',note=NULL,note_at=NULL,fulfilled=NULL,library_id=NULL,library_type=NULL,availability='{}',updated=? WHERE id=?",now,wish!!.id)
+            save(userId,op,"reject",fp,wish?.id,target.kind.wire,mbid,now,null,wishId!=null && wish==null)
+            WishMutation(inserted || reopen,wish?.let { store.read(this,userId,it.id) },false)
+        }
+    }
+
 }
