@@ -2487,6 +2487,8 @@ func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
     store.pushReaderPage(metadata)
     #expect(store.readerPath == [.wishlist, metadata])
     store.navigate(to: .search)
+    #expect(store.readerPath(for: .library) == [.wishlist, metadata], "The hidden tab must not be told to pop its retained Wishlist/detail")
+    #expect(store.readerPath(for: .search).isEmpty)
     store.navigate(to: .library)
     #expect(store.readerPath == [.wishlist, metadata], "Changing the shell's column arrangement must retain the stored item and back route")
     store.goBackInLibrary()

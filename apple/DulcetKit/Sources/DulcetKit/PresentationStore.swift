@@ -216,6 +216,10 @@ public final class DulcetPresentationStore {
         base.flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
     }
     public private(set) var readerPath: [DulcetReaderRoute] = []
+    /// Hidden tabs keep their own path, so switching away does not pop their destination views.
+    func readerPath(for destination: DulcetSidebarDestination) -> [DulcetReaderRoute] {
+        selectedDestination == destination ? readerPath : savedReaderPaths[destination] ?? []
+    }
     /// The library section at the root of the reader's stack: the sidebar's and the TV bar's
     /// selection. The phone's root is always Home, with the other sections pushed from it.
     public private(set) var librarySection: DulcetLibrarySection = .home

@@ -634,7 +634,7 @@ struct DulcetDestinationStack: View {
     private var readerPath: Binding<[StackRoute]> {
         let stackDestination = destination
         return Binding(
-            get: { stackDestination == store.selectedDestination ? store.readerPath.map(StackRoute.reader) : [] },
+            get: { store.readerPath(for: stackDestination).map(StackRoute.reader) },
             set: { path in
                 // A departing Library stack must not pop the page after Search takes its place.
                 guard store.selectedDestination == stackDestination else { return }
