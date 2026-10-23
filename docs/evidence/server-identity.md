@@ -465,3 +465,35 @@ security fallbacks. The Ubuntu 24.04 check, exact FFmpeg package pin, APT signat
 verification, and job timeouts remain unchanged. The filter was checked against
 the actual `ubuntu24/20261012.334` runner-image mirror configuration; this local
 check establishes mirror selection, not a successful package installation.
+
+
+### iPad sidebar automation quiescence (2026-10-22)
+
+OBSERVED in full Apple run `39873707703` on `27a560de`: the first My Library
+`testBrowseAddRemoveRelaunchAndOfflineReplay` exceeds the fixed 300-second XCTest
+allowance. Its batch finishes with five executions, four passes, one failure and
+zero skips; the remaining 18 iPad cases are not reached. The previous head's same
+case passed in 294.079 seconds. At the timeout, 193 of 279 sampled runner stacks
+wait for pre-event application quiescence in the post-relaunch Library tap. The
+application samples show SwiftUI graph/preference processing; they do not prove a
+product deadlock or server wait. Several earlier launch/navigation delays also
+contribute, so the final tap is not established as the sole cause.
+
+The iPad sidebar selector now scopes ordinary native input to the current
+application process using the same runtime-guarded interaction options already
+used by account and player proofs. Each relaunch receives a new scope. The old
+navigation body, explicit destination readiness and selected-state checks, test
+body, offline/wire assertions and 300-second cap are unchanged. Other platforms
+retain their prior selector path. An unavailable selector or unexpected ABI uses
+ordinary waits; no proof is skipped.
+
+OBSERVED by an independent local verifier on an iPad Pro 13-inch (M5), iOS 26.5,
+with separate fresh disposable Navidrome fixtures: the unchanged case passes in
+107.148 seconds and the changed case passes in 104.806 seconds, each one test,
+zero failures and zero skips. Both builds and XCTest commands succeed. Both runs
+send nine ordinary sidebar taps (seven Library, two Browse), need no cell retry,
+and complete the original durable add/remove, offline playback, pending-write,
+relaunch and reconnect assertions. The changed run emits no interaction-helper
+fallback. This single sequential pair establishes preserved local behavior; it
+supplies no local RED, hosted-timeout reproduction or causal speedup claim.
+Final-head full Apple execution remains required.

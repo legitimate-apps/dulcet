@@ -551,6 +551,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
     }
     @MainActor private func select(_ section: String) throws {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // Each launch installs a new application process. Scope this navigation to
+            // that process; destination readiness and selected-state checks stay explicit.
+            withoutIdleWaits { [self] in selectDestination(section) }
+            return
+        }
+#endif
+        selectDestination(section)
+    }
+    @MainActor private func selectDestination(_ section: String) {
         let control = destination(section)
         XCTAssertTrue(control.waitForExistence(timeout: 30), "Missing destination \(section)")
 #if os(tvOS)
@@ -649,6 +660,23 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
 #endif
     }
+#if os(iOS)
+    /// The same guarded interaction scope used by the account and player UI proofs.
+    /// It applies to the current application process and retains ordinary native input.
+    @MainActor private func withoutIdleWaits(_ body: @escaping () -> Void) {
+        let selector = NSSelectorFromString("_performWithInteractionOptions:block:")
+        guard let method = class_getInstanceMethod(type(of: app), selector),
+              let encoding = method_getTypeEncoding(method).map({ String(cString: $0) }),
+              encoding.filter({ !$0.isNumber }) == "v@:I@?" else {
+            print("MY LIBRARY IPAD sidebar interaction options unavailable; using ordinary waits")
+            body()
+            return
+        }
+        typealias Perform = @convention(c) (AnyObject, Selector, UInt32, @convention(block) () -> Void) -> Void
+        let perform = unsafeBitCast(method_getImplementation(method), to: Perform.self)
+        perform(app, selector, 3, body)
+    }
+#endif
     @MainActor private func albumTile(_ title: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier == 'dulcet.library.album' AND label BEGINSWITH %@", title)).firstMatch
     }
