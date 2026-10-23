@@ -98,6 +98,16 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.item.menu.album.0").performClick()
         compose.onNodeWithTag("discover.reject.album.0.0").assertIsDisplayed()
     }
+    @Test fun heldCanonicalResultStillOffersWishAfterPriorRemoval() {
+        val local=DiscoverLibraryRef("provider:test","song","local-song")
+        val target=source.item("song").copy(availability=DiscoverAvailability("held","known",null,null,null,null,listOf(local)))
+        source.state=source.state.copy(groups=listOf(DiscoverGroup("song",source.page(listOf(target)),false,null)))
+        search()
+        compose.onNodeWithTag("discover.openLibrary.song.0").assertIsDisplayed()
+        // A scan may fulfil A after it was removed. Its held metadata still starts a new B.
+        compose.onNodeWithTag("discover.wish.song.0").assertIsDisplayed().performClick()
+        assertEquals(1,source.added)
+    }
     @Test fun artistDetailNamesItsLibraryHeaderAndPrimaryWish() {
         compose.setContent { MaterialTheme { PhoneDiscoverArtist(session,"artist",{},{},{}) } }
         compose.onNodeWithTag("discover.artist.header").assertIsDisplayed()
