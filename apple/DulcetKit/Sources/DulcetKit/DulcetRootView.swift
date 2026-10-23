@@ -626,13 +626,7 @@ struct DulcetDestinationStack: View {
             }
                 .allowsHitTesting(showing)
                 .modifier(bar(drawsNotices: showing && store.readerPath.isEmpty))
-                .navigationDestination(for: StackRoute.self) { path in
-                    if case let .reader(route) = path {
-                        DulcetReaderRouteView(route: route)
-                            .environment(\.dulcetReaderPage, route)
-                            .modifier(bar(drawsNotices: showing && store.readerPath.last == route))
-                    }
-                }
+                .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
         }
         .id(destination)
     }
@@ -668,18 +662,28 @@ struct DulcetDestinationStack: View {
                 }
             }
             .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.isEmpty))
-            .navigationDestination(for: StackRoute.self) { path in
-                if case let .library(route) = path {
-                    DulcetLibraryRouteView(store: store, route: route)
-                        .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.last == route))
-                }
-            }
+            .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
         }
         // A different destination is a different stack: switching from an open album to Search
         // must not animate as a pop.
         .id(destination)
         .onAppear(perform: retainLibrary)
         .onChange(of: store.snapshot) { _, _ in retainLibrary() }
+    }
+
+    /// Split-view columns can retain a registration while changing the stack's root. Both
+    /// registrations therefore render the complete common route type; a retained snapshot
+    /// registration must never turn a reader route into EmptyView (or vice versa).
+    @ViewBuilder private func stackPage(_ path: StackRoute) -> some View {
+        switch path {
+        case let .reader(route):
+            DulcetReaderRouteView(route: route)
+                .environment(\.dulcetReaderPage, route)
+                .modifier(bar(drawsNotices: showing && store.readerPath.last == route))
+        case let .library(route):
+            DulcetLibraryRouteView(store: store, route: route)
+                .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.last == route))
+        }
     }
 
     private var displayedSnapshot: DulcetSnapshot? {
