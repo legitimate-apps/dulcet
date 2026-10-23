@@ -1129,6 +1129,10 @@ for workflow in workflows:
                 f"{workflow}: job {job} runs on {runner_value.strip()!r}; only the standard hosted "
                 "labels ubuntu-latest, ubuntu-<LTS version>, macos-latest and macos-<version> are allowed",
             )
+    for name, start, end in job_spans(lines):
+        env = job_properties(lines, start, end).get("env") or {}
+        if isinstance(env, dict) and any("runner." in str(value) for value in env.values()):
+            errors.append(f"{workflow}: job {name} env cannot use runner context; set it in a step after runner allocation")
     for action, ref in re.findall(r"uses:\s+([^@\s]+)@([^\s#]+)", text):
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             errors.append(f"{workflow}: {action} is not pinned to an immutable commit")
@@ -1243,7 +1247,7 @@ def max_concurrent_macos_slots(dependencies, weights):
     """Maximum weighted antichain: dependency paths serialize jobs, including through Linux."""
     from itertools import combinations
     def ancestors(name, seen=frozenset()):
-        if name in seen:return set()
+        if name in seen:raise ValueError("cyclic job dependencies")
         parents = dependencies.get(name, set())
         return parents | set().union(*(ancestors(p, seen | {name}) for p in parents))
     upstream = {name: ancestors(name) for name in weights}
@@ -1295,7 +1299,11 @@ if apple_ci:
 
     dependencies = {name: set(listed(job_properties(apple_lines, *span).get("needs")))
                     for name, span in apple_jobs.items()}
-    slots = max_concurrent_macos_slots(dependencies, {n: macos_slots(n) for n in macos_jobs})
+    try:
+        slots = max_concurrent_macos_slots(dependencies, {n: macos_slots(n) for n in macos_jobs})
+    except ValueError as error:
+        errors.append(f"{apple_ci_path}: {error}")
+        slots = 0
     if slots > MAX_APPLE_MACOS_JOBS:
         errors.append(
             f"{apple_ci_path}: {slots} macOS slots across {macos_jobs}; at most "

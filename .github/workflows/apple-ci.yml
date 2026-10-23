@@ -2733,7 +2733,7 @@ jobs:
   # Finite step-2 native proof. Serial dependencies retain the four-slot hosted envelope.
   discover-wishlist-macos:
     name: discover-wishlist-macos
-    needs: [apple-plan, apple-platform, apple-conformance-core, apple-conformance-ipad-iphone, discover-wishlist-macos, discover-wishlist-iphone, discover-wishlist-ipad]
+    needs: [apple-plan, apple-platform, apple-conformance-core, apple-conformance-ipad-iphone]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60

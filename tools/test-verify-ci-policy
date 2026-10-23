@@ -1985,3 +1985,19 @@ assert capacity({'mac':{'platform','core','devices'},'phone':{'mac'},'pad':{'lin
 assert capacity({'mac':{'platform'},'phone':{'mac'},'pad':{'phone'}},weights)==4
 assert capacity({'phone':{'mac'},'pad':{'phone'}},weights)==5
 print('Hosted macOS capacity controls passed: 5/5 cases, serial tails, matrix weights and transitive paths')
+
+for graph in [{'a':{'a'}},{'a':{'b'},'b':{'a'}}]:
+    try:capacity(graph,{'a':1,'b':1})
+    except ValueError as error:assert str(error)=='cyclic job dependencies'
+    else:raise AssertionError('capacity accepted cyclic job dependencies')
+print('Hosted capacity rejects self and transitive dependency cycles: 2/2')
+
+runner_env_fixture=workflow_for(next(case for case in CASES if case.accepted))
+with tempfile.TemporaryDirectory() as directory:
+    root=Path(directory);workflows=root/'.github/workflows';workflows.mkdir(parents=True)
+    # Job env is evaluated before a runner exists. Step env may use runner context.
+    bad=runner_env_fixture.replace('    steps:', '    env:\n      OUTPUT: ${{ runner.temp }}/proof\n    steps:',1)
+    (workflows/'core-ci.yml').write_text(bad)
+    result=subprocess.run([sys.executable,str(VERIFIER)],cwd=root,capture_output=True,text=True)
+    assert result.returncode==1 and 'env cannot use runner context' in result.stderr,result.stderr
+print('Job environment runner-context rejection: 1/1')
