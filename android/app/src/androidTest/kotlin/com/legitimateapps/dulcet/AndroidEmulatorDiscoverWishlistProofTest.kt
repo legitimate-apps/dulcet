@@ -20,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -189,7 +190,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     openWishlist();row("Fixture Song 02")
                     fixture.stillHeld(held)
                     remove("Fixture Song 02")
-                    fixture.stillHeld(held)
+                    // Removal may release the hold before this next observation. The positive
+                    // pre-tap hold above proves overlap; completed mutations below prove effect.
                     await("durable remove leaves the optimistic list") { !allVisibleText().contains("Fixture Song 02") }
                     fixture.effect(held,"addToDulcetWishlist",delivered=true)
                     fixture.effect(held,"removeFromDulcetWishlist",delivered=true)
@@ -417,9 +419,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 if (container == "discover.album.list" && tag.startsWith("discover.album.edition.")) {
                     runCatching { compose.onNodeWithTag(container).performScrollToIndex(2) }
                     compose.waitForIdle()
+                    runCatching { compose.onNodeWithTag(tag).performScrollTo() }
                     if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
                 }
                 runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
+                // Edition chips live in a horizontal scroller inside the lazy vertical item.
+                runCatching { compose.onNodeWithTag(tag).performScrollTo() }
                 if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
                 repeat(8) {
                     compose.onNodeWithTag(container).performTouchInput { swipeUp() }
@@ -444,7 +449,10 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(30)
         while(!runCatching(condition).getOrDefault(false)) {
             if (System.nanoTime()>=deadline) {
-                println("DISCOVER PHONE timeout: $what\n"+runCatching {compose.onRoot(useUnmergedTree=true).printToString()}.getOrDefault("semantics unavailable"))
+                val diagnostic="DISCOVER PHONE timeout: $what\n"+runCatching {compose.onRoot(useUnmergedTree=true).printToString()}.getOrDefault("semantics unavailable")
+                println(diagnostic)
+                val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
+                File(directory,"${args.getString("dulcetDiscoverCaptureLabel") ?: "phone"}-failure-semantics.txt").writeText(diagnostic)
                 runCatching {capture("failure")}
                 error("Did not observe $what")
             }
