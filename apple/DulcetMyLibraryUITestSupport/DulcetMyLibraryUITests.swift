@@ -466,7 +466,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 
     @MainActor
     private func launch(connect: Bool = true, server: String? = nil, username: String? = nil, password: String? = nil, variant: String = "light") throws {
-        var launchArguments = [variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
+        var launchArguments = ["-dulcet-debug-ui-markers", variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if variant == "largest-text" { launchArguments += ["-dulcet-debug-largest-text"] }
         if connect {
             launchArguments += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server ?? base,
@@ -756,7 +756,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // Resolve the indexed result, as for the iPad sidebar. On the Mac the firstMatch wait
         // reported absent for 15 s while the failure hierarchy held this exact titled StaticText.
         let header = app.staticTexts.matching(identifier: "dulcet.album.title").element(boundBy: 0)
-        XCTAssertTrue(header.waitForExistence(timeout: 15), "The activated tile must open its album page")
+        let opened = header.waitForExistence(timeout: 15)
+        if !opened {
+            print("MY LIBRARY NAVIGATION " + app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label)
+            print("MY LIBRARY FAILED ALBUM HIERARCHY " + app.debugDescription)
+        }
+        XCTAssertTrue(opened, "The activated tile must open its album page")
         XCTAssertEqual(header.label, title, "The album page must name the activated tile")
     }
     @MainActor private func activate(_ element: XCUIElement) {

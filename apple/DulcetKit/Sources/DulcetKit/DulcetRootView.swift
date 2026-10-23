@@ -651,6 +651,9 @@ struct DulcetDestinationStack: View {
         .onAppear(perform: retainLibrary)
         .onChange(of: store.snapshot) { _, _ in retainLibrary() }
         .onChange(of: readerRequest, initial: true) { _, request in
+            store.navigationBindingReceipt("DulcetDestinationStack.request[\(destination)]",
+                oldPath: String(describing: readerPresentation.path), newPath: String(describing: request.path),
+                outcome: "request;context=\(request.context)")
             readerPresentation.request(request)
         }
         .task(id: readerPresentation.pendingReplay) {
@@ -678,7 +681,10 @@ struct DulcetDestinationStack: View {
                     store.navigationBindingReceipt("DulcetDestinationStack.readerPath", oldPath: String(describing: store.readerPath), newPath: String(describing: path), outcome: "guard-dropped:route-type")
                     return
                 }
-                _ = readerPresentation.wrote(routes)
+                let accepted = readerPresentation.wrote(routes)
+                store.navigationBindingReceipt("DulcetDestinationStack.wrote[\(stackDestination)]",
+                    oldPath: String(describing: readerPresentation.request?.path), newPath: String(describing: routes),
+                    outcome: "accepted=\(accepted);presented=\(readerPresentation.presentedRoutes);replay=\(String(describing: readerPresentation.pendingReplay))")
                 store.popReaderFromStack(to: routes, presentedRoutes: readerPresentation.presentedRoutes)
             }
         )
