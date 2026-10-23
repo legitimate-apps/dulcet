@@ -79,6 +79,7 @@ def apple_proof(mode):
     owner=ProcessOwner().install()
     lease=None;udid=None;owned_device=False;navigation_log=None;navigation_stream=None
     monitor_done=threading.Event()
+    navigation_ready=threading.Event()
     def host_gate():
         gate=os.environ.get("DULCET_DISCOVER_HOST_GATE")
         if gate:run([gate,"--wait","3600"])
@@ -112,6 +113,7 @@ def apple_proof(mode):
                         rows=subprocess.check_output(['ps','-Ao','pid=,ppid=,rss=,command='],text=True,timeout=8).splitlines()
                         parsed=[line.strip().split(None,3) for line in rows]
                         parent=next((int(p) for p,pp,rss,cmd in parsed if 'launchd_sim' in cmd and udid in cmd),None)
+                        if parent:navigation_ready.set()
                         children=[row for row in parsed if parent and row[1]==str(parent)]
                         receipt=dict(time=__import__('time').time(),launchd=parent,children=len(children),rssKB=sum(int(row[2]) for row in children))
                         with (output/'simulator-health.jsonl').open('a') as log:log.write(json.dumps(receipt)+'\n')
@@ -125,7 +127,6 @@ def apple_proof(mode):
             # it Shutdown while building avoids an idle simulator during compilation.
         if udid:
             navigation_log=(output/'navigation-unified.log').open('w')
-            navigation_stream=owner.spawn(['xcrun','simctl','spawn',udid,'log','stream','--style','compact','--level','debug','--predicate','subsystem == "com.dulcet.navigation" OR eventMessage CONTAINS "navigationDestination" OR eventMessage CONTAINS "NavigationLink is presenting"'],stdout=navigation_log,stderr=subprocess.STDOUT)
         target='DulcetMacTests' if mode=='macos' else 'DulcetiOSUITests'
         suite={'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetMacDiscoverWishlistAppTest'}[mode]
         # Test products must live on the internal volume: Xcode 27 silently executes zero
@@ -151,7 +152,13 @@ def apple_proof(mode):
         completed=None;completed_at=None;interrupted=False
         with (output/'xcodebuild.log').open('w') as log:
             process=owner.spawn(command,cwd=repo,env=env,stdout=log,stderr=subprocess.STDOUT)
+            next_navigation_attempt=0
             while process.poll() is None:
+                # Xcode boots the leased device. Starting log stream before that boot exits
+                # immediately; launch only after launchd_sim appears, retrying bootstrap races.
+                if udid and navigation_ready.is_set() and time.monotonic() >= next_navigation_attempt and (navigation_stream is None or navigation_stream.poll() is not None):
+                    navigation_stream=owner.spawn(['xcrun','simctl','spawn',udid,'log','stream','--style','compact','--level','debug','--predicate','subsystem == "com.dulcet.navigation" OR eventMessage CONTAINS "navigationDestination" OR eventMessage CONTAINS "NavigationLink is presenting"'],stdout=navigation_log,stderr=subprocess.STDOUT)
+                    next_navigation_attempt=time.monotonic()+10
                 if completed is None:
                     completed=completed_native_report(output/'proof.xcresult',suite,selected,output)
                     if completed:completed_at=time.monotonic()
