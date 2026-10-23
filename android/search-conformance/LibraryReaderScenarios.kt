@@ -112,6 +112,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     private val environment: ProductionLibraryEnvironment,
     private val ui: ReaderAppUi,
     private val platform: String,
+    /** Active feature clients redetect capabilities after identity and epoch validation. */
+    private val reconnectCapabilityReads: List<String> = emptyList(),
 ) {
     private val proxy get() = environment.proxy
     private val server get() = environment.server
@@ -293,7 +295,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertEquals("star", names.getOrNull(1), "the outbox flush follows identity validation: $names")
         assertEquals(1, names.count { it == "star" }, "one change, one send: $names")
         assertEquals(listOf("getMusicFolders", "getScanStatus"), names.subList(2, 4).sorted(), "then the epoch read: $names")
-        assertEquals(VISIBLE_HOME_READS, names.drop(4).sorted(), "then the visible screen, and nothing else: $names")
+        assertEquals((VISIBLE_HOME_READS + reconnectCapabilityReads).sorted(), names.drop(4).sorted(),
+            "then the visible screen and its capability detection, and nothing else: $names")
         assertEquals(setOf("newest", "recent", "frequent"),
             sent.filter { it.endpoint == "getAlbumList2" }.mapNotNull { it.parameters["type"] }.toSet())
         assertTrue(server.albumStarred(album),
@@ -341,7 +344,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("trying again to reconnect") { observed().connections.last() is LibraryConnectionState.Online }
         assertTrue(compose.onAllNodesWithTag("library.connection").fetchSemanticsNodes().isEmpty(), "the line goes once connected")
         assertNoCredentialLeak()
-        println("CONF-77 OBSERVED $platform reconnect requests=${names.size} identity=1 flush=1 epoch=2 revalidated=4 " +
+        println("CONF-77 OBSERVED $platform reconnect requests=${names.size} identity=1 flush=1 epoch=2 revalidated=4 capability-reads=${reconnectCapabilityReads.size} " +
             "downloaded-recheck=0 (no downloads in this phase) other=0 order=$names cover-art=${coverArt(mark)}")
     }
 
@@ -363,12 +366,12 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         }
         awaitQuiet()
         val names = readerRequests(mark).map { it.endpoint }
-        assertEquals((listOf("ping", "getMusicFolders", "getScanStatus") + VISIBLE_HOME_READS).sorted(), names.sorted(),
-            "the identity check, epoch read and visible screen, nothing else: $names")
+        assertEquals((listOf("ping", "getMusicFolders", "getScanStatus") + VISIBLE_HOME_READS + reconnectCapabilityReads).sorted(), names.sorted(),
+            "the identity check, epoch read, visible screen and its capability detection, nothing else: $names")
         assertEquals("ping", names.firstOrNull(), "identity is validated before trusting stored server IDs")
         assertNoCredentialLeak()
         println("CONF-77 OBSERVED $platform foreground-return background-requests=0 after-16min requests=${names.size} " +
-            "identity=1 epoch=2 revalidated=4 order=$names cover-art=${coverArt(mark)}")
+            "identity=1 epoch=2 revalidated=4 capability-reads=${reconnectCapabilityReads.size} order=$names cover-art=${coverArt(mark)}")
     }
 
     /**
