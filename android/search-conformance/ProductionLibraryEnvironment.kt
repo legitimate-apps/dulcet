@@ -19,6 +19,8 @@ import java.security.SecureRandom
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.rules.ExternalResource
+import org.junit.runner.Description
+import org.junit.runners.model.Statement
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import kotlin.test.*
@@ -82,7 +84,16 @@ class ProductionLibraryEnvironment(
      * the library and so reads before a test body runs; the test unparks it once its rules are in.
      */
     private val parkLaunchRequests: Boolean = false,
+    /** Scenarios that must install their wire rules before the launch screen's first request. */
+    private val parkLaunchRequestsForTests: Set<String> = emptySet(),
 ) : ExternalResource() {
+    private var parkThisLaunch = parkLaunchRequests
+
+    override fun apply(base: Statement, description: Description): Statement {
+        parkThisLaunch = parkLaunchRequests || description.methodName in parkLaunchRequestsForTests
+        return super.apply(base, description)
+    }
+
     lateinit var proxy: CountingProxy
         private set
     lateinit var server: DisposableServer
@@ -106,7 +117,7 @@ class ProductionLibraryEnvironment(
         server.deletePlaylistsNamed(TEST_PLAYLIST_PREFIX)
         runCatching { otherUser().deleteOwnPlaylistsNamed(TEST_PLAYLIST_PREFIX) }
         proxy = CountingProxy(target)
-        if (parkLaunchRequests) proxy.park()
+        if (parkThisLaunch) proxy.park()
         val saved = AndroidAccountCredentialStore(app).save("Disposable", proxy.baseUrl, USERNAME, PASSWORD, true)
         // As the connect form does once the server accepted the account and it was saved (spec §13.1):
         // the session the app opens next is connected in this process, and reads.
