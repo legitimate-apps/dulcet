@@ -2742,7 +2742,6 @@ jobs:
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
-      DULCET_DISCOVER_PROOF_OUTPUT: ${{ runner.temp }}/discover-macos/native
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read toolchain pins
@@ -2770,6 +2769,8 @@ jobs:
           tools/ci/run-discover-wishlist-proofs --self-test
           python3 tools/ci/test_discover_process_owner.py
           python3 tools/ci/test_discover_simulator_health.py
+      - name: Select the macos evidence directory
+        run: echo "DULCET_DISCOVER_PROOF_OUTPUT=$RUNNER_TEMP/discover-macos/native" >> "$GITHUB_ENV"
       - name: Drive Discover and Wishlist through the native macos app
         timeout-minutes: 30
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-macos/fixture" -- tools/ci/run-discover-wishlist-proofs macos
@@ -2806,7 +2807,6 @@ jobs:
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
-      DULCET_DISCOVER_PROOF_OUTPUT: ${{ runner.temp }}/discover-iphone/native
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read toolchain pins
@@ -2834,6 +2834,8 @@ jobs:
           tools/ci/run-discover-wishlist-proofs --self-test
           python3 tools/ci/test_discover_process_owner.py
           python3 tools/ci/test_discover_simulator_health.py
+      - name: Select the iphone evidence directory
+        run: echo "DULCET_DISCOVER_PROOF_OUTPUT=$RUNNER_TEMP/discover-iphone/native" >> "$GITHUB_ENV"
       - name: Drive Discover and Wishlist through the native iphone app
         timeout-minutes: 30
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-iphone/fixture" -- tools/ci/run-discover-wishlist-proofs iphone
@@ -2870,7 +2872,6 @@ jobs:
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
-      DULCET_DISCOVER_PROOF_OUTPUT: ${{ runner.temp }}/discover-ipad/native
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read toolchain pins
@@ -2898,6 +2899,8 @@ jobs:
           tools/ci/run-discover-wishlist-proofs --self-test
           python3 tools/ci/test_discover_process_owner.py
           python3 tools/ci/test_discover_simulator_health.py
+      - name: Select the ipad evidence directory
+        run: echo "DULCET_DISCOVER_PROOF_OUTPUT=$RUNNER_TEMP/discover-ipad/native" >> "$GITHUB_ENV"
       - name: Drive Discover and Wishlist through the native ipad app
         timeout-minutes: 30
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-ipad/fixture" -- tools/ci/run-discover-wishlist-proofs ipad

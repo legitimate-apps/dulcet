@@ -428,7 +428,6 @@ jobs:
     timeout-minutes: 45
     env:
       TZ: UTC
-      DULCET_DISCOVER_ANDROID_OUTPUT: ${{ runner.temp }}/discover-android/native
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read toolchain pins
@@ -458,6 +457,8 @@ jobs:
       - name: Build the real app and fixture
         timeout-minutes: 15
         run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest
+      - name: Select the phone evidence directory
+        run: echo "DULCET_DISCOVER_ANDROID_OUTPUT=$RUNNER_TEMP/discover-android/native" >> "$GITHUB_ENV"
       - name: Drive Discover and Wishlist through the native phone app
         timeout-minutes: 25
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
