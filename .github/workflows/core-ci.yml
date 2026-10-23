@@ -323,6 +323,8 @@ jobs:
       EMULATOR_ARCH: ${{ matrix.arch }}
       # Keep aligned with sdk-installer.ts in the pinned emulator-runner action below.
       EMULATOR_BUILD_TOOLS: '37.0.0'
+      # AGP 9.1's default build tools, used by Gradle before emulator-runner starts.
+      EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prove SDK installation retries and reports infrastructure failures
@@ -347,7 +349,7 @@ jobs:
           COMPILE_SDK: ${{ steps.pins.outputs.compile_sdk }}
         run: |
           set -euo pipefail
-          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --action-log "$RUNNER_TEMP/android-sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/android-system-image-install.log"
+          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --action-log "$RUNNER_TEMP/android-sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/android-system-image-install.log"
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       # Standard Linux runners expose /dev/kvm to root only; the emulator needs it as the runner user.
       # `udevadm trigger` returns before the rule is applied: MEASURED, one leg of the first run

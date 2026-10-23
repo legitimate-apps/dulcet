@@ -170,7 +170,7 @@ class ImageControl(unittest.TestCase):
         self.assertNotIn('package=system-images;', result.stdout)
 
     def test_all_action_dependencies_use_same_serial_installer(self):
-        dependencies = ['build-tools;37.0.0', 'platform-tools', 'platforms;android-34',
+        dependencies = ['build-tools;37.0.0', 'build-tools;36.0.0', 'platform-tools', 'platforms;android-34',
                         'platforms;android-36', 'emulator']
         result = self.invoke(dependencies=dependencies)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
