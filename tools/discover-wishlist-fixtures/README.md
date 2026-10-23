@@ -212,7 +212,11 @@ Accessibility assertions cover labeled, reachable Compose actions, not a running
 The `delayed-old-query` control holds an old request until a new answer has been written, then
 delays it 750 ms. It prefixes only old-query row titles with `Obsolete old query · `;
 normal/new payloads retain the recorded titles. Its response effects include `response: true` and
-`payload: old|new`, so an order proof can distinguish the answers after both have returned.
+`payload: old|new|other`, so an order proof can distinguish the answers after both have returned.
+Native proofs first require the old request's `held: true` acknowledgement. Only the complete new
+query (`new` or `Fixture`) releases that hold; an earlier positive search or intermediate keyboard
+edit is recorded as `other` and cannot release it. Each request retains its own revision's release
+event across later scenario changes.
 
 `held-detail` holds artist/album requests after a `held: true` effect. Read that effect before closing
 or changing a window; then POST `{}` to `/control/release-detail` and require `released: true` on the

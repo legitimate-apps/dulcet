@@ -169,7 +169,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         let app = try await launch()
         let revision = try await scenario("delayed-old-query")
         try await search("old", in: app)
-        try await effect("delayed-old-query", revision: revision)
+        try await effect("delayed-old-query", revision: revision, flag: "held")
         try await type("Fixture", in: app)
         _ = try await item("Fixture Song 01", in: app)
         try await effect("delayed-old-query", revision: revision, flag: "response")

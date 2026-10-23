@@ -61,7 +61,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             requireText("Data from MusicBrainz and ListenBrainz")
             val delayed=fixture.arm("delayed-old-query")
             query("old")
-            fixture.effect(delayed,"searchDulcetDiscover")
+            fixture.effect(delayed,"searchDulcetDiscover",held=true)
             query("new")
             awaitTag("discover.item.artist.0")
             fixture.effect(delayed,"searchDulcetDiscover",responsePayload="new")

@@ -35,9 +35,17 @@ import UIKit
         return try XCTUnwrap(ack["revision"] as? Int)
     }
     func effect(_ name: String, revision: Int, flag: String? = nil) throws {
-        let state = try control("state")
-        let effects = try XCTUnwrap(state["effects"] as? [[String: Any]])
-        XCTAssertTrue(effects.contains { $0["scenario"] as? String == name && $0["revision"] as? Int == revision && (flag == nil || $0[flag!] as? Bool == true) }, "Arming a fault alone is not evidence it ran")
+        let deadline = Date().addingTimeInterval(15)
+        var state: [String: Any] = [:]
+        var witnessed = false
+        repeat {
+            state = try control("state")
+            let effects = try XCTUnwrap(state["effects"] as? [[String: Any]])
+            witnessed = effects.contains { $0["scenario"] as? String == name && $0["revision"] as? Int == revision && (flag == nil || $0[flag!] as? Bool == true) }
+            if witnessed { break }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
+        XCTAssertTrue(witnessed, "Arming a fault alone is not evidence it ran")
         _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": state])
         print("DISCOVER_ACK scenario=\(name) revision=\(revision) flag=\(flag ?? "served")")
     }
@@ -196,6 +204,7 @@ import UIKit
         try launch()
         let revision = try scenario("delayed-old-query")
         try search("old")
+        try effect("delayed-old-query", revision: revision, flag: "held")
         let field = app.textFields["discover.query"].firstMatch
         activate(field)
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "Fixture")

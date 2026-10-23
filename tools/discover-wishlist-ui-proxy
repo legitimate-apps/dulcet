@@ -123,12 +123,13 @@ class Handler(BaseHTTPRequestHandler):
             if not (path.startswith('/rest/') or path.startswith('/.well-known/dulcet')):return self.reply(404,{'error':'fixture path refused'})
             params={**q,**parse_qs(body.decode() if body else '')};endpoint=urlsplit(path).path.rsplit('/',1)[-1].removesuffix('.view')
             with state.lock:
-                name=state.name;revision=state.revision
+                name=state.name;revision=state.revision;query_release=state.query_release
                 state.requests.append({'sequence':len(state.requests)+1,'channel':'navidrome' if nav else 'dulcet','endpoint':endpoint,'revision':revision})
+            query=params.get('query',[''])[0].strip().lower()
+            query_role='old' if query=='old' else 'new' if query in {'new','fixture'} else 'other'
             if not nav:
                 if name=='offline':state.effect(endpoint,revision,name);return self.disconnect()
-                if name=='delayed-old-query' and endpoint=='searchDulcetDiscover' and 'old' in params.get('query',[''])[0].lower():
-                    with state.lock:query_release=state.query_release
+                if name=='delayed-old-query' and endpoint=='searchDulcetDiscover' and query_role=='old':
                     state.effect(endpoint,revision,name,held=True)
                     if not query_release.wait(90):
                         state.effect(endpoint,revision,name,expired=True)
@@ -166,10 +167,9 @@ class Handler(BaseHTTPRequestHandler):
                         state.effect(endpoint,revision,name,delivered=True,replay=wish_replay_parameters(params));return self.disconnect()
                 if not nav and endpoint=='searchDulcetDiscover' and name=='delayed-old-query':
                     decoded=json.loads(data);page=decoded['subsonic-response']['dulcetDiscover']
-                    old='old' in params.get('query',[''])[0].lower()
-                    if old:
+                    if query_role=='old':
                         for row in page['item']:row['title']='Obsolete old query · '+row['title']
-                    state.effect(endpoint,revision,name,response=True,payload='old' if old else 'new')
+                    state.effect(endpoint,revision,name,response=True,payload=query_role)
                     data=json.dumps(decoded).encode()
                 if not nav and endpoint=='searchDulcetDiscover' and name in {'stale-answer','future-metadata'}:
                     decoded=json.loads(data);page=decoded['subsonic-response']['dulcetDiscover']
@@ -179,8 +179,8 @@ class Handler(BaseHTTPRequestHandler):
                         page['item'][0]['kind']='future';page['item'][0]['availability']['status']='future'
                     state.effect(endpoint,revision,name);data=json.dumps(decoded).encode()
                 self.reply(response.status,data,headers)
-                if not nav and endpoint=='searchDulcetDiscover' and name=='delayed-old-query' and 'old' not in params.get('query',[''])[0].lower():
-                    state.query_release.set()
+                if not nav and endpoint=='searchDulcetDiscover' and name=='delayed-old-query' and query_role=='new':
+                    query_release.set()
                 return
             finally:connection.close()
         except (ValueError,KeyError):self.reply(400,{'error':'fixture control or shape rejected'})

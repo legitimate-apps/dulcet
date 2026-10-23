@@ -43,6 +43,39 @@ class ModuleLoadingTests(unittest.TestCase):
                 self.assertEqual('127.0.0.1',server.server_name)
                 self.assertGreater(server.server_port,0)
 
+    def test_unrelatedSearchCannotReleaseTheOldQueryHold(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import io
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        state=proxy.FixtureProxy({'server':'http://127.0.0.1:1'})
+        state.name='delayed-old-query';state.revision=1
+        response=MagicMock(status=200)
+        response.read.return_value=json.dumps({'subsonic-response':{'dulcetDiscover':{'item':[]}}}).encode()
+        response.getheaders.return_value=[]
+        connection=MagicMock();connection.getresponse.return_value=response
+        # The native failure acknowledged a previous positive search as the old hold.
+        # Neither that response nor an intermediate keyboard edit may release it.
+        for query in ['positive','ol','Fi']:
+            with self.subTest(query=query):
+                handler=SimpleNamespace(path='/rest/searchDulcetDiscover?kind=song&query='+query,
+                    headers={},rfile=io.BytesIO(),command='GET',server=SimpleNamespace(role='proxy',fixture=state),
+                    reply=lambda *args: None)
+                with patch.object(proxy.http.client,'HTTPConnection',return_value=connection):
+                    proxy.Handler.handle_request(handler)
+                self.assertFalse(state.query_release.is_set(),'an unrelated search released the delayed old query')
+                self.assertEqual('other',state.effects[-1]['payload'])
+        for query in ['new','Fixture']:
+            with self.subTest(query=query):
+                state.query_release.clear()
+                handler.path='/rest/searchDulcetDiscover?kind=song&query='+query
+                with patch.object(proxy.http.client,'HTTPConnection',return_value=connection):
+                    proxy.Handler.handle_request(handler)
+                self.assertTrue(state.query_release.is_set())
+                self.assertEqual('new',state.effects[-1]['payload'])
+
     def test_oldQuerySurvivesSlowNativeEditingUntilNewAnswer(self):
         from types import SimpleNamespace
         from unittest.mock import MagicMock
