@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -78,7 +79,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             fixture.arm("normal")
             // Independent positive target, fetched before the app trigger so it cannot satisfy its trace.
             val held=fixture.rest("getDulcetDiscoverAlbum",mapOf("mbid" to mbid(201)))
-                .getJSONObject("dulcetDiscoverAlbum").getJSONObject("tracks").getJSONArray("item")
+                .getJSONObject("dulcetDiscoverAlbum").getJSONObject("tracks").getJSONArray("song")
                 .getJSONObject(0).getJSONObject("availability").getJSONObject("libraryItems").getJSONArray("item")
             val expected=(0 until held.length()).map(held::getJSONObject).first {it.getString("type")=="song"}.getString("id")
             everywhere("held")
@@ -109,7 +110,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     requireText("Waiting to sync")
                     check(context.getSharedPreferences(PROOF_PREFS,0).edit()
                         .putInt("beforeDeathPid",Process.myPid()).putBoolean("durablePendingWitnessed",true).commit())
-                    File(context.getExternalFilesDir(null),"discover-wishlist-proof/process-before.json")
+                    File(context.filesDir,"discover-wishlist-process-before.json")
                         .writeText(JSONObject().put("pid",Process.myPid()).put("pending",true).toString())
                     println("DISCOVER PHONE before-death pending=true")
                 }
@@ -121,6 +122,10 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 check(AndroidAccountCredentialStore(context).activeAccountId()!=null) {"Process death must preserve the actual saved account"}
                 launch().use { activity ->
                     openWishlist();row("Fixture Song 01");requireText("Waiting to sync")
+                    val proofDirectory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
+                    File(proofDirectory,"process-after.json").writeText(JSONObject()
+                        .put("beforePid",persisted.getInt("beforeDeathPid",-1)).put("afterPid",Process.myPid())
+                        .put("pendingRestored",true).toString())
                     fixture.arm("normal");reconnect(activity)
                     fixture.awaitWish(mbid(1))
                     await("Waiting to sync removed after acknowledgement") { !rowText("Fixture Song 01").contains("Waiting to sync") }
@@ -136,11 +141,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     // Independent server scan is acknowledged before claiming an Arrived row or local route.
                     val scan=fixture.arm("scan-arrival")
                     check(scan.getJSONObject("scan").getBoolean("completed")) {"Real fixture scan did not finish"}
+                    fixture.effect(scan,"startScan")
                     val wish=fixture.awaitWish(mbid(1),"fulfilled")
                     val expected=wish.getJSONObject("libraryItem").getString("id")
                     check(fixture.libraryContains(expected)) {"Fulfilment did not add the actual server My Library member"}
                     click("wishlist.refresh");row("Fixture Song 01")
-                    check(rowText("Fixture Song 01").contains("Arrived")) {"Server fulfilment never reached Arrived UI"}
+                    await("server fulfilment reaches Arrived UI") { rowText("Fixture Song 01").contains("Arrived") }
                     capture("arrived")
                     PlaybackObserver(context,removeAccountDataOnClose=false).use { observer ->
                         observer.bind();click("wishlist.arrival.${row("Fixture Song 01")}")
@@ -154,8 +160,13 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     val held=fixture.arm("remove-before-add")
                     click("discover.wish.song.1")
                     fixture.effect(held,"addToDulcetWishlist",held=true)
-                    openWishlist();remove("Fixture Song 02")
-                    fixture.effect(held,"removeFromDulcetWishlist")
+                    openWishlist();row("Fixture Song 02")
+                    fixture.stillHeld(held)
+                    remove("Fixture Song 02")
+                    await("durable remove leaves the optimistic list") { !allVisibleText().contains("Fixture Song 02") }
+                    fixture.stillHeld(held)
+                    fixture.effect(held,"addToDulcetWishlist",delivered=true)
+                    fixture.effect(held,"removeFromDulcetWishlist",delivered=true)
                     fixture.arm("normal");fixture.awaitNoWish(mbid(2))
                     println("DISCOVER PHONE process-death=true scan-fulfilled=true exact-library-route=true removal-retained-library=true")
                 }
@@ -202,7 +213,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     val cursor=fixture.cursor()
                     click("library.open");awaitTag("library.home.0.item.0")
                     fixture.awaitRequest("getAlbumList2",cursor,"navidrome")
-                    click("search.open");awaitTag("search.surface")
+                    click("search.open");awaitTag("search.query")
                     check(!exists("discover.scope.everywhere")) {"Navidrome exposed Everywhere"}
                     click("library.open")
                     check(!exists("wishlist.open")) {"Navidrome exposed Wishlist"}
@@ -231,14 +242,25 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(fixture.wishes(fixture.other).none {recording(it)==mbid(1)}) {"A intent was sent as B"}
             click("account.open");click("account.server.$ownerA")
             openWishlist();row("Fixture Song 01")
+            // Prove a newly pending A mutation immediately before the binding is rejected.
+            everywhere("owner A")
+            val blocked=fixture.arm("offline")
+            click("discover.wish.song.1")
+            fixture.effect(blocked,"addToDulcetWishlist")
+            openWishlist();check(rowText("Fixture Song 02").contains("Waiting to sync"))
+            click("library.open") // The existing saved-account notice is hosted on the library root.
             val replacement=fixture.arm("identity-replacement")
             check(replacement.has("identity"))
             reconnect(activity)
+            requireText("This address now belongs to a different server")
+            beginAccountThroughUi(fixture.server,fixture.owner,fixture.password)
             awaitTag("account.replacement")
             val cursor=fixture.cursor()
             click("account.replacement.cancel")
             await("replacement cancelled") {!exists("account.replacement")}
-            Thread.sleep(800)
+            check(AndroidAccountCredentialStore(context).activeAccountId()==ownerA) {"Cancellation replaced A's account"}
+            click("account.add.cancel");awaitTag("library.open")
+            Thread.sleep(1500)
             check(fixture.requests(cursor).none {it.getString("endpoint") in setOf("addToDulcetWishlist","removeFromDulcetWishlist","rejectDulcetDiscoverMatch")}) {"Rejected identity sent a pending mutation"}
             check(!exists("discover.album.surface") && !exists("discover.artist.surface")) {"Old metadata navigated after account rejection"}
             println("DISCOVER PHONE switched=true pending-owner-preserved=true replacement-cancelled=true")
@@ -253,6 +275,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         check((context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK==Configuration.UI_MODE_NIGHT_YES)==expectedDark) {"Requested system appearance did not reach app"}
         launch().use {
             everywhere("accessible")
+            navigationControlsRemainLabeled()
             accessible("discover.scope.everywhere");accessible("discover.item.artist.0")
             capture("search")
             click("discover.item.artist.0");awaitTag("discover.artist.surface")
@@ -260,10 +283,10 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.item.album.0");awaitTag("discover.album.surface")
             accessible("discover.album.edition.1");capture("album")
             click("discover.back");click("discover.back")
-            fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync");capture("pending")
+            fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync");visiblePending("discover.list");capture("pending")
             openWishlist();val index=row("Fixture Song 01")
             accessible("wishlist.remove.$index")
-            requireText("Waiting to sync");capture("wishlist")
+            requireText("Waiting to sync");visiblePending("wishlist.list");capture("wishlist")
             println("DISCOVER PHONE accessible=true theme=${required("dulcetDiscoverTheme")} font-scale=$expectedScale")
         }
     }
@@ -286,7 +309,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         awaitTag("discover.item.artist.0");capture("search")
     }
     private fun query(value:String) {awaitTag("discover.search.field");compose.onNodeWithTag("discover.search.field").performTextReplacement(value)}
-    private fun openWishlist(){click("library.open");click("wishlist.open");awaitTag("wishlist.surface")}
+    private fun openWishlist(){if(exists("player.close"))click("player.close");click("library.open");click("wishlist.open");awaitTag("wishlist.surface")}
     private fun reconnect(activity:ActivityScenario<MainActivity>) {
         activity.moveToState(Lifecycle.State.CREATED);activity.moveToState(Lifecycle.State.RESUMED)
         if(exists("library.reconnect"))click("library.reconnect")
@@ -294,12 +317,15 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         else if(exists("wishlist.refresh"))click("wishlist.refresh")
     }
     private fun addAccountThroughUi(url:String,user:String,password:String) {
+        beginAccountThroughUi(url,user,password)
+        awaitTag("library.open")
+    }
+    private fun beginAccountThroughUi(url:String,user:String,password:String) {
         click("account.open");click("account.add-server")
         awaitTag("account.server");compose.onNodeWithTag("account.server").performTextReplacement(url)
         compose.onNodeWithTag("account.username").performTextReplacement(user)
         compose.onNodeWithTag("account.password").performTextReplacement(password)
         click("account.allow-local-http");click("account.submit")
-        awaitTag("library.open")
     }
     private fun remove(title:String){click("wishlist.remove.${row(title)}")}
     private fun row(title:String):Int {
@@ -329,8 +355,21 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         }
         awaitTag(tag);compose.onNodeWithTag(tag).performClick();compose.waitForIdle()
     }
+    private fun visiblePending(container: String) {
+        compose.onNodeWithTag(container).performScrollToNode(hasText("Waiting to sync"))
+        compose.onNodeWithText("Waiting to sync").assertIsDisplayed()
+    }
+    private fun navigationControlsRemainLabeled() {
+        listOf("library.open","browse.open","search.open","account.open").forEach(::accessible)
+    }
     private fun accessible(tag:String) {
         awaitTag(tag)
+        if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isFailure) {
+            for (container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list")) {
+                if (exists(container)) runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
+                if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) break
+            }
+        }
         compose.onNodeWithTag(tag).assertIsDisplayed().assertHasClickAction()
         val config=nodeConfig(tag)
         val name=text(tag).trim()
@@ -376,20 +415,33 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         fun control(path:String,body:JSONObject?=null):JSONObject=http(control+path,body)
         fun arm(name:String):JSONObject=control("/control/scenario",JSONObject().put("name",name)).also {ack ->
             check(ack.getString("scenario")==name && ack.getBoolean("armed"));check(ack.getLong("revision")>0)
+            record(JSONObject().put("type","armed").put("scenario",name).put("revision",ack.getLong("revision"))
+                .put("scanCompleted",ack.optJSONObject("scan")?.optBoolean("completed") ?: false))
+        }
+        private fun record(event: JSONObject) {
+            val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
+            File(directory,"acknowledgements.jsonl").appendText(event.toString()+"\n")
         }
         fun cursor():Long=control("/control/requests").getLong("next")
         fun requests(since:Long):List<JSONObject> =control("/control/requests?since=$since").getJSONArray("requests").objects()
         fun awaitRequest(endpoint:String,since:Long,channel:String="dulcet") {
             await("observed app request $endpoint"){requests(since).any {it.getString("endpoint")==endpoint && it.getString("channel")==channel}}
         }
+        fun stillHeld(ack:JSONObject) {
+            val effects=control("/control/state").getJSONArray("effects").objects().filter {it.getLong("revision")==ack.getLong("revision")}
+            check(effects.any {it.optBoolean("held")} && effects.none {it.optBoolean("holdReleased")}) {"Add hold ended before durable UI removal overlapped it"}
+            record(JSONObject().put("type","holdStillActive").put("revision",ack.getLong("revision")))
+        }
         fun effect(ack:JSONObject,endpoint:String,delivered:Boolean=false,held:Boolean=false) {
+            var witnessed: JSONObject?=null
             await("acknowledged ${ack.getString("scenario")} effect on $endpoint") {
-                val state=control("/control/state")
-                state.getJSONArray("effects").objects().any {effect ->
+                witnessed=control("/control/state").getJSONArray("effects").objects().firstOrNull {effect ->
                     effect.getLong("revision")==ack.getLong("revision") && effect.getString("endpoint")==endpoint &&
                         (!delivered || effect.optBoolean("delivered")) && (!held || effect.optBoolean("held"))
                 }
+                witnessed!=null
             }
+            record(JSONObject().put("type","effect").put("observed",checkNotNull(witnessed)))
         }
         fun rest(endpoint:String,parameters:Map<String,String> =emptyMap(),user:String=owner):JSONObject {
             val salt="android-discover-proof"

@@ -83,4 +83,12 @@ class PhoneWishlistTest {
         compose.onNodeWithText("Wish two",substring=true).assertExists()
         compose.onNodeWithTag("wishlist.remove.1").assertExists()
     }
+    @Test fun wishlistReadFailureKeepsSavedRowsAndNamesWishlist() {
+        source.state=source.state.copy(wishes=listOf(row(key="saved")),wishlistError=DiscoverFailure("unreachable",null,true))
+        host()
+        compose.onNodeWithText("Could not refresh Wishlist. Try again.").assertExists()
+        compose.onNodeWithText("Wish saved").assertExists()
+        compose.onNodeWithText("Not saved").assertDoesNotExist()
+    }
+
 }

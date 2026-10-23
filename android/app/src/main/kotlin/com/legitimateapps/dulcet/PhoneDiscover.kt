@@ -68,6 +68,7 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
         val pages = state.groups.mapNotNull { it.page }
         DiscoverPageNotices(pages.firstOrNull { it.age.stale || it.age.fromDeviceCache } ?: pages.firstOrNull(),
             state.groups.firstOrNull { it.error?.code == "rate-limited" }?.error ?: state.groups.firstNotNullOfOrNull { it.error }) { session.setQuery(query) }
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
         LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("discover.list"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (group in state.groups) {
                 item(key = "header:${group.kind}") {
@@ -179,7 +180,7 @@ internal fun DiscoverLinks(links: List<DiscoverLink>) {
 }
 
 @Composable
-internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, retry: () -> Unit) {
+internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, failureText: String? = null, retry: () -> Unit) {
     if (page?.age?.stale == true || page?.age?.fromDeviceCache == true) Text(stringResource(R.string.discover_cached), Modifier.testTag("discover.notice.stale"))
     page?.age?.let { age ->
         Text(age.sourceAgeSeconds?.let { stringResource(R.string.discover_age, it) } ?: stringResource(R.string.discover_age_unknown), Modifier.testTag("discover.age"), style = MaterialTheme.typography.bodySmall)
@@ -193,7 +194,7 @@ internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, r
         var now by remember(deadline) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
         LaunchedEffect(deadline) { while (now < deadline) { delay(1000); now = SystemClock.elapsedRealtime() } }
         if (error.code == "rate-limited") Text(stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()), Modifier.testTag("discover.notice.busy"))
-        else Text(stringResource(R.string.discover_failed))
+        else Text(failureText ?: stringResource(R.string.discover_failed))
         TextButton(retry, enabled = error.retryable && now >= deadline, modifier = Modifier.testTag("discover.retry")) { Text(stringResource(R.string.discover_retry)) }
     }
 }

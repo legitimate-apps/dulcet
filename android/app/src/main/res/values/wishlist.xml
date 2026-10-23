@@ -28,4 +28,5 @@
     <string name="wishlist_remove_named">Remove wish for %1$s</string>
     <string name="wishlist_open_named">Open %1$s in your library</string>
     <string name="wishlist_reject_named">Correct the library match for %1$s</string>
+    <string name="wishlist_refresh_failed">Could not refresh Wishlist. Try again.</string>
 </resources>

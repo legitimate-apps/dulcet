@@ -141,6 +141,7 @@ class Runner:
         argv=['am','instrument','-w','-r']
         for key,value in app_args.items():argv+=['-e',key,value]
         argv+=[self.component]
+        trace_since=self.control_json('/control/requests')['next']
         started=time.monotonic()
         try:
             process=self.adb_run('shell',shlex.join(argv),check=False,capture_output=True,text=True,timeout=300)
@@ -152,10 +153,12 @@ class Runner:
         junit(report/'TEST-DiscoverWishlist.xml',method,phase,result,detail,time.monotonic()-started)
         root=ET.parse(report/'TEST-DiscoverWishlist.xml').getroot()
         counts={key:int(root.get(key,'0')) for key in ('tests','failures','errors','skipped')}
+        (report/'requests.json').write_text(json.dumps(self.control_json('/control/requests?since='+str(trace_since)),indent=2))
+        (report/'fixture-state.json').write_text(json.dumps(self.control_json('/control/state'),indent=2))
         self.reports.append({'method':method,'phase':phase,'result':result,**counts})
         print(f'DISCOVER ANDROID {method} phase={phase}: {result} XML={counts}',flush=True)
         if phase=='before-death' and result=='passed':
-            raw=self.shell('run-as',PACKAGE,'cat',f'/sdcard/Android/data/{PACKAGE}/files/discover-wishlist-proof/process-before.json')
+            raw=self.shell('run-as',PACKAGE,'cat','files/discover-wishlist-process-before.json')
             marker=json.loads(raw)
             if not marker.get('pending') or not isinstance(marker.get('pid'),int):raise RuntimeError('process-death preparation lacks positive durable/PID marker')
             pid=marker['pid'];was_alive=str(pid) in self.shell('pidof',PACKAGE,check=False).split()

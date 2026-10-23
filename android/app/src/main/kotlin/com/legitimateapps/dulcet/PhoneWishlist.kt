@@ -123,7 +123,7 @@ internal fun PhoneWishlist(
                 CircularProgressIndicator(Modifier.testTag("wishlist.loading"))
             }
             current.wishlistError?.let { failure -> item("error") {
-                DiscoverPageNotices(null, failure) { session.refreshWishlist(filter) }
+                DiscoverPageNotices(null, failure, failureText = stringResource(R.string.wishlist_refresh_failed)) { session.refreshWishlist(filter) }
             } }
             if (current.wishlistSettled && !current.wishlistLoading && current.wishes.isEmpty() && current.wishlistError == null) item("empty") {
                 Text(stringResource(R.string.wishlist_empty), Modifier.testTag("wishlist.empty"))

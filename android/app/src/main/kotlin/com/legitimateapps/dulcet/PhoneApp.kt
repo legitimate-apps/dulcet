@@ -225,28 +225,28 @@ internal fun PhoneApp(
                 selected = tab == PhoneTab.ListenNow && routes.isEmpty(),
                 onClick = { tab = PhoneTab.ListenNow; routes.clear(); saveTab(preferences, PhoneTab.ListenNow) },
                 icon = { Icon(DulcetIcons.Play, null) },
-                label = { Text("Listen Now") },
+                label = { PhoneNavigationLabel("Listen Now") },
                 modifier = Modifier.testTag("listenNow.open"),
             )
             NavigationBarItem(
                 selected = tab == PhoneTab.Library && routes.isEmpty(),
                 onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
                 icon = { Icon(DulcetIcons.LibraryMusic, null) },
-                label = { Text(stringResource(R.string.tab_library)) },
+                label = { PhoneNavigationLabel(stringResource(R.string.tab_library)) },
                 modifier = Modifier.testTag("library.open"),
             )
             if (split) NavigationBarItem(
                 selected = tab == PhoneTab.Browse && routes.isEmpty(),
                 onClick = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
                 icon = { Icon(DulcetIcons.Browse, null) },
-                label = { Text(stringResource(SharedR.string.library_browse)) },
+                label = { PhoneNavigationLabel(stringResource(SharedR.string.library_browse)) },
                 modifier = Modifier.testTag("browse.open"),
             )
             NavigationBarItem(
                 selected = tab == PhoneTab.Search && routes.isEmpty(),
                 onClick = { tab = PhoneTab.Search; routes.clear(); saveTab(preferences, PhoneTab.Search) },
                 icon = { Icon(DulcetIcons.Search, null) },
-                label = { Text(stringResource(R.string.tab_search)) },
+                label = { PhoneNavigationLabel(stringResource(R.string.tab_search)) },
                 modifier = Modifier.testTag("search.open"),
             )
             // The account and its Sign out (spec §14.7); provided by AccountConnectScreen.

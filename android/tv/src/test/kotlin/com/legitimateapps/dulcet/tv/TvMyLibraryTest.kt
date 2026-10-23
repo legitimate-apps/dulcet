@@ -65,9 +65,14 @@ class TvMyLibraryTest {
 
     @Test fun tvCompositionDoesNotInstantiateFeature() {
         server.dulcetDiscoverWishlist = true
+        // Prove the fixture's advertisement independently; the baseline TV need not discover
+        // extensions when no feature facade is opened.
+        val extensions = org.json.JSONObject(java.net.URI(server.url + "/rest/getOpenSubsonicExtensions.view?f=json")
+            .toURL().readText()).getJSONObject("subsonic-response").getJSONArray("openSubsonicExtensions")
+        val names = (0 until extensions.length()).map { extensions.getJSONObject(it).getString("name") }
+        assertTrue(names.containsAll(listOf("dulcetDiscover", "dulcetWishlist")))
         host(FakeMyLibrarySource(available = false))
         await("positive baseline catalog response") { server.requests("getAlbumList2").isNotEmpty() }
-        assertTrue(server.requests("getOpenSubsonicExtensions").isNotEmpty())
         for (endpoint in listOf("searchDulcetDiscover", "getDulcetWishlist", "addToDulcetWishlist")) {
             assertTrue(server.requests(endpoint).isEmpty(), "TV must not create Discover: $endpoint")
         }

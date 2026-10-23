@@ -56,7 +56,7 @@ internal fun RowScope.AccountNavigationItem() {
         selected = false,
         onClick = { open = true },
         icon = { Icon(DulcetIcons.Person, null) },
-        label = { Text(stringResource(R.string.account_signout_account_label)) },
+        label = { PhoneNavigationLabel(stringResource(R.string.account_signout_account_label)) },
         modifier = Modifier.testTag("account.open"),
     )
     if (open) AccountDialog(actions) { open = false }
