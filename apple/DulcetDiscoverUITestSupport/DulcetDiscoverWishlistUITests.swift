@@ -364,6 +364,13 @@ import UIKit
         XCTAssertEqual(survivingB.first?["id"] as? String, current?["id"] as? String)
         _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": ["scenario": "old-A-after-B", "lateA": lateA, "survivingB": survivingB]])
         print("DISCOVER_ROUTE arrivalServerId=\(localId) playbackVisible=true lateAReplayed=true generationBRetained=true")
+        wishlist()
+        activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
+        try waitForWish(title, count: 0)
+        let retained = try XCTUnwrap(rest("getDulcetLibrary", params: ["type": "song", "size": "100"])["dulcetLibrary"] as? [String: Any])
+        XCTAssertTrue((retained["song"] as? [[String: Any]])?.contains { $0["id"] as? String == localId } == true, "Removing the arrived wish must retain its exact library member without another scan")
+        _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": ["scenario": "fulfilled-wish-removed", "wishAbsent": true, "wishId": try XCTUnwrap(current?["id"] as? String), "retainedLibraryItem": localId]])
+        try capture("After-Arrived-Remove")
     }
 
     func busyStaleAndNavidromeControl() throws {
