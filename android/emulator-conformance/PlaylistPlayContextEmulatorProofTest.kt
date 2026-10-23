@@ -220,7 +220,11 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
         } else {
             // Browse categories can lie outside the horizontal viewport on a phone.
-            runCatching { node.performScrollTo() }
+            // Only nodes with a scrollable ancestor need scrolling. Unexpected scroll/layout
+            // failures must reach the report at their first cause, not a later assertion.
+            if (node.onAncestors().filter(hasScrollAction()).fetchSemanticsNodes().isNotEmpty()) {
+                node.performScrollTo()
+            }
             node.assertIsDisplayed().performClick()
         }
         compose.waitForIdle()
