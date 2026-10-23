@@ -101,9 +101,23 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         try app.sendText(text)
     }
     private func item(_ title: String, in app: HostedApp) async throws -> Any {
-        try await app.element(timeout: .seconds(30), described: title) {
+        try await reveal(title, in: app) {
             (app.identifier($0) ?? "").hasPrefix("discover.item.") && (app.label($0) ?? "").hasPrefix(title)
         }
+    }
+    private func reveal(_ title: String, in app: HostedApp, where matches: (Any) -> Bool) async throws -> Any {
+        for delta in [Int32(-500), Int32(500)] {
+            for _ in 0..<14 {
+                if let element = app.firstElement(where: matches) {
+                    let frame = try app.frame(element)
+                    if app.contentScreenFrame.contains(NSPoint(x: frame.midX, y: frame.midY)) { return element }
+                }
+                try app.scrollDetail(by: delta)
+                try await Task.sleep(for: .milliseconds(150))
+            }
+        }
+        XCTFail("Could not reveal \(title) through the native detail scroll view")
+        throw HostedAppError.unexpected(title)
     }
     private func open(_ title: String, in app: HostedApp) async throws {
         try app.press(try await item(title, in: app), named: title)
@@ -127,7 +141,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         XCTFail("Server wish \(title) did not reach count \(count)"); throw HostedAppError.unexpected(title)
     }
     private func row(_ title: String, in app: HostedApp) async throws -> Any {
-        try await app.element(timeout: .seconds(20), described: "Wishlist row \(title)") {
+        try await reveal("Wishlist row \(title)", in: app) {
             (app.identifier($0) ?? "").hasPrefix("wishlist.row.") && app.containsLabel(title, in: $0)
         }
     }
@@ -195,7 +209,10 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         try await wishlist(app); try await effect("lost-add-receipt", revision: lost, flag: "delivered")
         let deliveredRows = try await awaitWish(title, count: 1)
         let delivered = try XCTUnwrap(deliveredRows.first)
-        try await scenario("offline"); try await press("wishlist.remove", in: app)
+        try await scenario("offline")
+        let deliveredRow = try await row(title, in: app)
+        let remove = try XCTUnwrap(app.childElement(identifiedBy: "wishlist.remove", in: deliveredRow))
+        try app.press(remove, named: "Remove \(title)")
         let scan = try await scenario("scan-arrival"); try await effect("scan-arrival", revision: scan, flag: "completed")
         app.close(); app = try await launch(run: run, credentials: credentials)
         try await wishlist(app); _ = try await awaitWish(title, count: 0)

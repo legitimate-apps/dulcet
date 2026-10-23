@@ -512,6 +512,27 @@ final class HostedApp {
         descendants(of: element).contains { label($0) == title }
     }
 
+    func childElement(identifiedBy id: String, in element: Any) -> Any? {
+        descendants(of: element).first { identifier($0) == id }
+    }
+
+    /// Deliver the same wheel event the detail's native scroll view receives from a person.
+    /// Lazy SwiftUI groups do not enter the accessibility tree until they approach the viewport.
+    func scrollDetail(by pixels: Int32) throws {
+        let scrolls = descendants(of: hostingView).compactMap { $0 as? NSScrollView }.filter {
+            $0.window === window && !$0.isHiddenOrHasHiddenAncestor && $0.bounds.height > 0
+        }
+        let scroll = try XCTUnwrap(scrolls.max {
+            $0.convert($0.bounds, to: hostingView).minX < $1.convert($1.bounds, to: hostingView).minX
+        }, "The rendered detail must contain a native scroll view")
+        let before = scroll.contentView.bounds.origin
+        let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                      wheel1: pixels, wheel2: 0, wheel3: 0))
+        scroll.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: cg)))
+        hostingView.layoutSubtreeIfNeeded()
+        print("OBSERVED Mac detail wheel \(pixels): \(before) -> \(scroll.contentView.bounds.origin)")
+    }
+
     func press(_ element: Any, named name: String) throws {
         let press = #selector(NSAccessibilityProtocol.accessibilityPerformPress)
         let object = try XCTUnwrap(element as? NSObject, "\(name) is not an accessibility object")
