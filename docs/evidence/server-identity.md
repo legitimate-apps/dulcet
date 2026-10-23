@@ -657,3 +657,28 @@ order and leaves no menu open. These runs preserve the original end-to-end
 behavior. Neither reproduces the long accessibility retry, supplies local RED,
 or establishes a causal speed improvement. Final-head full Apple execution
 remains required.
+
+
+### TV grouped-search test recomposer confinement (2026-10-23)
+
+OBSERVED in core CI run `39901409397` on `b443e8e4`: the TV grouped-search
+remote proof fails. Its retained logcat first reports multithreaded
+`SnapshotStateObserver` access while the test recomposer applies UI nodes on
+`DefaultDispatcher-worker-10`, through `TestMonotonicFrameClock` and
+`ApplyingContinuationInterceptor`. Approximately 26 seconds later, activity
+teardown reports the secondary `SlotTable.clear` array-index exception. The
+original background state publisher is not identified by that stack.
+
+The failing instrumented proof now imports the v2 `createEmptyComposeRule`. The
+resolved Compose 1.11.4 source confirms that its former v1 factory selects
+`UnconfinedTestDispatcher`, whereas v2 selects `StandardTestDispatcher`; the
+[official migration guide](https://developer.android.com/develop/ui/compose/testing/migrate-v2)
+explains the queued composition behavior. This addresses the demonstrated
+off-thread test recomposer path. Every remote input, assertion and deadline is
+unchanged; no product or host-test source changes.
+
+OBSERVED locally: `:android:tv:compileDebugAndroidTestKotlin` succeeds and both
+existing `TvGroupedSearchTest` host cases pass, two tests with zero failures,
+errors or skips. The combined build succeeds in 44 seconds. These checks preserve
+compilation and host behavior; they do not establish local device RED→GREEN.
+The unchanged remote workflow still requires execution in subsequent core CI.
