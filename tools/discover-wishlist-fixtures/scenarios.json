@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "scenarios": {
+    "normal": "Pass through to the disposable server.",
+    "delayed-old-query": "Delay a query containing old by 750 ms, including a reply to a cancelled request.",
+    "rate-limit-120": "Search answers HTTP 429 and Retry-After 120; each injection is counted.",
+    "stale-answer": "Search passes through, then carries stale=true and original age 7200 seconds.",
+    "offline": "Close app connections while control and independent server assertions remain available.",
+    "lost-add-receipt": "Deliver one add to the server, then close the response connection.",
+    "scan-arrival": "Install the generated tagged arrival file, run startScan and await scan/fulfilment.",
+    "remove-before-add": "Hold an add until cancellation is observed, bounded to 2 seconds.",
+    "identity-replacement": "Restore the documented Testing checkpoint, changing the real server instanceId.",
+    "future-metadata": "Expose a future kind/status and a missing-MBID row, both unwishable."
+  }
+}

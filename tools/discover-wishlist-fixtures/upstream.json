@@ -1,0 +1,8 @@
+{
+  "/1/stats/sitewide/artists": {"payload":{"artists":[{"artist_mbid":"00000064-1111-4111-8111-111111111111","artist_name":"Fixture Artist","listen_count":42}]}},
+  "/1/stats/sitewide/recordings": {"payload":{"recordings":[{"recording_mbid":"00000001-1111-4111-8111-111111111111","track_name":"Fixture Song 01","artist_name":"Fixture Artist","listen_count":42}]}},
+  "/1/stats/sitewide/release-groups": {"payload":{"release_groups":[{"release_group_mbid":"000000c8-1111-4111-8111-111111111111","release_group_name":"Fixture Album 00","artist_name":"Fixture Artist","listen_count":42}]}},
+  "/1/explore/fresh-releases/": {"payload":{"releases":[{"release_group_mbid":"000000c8-1111-4111-8111-111111111111","release_mbid":"0000012c-1111-4111-8111-111111111111","caa_id":1,"caa_release_mbid":"0000012c-1111-4111-8111-111111111111","artist_mbids":["00000064-1111-4111-8111-111111111111"],"release_date":"2026-01-01","release_group_primary_type":"Album","release_name":"Fixture Album 00","artist_credit_name":"Fixture Artist"}]}},
+  "/1/playlist/search": {"playlists":[]},
+  "/similar-artists/json": []
+}

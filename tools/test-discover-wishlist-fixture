@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Behavioural tests of the finite Discover fixture. No installed server is contacted."""
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+
+REPO=Path(__file__).resolve().parents[1]
+FIXTURE=REPO/'tools/ci/with-discover-wishlist-fixture'
+
+def module():
+    loader=importlib.machinery.SourceFileLoader('discover_fixture',str(FIXTURE))
+    spec=importlib.util.spec_from_loader(loader.name,loader);m=importlib.util.module_from_spec(spec);loader.exec_module(m);return m
+
+def call(url,path,body=None):
+    req=urllib.request.Request(url+path,data=None if body is None else json.dumps(body).encode(),headers={'Content-Type':'application/json'})
+    with urllib.request.urlopen(req,timeout=40) as r:return json.load(r)
+
+class FixtureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.m=module();cls.fixture=cls.m.DiscoverFixture();cls.fixture.start()
+    @classmethod
+    def tearDownClass(cls):cls.fixture.close()
+    def setUp(self):self.fixture.scenario('normal')
+    def test_fixtureFaultMustBeAcknowledgedBeforeAssertion(self):
+        f=self.fixture;url=f.urls['controlUrl'];before=call(url,'/control/state')
+        with self.assertRaises(urllib.error.HTTPError) as error:call(url,'/control/scenario',{'name':'typo'})
+        self.assertEqual(400,error.exception.code)
+        self.assertEqual(before['revision'],call(url,'/control/state')['revision'])
+        self.assertTrue(f.rest('searchDulcetDiscover',kind='song',query='Positive')['dulcetDiscover']['item'])
+        ack=f.scenario('rate-limit-120');self.assertTrue(ack['armed'])
+        self.assertEqual('rate-limit-120',ack['scenario']);self.assertGreater(ack['revision'],before['revision'])
+        with self.assertRaises(urllib.error.HTTPError) as error:f.rest('searchDulcetDiscover',kind='song',query='Rate')
+        self.assertEqual(429,error.exception.code);self.assertEqual('120',error.exception.headers['Retry-After'])
+        state=call(url,'/control/state');self.assertEqual(ack['revision'],state['revision'])
+        self.assertEqual(1,state['hits']);self.assertEqual('searchDulcetDiscover',state['effects'][-1]['endpoint'])
+    def test_healthyNavidromeBaselineBeforeEmptyFeatureAssertion(self):
+        f=self.fixture;baseline=call(f.urls['controlUrl'],'/control/baseline')
+        self.assertTrue(baseline['login']);self.assertGreater(baseline['albums'],0)
+        self.assertFalse(baseline['discoverAdvertised']);self.assertFalse(baseline['wishlistAdvertised'])
+        rows=call(f.urls['controlUrl'],'/control/requests')['requests']
+        nav=[r['endpoint'] for r in rows if r['channel']=='navidrome']
+        self.assertIn('ping',nav);self.assertIn('getAlbumList2',nav);self.assertIn('getOpenSubsonicExtensions',nav)
+        self.assertFalse(any('Dulcet' in name for name in nav))
+    def test_generatedCatalogPagesArtworkAndAvailability(self):
+        f=self.fixture;body=f.rest('searchDulcetDiscover',kind='song',query='Fixture',size='20')['dulcetDiscover']
+        self.assertEqual(20,len(body['item']));self.assertTrue(body['nextCursor'])
+        self.assertGreater(len(f.rest('searchDulcetDiscover',kind='song',query='Fixture',size='20',cursor=body['nextCursor'])['dulcetDiscover']['item']),0)
+        groups=f.rest('searchDulcetDiscover',kind='album',query='Fixture')['dulcetDiscover']['item']
+        self.assertEqual('partlyHeld',groups[0]['availability']['status'])
+        self.assertEqual(8,groups[0]['availability']['matchedTrackCount']);self.assertEqual(12,groups[0]['availability']['totalTrackCount'])
+        self.assertEqual('held',groups[1]['availability']['status']);self.assertEqual('unknown',groups[2]['availability']['completeness'])
+        art=f.binary('getDulcetDiscoverCoverArt',id=groups[0]['artworkId']);self.assertTrue(art.startswith(b'\x89PNG\r\n\x1a\n'))
+        wishes=f.rest('getDulcetWishlist',size='20')['dulcetWishlist'];self.assertEqual(20,len(wishes['wish']));self.assertTrue(wishes['nextCursor'])
+    def test_scenariosWitnessDelayStaleOfflineAndFutureMetadata(self):
+        f=self.fixture;url=f.urls['controlUrl']
+        ack=f.scenario('delayed-old-query');started=time.monotonic()
+        f.rest('searchDulcetDiscover',kind='song',query='old');self.assertGreaterEqual(time.monotonic()-started,.6)
+        self.assertEqual(ack['revision'],call(url,'/control/state')['effects'][-1]['revision'])
+        f.scenario('stale-answer');page=f.rest('searchDulcetDiscover',kind='song',query='stale')['dulcetDiscover']
+        self.assertTrue(page['stale']);self.assertEqual(7200,page['ageSeconds'])
+        f.scenario('future-metadata');page=f.rest('searchDulcetDiscover',kind='song',query='future')['dulcetDiscover']
+        self.assertEqual('future',page['item'][0]['kind']);self.assertFalse(page['item'][0]['wishable'])
+        f.scenario('offline')
+        with self.assertRaises((OSError,urllib.error.URLError)):f.rest('ping')
+        self.assertGreater(call(url,'/control/state')['hits'],0)
+    def test_realScanArrivalLostReceiptAndRemoveBeforeAdd(self):
+        import uuid
+        f=self.fixture;target=f.ids['arrival'];op=str(uuid.uuid4())
+        f.scenario('lost-add-receipt')
+        with self.assertRaises((OSError,urllib.error.URLError)):
+            f.rest('addToDulcetWishlist',kind='song',mbid=target,title='Arrival',sourceType='search',operationId=op)
+        f.scenario('normal');wishes=f.rest('getDulcetWishlist',size='100')['dulcetWishlist']['wish']
+        wish=next(w for w in wishes if w['externalIds'].get('musicbrainzRecordingId')==target)
+        ack=f.scenario('scan-arrival');self.assertTrue(ack['scan']['completed'])
+        arrived=f.rest('getDulcetWish',id=wish['id'])['dulcetWish'];self.assertEqual('fulfilled',arrived['state'])
+        members=f.rest('getDulcetLibrary',type='song',size='100')['dulcetLibrary']['song']
+        self.assertIn(arrived['libraryItem']['id'],[r['id'] for r in members])
+        f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
+        replay=f.rest('addToDulcetWishlist',kind='song',mbid=target,title='Arrival',sourceType='search',operationId=op)['dulcetWishMutation']
+        self.assertTrue(replay['removed']);self.assertNotIn('wish',replay)
+        self.assertIn(arrived['libraryItem']['id'],[r['id'] for r in f.rest('getDulcetLibrary',type='song',size='100')['dulcetLibrary']['song']])
+        op=str(uuid.uuid4());f.scenario('remove-before-add')
+        f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
+        replay=f.rest('addToDulcetWishlist',kind='song',mbid=f.ids['cancel'],title='Cancelled',sourceType='search',operationId=op)['dulcetWishMutation']
+        self.assertTrue(replay['removed'])
+    def test_identityReplacementAndResetAreAcknowledged(self):
+        f=self.fixture;before=f.discovery()['instanceId'];ack=f.scenario('identity-replacement')
+        self.assertNotEqual(before,ack['identity']['instanceId']);self.assertEqual(ack['identity']['instanceId'],f.discovery()['instanceId'])
+        reset=call(f.urls['controlUrl'],'/control/reset',{})
+        self.assertTrue(reset['reset']);self.assertNotEqual(before,reset['identity']['instanceId'])
+        self.assertEqual(23,len(f.rest('getDulcetWishlist',size='100')['dulcetWishlist']['wish']))
+
+class LifecycleTests(unittest.TestCase):
+    def test_fixtureCleansOnlyOwnedPids(self):
+        module() # A missing implementation must fail before a command could use another server.
+        sentinel=subprocess.Popen([sys.executable,'-c','import time;time.sleep(180)'])
+        try:
+            for mode in ['success','failure','signal']:
+                with self.subTest(mode=mode),tempfile.TemporaryDirectory() as evidence:
+                    root=Path(evidence)/'report'
+                    command=[str(FIXTURE),'--evidence',str(root),'--',sys.executable,'-c', 'import time;time.sleep(120)' if mode=='signal' else 'import sys;sys.exit('+('7' if mode=='failure' else '0')+')']
+                    process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+                    try:
+                        deadline=time.monotonic()+100
+                        while not (root/'ready.json').exists() and process.poll() is None:
+                            if time.monotonic()>deadline:self.fail('fixture did not become ready')
+                            time.sleep(.1)
+                        self.assertTrue((root/'ready.json').exists())
+                        if mode=='signal':process.send_signal(signal.SIGTERM)
+                        output,_=process.communicate(timeout=40)
+                        self.assertEqual({'success':0,'failure':7,'signal':143}[mode],process.returncode,output)
+                        report=json.loads((root/'cleanup.json').read_text())
+                        self.assertTrue(report['rootDeleted']);self.assertFalse(Path(report['root']).exists())
+                        self.assertGreaterEqual(len(report['children']),4)
+                        for child in report['children']:
+                            self.assertTrue(child['reaped'])
+                            with self.assertRaises(ProcessLookupError):os.kill(child['pid'],0)
+                        self.assertIsNone(sentinel.poll(),'unrelated positive-control process was stopped')
+                        print('CLEANUP PROOF',mode,json.dumps(report),flush=True)
+                    finally:
+                        if process.poll() is None:process.terminate();process.wait(timeout=30)
+        finally:sentinel.terminate();sentinel.wait()
+
+class XmlResult(unittest.TextTestResult):
+    def startTest(self,test):super().startTest(test);self.started=time.monotonic()
+    def stopTest(self,test):
+        bad=next((text for case,text in self.failures+self.errors if case==test),None)
+        case=ET.SubElement(self.xml,'testcase',name=test._testMethodName,classname=type(test).__name__,time=str(time.monotonic()-self.started))
+        if bad:ET.SubElement(case,'failure').text=bad
+        super().stopTest(test)
+    def __init__(self,*args,**kwargs):super().__init__(*args,**kwargs);self.xml=ET.Element('testsuite',name='DiscoverWishlistFixture')
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser();parser.add_argument('--junit',type=Path,required=True);args=parser.parse_args()
+    suite=unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+    result=unittest.TextTestRunner(verbosity=2,resultclass=XmlResult).run(suite)
+    result.xml.attrib.update(tests=str(result.testsRun),failures=str(len(result.failures)),errors=str(len(result.errors)),skipped=str(len(result.skipped)))
+    args.junit.parent.mkdir(parents=True,exist_ok=True);ET.ElementTree(result.xml).write(args.junit,encoding='utf-8',xml_declaration=True)
+    sys.exit(0 if result.wasSuccessful() else 1)
