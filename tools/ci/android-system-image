@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Install the CI image with bounded retries, then verify the emulator boots that image."""
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+ATTEMPTS = 3
+
+
+def properties(path: Path) -> dict[str, str]:
+    return dict(line.strip().split('=', 1) for line in path.read_text().splitlines()
+                if '=' in line and not line.lstrip().startswith('#'))
+
+
+def run(command: list[str], timeout: float, *, capture: bool = False) -> subprocess.CompletedProcess:
+    # sdkmanager is a shell wrapper around Java. Kill the group before deleting a timed-out install.
+    process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE if capture else None,
+                               stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    try:
+        output, _ = process.communicate('y\n' * 100, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate(timeout=10)
+        raise RuntimeError(f'command-timeout-{timeout:g}s') from None
+    if process.returncode:
+        raise RuntimeError(f'{Path(command[0]).name}-exit-{process.returncode}')
+    return subprocess.CompletedProcess(command, process.returncode, output)
+
+
+def image_ready(image: Path, package: str, api: str, target: str, arch: str) -> str:
+    values = properties(image / 'source.properties')
+    for key, expected in [('AndroidVersion.ApiLevel', api), ('SystemImage.TagId', target), ('SystemImage.Abi', arch)]:
+        if values.get(key) != expected:
+            raise RuntimeError(f'image-metadata-mismatch-{key}')
+    metadata = ET.parse(image / 'package.xml').getroot()
+    if not any(element.tag.split('}')[-1] == 'localPackage' and element.get('path') == package
+               for element in metadata.iter()):
+        raise RuntimeError('image-package-mismatch')
+    for name in ['system.img', 'ramdisk.img']:
+        if not (image / name).is_file() or (image / name).stat().st_size == 0:
+            raise RuntimeError(f'image-payload-missing-{name}')
+    if not any((image / name).is_file() and (image / name).stat().st_size > 0
+               for name in ['kernel-ranchu', 'kernel-ranchu-64']):
+        raise RuntimeError('image-payload-missing-kernel')
+    return values.get('Pkg.Revision', 'unknown')
+
+
+def remove(path: Path) -> None:
+    if path.is_symlink():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+
+
+def install(args, sdk: Path, package: str, image: Path) -> None:
+    for attempt in range(1, ATTEMPTS + 1):
+        print(f'ANDROID IMAGE INSTALL package={package} attempt={attempt}/{ATTEMPTS} '
+              f'timeout-seconds={args.attempt_timeout_seconds:g}', flush=True)
+        try:
+            run(['sdkmanager', f'--sdk_root={sdk}', '--install', package, '--channel=0'],
+                args.attempt_timeout_seconds)
+            revision = image_ready(image, package, args.api_level, args.target, args.arch)
+            print(f'ANDROID IMAGE READY package={package} api={args.api_level} target={args.target} '
+                  f'abi={args.arch} revision={revision} attempt={attempt}', flush=True)
+            return
+        except (OSError, RuntimeError, ET.ParseError) as failure:
+            # This job installs SDK packages serially. Discard both the partial package (including
+            # .installer state) and sdkmanager's staged archives, so a bad zip cannot poison retry.
+            # Keep every other installed SDK package. No shared image/AVD cache is used.
+            remove(image)
+            remove(sdk / '.temp')
+            remove(sdk / '.downloadIntermediates')
+            if attempt == ATTEMPTS:
+                raise RuntimeError(f'package={package} attempts={ATTEMPTS} reason={failure}; '
+                                   'emulator and tests were not started') from None
+            delay = args.retry_delay_seconds * 2 ** (attempt - 1)
+            print(f'ANDROID IMAGE RETRY package={package} attempt={attempt}/{ATTEMPTS} '
+                  f'reason={failure} clean-partial=true delay-seconds={delay:g}', flush=True)
+            time.sleep(delay)
+
+
+def verify_booted(args, sdk: Path, package: str, image: Path) -> None:
+    def adb(*command: str) -> str:
+        return run(['adb', '-s', 'emulator-5554', *command], 30, capture=True).stdout.strip()
+    api = adb('shell', 'getprop', 'ro.build.version.sdk')
+    arch = adb('shell', 'getprop', 'ro.product.cpu.abi')
+    avd = adb('emu', 'avd', 'name').splitlines()[0].strip()
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+', avd) or avd in {'.', '..'}:
+        raise RuntimeError('invalid-running-avd-name')
+    avd_home = Path(os.environ.get('ANDROID_AVD_HOME', str(Path.home() / '.android/avd')))
+    config = properties(avd_home / f'{avd}.avd/config.ini')
+    selected = Path(config.get('image.sysdir.1', ''))
+    if not selected.is_absolute():
+        selected = sdk / selected
+    if selected.resolve() != image.resolve() or api != args.api_level or arch != args.arch:
+        raise RuntimeError(f'booted-image-mismatch expected={package} observed-api={api} observed-abi={arch}')
+    image_ready(image, package, args.api_level, args.target, args.arch)
+    print(f'ANDROID IMAGE BOOTED package={package} api={api} target={args.target} abi={arch} avd={avd}', flush=True)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('operation', choices=['install', 'verify-booted'])
+    parser.add_argument('--api-level', required=True)
+    parser.add_argument('--target', required=True)
+    parser.add_argument('--arch', required=True, choices=['x86', 'x86_64', 'arm64-v8a'])
+    parser.add_argument('--attempt-timeout-seconds', type=float, default=240)
+    parser.add_argument('--retry-delay-seconds', type=float, default=10)
+    args = parser.parse_args()
+    if not re.fullmatch(r'[1-9][0-9]*', args.api_level) or not re.fullmatch(r'[a-z0-9_][a-z0-9_-]*', args.target):
+        parser.error('expected a numeric API level and an SDK target identifier')
+    if not 0 < args.attempt_timeout_seconds <= 300 or not 0 <= args.retry_delay_seconds <= 30:
+        parser.error('attempt timeout must be (0,300] seconds and retry delay [0,30] seconds')
+    try:
+        sdk = Path(os.environ['ANDROID_HOME']).resolve(strict=True)
+        package = f'system-images;android-{args.api_level};{args.target};{args.arch}'
+        image = sdk / 'system-images' / f'android-{args.api_level}' / args.target / args.arch
+        if args.operation == 'install':
+            install(args, sdk, package, image)
+        else:
+            verify_booted(args, sdk, package, image)
+    except (KeyError, OSError, RuntimeError, ET.ParseError) as failure:
+        print(f'::error title=Android system image infrastructure failure::ANDROID IMAGE INFRA FAILURE {failure}',
+              file=sys.stderr, flush=True)
+        return 75
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
