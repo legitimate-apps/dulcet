@@ -113,15 +113,21 @@ class Handler(BaseHTTPRequestHandler):
                 if name=='rate-limit-120' and endpoint=='searchDulcetDiscover':
                     state.effect(endpoint,revision,name);return self.reply(429,{'error':'fixture rate limit'},{'Retry-After':'120','Content-Type':'application/json'})
                 if name=='remove-before-add':
-                    if endpoint=='removeFromDulcetWishlist':state.remove_seen.set();state.effect(endpoint,revision,name)
+                    if endpoint=='removeFromDulcetWishlist':state.effect(endpoint,revision,name)
                     if endpoint=='addToDulcetWishlist':
                         state.effect(endpoint,revision,name,held=True)
                         state.remove_seen.wait(2)
+                        state.effect(endpoint,revision,name,holdReleased=True)
             upstream_base=state.config['navidrome' if nav else 'server'];url=urlsplit(upstream_base)
             connection=http.client.HTTPConnection(url.hostname,url.port,timeout=30)
             try:
                 headers={k:v for k,v in self.headers.items() if k.lower() not in {'host','connection','content-length'}}
                 connection.request(self.command,path,body,headers);response=connection.getresponse();data=response.read();headers={k:v for k,v in response.getheaders() if k.lower() not in {'connection','content-length','transfer-encoding'}}
+                if not nav and name=='remove-before-add' and endpoint in {'addToDulcetWishlist','removeFromDulcetWishlist'}:
+                    if json.loads(data)['subsonic-response']['status']!='ok':raise ValueError('race mutation was not delivered')
+                    state.effect(endpoint,revision,name,delivered=True)
+                    # The held add may proceed only after removal has committed upstream.
+                    if endpoint=='removeFromDulcetWishlist':state.remove_seen.set()
                 if not nav and name=='lost-add-receipt' and endpoint=='addToDulcetWishlist':
                     with state.lock:
                         lose=not state.lost;state.lost=True

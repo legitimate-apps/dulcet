@@ -139,6 +139,24 @@ class FixtureTests(unittest.TestCase):
             self.assertFalse(pending.done(),'add was not held while removal was sent')
             f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
             self.assertTrue(pending.result(timeout=5)['dulcetWishMutation']['removed'])
+            effects=call(f.urls['controlUrl'],'/control/state')['effects']
+            for endpoint in ['addToDulcetWishlist','removeFromDulcetWishlist']:
+                self.assertTrue(any(e['revision']==ack['revision'] and e['endpoint']==endpoint and e.get('delivered') for e in effects),
+                    'completed mutation has no delivery acknowledgement: '+endpoint)
+            self.assertTrue(any(e['revision']==ack['revision'] and e.get('holdReleased') for e in effects),
+                'held add has no release acknowledgement')
+    def test_removeBeforeAddAcknowledgesCompletedMutations(self):
+        import uuid
+        f=self.fixture;op=str(uuid.uuid4());ack=f.scenario('remove-before-add')
+        result=f.rest('addToDulcetWishlist',kind='song',mbid=f.ids['cancel'],title='Delivery witness',sourceType='search',operationId=op)
+        self.assertIn('wish',result['dulcetWishMutation'],'known successful add before testing its removal')
+        f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
+        effects=call(f.urls['controlUrl'],'/control/state')['effects']
+        for endpoint in ['addToDulcetWishlist','removeFromDulcetWishlist']:
+            self.assertTrue(any(e['revision']==ack['revision'] and e['endpoint']==endpoint and e.get('delivered') for e in effects),
+                'completed mutation has no delivery acknowledgement: '+endpoint)
+        self.assertTrue(any(e['revision']==ack['revision'] and e.get('holdReleased') for e in effects),
+            'held add has no release acknowledgement')
     def test_identityReplacementAndResetAreAcknowledged(self):
         f=self.fixture;before=f.discovery()['instanceId'];ack=f.scenario('identity-replacement')
         self.assertNotEqual(before,ack['identity']['instanceId']);self.assertEqual(ack['identity']['instanceId'],f.discovery()['instanceId'])
