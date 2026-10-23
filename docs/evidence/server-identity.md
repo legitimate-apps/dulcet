@@ -497,3 +497,37 @@ relaunch and reconnect assertions. The changed run emits no interaction-helper
 fallback. This single sequential pair establishes preserved local behavior; it
 supplies no local RED, hosted-timeout reproduction or causal speedup claim.
 Final-head full Apple execution remains required.
+
+
+### Positive empty Up Next readiness (2026-10-22)
+
+OBSERVED in the iPhone leg of full Apple run `39873707703` on `27a560de`:
+20 XCTest executions finish with 19 passes and one failure. The album-tile drag
+case fails before any drag, while establishing its baseline queue. One queue read
+takes approximately 57 seconds, so the 45-second settling loop cannot make its
+second matching observation. The optional two-second wait for a queued row
+triggers an approximately 31-second native accessibility retry for an absent
+row. The retained accessibility hierarchy positively shows the open Up Next
+collection, its `dulcet.upNext.empty` / Nothing Up Next marker, the expected
+paused current track, and five separately identified AutoPlay suggestions. An
+empty queue is valid here; no drag or drop has yet been attempted. The cause of
+the native query delay remains unproven.
+
+The test reader now waits positively for the existing empty-state marker or a
+queued-row identifier within the same two-second budget. Neither AutoPlay
+suggestions nor an unrendered list satisfy that readiness check. The 45-second
+two-matching-read settling loop, queued-label snapshot logic, ordinary player
+input/dismissal, uncovered-bar checks and all native-menu/drag/count/order
+assertions remain unchanged. This removes a known absent-element query from the
+valid empty-list path without extending a deadline.
+
+OBSERVED by an independent local verifier on iPhone 17 Pro / iOS 26.5 with fresh
+separate disposable Navidrome fixtures: the unchanged case passes in 101.294
+seconds and the changed case passes in 99.255 seconds. Each runs one test with
+zero failures and zero skips under the fixed 300-second XCTest cap; both test
+builds and commands succeed. Each observes two empty baseline queues, then one
+positively prepared native-menu drag adds the three expected album tracks in
+order and leaves no menu open. These runs preserve the original end-to-end
+behavior. Neither reproduces the long accessibility retry, supplies local RED,
+or establishes a causal speed improvement. Final-head full Apple execution
+remains required.

@@ -2397,8 +2397,16 @@ final class DulcetiOSUITests: XCTestCase {
         }
         let rows = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.upNext.row."))
-        // An empty Up Next has no row to wait for; give the list a moment to draw.
-        _ = rows.firstMatch.waitForExistence(timeout: 2)
+        // Empty is a positively rendered state. Waiting for a row that cannot exist
+        // makes XCTest retry a missing-element snapshot even when this list is ready.
+        let contents = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ OR identifier BEGINSWITH %@",
+            "dulcet.upNext.empty", "dulcet.upNext.row."
+        )).firstMatch
+        guard contents.waitForExistence(timeout: 2) else {
+            XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
+            return nil
+        }
         // Read through snapshots, which throw when a row has gone, instead of recording a failure
         // as a bare `.label` does: the queue can change between counting its rows and reading them
         // (OBSERVED: a restored queue replaced under the read, "No matches found for Element at
