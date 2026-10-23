@@ -95,9 +95,18 @@ import UIKit
 #if os(macOS)
         let row = app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
 #else
-        let row = UIDevice.current.userInterfaceIdiom == .pad ? app.staticTexts["dulcet.sidebar.\(section)"].firstMatch : app.tabBars.buttons["dulcet.tab." + section].firstMatch
+        let tab = app.tabBars.buttons["dulcet.tab." + section].firstMatch
+        let row = tab.exists ? tab : app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
 #endif
-        XCTAssertTrue(row.waitForExistence(timeout: 30)); activate(row)
+        XCTAssertTrue(row.waitForExistence(timeout: 30))
+        let reachable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: row)
+        XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 30), .completed, "Destination must be reachable before activation")
+        activate(row)
+    }
+    func selectSavedServer(_ button: XCUIElement) {
+        activate(button)
+        let committed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: button)
+        XCTAssertEqual(XCTWaiter.wait(for: [committed], timeout: 45), .completed, "Saved account must commit before navigating: " + app.debugDescription)
     }
     func search(_ query: String = "Fixture") throws {
         select("search")
@@ -144,7 +153,7 @@ import UIKit
         select("library")
         if app.buttons["wishlist.refresh"].exists { return }
         let link = app.descendants(matching: .any)["wishlist.destination"].firstMatch
-        XCTAssertTrue(link.waitForExistence(timeout: 15), "Missing Library Wishlist destination")
+        XCTAssertTrue(link.waitForExistence(timeout: 15), "Missing Library Wishlist destination: " + app.debugDescription)
         activate(link)
         XCTAssertTrue(app.buttons["wishlist.refresh"].waitForExistence(timeout: 15))
     }
@@ -365,13 +374,13 @@ import UIKit
         select("settings")
         let savedA = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "dulcet.account.server.", try required("USERNAME"))).firstMatch
         XCTAssertTrue(savedA.waitForExistence(timeout: 15))
-        activate(savedA)
+        selectSavedServer(savedA)
         wishlist()
         XCTAssertTrue(app.staticTexts["Fixture Song 01"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.staticTexts["Other owner only"].exists)
         select("settings")
         let savedB = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "dulcet.account.server.", try required("OTHER_USERNAME"))).firstMatch
-        activate(savedB); wishlist()
+        selectSavedServer(savedB); wishlist()
         XCTAssertTrue(app.staticTexts["Other owner only"].waitForExistence(timeout: 30))
         select("settings")
         _ = try scenario("identity-replacement")
