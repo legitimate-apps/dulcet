@@ -2801,7 +2801,7 @@ jobs:
   # Each native proof follows its corresponding baseline leg. Together they retain four slots.
   discover-wishlist-iphone:
     name: discover-wishlist-iphone
-    needs: [apple-plan, apple-conformance-core]
+    needs: [apple-plan, apple-conformance-ipad-iphone]
     if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60
