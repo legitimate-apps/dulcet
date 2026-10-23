@@ -2001,3 +2001,19 @@ with tempfile.TemporaryDirectory() as directory:
     result=subprocess.run([sys.executable,str(VERIFIER)],cwd=root,capture_output=True,text=True)
     assert result.returncode==1 and 'env cannot use runner context' in result.stderr,result.stderr
 print('Job environment runner-context rejection: 1/1')
+
+# Native Discover selectors require their own matching finalized-xcresult emission.
+import shlex
+association_namespace={'re':re,'shlex':shlex,'Path':Path}
+functions=[n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name in {'code_before_comment','evidence_commands','method_emission_associations'}]
+exec(compile(ast.Module(body=functions,type_ignores=[]),str(VERIFIER),'exec'),association_namespace)
+associate=association_namespace['method_emission_associations']
+for mode,suite in [('iphone','DulcetDiscoverWishlistUITests'),('ipad','DulcetDiscoverWishlistIPadUITests'),('macos','DulcetMacDiscoverWishlistAppTest')]:
+    cited={'testBusyStaleAndNavidromeControl':{suite}}
+    invoke='run: tools/ci/with-discover-wishlist-fixture -- tools/ci/run-discover-wishlist-proofs '+mode
+    emission='\npython3 tools/swift-testing-junit proof.xcresult report.xml '+suite
+    assert associate(invoke+emission,cited)=={(suite,'testBusyStaleAndNavidromeControl')}
+    for bad in ['echo '+invoke,'# '+invoke,invoke.replace(mode,'unknown'),invoke.replace('tools/ci/run-discover-wishlist-proofs','tools/ci/unrelated-runner')]:
+        assert associate(bad+emission,cited)==set(),bad
+    assert associate(invoke+emission.replace(suite,'OtherSuite'),cited)==set()
+print('Native Discover selector/emission controls: 18/18, all three idioms and five negative mutations each')

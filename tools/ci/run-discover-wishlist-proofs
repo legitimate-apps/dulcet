@@ -277,4 +277,4 @@ def apple_proof(mode):
 if a.mode in {'iphone','ipad','mac','macos'}:sys.exit(apple_proof(a.mode))
 runner=os.environ.get('DULCET_DISCOVER_GRADLE_RUNNER',str(repo/'tools/run-gradle-exclusive'))
 cls='DiscoverWishlistTransportComponentsTest' if a.mode=='components' else 'DiscoverWishlistConformanceTest'
-os.execv(runner,[runner,':core-conformance:jvmTest','--rerun','--tests','*'+cls])
+os.execv(runner,[runner,'-Pdulcet.discoverWishlistConformance',':core-conformance:jvmTest','--rerun','--tests','*'+cls])

@@ -2777,7 +2777,10 @@ jobs:
       - name: Stage finalized native parity results
         run: |
           mkdir -p "$RUNNER_TEMP/dulcet-discover-macos-junit/"
-          cp "$RUNNER_TEMP/discover-macos/native/junit.xml" "$RUNNER_TEMP/dulcet-discover-macos-junit/"
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/discover-macos/native/proof.xcresult" \
+            "$RUNNER_TEMP/dulcet-discover-macos-junit/TEST-DulcetMacDiscoverWishlistAppTest.xml" \
+            DulcetMacDiscoverWishlistAppTest
       - name: Upload native proof and captures
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -2842,7 +2845,10 @@ jobs:
       - name: Stage finalized native parity results
         run: |
           mkdir -p "$RUNNER_TEMP/dulcet-discover-iphone-junit/"
-          cp "$RUNNER_TEMP/discover-iphone/native/junit.xml" "$RUNNER_TEMP/dulcet-discover-iphone-junit/"
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/discover-iphone/native/proof.xcresult" \
+            "$RUNNER_TEMP/dulcet-discover-iphone-junit/TEST-DulcetDiscoverWishlistUITests.xml" \
+            DulcetDiscoverWishlistUITests
       - name: Upload native proof and captures
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -2907,7 +2913,10 @@ jobs:
       - name: Stage finalized native parity results
         run: |
           mkdir -p "$RUNNER_TEMP/dulcet-discover-ipad-junit/"
-          cp "$RUNNER_TEMP/discover-ipad/native/junit.xml" "$RUNNER_TEMP/dulcet-discover-ipad-junit/"
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/discover-ipad/native/proof.xcresult" \
+            "$RUNNER_TEMP/dulcet-discover-ipad-junit/TEST-DulcetDiscoverWishlistIPadUITests.xml" \
+            DulcetDiscoverWishlistIPadUITests
       - name: Upload native proof and captures
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

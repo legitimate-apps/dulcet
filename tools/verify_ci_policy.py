@@ -507,6 +507,21 @@ def method_emission_associations(source: str, cited: dict[str, set[str]]) -> set
             # Filtering an otherwise whole-suite invocation needs explicit support.
             if any(word.startswith("-skip-testing:") for word in words):
                 selected = set()
+        native_command = command + 1 if words[command] == "run:" and command + 1 < len(words) else command
+        proof = "tools/ci/run-discover-wishlist-proofs"
+        position = native_command if words[native_command] == proof else None
+        if words[native_command] == "tools/ci/with-discover-wishlist-fixture" and "--" in words:
+            after = words.index("--") + 1
+            if after < len(words) and words[after] == proof:position = after
+        if position is not None:
+            mode = words[position + 1] if position + 1 < len(words) else ""
+            # Each mode executes a whole, distinct XCTest suite; its runtime report guard requires
+            # exact identities and the matching device idiom before this emission can run.
+            suites = {"iphone": "DulcetDiscoverWishlistUITests",
+                      "ipad": "DulcetDiscoverWishlistIPadUITests",
+                      "macos": "DulcetMacDiscoverWishlistAppTest"}
+            selected = {(suite, method) for suite in [suites.get(mode)]
+                        for method, names in cited.items() if suite in names}
         if words[:2] == ["python3", "tools/swift-testing-junit"]:
             if len(words) == 5:
                 resolved.update(pair for pair in selected if pair[0] == words[4])
