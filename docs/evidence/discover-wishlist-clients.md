@@ -144,3 +144,57 @@ above. Later final-head results replace these diagnostics for readiness.
   implemented controls accept each of the four full wrapped modes and reject six mutations per
   surface: removed wrapper, echoed command, wrong mode, self-test-only execution, a disabled step
   and allowed failure. The rule inspects Android emulator action scripts as well as shell steps.
+
+## Integration validation after the held-result correction
+
+OBSERVED: [core-ci 40029360299](https://github.com/legitimate-apps/dulcet/actions/runs/40029360299)
+passes every job. Its actual PR checkout is `e80500565f2bbc47d51158de2a2a1d14b24b17fd`;
+its Git tree equals branch revision `e8ebd33b`. This is current-source evidence before the later
+merge of main's Compose proof rule, rather than a claim about a later commit.
+
+| Job | XML suite | Executed | Failures / errors / skips |
+| --- | --- | ---: | --- |
+| core-build | core JVM | 1,288 | 0 / 0 / 0 |
+| core-build | core Android host | 1,567 | 0 / 0 / 0 |
+| core-build | Discover fixture / components / sessions | 12 / 2 / 3 | 0 / 0 / 0 |
+| core-build | phone DEV / PROD | 271 / 271 | 0 / 0 / 0 |
+| core-build | TV host | 97 | 0 / 0 / 0 |
+| core-build | server | 253 | 0 / 0 / 0 |
+| conformance-env-linux | JVM / Android host | 71 / 65 | 0 / 0 / 0 |
+| discover-wishlist-android, job 120674008272 | native instrumentation | 10 phases, 5 methods | 0 / 0 / 0 |
+
+The Android device is API 34 `sdk_gphone64_x86_64`, `emulator-5554`. Its artifact is
+`discover-wishlist-android-40029360299-1`; phase XML, source/device metadata, fixture receipts,
+process-restart witnesses and compressed captures are under `native/`.
+
+The native chain witnesses distinct new and old query payloads at revision 2, a delivered lost add
+receipt at revision 6, a completed scan at revision 8, and replay A returning `removed=true` and
+`applied=false`. A new wish B survives a completed revision-9 scan and a second old-A replay, and
+its Arrived action opens the existing local item. Removing B retains My Library membership. The
+separate revision-10 in-flight add is positively held before UI removal, both mutations are
+acknowledged, and the final wish is absent. Revision 13 serves the 429. The Navidrome phase first
+browses a real catalog through the app and then records zero feature RPCs.
+
+OBSERVED: the earlier native continuation could not add B after reconnect because refresh had
+correctly marked its canonical search result held. Android alone hid Wish for held results. The
+new host regression first fails with `discover.wish.song.0` absent
+([40028537829](https://github.com/legitimate-apps/dulcet/actions/runs/40028537829), one test,
+one failure). `a07a3c98` retains canonical, wishable and capability checks while allowing a new
+wish after prior removal, matching the other clients. The ten native phases above pass after that
+change. All fourteen PhoneDiscoverTest cases also pass twenty Linux repetitions
+([40029054110](https://github.com/legitimate-apps/dulcet/actions/runs/40029054110), 280 XML cases,
+zero failures/errors/skips, `SOAK RESULT passed=20 failed=0`).
+
+OBSERVED: the iPhone baseline writer receipts on the earlier Apple run show an album pushed,
+requested and appeared, followed by a shorter NavigationStack binding write and an accepted pop.
+No source snapshot/reset intervenes. The binding getter exposed an empty path while an ordinary
+same-context push awaited its presentation acknowledgement. `ccefbe64` keeps that requested path
+visible immediately; changed account/destination contexts still wait for registration. The new
+store/presentation regression distinguishes those cases. Native integrated-head confirmation is
+still required before promoting an Apple cell.
+
+Main's Compose proof execution rule, merged through `e6d6e99f`, is retained unchanged. The existing
+Ubuntu archive fallback and pinned FFmpeg installation now precede the new fixture tests, avoiding
+a second unversioned package installation against the slow mirror. The first hosted Mac proof did
+not run tests because development provisioning was unavailable; `f0fd093c` adopts the established
+ad hoc app-hosted proof signing command and tests the actual command in the runner cleanup control.
