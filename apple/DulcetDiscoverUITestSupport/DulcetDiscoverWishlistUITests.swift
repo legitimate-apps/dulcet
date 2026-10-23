@@ -265,20 +265,23 @@ import UIKit
         try waitForWish(title, count: 1)
         activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
         try waitForWish(title, count: 0)
-        // A new add reaches the server but loses its receipt. Its stable native row key carries
-        // the real operation id, so the final replay is independent of the app overlay.
+        // Observe A's durable identity before sending it. Foundation may automatically retry
+        // the GET after the fixture drops its first receipt; that recovery must not erase the
+        // identity used by our independent late replay after removal and scan.
         try search(); let sourceId = item("song", 1).identifier.replacingOccurrences(of: "discover.item.", with: "")
-        activate(item("song", 1))
-        let lostRevision = try scenario("lost-add-receipt")
+        activate(item("song", 1)); _ = try scenario("offline")
         activate(app.buttons["discover.wish"].firstMatch)
-        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        wishlist()
+        let operationId = wishRow(title).identifier.replacingOccurrences(of: "wishlist.row.add:", with: "")
+        XCTAssertNotNil(UUID(uuidString: operationId), "Observed native pending add identity")
+        app.terminate()
+        let lostRevision = try scenario("lost-add-receipt")
+        try launch(); wishlist()
         try effect("lost-add-receipt", revision: lostRevision, flag: "delivered")
         let deliveredWish = try XCTUnwrap(wishes().first { ($0["snapshot"] as? [String: Any])?["title"] as? String == title })
-        _ = try scenario("offline"); wishlist()
-        let lostRow = wishRow(title)
-        let operationId = lostRow.identifier.replacingOccurrences(of: "wishlist.row.add:", with: "")
-        XCTAssertNotNil(UUID(uuidString: operationId), "Observed native pending add identity")
-        activate(lostRow.buttons["wishlist.remove"].firstMatch)
+        _ = try scenario("offline")
+        activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
         XCTAssertFalse(app.staticTexts[title].exists, "Durable remove hides A before reconnect")
         let scanRevision = try scenario("scan-arrival")
         try effect("scan-arrival", revision: scanRevision, flag: "completed")
@@ -310,7 +313,13 @@ import UIKit
         assertPlaybackReference(localId)
         let current = try wishes().first { ($0["snapshot"] as? [String: Any])?["title"] as? String == title }
         XCTAssertEqual((current?["libraryItem"] as? [String: Any])?["id"] as? String, localId)
-        print("DISCOVER_ROUTE arrivalServerId=\(localId) playbackVisible=true")
+        let lateA = try XCTUnwrap(rest("addToDulcetWishlist", params: replayParams)["dulcetWishMutation"] as? [String: Any])
+        XCTAssertEqual(lateA["removed"] as? Bool, true)
+        let survivingB = try wishes().filter { ($0["snapshot"] as? [String: Any])?["title"] as? String == title }
+        XCTAssertEqual(survivingB.count, 1)
+        XCTAssertEqual(survivingB.first?["id"] as? String, current?["id"] as? String)
+        _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": ["scenario": "old-A-after-B", "lateA": lateA, "survivingB": survivingB]])
+        print("DISCOVER_ROUTE arrivalServerId=\(localId) playbackVisible=true lateAReplayed=true generationBRetained=true")
     }
 
     func busyStaleAndNavidromeControl() throws {
