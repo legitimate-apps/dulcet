@@ -47,7 +47,7 @@ public struct DulcetRootView: View {
                     NavigationSplitView {
                         DulcetSidebar(store: store)
                     } detail: {
-                        DulcetSplitDestinationStacks(store: store)
+                        DulcetDestinationStack(store: store)
                     }
                     .navigationSplitViewStyle(.balanced)
                     .dulcetForeground(.primaryTextOnWindow)
@@ -412,7 +412,7 @@ private struct DulcetIOSShell: View {
                     NavigationSplitView {
                         DulcetSidebar(store: store, destinations: store.destinations(Self.places))
                     } detail: {
-                        DulcetSplitDestinationStacks(
+                        DulcetDestinationStack(
                             store: store,
                             barPlacement: .floating,
                             onOpenPlayer: openPlayer
@@ -580,33 +580,6 @@ private struct DulcetCompactShell: View {
 #endif
 
 #if !os(tvOS)
-/// A split column keeps each reader destination's navigation owner alive, as phone tabs do.
-/// Reusing one owner for Search and Library made SwiftUI initialise Library with an empty path
-/// after the store had already pushed an album. Rejecting that write preserved the store but
-/// left the column on its root. These stacks receive pushes through an existing owner instead.
-private struct DulcetSplitDestinationStacks: View {
-    @Bindable var store: DulcetPresentationStore
-    var barPlacement: DulcetNowPlayingBarPlacement.Placement?
-    var onOpenPlayer: () -> Void = {}
-
-    var body: some View {
-        ZStack {
-            ForEach([DulcetSidebarDestination.listenNow, .library, .browse]) { destination in
-                DulcetDestinationStack(store: store, tab: destination,
-                                       barPlacement: barPlacement, onOpenPlayer: onOpenPlayer)
-                    .opacity(store.selectedDestination == destination ? 1 : 0)
-                    .allowsHitTesting(store.selectedDestination == destination)
-                    .accessibilityHidden(store.selectedDestination != destination)
-                    .zIndex(store.selectedDestination == destination ? 1 : 0)
-            }
-            if !store.isReaderDestination {
-                DulcetDestinationStack(store: store, tab: store.selectedDestination,
-                                       barPlacement: barPlacement, onOpenPlayer: onOpenPlayer)
-            }
-        }
-    }
-}
-
 /// One navigation stack showing a destination, with library pages pushed onto it.
 ///
 /// In a tab, `tab` names the destination this stack belongs to. Only the Library destination
@@ -632,7 +605,19 @@ struct DulcetDestinationStack: View {
     /// describes one destination at a time, so without it the Library tab would draw nothing
     /// while hidden and rebuild its grid -- scrolled back to the top -- on every return.
     @State private var retainedLibrary: DulcetSnapshot?
-    @State private var presentedReaderRoutes: Set<DulcetReaderRoute> = []
+    private struct ReaderContext: Hashable {
+        var destination: DulcetSidebarDestination
+        var generation: Int
+        var enabled: Bool
+    }
+    private typealias ReaderPresentation = DulcetReaderStackPresentation<DulcetReaderRoute, ReaderContext>
+    @State private var readerPresentation = ReaderPresentation()
+
+    private var readerRequest: ReaderPresentation.Request {
+        .init(context: .init(destination: destination, generation: store.librarySession?.readerGeneration ?? 0,
+                             enabled: usesReader),
+              path: usesReader ? store.readerPath(for: destination) : [])
+    }
 
     private var destination: DulcetSidebarDestination { tab ?? store.selectedDestination }
     private var showing: Bool { tab.map { $0 == store.selectedDestination } ?? true }
@@ -665,12 +650,25 @@ struct DulcetDestinationStack: View {
         // it with an already-pushed path causes SwiftUI to write its initial [] over that push.
         .onAppear(perform: retainLibrary)
         .onChange(of: store.snapshot) { _, _ in retainLibrary() }
+        .onChange(of: readerRequest, initial: true) { _, request in
+            readerPresentation.request(request)
+        }
+        .task(id: readerPresentation.pendingReplay) {
+            guard let request = readerPresentation.pendingReplay else { return }
+            // The initial reset must first become an actual empty displayed path. Reapply
+            // after this UI update, with no timer and no replay across an account change.
+            await Task.yield()
+            guard !Task.isCancelled, readerRequest == request else { return }
+            store.navigationBindingReceipt("DulcetDestinationStack.replay", oldPath: String(describing: readerPresentation.path),
+                                           newPath: String(describing: request.path), outcome: "reapply-unpresented-route")
+            readerPresentation.replay(request)
+        }
     }
 
     private var readerPath: Binding<[StackRoute]> {
         let stackDestination = destination
         return Binding(
-            get: { store.readerPath(for: stackDestination).map(StackRoute.reader) },
+            get: { readerPresentation.request == readerRequest ? readerPresentation.path.map(StackRoute.reader) : [] },
             set: { path in
                 // A departing Library stack must not pop the page after Search takes its place.
                 store.navigationBindingReceipt("DulcetDestinationStack.readerPath[\(stackDestination)]", oldPath: String(describing: store.readerPath(for: stackDestination)), newPath: String(describing: path), outcome: store.selectedDestination == stackDestination ? "received" : "guard-dropped:destination")
@@ -680,7 +678,12 @@ struct DulcetDestinationStack: View {
                     store.navigationBindingReceipt("DulcetDestinationStack.readerPath", oldPath: String(describing: store.readerPath), newPath: String(describing: path), outcome: "guard-dropped:route-type")
                     return
                 }
-                store.popReaderFromStack(to: routes, presentedRoutes: presentedReaderRoutes)
+                let acceptedPop = readerPresentation.wrote(routes)
+                if acceptedPop { store.popReader(to: routes) }
+                else {
+                    store.navigationBindingReceipt("DulcetDestinationStack.readerPath", oldPath: String(describing: store.readerPath),
+                                                   newPath: String(describing: routes), outcome: "guard-dropped:unpresented-route")
+                }
             }
         )
     }
@@ -690,7 +693,11 @@ struct DulcetDestinationStack: View {
         switch path {
         case let .reader(route):
             DulcetReaderRouteView(route: route)
-                .onAppear { presentedReaderRoutes.insert(route) }
+                .onAppear {
+                    readerPresentation.appeared(route)
+                    store.navigationBindingReceipt("DulcetDestinationStack.appeared", oldPath: String(describing: readerPresentation.path),
+                                                   newPath: String(describing: route), outcome: "presented")
+                }
                 .environment(\.dulcetReaderPage, route)
                 .modifier(bar(drawsNotices: showing && store.readerPath.last == route))
         case let .library(route):
