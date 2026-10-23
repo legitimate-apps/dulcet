@@ -7922,9 +7922,13 @@ rejection, including through the existing phone and TV Reconnect action. Pending
 the ordinary reader reconnect flush. A replacement still fails negotiation and retains the old
 account's pending changes without sending its IDs. Reopening advances the account authorization
 lifetime; it never restores the token used before rejection. Only the latest identity negotiation
-may publish its result, so an older matching or mismatching reply cannot reopen or revoke the
-recovered account. Reader replies still check both their captured reader generation and account
-authorization after transport. This implements the existing lasting-fence contract, with no
+may publish its result. A rejection notification carries the authorization epoch that created it;
+on the reader owner, its epoch check and local rejection write are atomic against both validated
+reconnect and explicit consent acceptance. A notification delivered after newer acceptance is
+ignored; one delivered first is retired by the ordinary validated reconnect. The notification's
+registry lookup stays outside the gate lock. An older matching or mismatching reply or delayed
+notification cannot reopen or revoke the recovered account. Reader replies still check both their
+captured reader generation and account authorization after transport. This implements the existing lasting-fence contract, with no
 change to saved lineage, counted replacement consent, or the version-upgrade rule.
 
 **2026-10-22 — Serialize Android media removal with download retirement.**

@@ -16,6 +16,14 @@ public object AndroidServerIdentity {
     internal fun authorizationEpoch(id: String): Long? = synchronized(validationLock) {
         if (id in rejected) null else authorizationEpochs[id] ?: 0L
     }
+    /** Reader-owner writes only; never acquire the composition registry or suspend in [apply]. */
+    internal fun applyRejection(id: String, epoch: Long, apply: () -> Unit): Boolean = synchronized(validationLock) {
+        if (id !in rejected || authorizationEpochs[id] != epoch) false
+        else { apply(); true }
+    }
+    internal fun rejectionEpoch(id: String): Long? = synchronized(validationLock) {
+        if (id in rejected) authorizationEpochs[id] else null
+    }
     private fun retireAuthorization(id: String) {
         authorizationEpochs[id] = (authorizationEpochs[id] ?: 0L) + 1
     }
@@ -49,6 +57,7 @@ public object AndroidServerIdentity {
     public fun isVerified(id: String): Boolean = id in mutableVerified.value && !isRejected(id)
     internal suspend fun validate(
         id: String,
+        // Narrow race-test seam after the decision lock, before registry lookup and dispatch.
         beforeRejectedNotification: suspend () -> Unit = {},
         validation: suspend () -> DomainError?,
     ): DomainError? {
@@ -60,14 +69,14 @@ public object AndroidServerIdentity {
         }
         try {
             val error = validation()
-            var notifyRejected = false
+            var rejectedEpoch: Long? = null
             val outcome = synchronized(validationLock) {
                 if (generations[id] != generation) {
                     if (id in rejected) DomainError.Protocol.ServerIdentityChanged else DomainError.Transport.Cancelled
                 } else {
                     if (error == DomainError.Protocol.ServerIdentityChanged && rejected.add(id)) {
                         retireAuthorization(id)
-                        notifyRejected = true
+                        rejectedEpoch = authorizationEpochs.getValue(id)
                     }
                     if (error == null) {
                         // The current probe authenticated saved lineage. Reopen with a new lifetime,
@@ -80,11 +89,16 @@ public object AndroidServerIdentity {
                 }
             }
             // Do not acquire the composition registry's lock while holding the gate's lock.
-            if (notifyRejected) {
+            rejectedEpoch?.let { epoch ->
                 beforeRejectedNotification()
-                AndroidLibraryReader.currentFor(id)?.rejectServerIdentity()
+                AndroidLibraryReader.currentFor(id)?.rejectServerIdentity(epoch)
             }
-            return outcome
+            // Notification delivery can suspend in tests, and registry lookup can race acceptance.
+            // Its decision is subject to the same latest-negotiation rule as the original reply.
+            return synchronized(validationLock) {
+                if (generations[id] == generation) outcome
+                else if (id in rejected) DomainError.Protocol.ServerIdentityChanged else DomainError.Transport.Cancelled
+            }
         } catch (failure: Throwable) {
             synchronized(validationLock) {
                 if (generations[id] == generation) mutableVerified.update { it - id }

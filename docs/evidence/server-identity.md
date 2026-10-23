@@ -42,6 +42,29 @@ boundaries with the actual Android authorization object, production shared reade
 transport. The negative replacement integration controls retain the old pending favourite and
 send no `star` while a new negotiation continues to reject the replacement.
 
+### Rejection notification ordering review
+
+OBSERVED baseline `d0a3b58b`, with only a narrow pre-notification pause seam and the new tests
+added in `ad68b219`: Linux run `39962068663` executes four cases, two failures, zero errors and
+zero skips. Both `aDelayedRejectionCannotCloseANewerReconnectOrStrandItsChanges` and
+`aDelayedRejectionCannotCloseANewerConsentOrStrandItsChanges` fail with
+"A stale rejection notification cannot close the reopened account". P1 has committed rejection,
+a favourite is durable and unsent, and the newer reconnect has reopened contact and flushed that
+favourite before P1's old notification is delivered. The opposite-order controls already pass on
+the baseline. These tests use the registered Android reader, real session and SQLite mutation
+outbox with a controlled transport and authenticated-identity verdicts supplied at the gate seam;
+they do not claim HTTP negotiation, rendered consent controls or device execution.
+
+Rejection delivery now carries its rejected authorization epoch. The gate checks that epoch and
+applies the reader-owner rejection under the same lock used by successful validation and consent
+acceptance. The registry lookup happens outside that lock, and the guarded write happens after
+dispatch to the reader owner. Acceptance before delivery makes the old notification a no-op.
+Delivery first retires the reader; the subsequent validated reconnect clears its local rejection
+and flushes normally. The notification sender also rechecks negotiation generation before returning
+its result. Acceptance never restores the old authorization token. All four ordering cases hold a
+read from before rejection until after recovery and require `ReaderSendRefused`, then verify that
+a new favourite flushes after the old notification has drained.
+
 ## Lasting rejection and replies already in flight
 
 OBSERVED on published revision `4a946a68`: three review regressions fail before production changes.
