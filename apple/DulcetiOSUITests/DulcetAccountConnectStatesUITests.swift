@@ -253,7 +253,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             for _ in 0..<6 where !albums.isHittable { app.swipeUp() }
             guard tap(albums, in: app, name: "Albums") else { return false }
         } else {
-            let albums = app.staticTexts["dulcet.sidebar.section.albums"].firstMatch
+            let albums = app.descendants(matching: .any)["dulcet.sidebar.section.albums"].firstMatch
             guard albums.waitForExistence(timeout: 10), albums.isHittable else {
                 XCTFail("Albums must be visible in the sidebar: " + app.debugDescription); return false
             }
@@ -372,12 +372,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
         if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
             if compact { app.tabBars.buttons["Library"].firstMatch.tap() }
-            else { app.staticTexts["dulcet.sidebar.library"].firstMatch.tap() }
+            else { app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.tap() }
             if app.staticTexts["Your music, wherever you listen"].firstMatch.waitForExistence(timeout: 10) {
                 tourPhotograph("first-run-library")
             } else { XCTFail("First-run Library must have no saved account") }
             if compact { app.tabBars.buttons["Search"].firstMatch.tap() }
-            else { app.staticTexts["dulcet.sidebar.search"].firstMatch.tap() }
+            else { app.descendants(matching: .any)["dulcet.sidebar.search"].firstMatch.tap() }
             // The interaction scope skips animation-idle waits. Wait for Search's own content,
             // then let the tab transition finish before photographing its resting surface.
             XCTAssertTrue(app.staticTexts["Search your server"].firstMatch.waitForExistence(timeout: 10))
@@ -774,7 +774,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             if !tab.isSelected { tab.tap() }
             return true
         }
-        let row = app.staticTexts["dulcet.sidebar.settings"].firstMatch
+        let row = app.descendants(matching: .any)["dulcet.sidebar.settings"].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else {
             XCTFail("The Connection row must be visible in the sidebar: " + app.debugDescription)
             return false

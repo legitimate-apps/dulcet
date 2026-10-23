@@ -2522,6 +2522,7 @@ func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
     #expect(store.readerPath.isEmpty)
 }
 
+#if os(iOS) || os(macOS)
 @Test @MainActor func wishlistAlwaysOpensInLibraryFromBrowseOrListenNow() throws {
     let factory = RecordingReaderFactory()
     let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
@@ -2537,7 +2538,6 @@ func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
 }
 
 
-#if os(iOS) || os(macOS)
 @Test @MainActor func discoverSongPlaybackUsesAnExactScopedLookupWithoutATitleSearch() throws {
     let factory = RecordingReaderFactory()
     let session = DulcetLibrarySession(factory: factory)

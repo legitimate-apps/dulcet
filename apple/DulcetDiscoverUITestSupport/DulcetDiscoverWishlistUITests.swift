@@ -93,7 +93,7 @@ import UIKit
     }
     func select(_ section: String) {
 #if os(macOS)
-        let row = app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
+        let row = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #else
         var tab = app.tabBars.buttons["dulcet.tab." + section].firstMatch
         if !tab.waitForExistence(timeout: 2) {

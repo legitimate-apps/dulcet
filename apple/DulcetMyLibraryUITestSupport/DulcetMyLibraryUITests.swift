@@ -536,7 +536,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(macOS)
         // Labels also match section headings and toolbar titles. The actual navigation row
         // carries this identifier on its text in the macOS outline's accessibility tree.
-        return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
+        return app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #elseif os(tvOS)
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
@@ -544,7 +544,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // Resolve the indexed result after the account publishes its sidebar. The retained
             // iPad failure's firstMatch wait reported absent while its own failure hierarchy
             // contained this exact StaticText. The indexed query avoids that early shortcut.
-            return app.staticTexts.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
+            return app.descendants(matching: .any).matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
         }
         let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
