@@ -36,17 +36,22 @@ fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
         }
         println("TV BROWSE NAVIGATION target=$tag initial=${focusedTags()} " +
             "header-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
-        // The Songs/Downloaded row lies between the first shelf and Albums. UP reveals both
-        // rows; unlike a semantics lookup this also brings a lazy, uncomposed header into view.
+        // The Songs/Downloaded row lies between the first shelf and the category row. UP uses
+        // spatial focus, so a wide first card can align with Artists rather than Albums.
+        // Stop on any category, then walk horizontally from the one the remote actually reached.
         repeat(4) {
-            if ("library.view.albums" !in focusedTags()) {
+            if (focusedTags().none { it in categories }) {
                 remote(KeyEvent.KEYCODE_DPAD_UP)
                 println("TV BROWSE NAVIGATION after-UP=${focusedTags()}")
             }
         }
-        check("library.view.albums" in focusedTags()) { "UP from Browse never reached Albums" }
-        repeat(categories.indexOf(tag)) { remote(KeyEvent.KEYCODE_DPAD_RIGHT) }
-        check(tag in focusedTags()) { "RIGHT along Browse categories did not reach $tag: ${focusedTags()}" }
+        val reached = focusedTags().firstOrNull { it in categories }
+        check(reached != null) { "UP from Browse never reached its categories: ${focusedTags()}" }
+        val distance = categories.indexOf(tag) - categories.indexOf(reached)
+        repeat(kotlin.math.abs(distance)) {
+            remote(if (distance < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT)
+        }
+        check(tag in focusedTags()) { "Horizontal movement along Browse did not reach $tag: ${focusedTags()}" }
         println("TV BROWSE NAVIGATION target=$tag focused=true remote-only=true")
     } catch (failure: Throwable) {
         println("TV BROWSE NAVIGATION target=$tag failed focused=${focusedTags()}")
