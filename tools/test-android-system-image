@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the image tool against disposable fake sdkmanager/adb processes, never a real SDK."""
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
@@ -11,21 +12,31 @@ import unittest
 TOOL = (Path(__file__).parent / 'ci/android-system-image').resolve()
 FAKE_SDKMANAGER = r'''#!/usr/bin/env python3
 from pathlib import Path
-import os, subprocess, sys, time
+import json, os, subprocess, sys, time
 sdk = Path(os.environ['ANDROID_HOME']).resolve()
-package = os.environ['EXPECTED_PACKAGE']
+if sys.argv[1:] == ['--licenses']:
+    print('All SDK package licenses accepted.')
+    sys.exit(0)
+package = sys.argv[3]
+assert package in json.loads(os.environ['EXPECTED_PACKAGES']), package
 assert sys.argv[1:] == [f'--sdk_root={sdk}', '--install', package, '--channel=0'], sys.argv
 counter = Path(os.environ['FAKE_COUNTER'])
-attempt = int(counter.read_text()) + 1 if counter.exists() else 1
-counter.write_text(str(attempt))
+counter.write_text(str(int(counter.read_text()) + 1 if counter.exists() else 1))
+counts_path = counter.with_suffix('.packages')
+counts = json.loads(counts_path.read_text()) if counts_path.exists() else {}
+attempt = counts.get(package, 0) + 1
+counts[package] = attempt
+counts_path.write_text(json.dumps(counts))
 image = sdk.joinpath(*package.split(';'))
 # Each retry must get a fresh download, preserving unrelated installed SDK packages.
 if attempt > 1:
     assert not image.exists(), 'partial package survived'
     assert not (sdk / '.temp').exists(), 'bad staged archive survived'
     assert not (sdk / '.downloadIntermediates').exists(), 'partial download survived'
-assert (sdk / 'platform-tools/keep').read_text() == 'keep'
+assert (sdk / 'licenses/keep').read_text() == 'keep'
 mode = os.environ.get('FAKE_MODE', 'success')
+if package != os.environ.get('FAKE_FAIL_PACKAGE', package):
+    mode = 'success'
 if mode in ('http', 'zip', 'exhausted', 'timeout') and (attempt == 1 or mode in ('exhausted', 'timeout')):
     image.mkdir(parents=True, exist_ok=True)
     (image / '.installer').write_text('partial state')
@@ -42,6 +53,17 @@ if mode in ('http', 'zip', 'exhausted', 'timeout') and (attempt == 1 or mode in 
 if mode == 'empty-success':
     sys.exit(0)
 image.mkdir(parents=True, exist_ok=True)
+if not package.startswith('system-images;'):
+    (image / 'source.properties').write_text('Pkg.Revision=13\n')
+    (image / 'package.xml').write_text('<repository><localPackage path="' + package + '"/></repository>')
+    names = (['emulator'] if package == 'emulator' else ['adb'] if package == 'platform-tools' else
+             ['android.jar'] if package.startswith('platforms;') else ['aapt2', 'apksigner', 'zipalign'])
+    if mode != 'missing-payload':
+        for name in names:
+            binary = image / name
+            binary.write_text('fixture payload')
+            binary.chmod(0o755)
+    sys.exit(0)
 _, api, target, arch = package.split(';')
 api = api.removeprefix('android-')
 values = {'AndroidVersion.ApiLevel': api, 'SystemImage.TagId': target, 'SystemImage.Abi': arch, 'Pkg.Revision': '13'}
@@ -73,8 +95,8 @@ class ImageControl(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.sdk = self.root / 'sdk'
-        (self.sdk / 'platform-tools').mkdir(parents=True)
-        (self.sdk / 'platform-tools/keep').write_text('keep')
+        (self.sdk / 'licenses').mkdir(parents=True)
+        (self.sdk / 'licenses/keep').write_text('keep')
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         for name, content in [('sdkmanager', FAKE_SDKMANAGER), ('adb', FAKE_ADB)]:
@@ -87,12 +109,14 @@ class ImageControl(unittest.TestCase):
         self.target = 'google_apis'
         self.arch = 'x86_64'
 
-    def invoke(self, operation='install', timeout=5):
+    def invoke(self, operation='install', timeout=5, dependencies=(), action_log=None):
         package = f'system-images;android-34;{self.target};{self.arch}'
-        self.env.update(EXPECTED_PACKAGE=package, BOOT_ABI=self.env.get('BOOT_ABI', self.arch))
+        self.env.update(EXPECTED_PACKAGES=json.dumps([*dependencies, package]), BOOT_ABI=self.env.get('BOOT_ABI', self.arch))
         return subprocess.run([sys.executable, str(TOOL), operation, '--api-level', '34',
                                '--target', self.target, '--arch', self.arch,
-                               '--attempt-timeout-seconds', str(timeout), '--retry-delay-seconds', '0'],
+                               '--attempt-timeout-seconds', str(timeout), '--retry-delay-seconds', '0',
+                               *(['--action-log', str(action_log)] if action_log else []),
+                               *[arg for dependency in dependencies for arg in ['--sdk-package', dependency]]],
                               env=self.env, text=True, capture_output=True, timeout=20)
 
     def attempts(self):
@@ -100,7 +124,7 @@ class ImageControl(unittest.TestCase):
 
     def assert_failure(self, result, reason):
         self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
-        self.assertIn('::error title=Android system image infrastructure failure::ANDROID IMAGE INFRA FAILURE', result.stderr)
+        self.assertIn('::error title=Android emulator SDK infrastructure failure::ANDROID IMAGE INFRA FAILURE', result.stderr)
         self.assertIn(reason, result.stderr)
         self.assertNotIn('ANDROID IMAGE READY', result.stdout)
         self.assertNotIn('ANDROID IMAGE BOOTED', result.stdout)
@@ -124,6 +148,88 @@ class ImageControl(unittest.TestCase):
 
     def test_bad_zip_then_success_discards_partial_archive(self):
         self.prove_retry('zip', 'Error on ZipFile unknown archive')
+
+    def test_emulator_bad_zip_then_success_really_installs_twice(self):
+        self.env.update(FAKE_MODE='zip', FAKE_FAIL_PACKAGE='emulator')
+        result = self.invoke(dependencies=['emulator'])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        counts = json.loads((self.root / 'attempts.packages').read_text())
+        self.assertEqual(counts['emulator'], 2)
+        self.assertEqual(self.attempts(), 3)  # Two emulator attempts, then one image install.
+        self.assertIn('ANDROID IMAGE RETRY package=emulator attempt=1/3', result.stdout)
+        self.assertIn('ANDROID IMAGE READY package=emulator revision=13 attempt=2', result.stdout)
+        for line in result.stdout.splitlines():
+            if line.startswith('ANDROID IMAGE '):
+                print(f'CONTROL emulator-zip: {line}', flush=True)
+
+    def test_emulator_exhaustion_stops_before_image_and_tests(self):
+        self.env.update(FAKE_MODE='exhausted', FAKE_FAIL_PACKAGE='emulator')
+        result = self.invoke(dependencies=['emulator'])
+        self.assert_failure(result, 'package=emulator attempts=3')
+        self.assertEqual(self.attempts(), 3)
+        self.assertNotIn('package=system-images;', result.stdout)
+
+    def test_all_action_dependencies_use_same_serial_installer(self):
+        dependencies = ['build-tools;37.0.0', 'platform-tools', 'platforms;android-34',
+                        'platforms;android-36', 'emulator']
+        result = self.invoke(dependencies=dependencies)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.attempts(), len(dependencies) + 1)
+        for dependency in dependencies:
+            self.assertIn(f'ANDROID IMAGE READY package={dependency} revision=13 attempt=1', result.stdout)
+
+    def test_emulator_metadata_without_binary_is_not_success(self):
+        self.env.update(FAKE_MODE='missing-payload', FAKE_FAIL_PACKAGE='emulator')
+        result = self.invoke(dependencies=['emulator'])
+        self.assert_failure(result, 'sdk-package-payload-missing-emulator')
+        self.assertEqual(self.attempts(), 3)
+
+    def prepare_action_wrapper(self):
+        real = self.sdk / 'cmdline-tools/latest/bin/sdkmanager'
+        real.parent.mkdir(parents=True)
+        real.write_text(FAKE_SDKMANAGER)
+        real.chmod(0o755)
+        self.action_log = self.root / 'action-install.log'
+        result = self.invoke(action_log=self.action_log)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.env.update(EXPECTED_PACKAGES=json.dumps(['emulator']), FAKE_FAIL_PACKAGE='emulator')
+        return self.sdk / 'cmdline-tools/latest/sdkmanager'
+
+    def action_install(self, wrapper, *request):
+        # Match the action's stdout redirection: evidence must survive on stderr and in the log.
+        return subprocess.run([str(wrapper), *request], env=self.env, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE, text=True, timeout=20)
+
+    def test_action_shim_retries_emulator_and_preserves_hidden_output(self):
+        wrapper = self.prepare_action_wrapper()
+        self.env['FAKE_MODE'] = 'zip'
+        result = self.action_install(wrapper, '--install', 'emulator', '--channel=0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Error on ZipFile unknown archive', result.stderr)
+        self.assertIn('ANDROID IMAGE READY package=emulator revision=13 attempt=2', result.stderr)
+        self.assertEqual(self.action_log.read_text(), result.stderr)
+        self.assertEqual(json.loads((self.root / 'attempts.packages').read_text())['emulator'], 2)
+
+    def test_action_shim_exhaustion_preserves_infrastructure_exit(self):
+        wrapper = self.prepare_action_wrapper()
+        self.env['FAKE_MODE'] = 'exhausted'
+        result = self.action_install(wrapper, '--install', 'emulator', '--channel=0')
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertIn('ANDROID IMAGE INFRA FAILURE package=emulator attempts=3', result.stderr)
+
+    def test_action_shim_rejects_a_different_channel_before_installing(self):
+        wrapper = self.prepare_action_wrapper()
+        result = self.action_install(wrapper, '--install', 'emulator', '--channel=1')
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertIn('unsupported-action-sdkmanager-package-or-channel', result.stderr)
+        self.assertEqual(self.attempts(), 1)
+
+    def test_action_shim_passes_licenses_without_installing_packages(self):
+        wrapper = self.prepare_action_wrapper()
+        result = self.action_install(wrapper, '--licenses')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('All SDK package licenses accepted.', result.stderr)
+        self.assertEqual(self.attempts(), 1)
 
     def test_exhaustion_is_bounded_and_classified_as_infrastructure(self):
         self.env['FAKE_MODE'] = 'exhausted'

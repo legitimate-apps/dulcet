@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the CI image with bounded retries, then verify the emulator boots that image."""
+"""Install emulator SDK packages with bounded retries, then verify the booted image."""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -66,16 +67,39 @@ def remove(path: Path) -> None:
         shutil.rmtree(path)
 
 
+def package_ready(path: Path, package: str) -> str:
+    metadata = ET.parse(path / 'package.xml').getroot()
+    if not any(element.tag.split('}')[-1] == 'localPackage' and element.get('path') == package
+               for element in metadata.iter()):
+        raise RuntimeError('sdk-package-mismatch')
+    revision = properties(path / 'source.properties').get('Pkg.Revision')
+    if not revision:
+        raise RuntimeError('sdk-package-missing-revision')
+    payload = (['emulator'] if package == 'emulator' else
+               ['adb'] if package == 'platform-tools' else
+               ['android.jar'] if package.startswith('platforms;') else
+               ['aapt2', 'apksigner', 'zipalign'])
+    for name in payload:
+        binary = path / name
+        if not binary.is_file() or binary.stat().st_size == 0:
+            raise RuntimeError(f'sdk-package-payload-missing-{name}')
+        if name != 'android.jar' and not os.access(binary, os.X_OK):
+            raise RuntimeError(f'sdk-package-payload-not-executable-{name}')
+    return revision
+
+
 def install(args, sdk: Path, package: str, image: Path) -> None:
     for attempt in range(1, ATTEMPTS + 1):
         print(f'ANDROID IMAGE INSTALL package={package} attempt={attempt}/{ATTEMPTS} '
               f'timeout-seconds={args.attempt_timeout_seconds:g}', flush=True)
         try:
-            run(['sdkmanager', f'--sdk_root={sdk}', '--install', package, '--channel=0'],
+            run([args.sdkmanager, f'--sdk_root={sdk}', '--install', package, '--channel=0'],
                 args.attempt_timeout_seconds)
-            revision = image_ready(image, package, args.api_level, args.target, args.arch)
-            print(f'ANDROID IMAGE READY package={package} api={args.api_level} target={args.target} '
-                  f'abi={args.arch} revision={revision} attempt={attempt}', flush=True)
+            is_image = package.startswith('system-images;')
+            revision = (image_ready(image, package, args.api_level, args.target, args.arch) if is_image
+                        else package_ready(image, package))
+            coordinates = f' api={args.api_level} target={args.target} abi={args.arch}' if is_image else ''
+            print(f'ANDROID IMAGE READY package={package}{coordinates} revision={revision} attempt={attempt}', flush=True)
             return
         except (OSError, RuntimeError, ET.ParseError) as failure:
             # This job installs SDK packages serially. Discard both the partial package (including
@@ -91,6 +115,43 @@ def install(args, sdk: Path, package: str, image: Path) -> None:
             print(f'ANDROID IMAGE RETRY package={package} attempt={attempt}/{ATTEMPTS} '
                   f'reason={failure} clean-partial=true delay-seconds={delay:g}', flush=True)
             time.sleep(delay)
+
+
+def supported_dependency(package: str) -> bool:
+    return re.fullmatch(r'emulator|platform-tools|platforms;android-[1-9][0-9]*|build-tools;[0-9]+\.[0-9]+\.[0-9]+', package) is not None
+
+
+def action_wrapper(args, sdk: Path) -> None:
+    # The pinned action puts cmdline-tools/latest BEFORE latest/bin on PATH. Keep the real
+    # sdkmanager untouched in bin, and expose its output even when the action redirects stdout.
+    real = (sdk / 'cmdline-tools/latest/bin/sdkmanager').resolve(strict=True)
+    command = [sys.executable, str(Path(__file__).resolve()), 'action-sdkmanager',
+               '--api-level', args.api_level, '--target', args.target, '--arch', args.arch,
+               '--sdkmanager', str(real), '--attempt-timeout-seconds', str(args.attempt_timeout_seconds),
+               '--retry-delay-seconds', str(args.retry_delay_seconds), '--']
+    wrapper = sdk / 'cmdline-tools/latest/sdkmanager'
+    wrapper.write_text('#!/bin/bash\nset -euo pipefail\n' + shlex.join(command) +
+                       ' "$@" 2>&1 | tee -a ' + shlex.quote(str(Path(args.action_log).resolve())) + ' >&2\n')
+    wrapper.chmod(0o755)
+    print(f'ANDROID IMAGE ACTION WRAPPER real-sdkmanager={real} channel=0 log={args.action_log}', flush=True)
+
+
+def action_request(args, sdk: Path, image_package: str) -> None:
+    request = args.request
+    if request and request[0] == '--':
+        request = request[1:]
+    print(f'ANDROID IMAGE ACTION REQUEST {shlex.join(request)}', flush=True)
+    if request == ['--licenses']:
+        run([args.sdkmanager, '--licenses'], args.attempt_timeout_seconds)
+        return
+    if not request or request[0] != '--install':
+        raise RuntimeError('unsupported-action-sdkmanager-request')
+    packages = [item for item in request[1:] if item != '--channel=0']
+    if not packages or any(not supported_dependency(item) and item != image_package for item in packages):
+        raise RuntimeError('unsupported-action-sdkmanager-package-or-channel')
+    for package in dict.fromkeys(packages):
+        install(args, sdk, package, sdk.joinpath(*package.split(';')))
+    print('ANDROID IMAGE ACTION REQUEST COMPLETE channel=0', flush=True)
 
 
 def verify_booted(args, sdk: Path, package: str, image: Path) -> None:
@@ -118,27 +179,42 @@ def verify_booted(args, sdk: Path, package: str, image: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['install', 'verify-booted'])
+    parser.add_argument('operation', choices=['install', 'verify-booted', 'action-sdkmanager'])
     parser.add_argument('--api-level', required=True)
     parser.add_argument('--target', required=True)
     parser.add_argument('--arch', required=True, choices=['x86', 'x86_64', 'arm64-v8a'])
+    parser.add_argument('--sdk-package', action='append', default=[],
+                        help='additional emulator dependency; installed serially before the image')
+    parser.add_argument('--action-log', help='install a logging/retrying shim for the pinned emulator action')
+    parser.add_argument('--sdkmanager', default='sdkmanager', help=argparse.SUPPRESS)
     parser.add_argument('--attempt-timeout-seconds', type=float, default=240)
     parser.add_argument('--retry-delay-seconds', type=float, default=10)
-    args = parser.parse_args()
+    args, args.request = parser.parse_known_args()
+    if args.operation != 'action-sdkmanager' and args.request:
+        parser.error(f'unrecognized arguments: {shlex.join(args.request)}')
     if not re.fullmatch(r'[1-9][0-9]*', args.api_level) or not re.fullmatch(r'[a-z0-9_][a-z0-9_-]*', args.target):
         parser.error('expected a numeric API level and an SDK target identifier')
     if not 0 < args.attempt_timeout_seconds <= 300 or not 0 <= args.retry_delay_seconds <= 30:
         parser.error('attempt timeout must be (0,300] seconds and retry delay [0,30] seconds')
+    for package in args.sdk_package:
+        if not supported_dependency(package):
+            parser.error(f'unsupported emulator SDK dependency: {package}')
     try:
         sdk = Path(os.environ['ANDROID_HOME']).resolve(strict=True)
         package = f'system-images;android-{args.api_level};{args.target};{args.arch}'
         image = sdk / 'system-images' / f'android-{args.api_level}' / args.target / args.arch
         if args.operation == 'install':
+            for dependency in dict.fromkeys(args.sdk_package):
+                install(args, sdk, dependency, sdk.joinpath(*dependency.split(';')))
             install(args, sdk, package, image)
+            if args.action_log:
+                action_wrapper(args, sdk)
+        elif args.operation == 'action-sdkmanager':
+            action_request(args, sdk, package)
         else:
             verify_booted(args, sdk, package, image)
     except (KeyError, OSError, RuntimeError, ET.ParseError) as failure:
-        print(f'::error title=Android system image infrastructure failure::ANDROID IMAGE INFRA FAILURE {failure}',
+        print(f'::error title=Android emulator SDK infrastructure failure::ANDROID IMAGE INFRA FAILURE {failure}',
               file=sys.stderr, flush=True)
         return 75
     return 0
