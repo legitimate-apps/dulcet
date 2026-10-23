@@ -96,7 +96,7 @@ import UIKit
         let row = app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
 #else
         let tab = app.tabBars.buttons["dulcet.tab." + section].firstMatch
-        let row = tab.exists ? tab : app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
+        let row = UIDevice.current.userInterfaceIdiom == .pad && !tab.waitForExistence(timeout: 2) ? app.staticTexts["dulcet.sidebar.\(section)"].firstMatch : tab
 #endif
         XCTAssertTrue(row.waitForExistence(timeout: 30))
         let reachable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: row)
@@ -104,8 +104,10 @@ import UIKit
         activate(row)
     }
     func selectSavedServer(_ button: XCUIElement) {
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 30), .completed)
         activate(button)
-        let committed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: button)
+        let committed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@ AND enabled == true", "Current server"), object: button)
         XCTAssertEqual(XCTWaiter.wait(for: [committed], timeout: 45), .completed, "Saved account must commit before navigating: " + app.debugDescription)
     }
     func search(_ query: String = "Fixture") throws {
