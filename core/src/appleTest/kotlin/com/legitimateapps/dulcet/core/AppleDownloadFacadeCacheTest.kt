@@ -27,6 +27,64 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalForeignApi::class)
 class AppleDownloadFacadeCacheTest {
     @Test
+    fun matchingExplicitAcceptanceKeepsAuthorityButDifferentLineageRetiresOldCaptures() = fixtureWithName { _, name ->
+        val provider = "provider:cache-bridge"
+        val first = ServerIdentityPolicy.identity("navidrome", "first")
+        val second = ServerIdentityPolicy.identity("dulcet", "second")
+        assertTrue(AppleMediaBindingClient.acceptServerIdentity(name, provider, first))
+        val old = AppleLibraryReaderIdentityAuthorization.capture(name, provider)
+        val token = assertNotNull(old.currentToken())
+        assertTrue(AppleMediaBindingClient.acceptServerIdentity(name, provider, first))
+        assertEquals(token, old.currentToken(), "Matching acceptance/version probes preserve issued work")
+        assertTrue(AppleMediaBindingClient.acceptServerIdentity(name, provider, second))
+        assertNull(old.currentToken(), "Explicit different lineage must revoke even without prior rejection")
+        val current = AppleLibraryReaderIdentityAuthorization.capture(name, provider)
+        assertNotNull(current.currentToken())
+        assertTrue(AppleMediaBindingClient.seedServerIdentity(name, provider, first))
+        assertEquals(second, AppleMediaBindingClient.acceptedServerIdentity(name, provider))
+        assertNotNull(current.currentToken(), "Saved metadata cannot change accepted lineage or authority")
+        assertNull(old.currentToken(), "Seeding cannot reopen an old lifetime")
+    }
+
+    @Test
+    fun downloadDetectedReplacementSynchronouslyRevokesHeldSenderAndOldLifetimes() = fixtureWithName { client, name ->
+        runBlocking {
+            val authority = AppleLibraryReaderIdentityAuthorization.capture(name, "provider:cache-bridge")
+            val released = CompletableDeferred<Unit>()
+            var sends = 0
+            val sender = ScrobbleEndpointSender(object : ScrobbleEndpointTransport {
+                override suspend fun extensions() = error("No playlist discovery expected")
+                override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse {
+                    sends++
+                    released.await()
+                    val body = """{"subsonic-response":{"status":"ok"}}""".encodeToByteArray()
+                    val url = "https://music.invalid/rest/scrobble.view?<redacted>"
+                    return AuthenticatedEndpointResponse(200, body, url,
+                        AuthenticatedEndpointResponseHeaders("application/json", PlaybackContentLength.Exact(body.size.toLong()), null, null, null),
+                        RequestTrace.observed(endpoint = "scrobble", method = "GET", redactedUrl = url,
+                            authenticationLocation = AuthenticationLocation.Query, queryAuthenticationParameters = emptySet(),
+                            formAuthenticationParameters = emptySet(), channels = emptySet(), requestedProtocolVersion = "1.16.1", saltFingerprint = "fixture"))
+                }
+            }, identityAuthorization = authority::currentToken)
+            val event = RecordedPlaybackEvent.SubmittedPlay(ProviderItemId("provider:cache-bridge", "song"), PlaybackWallClockTime(1L), null)
+            try {
+                val pending = async(start = CoroutineStart.UNDISPATCHED) { sender.send(ScrobbleEndpointRequest(event)) }
+                assertEquals(1, sends, "The actual sender request must be held after issuing")
+                client.identityValidator = { DomainError.Protocol.ServerIdentityChanged }
+                assertEquals(DomainError.Protocol.ServerIdentityChanged, client.validateServerIdentity())
+                assertNull(authority.currentToken(), "Download detection must revoke before any Swift completion")
+                assertTrue(AppleMediaBindingClient.acceptServerIdentity(name, "provider:cache-bridge", "accepted"))
+                val accepted = AppleLibraryReaderIdentityAuthorization.capture(name, "provider:cache-bridge")
+                assertNotNull(accepted.currentToken())
+                assertNull(authority.currentToken(), "Explicit acceptance cannot revive old issued work")
+                released.complete(Unit)
+                assertEquals(ScrobbleSendResult.Failed(DomainError.Protocol.ServerIdentityChanged), pending.await())
+                assertEquals(DomainError.Protocol.ServerIdentityChanged, client.validateServerIdentity(), "Old download client remains closed")
+            } finally { released.complete(Unit); sender.close() }
+        }
+    }
+
+    @Test
     fun knownReplacementRejectsLateCachePromotionAndKeepsExistingLocalBytes() = fixture { client ->
         val body = waveAudio()
         fun write(rawId: String): String {
@@ -125,7 +183,9 @@ class AppleDownloadFacadeCacheTest {
         assertFalse(client.isStreamingCacheWriteComplete(write))
     }
 
-    private fun fixture(block: (AppleDownloadClient) -> Unit) {
+    private fun fixture(block: (AppleDownloadClient) -> Unit) = fixtureWithName { client, _ -> block(client) }
+
+    private fun fixtureWithName(block: (AppleDownloadClient, String) -> Unit) {
         val name = "dulcet-apple-cache-bridge-${NSUUID().UUIDString}.db"
         val root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "dulcet-apple-cache-bridge-${NSUUID().UUIDString}"
         val locator = DulcetDriverFactory(name).openDulcetDatabase()
@@ -140,7 +200,7 @@ class AppleDownloadFacadeCacheTest {
         )
         try {
             assertNull(client.reconcile(emptyList(), credentialGeneration = 1).errorKind)
-            block(client)
+            block(client, name)
         } finally {
             client.close()
             FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)

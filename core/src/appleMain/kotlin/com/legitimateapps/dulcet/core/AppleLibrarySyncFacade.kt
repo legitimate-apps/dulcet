@@ -115,14 +115,25 @@ private class AppleLibrarySyncOperationImpl(
     private val completion: (AppleLibrarySyncOutcome) -> Unit,
 ) : AppleLibrarySyncOperation {
     private var delivered = false
+    private val authority = AppleLibraryReaderIdentityAuthorization.capture(databaseName, request.providerInstanceId)
+    private fun requireIdentityAuthority() {
+        if (authority.currentToken() == null) throw AuthenticatedEndpointFailure(DomainError.Protocol.ServerIdentityChanged)
+    }
     private val job: Job = scope.launch(start = CoroutineStart.LAZY) {
         var store: DulcetDatabaseStore? = null
         val response = try {
             require(databaseName.isNotBlank())
             store = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+            requireIdentityAuthority()
+            val error = ServerIdentityGate(store.database, request.providerInstanceId,
+                AccountConnectionRequest(request.normalizedBaseUrl, request.username, request.password, request.allowLocalHttp)).validate()
+            if (error == DomainError.Protocol.ServerIdentityChanged) authority.reject()
+            requireIdentityAuthority()
+            if (error != null) throw AuthenticatedEndpointFailure(error)
             val repository = LibrarySyncRepository(store)
             LibrarySyncManager(
-                LibrarySyncEngine(repository, maxInFlight = maximumInFlightPerServer),
+                LibrarySyncEngine(repository, maxInFlight = maximumInFlightPerServer,
+                    authorizeRequest = ::requireIdentityAuthority),
                 repository,
             ).synchronize(
                 request = request.toCoreRequest(),
@@ -137,6 +148,8 @@ private class AppleLibrarySyncOperationImpl(
             )
         } catch (_: CancellationException) {
             LibrarySyncResponse.Failed(DomainError.Transport.Cancelled)
+        } catch (failure: AuthenticatedEndpointFailure) {
+            LibrarySyncResponse.Failed(failure.error)
         } catch (failure: Throwable) {
             LibrarySyncResponse.Failed(mapAccountConnectionFailure(failure))
         } finally {
@@ -202,6 +215,7 @@ private fun LibrarySyncResponse.toAppleOutcome(): AppleLibrarySyncOutcome = when
 }
 
 private fun DomainError.appleSyncKind(): String = when (this) {
+    DomainError.Protocol.ServerIdentityChanged -> "serverIdentityChanged"
     DomainError.Transport.Cancelled -> "cancelled"
     DomainError.Transport.Timeout -> "timeout"
     DomainError.Transport.Unreachable -> "unreachable"

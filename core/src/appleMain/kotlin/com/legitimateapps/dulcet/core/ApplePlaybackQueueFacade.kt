@@ -183,6 +183,7 @@ public class ApplePlaybackDeliveryReportDto internal constructor(
 public class ApplePlaybackQueueClient private constructor(
     compositionResult: ApplePlaybackQueueCompositionResult,
     deliveryDispatcher: CoroutineDispatcher,
+    private val identityDatabaseName: String? = null,
 ) {
     private val databaseStore: DulcetDatabaseStore?
     private val database: com.legitimateapps.dulcet.database.DulcetDatabase?
@@ -212,6 +213,7 @@ public class ApplePlaybackQueueClient private constructor(
     public constructor(databaseName: String) : this(
         openApplePlaybackQueue(databaseName),
         Dispatchers.Main,
+        databaseName,
     )
 
     internal constructor(controller: PlaybackQueueController) : this(
@@ -259,12 +261,19 @@ public class ApplePlaybackQueueClient private constructor(
             ?: return ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
         return try {
             setNetworkAvailable(true)
+            val authorization = identityDatabaseName?.let {
+                AppleLibraryReaderIdentityAuthorization.capture(it, account.providerInstanceId)
+            } ?: AppleLibraryReaderIdentityAuthorization()
             installDelivery(
                 serverId = ServerId(account.providerInstanceId),
-                sender = ScrobbleEndpointSender(account),
+                sender = ScrobbleEndpointSender(account, authorization::currentToken),
                 outbox = PersistentScrobbleOutbox(database, ApplePlaybackWallClock),
-                validateServerIdentity = ServerIdentityGate(database, account.providerInstanceId,
-                    AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp))::validate,
+                validateServerIdentity = {
+                    val error = ServerIdentityGate(database, account.providerInstanceId,
+                        AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+                    if (error == DomainError.Protocol.ServerIdentityChanged) authorization.reject()
+                    if (authorization.currentToken() == null) DomainError.Protocol.ServerIdentityChanged else error
+                },
             )
             ApplePlaybackDeliveryConfigurationOutcomeDto(true, null)
         } catch (_: IllegalArgumentException) {

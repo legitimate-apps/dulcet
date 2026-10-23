@@ -72,6 +72,7 @@ public class AppleLibraryReaderClient internal constructor(
     private val initiallyForeground: Boolean,
     private val readerDispatcher: CloseableCoroutineDispatcher,
     mainDispatcher: CoroutineDispatcher,
+    private val identityAuthorization: AppleLibraryReaderIdentityAuthorization = AppleLibraryReaderIdentityAuthorization(),
 ) {
     /**
      * One account's reader over the app's database. [databaseName] is the same database the other
@@ -102,11 +103,25 @@ public class AppleLibraryReaderClient internal constructor(
         foreground: Boolean,
         readsDownloads: Boolean,
     ) : this(
-        productionComposer(databaseName, account, readsDownloads),
-        foreground,
-        newLibraryReaderDispatcher(),
-        Dispatchers.Main,
+        databaseName, account, foreground, readsDownloads,
+        AppleLibraryReaderIdentityAuthorization.capture(databaseName, account.providerInstanceId),
     )
+
+    private constructor(
+        databaseName: String, account: AppleLibraryReaderAccount, foreground: Boolean,
+        readsDownloads: Boolean, authorization: AppleLibraryReaderIdentityAuthorization,
+    ) : this(
+        productionComposer(databaseName, account, readsDownloads, authorization), foreground,
+        newLibraryReaderDispatcher(), Dispatchers.Main, authorization,
+    )
+
+    internal val identityAuthorizationToken: Long? get() = identityAuthorization.currentToken()
+
+    /** Revoke on the calling thread, before the confined reader can resume a suspended reply. */
+    public fun rejectServerIdentity() {
+        identityAuthorization.reject()
+        onReader { composition?.session?.reader?.rejectServerIdentity() }
+    }
 
     private val closed = AtomicBoolean(false)
 
@@ -589,6 +604,7 @@ private fun productionComposer(
     databaseName: String,
     account: AppleLibraryReaderAccount,
     readsDownloads: Boolean,
+    authorization: AppleLibraryReaderIdentityAuthorization,
 ): (CoroutineScope, Boolean) -> AppleLibraryReaderComposition = { scope, foreground ->
     var store: DulcetDatabaseStore? = null
     var transport: KtorLibraryEndpointTransport? = null
@@ -620,8 +636,13 @@ private fun productionComposer(
                 downloads = if (readsDownloads) DownloadedTrackSource.fromDownloads(opened.database) else DownloadedTrackSource.None,
                 formPost = false,
                 foreground = foreground,
-                validateServerIdentity = ServerIdentityGate(opened.database, account.providerInstanceId,
-                    AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp))::validate,
+                identityAuthorization = authorization::currentToken,
+                validateServerIdentity = {
+                    val error = ServerIdentityGate(opened.database, account.providerInstanceId,
+                        AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+                    if (error == DomainError.Protocol.ServerIdentityChanged) authorization.reject()
+                    if (authorization.currentToken() == null) DomainError.Protocol.ServerIdentityChanged else error
+                },
             ),
             release = {
                 live.close()

@@ -145,7 +145,19 @@ public object AppleMediaBindingClient {
 
     public fun acceptServerIdentity(databaseName: String, providerInstanceId: String, identity: String): Boolean = try {
         val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
-        try { ServerIdentityStore(opened.database).accept(providerInstanceId, identity); true }
+        try {
+            val store = ServerIdentityStore(opened.database)
+            val replacement = opened.database.transactionWithResult {
+                val replacement = ServerIdentityPolicy.isReplacement(store.read(providerInstanceId), identity)
+                // Retire old callbacks before publishing a different durable lineage. A failed
+                // persistence attempt remains closed until a later explicit accepted negotiation.
+                if (replacement) AppleLibraryReaderIdentityAuthorization.capture(databaseName, providerInstanceId).reject()
+                store.accept(providerInstanceId, identity)
+                replacement
+            }
+            AppleLibraryReaderIdentityAuthorization.accept(databaseName, providerInstanceId, replacement)
+            true
+        }
         finally { opened.close() }
     } catch (_: Throwable) { false }
 
@@ -159,7 +171,9 @@ public object AppleMediaBindingClient {
         val opened = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
         try {
             val store = ServerIdentityStore(opened.database)
-            if (store.read(providerInstanceId).isEmpty()) store.accept(providerInstanceId, identity)
+            opened.database.transaction {
+                if (store.read(providerInstanceId).isEmpty()) store.accept(providerInstanceId, identity)
+            }
             true
         } finally { opened.close() }
     } catch (_: Throwable) { false }
@@ -227,7 +241,10 @@ public class AppleDownloadClient(
     private var closed = false
     private var initializationFailed = false
     private var bindingPurgedDownloadIds = emptySet<DownloadId>()
-    private var identityRejected = false
+    private val identityAuthorization = AppleLibraryReaderIdentityAuthorization.capture(databaseName, account.providerInstanceId)
+    private var identityRejected: Boolean
+        get() = identityAuthorization.currentToken() == null
+        set(value) { if (value) identityAuthorization.reject() }
     internal var identityValidator: (suspend () -> DomainError?)? = null
 
     /** A known replacement stays closed until account negotiation constructs a new client. */

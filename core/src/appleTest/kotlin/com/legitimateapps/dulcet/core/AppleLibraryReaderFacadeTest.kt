@@ -42,6 +42,44 @@ import kotlin.time.TimeSource
 @OptIn(ExperimentalAtomicApi::class)
 class AppleLibraryReaderFacadeTest {
 
+    /** Revoke before dispatching: a blocked reader thread must not retain platform authority. */
+    @Test
+    fun externalIdentityRejectionRevokesAuthorityBeforeTheReaderThreadCanRun() = facadeTest { h ->
+        val c = h.client()
+        c.onReader { }
+        val release = c.holdReader()
+        try {
+            c.client.rejectServerIdentity()
+            assertNull(c.client.identityAuthorizationToken, "external rejection must be synchronous")
+        } finally { release() }
+        assertFalse(c.onReader { h.sessions.last().reader.online })
+        val sent = c.onReader { h.server.log.size }
+        c.client.setOnline(true)
+        c.client.setFavourite("album", albumId(4), true)
+        c.onReader { }
+        pumpFor(100.milliseconds)
+        assertEquals(sent, c.onReader { h.server.log.size }, "reachability and favourites cannot reopen rejected authority")
+    }
+
+    /** Release queues the response first; rejection's atomic token must beat its queued transition. */
+    @Test
+    fun externalIdentityRejectionDropsAHeldReplyBeforeItsQueuedOfflineTransition() = facadeTest { h ->
+        val c = h.client()
+        c.onReader { h.server.base.holdMatching = { it.endpoint == "getAlbumList2" } }
+        val grid = WindowRecorder()
+        c.client.subscribeLibraryWindow(GRID, grid)
+        pumpUntil("the initial publication") { grid.any() }
+        waitOnReader(c, "the held page reply") { c.onReader { h.server.base.heldCount } == 1 }
+        c.onReader {
+            h.server.base.release()
+            c.client.rejectServerIdentity()
+        }
+        waitOnReader(c, "the rejected reader") { c.onReader { !h.sessions.last().reader.online } }
+        pumpFor(100.milliseconds)
+        assertFalse(grid.any { it.freshness.kind == "live" }, "the rejected response was published live")
+        assertTrue(c.onReader { h.sessions.last().reader.cache.localAlbums().isEmpty() }, "the rejected response entered seen-cache")
+    }
+
     // ---- Closed kinds ---------------------------------------------------------------------------------
 
     /**
@@ -1433,6 +1471,7 @@ class AppleLibraryReaderFacadeTest {
             compose: ((CoroutineScope, Boolean) -> AppleLibraryReaderComposition)? = null,
         ): FacadeClient {
             val dispatcher = newLibraryReaderDispatcher()
+            val authorization = AppleLibraryReaderIdentityAuthorization()
             val client = AppleLibraryReaderClient(
                 compose ?: { scope, launchedInForeground ->
                     val store = DulcetDatabaseStore.open(driver)
@@ -1440,6 +1479,7 @@ class AppleLibraryReaderFacadeTest {
                         LibraryReaderSession(
                             store.database, SeenCacheStore(store, clock).bind(BINDING), transport, scope,
                             config, downloads, formPost = false, foreground = launchedInForeground,
+                            identityAuthorization = authorization::currentToken,
                         ).also { sessions += it },
                         search,
                     )
@@ -1447,6 +1487,7 @@ class AppleLibraryReaderFacadeTest {
                 foreground,
                 dispatcher,
                 Dispatchers.Main,
+                authorization,
             )
             return FacadeClient(client, dispatcher).also { clients += it }
         }
