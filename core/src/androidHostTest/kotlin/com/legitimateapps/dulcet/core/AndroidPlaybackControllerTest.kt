@@ -70,12 +70,13 @@ class AndroidPlaybackControllerTest {
         }
         val reads = mutableListOf<String>()
         try {
-            Fixture(accountOwner = owner, serverContact = contact, loadSong = { reads += it; song(it) }).use { f ->
+            Fixture(accountOwner = owner, serverContact = contact, localPlans = { null }, loadSong = { reads += it; song(it) }).use { f ->
                 assertTrue(contact.isOpen(), "Control: the account starts verified and connected")
                 kotlinx.coroutines.runBlocking {
                     assertEquals(DomainError.Transport.Unreachable,
                         AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable })
                 }
+                AndroidPlaybackController.notifyServerAvailable(owner, false)
                 assertTrue(contact.isChosen(), "Control: a transient failure did not withdraw the connection choice")
                 assertFalse(contact.isOpen(), "Control: the completed failed probe closed contact before Play")
                 val tracks = listOf("first", "second").map { AndroidTrack(owner, it, "Title $it", null, "Album", 40_000) }
@@ -94,6 +95,43 @@ class AndroidPlaybackControllerTest {
         } finally { AndroidServerIdentity.requireValidation(owner) }
     }
 
+    @Test fun contactLossDuringTheSelectionsMetadataReadRetainsAndReauthorizesOnlyThatSelection() {
+        val owner = "provider:metadata-reconnect:${java.util.UUID.randomUUID()}"
+        kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+        val contact = object : AndroidServerContact {
+            override fun isChosen() = true
+            override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+            override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+            override suspend fun awaitOpen() { AndroidServerIdentity.verified.first { owner in it } }
+        }
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var reads = 0
+        try {
+            Fixture(accountOwner = owner, serverContact = contact, localPlans = { null }, loadSong = {
+                reads++
+                if (reads == 1) release.await()
+                song(it)
+            }).use { f ->
+                f.controller.playQueue(listOf(AndroidTrack(owner, "first", "First", null, "Album", 40_000)),
+                    0, AndroidQueueSource.Album, "Album", "album")
+                assertEquals(1, reads, "Control: the selection's actual metadata read is suspended")
+                kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                AndroidPlaybackController.notifyServerAvailable(owner, false)
+                assertFalse(contact.isOpen(), "Control: contact closes while that reply is held")
+                release.complete(Unit)
+                settle(5)
+                assertEquals(listOf("first"), f.controller.state.value.queue.map { it.track.rawId })
+                assertTrue(f.controller.state.value.needsReconnect)
+                assertTrue(f.prepared.isEmpty())
+                kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+                settle(5)
+                assertEquals(2, reads, "The withdrawn reply is replaced by one fresh authorized read")
+                assertEquals(listOf("first"), f.prepared.map { it.itemId.rawId })
+                assertTrue(f.probe.requested)
+            }
+        } finally { release.complete(Unit); AndroidServerIdentity.requireValidation(owner) }
+    }
+
     @Test fun aHeldAlbumHonorsPauseStopNewSelectionAndTheIdentityAuthorizationFence() {
         for (action in listOf("pause", "stop", "new-selection", "next", "jump", "replace-server")) {
             val owner = "provider:held-album-$action:${java.util.UUID.randomUUID()}"
@@ -106,8 +144,9 @@ class AndroidPlaybackControllerTest {
             }
             val reads = mutableListOf<String>()
             try {
-                Fixture(accountOwner = owner, serverContact = contact, loadSong = { reads += it; song(it) }).use { f ->
+                Fixture(accountOwner = owner, serverContact = contact, localPlans = { null }, loadSong = { reads += it; song(it) }).use { f ->
                     kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                    AndroidPlaybackController.notifyServerAvailable(owner, false)
                     assertFalse(contact.isOpen(), "Control: $action starts with chosen contact closed")
                     fun select(rawId: String) = f.controller.playQueue(
                         (if (rawId == "first") listOf("first", "second") else listOf(rawId)).map {
@@ -130,6 +169,7 @@ class AndroidPlaybackControllerTest {
                     if (action != "replace-server") kotlinx.coroutines.runBlocking {
                         assertNull(AndroidServerIdentity.validate(owner) { null })
                     }
+                    AndroidPlaybackController.notifyServerAvailable(owner, true)
                     settle(5)
                     when (action) {
                         "pause" -> {

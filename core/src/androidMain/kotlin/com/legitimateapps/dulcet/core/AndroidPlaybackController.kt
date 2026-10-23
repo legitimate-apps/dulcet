@@ -231,7 +231,11 @@ public class AndroidPlaybackController internal constructor(
     private var networkAvailable = true
     private val queue = PlaybackQueueController(PersistentQueueStore(store.database), resumes,
         PlaybackIdentitySource { "$it:${UUID.randomUUID()}" }, canPlayItem = { item ->
-            val remote = networkAvailable && (serverAvailable || localPlans == null)
+            // An explicit selection may be retained while this chosen connection revalidates.
+            // This admits queue identity only; start() still gates every remote request.
+            val reconnecting = !contactOpen() && serverContact?.isChosen() == true &&
+                AndroidServerIdentity.authorizationEpoch(account.providerInstanceId) != null
+            val remote = networkAvailable && (serverAvailable || localPlans == null || reconnecting)
             val local = !remote && localPlans?.isLocallyPlayable(item.rawId) == true
             remote || local
         })
@@ -721,6 +725,7 @@ public class AndroidPlaybackController internal constructor(
             } catch (cancelled: CancellationException) {
                 android.util.Log.d("DulcetPlayQueue", "cancelled current=${generation == requestGeneration} contact=${contactOpen()}")
                 if (generation == requestGeneration && !closed && !contactOpen()) {
+                    if (coroutineContext.isActive && holdSelectionForContact()) return@launch
                     dropHeldAdditions(); wantsPlay = false; needsReconnect = true; publish()
                 }
                 throw cancelled
@@ -1373,6 +1378,10 @@ public class AndroidPlaybackController internal constructor(
                         }
                     } while (!contactOpen())
                     needsReconnect = false
+                    // Identity opens before the reader publishes its later availability hint.
+                    // The held selection may prepare once against that observed outage, like
+                    // Try Again, but never OS-offline. Pause still prepares without sound.
+                    remoteRetryAttempt = directive.attemptId
                     android.util.Log.d("DulcetPlayQueue", "resumed contact-open generation=$generation")
                     return true
                 }
@@ -1444,7 +1453,14 @@ public class AndroidPlaybackController internal constructor(
                     }
                 }
             } catch (cancelled: CancellationException) {
-                if (generation == requestGeneration && !closed) holdRemoteStartIfContactClosed(directive)
+                if (generation == requestGeneration && !closed) {
+                    if (coroutineContext.isActive && !contactOpen() && serverContact?.isChosen() == true &&
+                        authorization != null && authorization == AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) {
+                        if (authorized()) start(directive, authorization = authorization)
+                        return@launch
+                    }
+                    holdRemoteStartIfContactClosed(directive)
+                }
                 throw cancelled
             }
             catch (error: AndroidPlaybackIOException) { failBeforeStart(directive, error.error, generation) }
