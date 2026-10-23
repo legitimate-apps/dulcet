@@ -614,6 +614,11 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     }
 
     func connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState() async throws {
+        // Keep the production HTTP/cache quarantine controls in this existing CI-selected host proof.
+        let artworkIdentity = DulcetMacArtworkIdentityAppTest()
+        try await artworkIdentity.testRejectedArtworkReplyCannotPopulateSavedAccountsDiskOrUI()
+        try await artworkIdentity.testSameIdentityNegotiationKeepsAcceptedArtworkReplyAndCachedCover()
+        print("ARTWORK IDENTITY PASS rejected=disk+ui-blocked cached-cover=retained matching-probe=accepted")
         let baseURL = try XCTUnwrap(
             ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],
             "apple-ci must supply the live conformance fixture URL"
