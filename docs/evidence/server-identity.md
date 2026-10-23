@@ -5,6 +5,43 @@ local random account ID, the latter is authenticated product type and, for an ad
 server, its origin's discovery instance ID. Software versions do not enter lineage. See spec §28
 for trust, migration and plain OpenSubsonic limits.
 
+## Android saved-account reconnect recovery (#355, 2026-10-23)
+
+OBSERVED baseline: production code at `26655b9b`, with the tests-only commit `c18d6207`,
+reproduces recovery failure through `LibrarySession.connectSavedAccount`, the handler installed on
+both Android Reconnect controls. `SavedIdentityReconnectTest` and `TvSavedIdentityReconnectTest`
+each execute two cases: the original-server recovery case fails with `Failed` instead of `Online`,
+and the replacement-still-present case passes. Both XML reports contain two cases, one failure,
+zero errors and zero skips. The initial saved server authenticates before each case. The server
+then changes product at the same loopback URL, the real reader rejects it, and a favourite remains
+in the durable outbox while the platform still reports a network. The recovery failure occurs
+after the fixture returns the saved product and the test calls the Reconnect handler again.
+
+The negative replacement controls already pass on main. They are regression controls, not claimed
+as red-before evidence. These host tests call the actual shared shell action and use production
+HTTP negotiation, reader and SQLite outbox. They do not drive rendered Compose controls or claim
+an emulator proof. Only the loopback server is a fixture; no LIVE fixture changes are involved.
+
+OBSERVED Linux baseline `39956617865`: `AndroidServerIdentityRaceTest` executes six cases,
+with four failures, zero errors and zero skips. Both newly added recovery controls fail before
+recovery can complete: `reconnectRecoveryCannotAdoptAReadStartedBeforeRejection` receives
+`ReaderConnectionOutcome.Failed` instead of `Read`, and
+`olderNegotiationsCannotRevokeOrReopenTheRecoveredAuthorization` receives
+`ServerIdentityChanged` instead of null. Two existing cases now require the specified fresh
+matching negotiation to succeed; their earlier assertions still reject older replies, but their
+new recovery assertions fail on main. The other two original controls pass.
+
+The fix clears rejection only in the existing current-generation successful-validation branch.
+Every production caller supplies `ServerIdentityGate.validate`, which authenticates and compares
+the durable saved lineage. Clearing rejection advances the authorization epoch. The epoch retired
+on rejection is never restored; a held reader request still fails its captured generation/token
+check after transport. Older matching and mismatching identity negotiations return `Cancelled`
+after recovery without changing verified contact or its token. An ordinary matching background
+probe does not advance the token. The held-reader and held-negotiation cases exercise those
+boundaries with the actual Android authorization object, production shared reader, and controlled
+transport. The negative replacement integration controls retain the old pending favourite and
+send no `star` while a new negotiation continues to reject the replacement.
+
 ## Lasting rejection and replies already in flight
 
 OBSERVED on published revision `4a946a68`: three review regressions fail before production changes.

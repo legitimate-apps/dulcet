@@ -7916,6 +7916,17 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-23 - Android saved-account reconnect after identity rejection (#355).**
+A fresh authenticated negotiation validating the saved server identity clears Android's account
+rejection, including through the existing phone and TV Reconnect action. Pending changes then use
+the ordinary reader reconnect flush. A replacement still fails negotiation and retains the old
+account's pending changes without sending its IDs. Reopening advances the account authorization
+lifetime; it never restores the token used before rejection. Only the latest identity negotiation
+may publish its result, so an older matching or mismatching reply cannot reopen or revoke the
+recovered account. Reader replies still check both their captured reader generation and account
+authorization after transport. This implements the existing lasting-fence contract, with no
+change to saved lineage, counted replacement consent, or the version-upgrade rule.
+
 **2026-10-22 — Serialize Android media removal with download retirement.**
 Account removal and the launch sweep use the download controllers' shared database executor for
 file deletion and binding revocation. They cannot revoke a binding between a queued download

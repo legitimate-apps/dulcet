@@ -4,7 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 
-/** Records only a server accepted on the account form, after any replacement consent. */
+/** Authorizes saved server identity after negotiation or account-form replacement consent. */
 public object AndroidServerIdentity {
     private val mutableVerified = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
     public val verified: kotlinx.coroutines.flow.StateFlow<Set<String>> = mutableVerified
@@ -65,8 +65,13 @@ public object AndroidServerIdentity {
                         retireAuthorization(id)
                         notifyRejected = true
                     }
-                    if (error == null && id !in rejected) mutableVerified.update { it + id }
-                    else mutableVerified.update { it - id }
+                    if (error == null) {
+                        // The current probe authenticated saved lineage. Reopen with a new lifetime,
+                        // never the token captured by work started before rejection. Older probes
+                        // cannot reach this branch; ordinary matching probes keep accepted work valid.
+                        if (rejected.remove(id)) retireAuthorization(id)
+                        mutableVerified.update { it + id }
+                    } else mutableVerified.update { it - id }
                     if (id in rejected) DomainError.Protocol.ServerIdentityChanged else error
                 }
             }

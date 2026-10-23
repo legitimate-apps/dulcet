@@ -2034,6 +2034,30 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidDownloadControllerTest/queuedStreamCacheFinishCannotCrossRejectionAndAcceptance"
+            },
+            {
+              "observes": "OBSERVED Android host production Reconnect handler, authenticated loopback negotiation and durable outbox: after rejecting a replacement, the original saved identity reopens contact and acknowledges the retained favourite. This is handler integration evidence, not a rendered or device UI proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedIdentityReconnectTest/originalServerReturnsAndReconnectReopensContactAndFlushesPendingChanges"
+            },
+            {
+              "observes": "OBSERVED Android host production Reconnect handler: a fresh negotiation while the replacement remains keeps contact rejected and the favourite pending, with no star request to the replacement.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedIdentityReconnectTest/replacementRemainsAndReconnectKeepsContactRejectedAndChangesPending"
+            },
+            {
+              "observes": "OBSERVED Android host: saved-identity reconnect recovers authorization without adopting a held reader reply started before rejection.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityRaceTest/reconnectRecoveryCannotAdoptAReadStartedBeforeRejection"
+            },
+            {
+              "observes": "OBSERVED Android host: an older matching or mismatching identity negotiation cannot override recovered authorization.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityRaceTest/olderNegotiationsCannotRevokeOrReopenTheRecoveredAuthorization"
             }
           ],
           "promotion_condition": {
@@ -2225,6 +2249,30 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidDownloadControllerTest/queuedStreamCacheFinishCannotCrossRejectionAndAcceptance"
+            },
+            {
+              "observes": "OBSERVED Android host production Reconnect handler, authenticated loopback negotiation and durable outbox: after rejecting a replacement, the original saved identity reopens contact and acknowledges the retained favourite. This is handler integration evidence, not a rendered or device UI proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvSavedIdentityReconnectTest/originalServerReturnsAndReconnectReopensContactAndFlushesPendingChanges"
+            },
+            {
+              "observes": "OBSERVED Android host production Reconnect handler: a fresh negotiation while the replacement remains keeps contact rejected and the favourite pending, with no star request to the replacement.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvSavedIdentityReconnectTest/replacementRemainsAndReconnectKeepsContactRejectedAndChangesPending"
+            },
+            {
+              "observes": "OBSERVED Android host: saved-identity reconnect recovers authorization without adopting a held reader reply started before rejection.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityRaceTest/reconnectRecoveryCannotAdoptAReadStartedBeforeRejection"
+            },
+            {
+              "observes": "OBSERVED Android host: an older matching or mismatching identity negotiation cannot override recovered authorization.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityRaceTest/olderNegotiationsCannotRevokeOrReopenTheRecoveredAuthorization"
             }
           ],
           "promotion_condition": {
