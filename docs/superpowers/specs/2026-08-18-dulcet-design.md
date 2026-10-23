@@ -7927,6 +7927,9 @@ contact. The selected queue and a connection explanation appear immediately. Pla
 the foreground reader's existing reconnect, without initiating network retries or changing its
 backoff or request limits, and starts once the same server is verified again while the OS network remains available. Pause withdraws
 sound, Stop cancels the wait, and another selection or queue position supersedes the old one.
+The connection explanation clears on Connect/Reconnect, Stop, downloaded playback, or an
+authorized remote start, including automatic recovery and a superseding selection that starts
+before the old contact waiter returns. It cannot remain over that playing selection.
 An identity rejection or explicit replacement consent cannot authorize the old selection.
 A saved account with no connection choice still sends nothing and follows §13.1.
 

@@ -67,8 +67,9 @@ public data class AndroidPlaybackState(
     val droppedAdditions: AndroidDroppedAdditions? = null,
     /**
      * The selected song needs server contact that is not open (spec §13.1). The surface explains
-     * the wait and offers Reconnect; a chosen connection's held selection follows automatic recovery. Cleared once the
-     * person connects, stops, or a downloaded song plays.
+     * the wait and offers Reconnect; a chosen connection's held selection follows automatic recovery.
+     * Cleared by Connect/Reconnect, Stop, downloaded playback, or an authorized remote start,
+     * including automatic recovery of the held selection and a new selection that supersedes it.
      */
     val needsReconnect: Boolean = false,
     val autoplayEnabled: Boolean = true,
@@ -1365,10 +1366,12 @@ public class AndroidPlaybackController internal constructor(
         startJob = scope.launch {
             suspend fun authorized(): Boolean {
                 if (authorizesRemoteReply(authorization)) {
+                    // An authorized start ends the explanation, even if a new selection already
+                    // superseded the held token before its contact waiter could return.
+                    needsReconnect = false
                     // Contact may have reopened during asynchronous local-file acquisition.
                     if (heldQueueAuthorization != null && heldQueueAuthorization == authorization) {
                         heldQueueAuthorization = null
-                        needsReconnect = false
                         remoteRetryAttempt = directive.attemptId
                     }
                     return true
