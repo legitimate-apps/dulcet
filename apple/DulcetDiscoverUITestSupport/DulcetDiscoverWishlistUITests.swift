@@ -400,8 +400,15 @@ import UIKit
         activate(savedA)
         let consent = app.buttons["dulcet.account.confirm-replacement"].firstMatch
         XCTAssertTrue(consent.waitForExistence(timeout: 30), "Replacement requires consent")
-        activate(app.buttons["Cancel"].firstMatch)
-        XCTAssertFalse(consent.exists)
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.waitForExistence(timeout: 2) { activate(cancel) }
+        else {
+            // The adaptive confirmation popover on Xcode 27 omits the cancel action from AX.
+            // Escape is native cancellation and cannot activate its destructive action.
+            app.typeKey(.escape, modifierFlags: [])
+        }
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: consent)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed)
         wishlist(); XCTAssertFalse(app.staticTexts["Fixture Song 01"].exists)
         print("DISCOVER_ACCOUNT savedAccountSwitch=true otherOwnerSentinel=true replacementConsentCancelled=true oldWishAbsent=true")
     }
