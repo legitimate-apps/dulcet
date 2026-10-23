@@ -69,11 +69,12 @@ elif name=='sim-lease':
     if sys.argv[1]=='create':(root/'device-lease').write_text('held');print('CONTROL-UDID')
     else:(root/'device-lease').unlink()
 elif name=='git':print('control-head')
-elif name=='xcodebuild':
-    (root/'xcode-pid').write_text(str(os.getpid()));time.sleep(180)
+elif name=='xcodebuild':time.sleep(180)
 elif sys.argv[1:4]==['simctl','list','devices']:
     print(json.dumps({'devices':{'control-runtime':[{'udid':'CONTROL-UDID','name':'control-phone'}]}}))
 elif sys.argv[1:3]==['simctl','shutdown']:(root/'shutdown').write_text('CONTROL-UDID')
+elif sys.argv[1:3]==['simctl','bootstatus']:
+    (root/'boot-pid').write_text(str(os.getpid()));time.sleep(180)
 elif sys.argv[1:3]==['simctl','spawn']:time.sleep(180)
 """)
             worker.chmod(0o755)
@@ -85,9 +86,9 @@ elif sys.argv[1:3]==['simctl','spawn']:time.sleep(180)
                 runner=subprocess.Popen([sys.executable,str(HERE/'run-discover-wishlist-proofs'),'iphone'],env=env,stdout=log,stderr=subprocess.STDOUT)
                 try:
                     deadline=time.monotonic()+15
-                    while not (root/'xcode-pid').exists() and runner.poll() is None and time.monotonic()<deadline:time.sleep(.05)
-                    self.assertTrue((root/'xcode-pid').exists(),(root/'runner.log').read_text())
-                    child=int((root/'xcode-pid').read_text())
+                    while not (root/'boot-pid').exists() and runner.poll() is None and time.monotonic()<deadline:time.sleep(.05)
+                    self.assertTrue((root/'boot-pid').exists(),(root/'runner.log').read_text())
+                    child=int((root/'boot-pid').read_text())
                     runner.terminate();runner.wait(timeout=30)
                     self.assertEqual(143,runner.returncode,(root/'runner.log').read_text())
                     self.assertEqual('CONTROL-UDID',(root/'shutdown').read_text())

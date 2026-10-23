@@ -47,8 +47,14 @@ Apple runner options are environment variables: `DULCET_DISCOVER_PROOF_RUNTIME` 
 CoreSimulator runtime identifier; `DULCET_DISCOVER_PROOF_UDID` uses a caller-owned reusable lease.
 A borrowed device is shut down after each run and its lease remains the caller's responsibility.
 Without a supplied UDID, the runner creates and releases its own device. The runner records the
-actual runtime/device in `device.json` and samples launchd_sim children/RSS every ten seconds.
-More than 120 children or 3 GiB stops the run, retaining `simulator-balloon-top20.txt`.
+actual runtime/device in `device.json`. Every 15 seconds it records launchd_sim children/summed
+RSS, live swap-out rate, 1-minute load, boot-disk free space and memory-free percentage.
+More than 200 children or 12 GiB summed RSS, disk below 6 GiB or memory free below 10% stops
+immediately. Swap-outs at least 200 pages/s or load above 120 stop after three consecutive
+samples. `host-peaks.json` retains maxima and free-space minima; a stop also retains the top
+20 processes and `health-stop.json`. Summed RSS includes shared pages repeatedly.
+The runner boots its leased device first, then waits for a quiet minute without child-count
+growth before starting xcodebuild. TERM/parent-loss cleanup includes this boot phase.
 `DULCET_DISCOVER_HOST_GATE=/absolute/path/to/mac-settled` runs that host gate with `--wait 3600`
 before lease acquisition, simulator boot and xcodebuild. Local callers also gate before starting
 the fixture, and run only one native job/fixture stack at a time.

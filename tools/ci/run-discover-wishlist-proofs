@@ -80,6 +80,8 @@ def apple_proof(mode):
     lease=None;udid=None;owned_device=False;navigation_log=None;navigation_stream=None
     monitor_done=threading.Event()
     navigation_ready=threading.Event()
+    boot_settled=threading.Event()
+    native_started=threading.Event()
     def host_gate():
         gate=os.environ.get("DULCET_DISCOVER_HOST_GATE")
         if gate:run([gate,"--wait","3600"])
@@ -108,23 +110,45 @@ def apple_proof(mode):
             host_gate()
             def monitor():
                 import signal
-                while not monitor_done.wait(10):
+                from discover_simulator_health import HostSampler, SimulatorHealth
+                sampler=HostSampler(udid)
+                health=SimulatorHealth()
+                errors=0
+                while not monitor_done.is_set():
                     try:
-                        rows=subprocess.check_output(['ps','-Ao','pid=,ppid=,rss=,command='],text=True,timeout=8).splitlines()
-                        parsed=[line.strip().split(None,3) for line in rows]
-                        parent=next((int(p) for p,pp,rss,cmd in parsed if 'launchd_sim' in cmd and udid in cmd),None)
-                        if parent:navigation_ready.set()
-                        children=[row for row in parsed if parent and row[1]==str(parent)]
-                        receipt=dict(time=__import__('time').time(),launchd=parent,children=len(children),rssKB=sum(int(row[2]) for row in children))
+                        receipt,children=sampler.sample()
+                        errors=0
+                        reason=health.observe(receipt)
+                        receipt.update(stopReason=reason,settled=health.settled,
+                                       phase='native' if native_started.is_set() else 'boot')
+                        if receipt['launchd']:navigation_ready.set()
                         with (output/'simulator-health.jsonl').open('a') as log:log.write(json.dumps(receipt)+'\n')
-                        if receipt['children']>120 or receipt['rssKB']>3*1024*1024:
+                        (output/'host-peaks.json').write_text(json.dumps(health.peaks,indent=2))
+                        if not native_started.is_set():
+                            (output/'boot-peaks.json').write_text(json.dumps(health.peaks,indent=2))
+                        if reason:
                             (output/'simulator-balloon-top20.txt').write_text('\n'.join(' '.join(row) for row in sorted(children,key=lambda r:int(r[2]),reverse=True)[:20]))
+                            (output/'health-stop.json').write_text(json.dumps(receipt,indent=2))
                             os.kill(os.getpid(),signal.SIGTERM)
                             return
-                    except (subprocess.SubprocessError,StopIteration,ValueError):pass
+                        if health.settled:boot_settled.set()
+                        else:boot_settled.clear()
+                    except (subprocess.SubprocessError,ValueError,TypeError) as error:
+                        errors+=1
+                        with (output/'simulator-health-errors.log').open('a') as log:log.write(repr(error)+'\n')
+                        if errors>=3:
+                            os.kill(os.getpid(),signal.SIGTERM)
+                            return
+                    if monitor_done.wait(15):return
             threading.Thread(target=monitor,daemon=True).start()
-            # xcodebuild boots this exact leased device after the final host gate. Keeping
-            # it Shutdown while building avoids an idle simulator during compilation.
+            # First-boot migration settles before compilation rather than competing with it.
+            run(['xcrun','simctl','boot',udid])
+            with (output/'bootstatus.log').open('w') as log:
+                run(['xcrun','simctl','bootstatus',udid,'-b'],stdout=log,stderr=subprocess.STDOUT)
+            import time
+            deadline=time.monotonic()+900
+            while not boot_settled.wait(1):
+                if time.monotonic()>=deadline:raise RuntimeError('simulator did not settle for a quiet minute')
         if udid:
             navigation_log=(output/'navigation-unified.log').open('w')
         target='DulcetMacTests' if mode=='macos' else 'DulcetiOSUITests'
@@ -151,6 +175,7 @@ def apple_proof(mode):
         import signal
         completed=None;completed_at=None;interrupted=False
         with (output/'xcodebuild.log').open('w') as log:
+            native_started.set()
             process=owner.spawn(command,cwd=repo,env=env,stdout=log,stderr=subprocess.STDOUT)
             next_navigation_attempt=0
             while process.poll() is None:
