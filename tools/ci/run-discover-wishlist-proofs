@@ -74,7 +74,7 @@ def apple_proof(mode):
                 self.send_response(400); self.end_headers()
     capture_server=ThreadingHTTPServer(('127.0.0.1',0),CaptureReceiver)
     threading.Thread(target=capture_server.serve_forever,daemon=True).start()
-    lease=None;udid=None
+    lease=None;udid=None;navigation_log=None;navigation_stream=None
     def run(argv,**kw):
         try:return subprocess.run(argv,check=True,text=True,**kw)
         except subprocess.CalledProcessError as error:
@@ -90,7 +90,10 @@ def apple_proof(mode):
             if not udid:raise RuntimeError('sim-lease returned no device')
             run(['xcrun','simctl','boot',udid],stdout=subprocess.DEVNULL)
             run(['xcrun','simctl','bootstatus',udid,'-b'],stdout=subprocess.DEVNULL)
-        target='DulcetDiscoverMacUITests' if mode=='macos' else 'DulcetiOSUITests'
+        if udid:
+            navigation_log=(output/'navigation-unified.log').open('w')
+            navigation_stream=subprocess.Popen(['xcrun','simctl','spawn',udid,'log','stream','--style','compact','--level','debug','--predicate','subsystem == "com.dulcet.navigation" OR eventMessage CONTAINS "navigationDestination" OR eventMessage CONTAINS "NavigationLink is presenting"'],stdout=navigation_log,stderr=subprocess.STDOUT)
+        target='DulcetDiscoverMacUITests'  if mode=='macos' else 'DulcetiOSUITests'
         suite={'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetDiscoverWishlistMacUITests'}[mode]
         # Test products must live on the internal volume: Xcode 27 silently executes zero
         # XCUITests from external DerivedData. Result bundles/captures stay with the report.
@@ -152,6 +155,11 @@ def apple_proof(mode):
         return code or (1 if counts.get('failedTests') or counts.get('skippedTests') else 0)
     finally:
         capture_server.shutdown();capture_server.server_close()
+        if navigation_stream:
+            navigation_stream.terminate()
+            try:navigation_stream.wait(timeout=10)
+            except subprocess.TimeoutExpired:navigation_stream.kill();navigation_stream.wait()
+        if navigation_log:navigation_log.close()
         if udid:subprocess.run(['sim-lease','release','--force',udid],check=False)
         if lease:subprocess.run(['leg-lease','release','--session',session],check=False)
 

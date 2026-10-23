@@ -643,9 +643,13 @@ struct DulcetDestinationStack: View {
             get: { store.readerPath(for: stackDestination).map(StackRoute.reader) },
             set: { path in
                 // A departing Library stack must not pop the page after Search takes its place.
+                store.navigationBindingReceipt("DulcetDestinationStack.readerPath[\(stackDestination)]", oldPath: String(describing: store.readerPath(for: stackDestination)), newPath: String(describing: path), outcome: store.selectedDestination == stackDestination ? "received" : "guard-dropped:destination")
                 guard store.selectedDestination == stackDestination else { return }
                 let routes: [DulcetReaderRoute] = path.compactMap { if case let .reader(route) = $0 { route } else { nil } }
-                guard routes.count == path.count else { return }
+                guard routes.count == path.count else {
+                    store.navigationBindingReceipt("DulcetDestinationStack.readerPath", oldPath: String(describing: store.readerPath), newPath: String(describing: path), outcome: "guard-dropped:route-type")
+                    return
+                }
                 store.popReader(to: routes)
             }
         )
@@ -694,8 +698,12 @@ struct DulcetDestinationStack: View {
         return Binding(
             get: { path.wrappedValue.map(StackRoute.library) },
             set: { updated in
+                store.navigationBindingReceipt("DulcetDestinationStack.snapshotPath[\(destination)]", oldPath: String(describing: path.wrappedValue), newPath: String(describing: updated), outcome: "received")
                 let routes: [DulcetLibraryRoute] = updated.compactMap { if case let .library(route) = $0 { route } else { nil } }
-                guard routes.count == updated.count else { return }
+                guard routes.count == updated.count else {
+                    store.navigationBindingReceipt("DulcetDestinationStack.snapshotPath", oldPath: String(describing: path.wrappedValue), newPath: String(describing: updated), outcome: "guard-dropped:route-type")
+                    return
+                }
                 path.wrappedValue = routes
             }
         )
@@ -715,7 +723,10 @@ struct DulcetDestinationStack: View {
                 // The back button and the edge swipe pop. Nothing pushes through this setter:
                 // pages are pushed by the store selecting them.
                 guard stackDestination == .library,
-                      store.selectedDestination == .library else { return }
+                      store.selectedDestination == .library else {
+                    store.navigationBindingReceipt("DulcetDestinationStack.snapshotPath.libraryPath[\(stackDestination)]", oldPath: String(describing: store.libraryPath), newPath: String(describing: path), outcome: "guard-dropped:destination")
+                    return
+                }
                 store.popLibrary(to: path)
             }
         )

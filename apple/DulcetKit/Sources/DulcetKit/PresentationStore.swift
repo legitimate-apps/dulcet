@@ -176,7 +176,9 @@ public final class DulcetPresentationStore {
     public func cancelServerReplacement() { (source as? any DulcetSavedServerManaging)?.cancelServerReplacement() }
 
     public private(set) var snapshot: DulcetSnapshot
-    public private(set) var selectedDestination: DulcetSidebarDestination
+    public private(set) var selectedDestination: DulcetSidebarDestination {
+        didSet { navigationWrite(oldDestination: oldValue) }
+    }
     /// Set by the search command and cleared by the search field once it has taken focus. A
     /// request, not a focus state: the field may not exist yet when the command arrives.
     public private(set) var searchFocusRequested = false
@@ -192,6 +194,9 @@ public final class DulcetPresentationStore {
     @ObservationIgnored var discoverLibrarySearch: (any DulcetLibrarySearchSubscribing)?
     public private(set) var myLibrarySection: DulcetMyLibrarySection = .recent
     public func selectMyLibrarySection(_ section: DulcetMyLibrarySection) {
+        let previousWriter = navigationWriter
+        navigationWriter = "selectMyLibrarySection"
+        defer { navigationWriter = previousWriter }
         navigate(to: .library)
         readerPath = []
         readerReturn = nil
@@ -199,8 +204,13 @@ public final class DulcetPresentationStore {
         myLibrarySection = section
     }
     private var requestedBrowse = false
-    private var savedReaderPaths: [DulcetSidebarDestination: [DulcetReaderRoute]] = [:]
+    private var savedReaderPaths: [DulcetSidebarDestination: [DulcetReaderRoute]] = [:] {
+        didSet { navigationWrite(oldSavedPaths: String(describing: oldValue)) }
+    }
     public func resetReaderNavigation() {
+        let previousWriter = navigationWriter
+        navigationWriter = "resetReaderNavigation"
+        defer { navigationWriter = previousWriter }
         myLibrarySection = .recent
         librarySection = .home
         readerPath = []
@@ -215,7 +225,26 @@ public final class DulcetPresentationStore {
     public func destinations(_ base: [DulcetSidebarDestination]) -> [DulcetSidebarDestination] {
         base.flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
     }
-    public private(set) var readerPath: [DulcetReaderRoute] = []
+    public private(set) var readerPath: [DulcetReaderRoute] = [] {
+        didSet { navigationWrite(oldPath: String(describing: oldValue)) }
+    }
+    @ObservationIgnored private var navigationWriter = "initialization"
+
+    private func navigationWrite(oldDestination: DulcetSidebarDestination? = nil,
+                                 oldPath: String? = nil, oldSavedPaths: String? = nil) {
+        DulcetUIProofMarkers.navigation(writer: navigationWriter,
+            oldDestination: String(describing: oldDestination ?? selectedDestination),
+            newDestination: String(describing: selectedDestination),
+            oldPath: oldPath ?? String(describing: readerPath), newPath: String(describing: readerPath),
+            detail: "savedOld=\(oldSavedPaths ?? String(describing: savedReaderPaths));savedNew=\(savedReaderPaths)")
+    }
+
+    func navigationBindingReceipt(_ writer: String, oldPath: String, newPath: String, outcome: String) {
+        DulcetUIProofMarkers.navigation(writer: writer,
+            oldDestination: String(describing: selectedDestination), newDestination: String(describing: selectedDestination),
+            oldPath: oldPath, newPath: newPath, detail: outcome)
+    }
+
     /// Hidden tabs keep their own path, so switching away does not pop their destination views.
     func readerPath(for destination: DulcetSidebarDestination) -> [DulcetReaderRoute] {
         guard destination == .listenNow || destination == .library || destination == .browse else { return [] }
@@ -344,6 +373,9 @@ public final class DulcetPresentationStore {
 
     /// Shows a destination's root: Library's grid, whatever was open on top of it.
     public func selectDestination(_ destination: DulcetSidebarDestination) {
+        let previousWriter = navigationWriter
+        navigationWriter = "selectDestination"
+        defer { navigationWriter = previousWriter }
         guard !isApplyingSourceSnapshot else { return }
         let destination = destination == .browse && !myLibraryAvailable ? .library : destination
         if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
@@ -360,6 +392,9 @@ public final class DulcetPresentationStore {
     /// choosing the destination already showing returns it to its root, as tapping the current
     /// tab does.
     public func navigate(to destination: DulcetSidebarDestination) {
+        let previousWriter = navigationWriter
+        navigationWriter = "navigate(to:)"
+        defer { navigationWriter = previousWriter }
         guard !isApplyingSourceSnapshot else { return }
         if (destination == .listenNow || destination == .library || destination == .browse), readerOwnsLibrary {
             // The reader's pages are the store's own; the source is told only the destination.
@@ -589,6 +624,9 @@ public final class DulcetPresentationStore {
     /// Opens a page from anywhere: from Library it is pushed; from elsewhere -- a search result,
     /// the player -- Library comes forward showing it on top of the section it was left on.
     public func showReaderPage(_ route: DulcetReaderRoute) {
+        let previousWriter = navigationWriter
+        navigationWriter = "showReaderPage"
+        defer { navigationWriter = previousWriter }
         readerReturn = nil
         readerArrival = route
         if isReaderDestination {
@@ -601,6 +639,9 @@ public final class DulcetPresentationStore {
 
     /// Pushes a page on top of the Library stack.
     public func pushReaderPage(_ route: DulcetReaderRoute) {
+        let previousWriter = navigationWriter
+        navigationWriter = "pushReaderPage"
+        defer { navigationWriter = previousWriter }
         guard isReaderDestination else {
             showReaderPage(route)
             return
@@ -612,6 +653,9 @@ public final class DulcetPresentationStore {
 
     /// The back button or the edge swipe left the stack at `path`, a prefix of the one it held.
     public func popReader(to path: [DulcetReaderRoute]) {
+        let previousWriter = navigationWriter
+        navigationWriter = "popReader"
+        defer { navigationWriter = previousWriter }
         guard path.count < readerPath.count,
               Array(readerPath.prefix(path.count)) == path else { return }
         readerReturn = DulcetReaderReturn(page: path.last, opened: readerPath[path.count])
@@ -688,6 +732,9 @@ public final class DulcetPresentationStore {
 
     /// A sidebar or TV-bar section: Library, at that section's root.
     public func selectLibrarySection(_ section: DulcetLibrarySection) {
+        let previousWriter = navigationWriter
+        navigationWriter = "selectLibrarySection"
+        defer { navigationWriter = previousWriter }
         let destination: DulcetSidebarDestination = myLibraryAvailable ? .browse : .library
         if selectedDestination != destination {
             selectDestination(destination)
@@ -771,6 +818,9 @@ public final class DulcetPresentationStore {
     }
 
     private func receive(_ snapshot: DulcetSnapshot) {
+        let previousWriter = navigationWriter
+        navigationWriter = "receive"
+        defer { navigationWriter = previousWriter }
         isApplyingSourceSnapshot = true
         followLibraryPage(in: snapshot, arrivingFrom: self.snapshot.selectedDestination)
         if !snapshot.playbackFailed { dismissedPlaybackFailure = nil }
