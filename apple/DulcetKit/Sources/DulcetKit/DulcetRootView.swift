@@ -678,12 +678,8 @@ struct DulcetDestinationStack: View {
                     store.navigationBindingReceipt("DulcetDestinationStack.readerPath", oldPath: String(describing: store.readerPath), newPath: String(describing: path), outcome: "guard-dropped:route-type")
                     return
                 }
-                let acceptedPop = readerPresentation.wrote(routes)
-                if acceptedPop { store.popReader(to: routes) }
-                else {
-                    store.navigationBindingReceipt("DulcetDestinationStack.readerPath", oldPath: String(describing: store.readerPath),
-                                                   newPath: String(describing: routes), outcome: "guard-dropped:unpresented-route")
-                }
+                _ = readerPresentation.wrote(routes)
+                store.popReaderFromStack(to: routes, presentedRoutes: readerPresentation.presentedRoutes)
             }
         )
     }

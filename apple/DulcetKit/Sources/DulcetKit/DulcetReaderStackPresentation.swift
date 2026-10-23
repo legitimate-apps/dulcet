@@ -10,7 +10,7 @@ struct DulcetReaderStackPresentation<Route: Hashable, Context: Hashable> {
     private(set) var path: [Route] = []
     private(set) var pendingReplay: Request?
     private var replayed = false
-    private var presented: Set<Route> = []
+    private(set) var presentedRoutes: Set<Route> = []
 
     mutating func request(_ updated: Request) {
         guard request != updated else { return }
@@ -18,17 +18,17 @@ struct DulcetReaderStackPresentation<Route: Hashable, Context: Hashable> {
         path = updated.path
         pendingReplay = nil
         replayed = false
-        presented = []
+        presentedRoutes = []
     }
 
-    mutating func appeared(_ route: Route) { presented.insert(route) }
+    mutating func appeared(_ route: Route) { presentedRoutes.insert(route) }
 
     /// Returns true only for a pop from a page this presentation has displayed.
     mutating func wrote(_ updated: [Route]) -> Bool {
         path = updated
         guard let request, updated.count < request.path.count,
               Array(request.path.prefix(updated.count)) == updated else { return false }
-        if request.path.last.map(presented.contains) == true { return true }
+        if request.path.last.map(presentedRoutes.contains) == true { return true }
         if !replayed { pendingReplay = request }
         return false
     }
