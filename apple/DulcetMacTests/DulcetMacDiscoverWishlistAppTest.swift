@@ -249,8 +249,16 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         XCTAssertEqual(secondLate?["removed"] as? Bool, true)
         let survivingRows = try await awaitWish(title, count: 1)
         XCTAssertEqual(survivingRows.first?["id"] as? String, generationB)
+        try await wishlist(app)
+        let arrivedWish = try await row(title, in: app)
+        let removeArrived = try XCTUnwrap(app.childElement(identifiedBy: "wishlist.remove", in: arrivedWish))
+        try app.press(removeArrived, named: "Remove arrived wish")
+        _ = try await awaitWish(title, count: 0)
+        // No intervening scan may restore an item incorrectly removed with the wish.
         let library = try await rest("getDulcetLibrary", ["type": "song", "size": "100"])["dulcetLibrary"] as? [String: Any]
         XCTAssertTrue((library?["song"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == localID })
+        _ = try await request(required("CAPTURE_UPLOAD_URL"), body: ["ack": ["scenario": "fulfilled-wish-removed", "wishId": generationB, "wishAbsent": true, "retainedLibraryItem": localID]])
+        try await capture("After-Arrived-Remove", app)
     }
 
     func testBusyStaleAndNavidromeControl() async throws {
