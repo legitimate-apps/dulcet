@@ -80,8 +80,8 @@ public actor DulcetArtworkDiskCache {
         return data
     }
 
-    public func insert(_ data: Data, for key: DulcetArtworkCacheKey) {
-        guard !Task.isCancelled, !data.isEmpty, data.count <= maximumByteCount else { return }
+    public func insert(_ data: Data, for key: DulcetArtworkCacheKey, authorize: @Sendable () -> Bool = { true }) {
+        guard !Task.isCancelled, authorize(), !data.isEmpty, data.count <= maximumByteCount else { return }
         loadIndexIfNeeded()
         let url = fileURL(for: key)
         do {

@@ -428,6 +428,131 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await proveRejectedPlaybackResolve(preload: true)
     }
 
+    func testDownloadFirstRejectionBlocksHeldCurrentBeforeSourceNotification() async throws {
+        try await proveCrossClientPlaybackAuthority(preload: false, reject: true)
+    }
+
+    func testDownloadFirstRejectionBlocksHeldPreloadBeforeSourceNotification() async throws {
+        try await proveCrossClientPlaybackAuthority(preload: true, reject: true)
+    }
+
+    func testSameIdentityDownloadProbePreservesHeldCurrentAuthority() async throws {
+        try await proveCrossClientPlaybackAuthority(preload: false, reject: false)
+    }
+
+    private func proveCrossClientPlaybackAuthority(preload: Bool, reject: Bool) async throws {
+        let name = "dulcet-cross-client-authority-\(UUID()).db"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-cross-client-authority-\(UUID())")
+        let server = try ProductionPathLoopbackServer(audio: Data(), answersIdentity: true)
+        defer { server.stop() }
+        let account = PlaybackEndpointAccount(providerInstanceId: "loopback-provider",
+            normalizedBaseUrl: server.baseURL.absoluteString, username: "fixture", password: "fixture", allowLocalHttp: true)
+        XCTAssertTrue(AppleMediaBindingClient.shared.seedServerIdentity(databaseName: name,
+            providerInstanceId: "loopback-provider", identity: #"["navidrome",""]"#))
+        let downloads = AppleDownloadClient(account: account, databaseName: name, downloadRootPath: root.path)
+        let queue = ApplePlaybackQueueClient(databaseName: name)
+        let engine = RejectionPlaybackEngine()
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: engine, catalog: [], identityDatabaseName: name)
+        defer {
+            controller.disconnect(); downloads.close(); queue.close()
+            try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name)
+        }
+        controller.configure(account: .init(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        var held: [() -> Void] = []
+        controller.resolvePlayback = { client, request, completion in
+            client.startResolve(request: request) { outcome in
+                Task { @MainActor in held.append { completion(outcome) } }
+            }
+        }
+        controller.replaceQueueAndPlay(.init(tracks: [rejectionTrack("first"), rejectionTrack("second")],
+            sourceKind: .library, sourceID: nil, sourceDisplayName: "Cross-client authority", startIndex: 0, shuffle: false))
+        try await waitUntil(timeout: .seconds(3), failureMessage: "Current resolve was not held") { !held.isEmpty }
+        if preload {
+            held.removeFirst()()
+            try await waitUntil(timeout: .seconds(3), failureMessage: "Current plan did not install") { engine.plans.count == 1 }
+            let plan = try XCTUnwrap(engine.plans.first)
+            engine.emit(.ready(attemptID: plan.attemptID, duration: 120, seekability: .seekable))
+            engine.emit(.playbackProgressBegan(attemptID: plan.attemptID,
+                wallClock: Date(timeIntervalSince1970: 1), mediaPosition: 1))
+            try await waitUntil(timeout: .seconds(3), failureMessage: "Preload resolve was not held") { !held.isEmpty }
+        }
+        if reject {
+            // Deliberately omit the source/controller notification: the Kotlin account token must suffice.
+            downloads.rejectServerIdentity()
+        } else {
+            var completed = false
+            var validationError: String?
+            let validation = downloads.startValidateServerIdentity { validationError = $0; completed = true }
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Same-identity probe did not complete") { completed }
+            withExtendedLifetime(validation) {}
+            XCTAssertNil(validationError)
+            XCTAssertTrue(server.requestPaths.contains("/rest/ping.view"))
+        }
+        controller.setServerAvailable(true)
+        held.removeFirst()()
+        if !reject {
+            try await waitUntil(timeout: .seconds(3), failureMessage: "Ordinary probe revoked accepted playback") { engine.plans.count == 1 }
+        } else {
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertEqual(engine.plans.count, preload || !reject ? 1 : 0)
+        XCTAssertEqual(engine.preloads.count, 0)
+    }
+
+    func testDownloadRejectionStopsAutoplayFallbacksAfterHeldSeedReply() async throws {
+        try await proveAutoplayAccountAuthority(reject: true)
+    }
+
+    func testSameIdentityProbePreservesAutoplayFallbacksAfterHeldSeedReply() async throws {
+        try await proveAutoplayAccountAuthority(reject: false)
+    }
+
+    private func proveAutoplayAccountAuthority(reject: Bool) async throws {
+        let name = "dulcet-autoplay-authority-\(UUID()).db"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-autoplay-authority-\(UUID())")
+        let server = try ProductionPathLoopbackServer(audio: Data(), answersIdentity: true, autoplay: true)
+        defer { server.stop() }
+        let provider = "autoplay-authority-\(UUID())"
+        XCTAssertTrue(AppleMediaBindingClient.shared.seedServerIdentity(databaseName: name,
+            providerInstanceId: provider, identity: #"["navidrome",""]"#))
+        let account = PlaybackEndpointAccount(providerInstanceId: provider, normalizedBaseUrl: server.baseURL.absoluteString,
+            username: "fixture", password: "fixture", allowLocalHttp: true)
+        let downloads = AppleDownloadClient(account: account, databaseName: name, downloadRootPath: root.path)
+        defer { downloads.close(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name) }
+        let client = AppleAutoplayClient(databaseName: name)
+        var outcome: AppleAutoplayOutcome?
+        let operation = client.startCandidates(request: AppleLibraryBrowseRequest(providerInstanceId: provider,
+            normalizedBaseUrl: server.baseURL.absoluteString, username: "fixture", password: "fixture", allowLocalHttp: true),
+            seedRawId: "seed", excludedRawIds: [], count: 2) { outcome = $0 }
+        defer { operation.cancel() }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Actual AutoPlay seed HTTP reply was not held") { server.hasHeldAutoplaySeed }
+        if reject {
+            downloads.rejectServerIdentity()
+        } else {
+            var probed = false
+            var error: String?
+            let validation = downloads.startValidateServerIdentity { error = $0; probed = true }
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Matching identity probe did not finish") { probed }
+            withExtendedLifetime(validation) {}
+            XCTAssertNil(error)
+        }
+        server.releaseAutoplaySeed()
+        try await waitUntil(timeout: .seconds(5), failureMessage: "AutoPlay facade completion did not arrive") { outcome != nil }
+        let paths = server.requestPaths.filter { !$0.contains("ping") }
+        if reject {
+            XCTAssertEqual(paths, ["/rest/getSong.view"], "No fallback may send old IDs after the held seed returns")
+            XCTAssertNil(outcome?.tracks)
+            XCTAssertNotNil(outcome?.error)
+        } else {
+            XCTAssertEqual(paths, ["/rest/getSong.view", "/rest/getSimilarSongs2.view", "/rest/getSimilarSongs.view",
+                "/rest/getTopSongs.view", "/rest/getRandomSongs.view", "/rest/getRandomSongs.view"])
+            XCTAssertEqual(outcome?.tracks?.map(\.rawId), ["candidate"])
+            XCTAssertNil(outcome?.error)
+        }
+    }
+
     private func rejectionTrack(_ raw: String) -> DulcetTrack {
         DulcetTrack(id: .init(providerInstanceID: "loopback-provider", rawID: raw),
             title: raw, credits: [], albumTitle: nil, duration: .seconds(120),
@@ -1251,6 +1376,14 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue()
         try await testKnownReplacementRejectsLateCurrentResolve()
         try await testKnownReplacementRejectsLatePreloadResolve()
+        try await testDownloadFirstRejectionBlocksHeldCurrentBeforeSourceNotification()
+        try await testDownloadFirstRejectionBlocksHeldPreloadBeforeSourceNotification()
+        try await testSameIdentityDownloadProbePreservesHeldCurrentAuthority()
+        try await testDownloadRejectionStopsAutoplayFallbacksAfterHeldSeedReply()
+        try await testSameIdentityProbePreservesAutoplayFallbacksAfterHeldSeedReply()
+        #if os(macOS)
+        try await DulcetCorePlaybackSystemTests().testRejectedArtworkCompletionCannotReplacePausedPlayersExistingImage()
+        #endif
         try await testKnownReplacementBlocksAnInstalledResourcesNextHTTPRange()
         try await testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair()
         try await testAutomaticDownloadPreferenceIsNotLostDuringSameAccountReconciliation()
@@ -2164,6 +2297,13 @@ private final class RejectionPlaybackEngine: DulcetCorePlaybackEngine, @unchecke
 final class ProductionPathLoopbackServer: @unchecked Sendable {
     private let audio: Data
     private let answersIdentity: Bool
+    private let autoplay: Bool
+    private var heldAutoplaySeed: (@Sendable () -> Void)?
+    var hasHeldAutoplaySeed: Bool { lock.withLock { heldAutoplaySeed != nil } }
+    func releaseAutoplaySeed() {
+        let reply = lock.withLock { let reply = heldAutoplaySeed; heldAutoplaySeed = nil; return reply }
+        reply?()
+    }
     private let listener: NWListener
     private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.production-http")
     private let lock = NSLock()
@@ -2196,9 +2336,10 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
         return rangeStorage
     }
 
-    init(audio: Data, answersIdentity: Bool = false, holdStreams: Bool = false) throws {
+    init(audio: Data, answersIdentity: Bool = false, holdStreams: Bool = false, autoplay: Bool = false) throws {
         self.audio = audio
         self.answersIdentity = answersIdentity
+        self.autoplay = autoplay
         holdingStreams = holdStreams
         listener = try NWListener(using: .tcp, on: .any)
         let startup = ProductionPathLoopbackStartup()
@@ -2270,6 +2411,27 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
             var response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
             response.append(body)
             connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+        if autoplay {
+            let endpoint = path.split(separator: "/").last.map(String.init) ?? ""
+            let payload: String
+            switch endpoint {
+            case "getSong.view": payload =  #""song":{"id":"seed","title":"Seed","artistId":"artist","artist":"Artist","genre":"Jazz"}"#
+            case "getSimilarSongs2.view": payload =  #""similarSongs2":{"song":[]}"#
+            case "getSimilarSongs.view": payload =  #""similarSongs":{"song":[]}"#
+            case "getTopSongs.view": payload =  #""topSongs":{"song":[]}"#
+            default:
+                payload = request.contains("genre=") ?  #""randomSongs":{"song":[]}"#
+                    :  #""randomSongs":{"song":[{"id":"candidate","title":"Candidate","album":"A","albumId":"album","duration":200}]}"#
+            }
+            let body = Data((#"{"subsonic-response":{"status":"ok","version":"1.16.1","# + payload + "}}").utf8)
+            let reply: @Sendable () -> Void = {
+                var response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+                response.append(body)
+                connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            }
+            if endpoint == "getSong.view" { lock.withLock { heldAutoplaySeed = reply } } else { reply() }
             return
         }
         lock.lock()

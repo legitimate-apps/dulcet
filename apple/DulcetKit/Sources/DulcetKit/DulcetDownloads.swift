@@ -67,6 +67,7 @@ public protocol DulcetDownloadControlling: AnyObject {
     func disconnect()
     /// Called whenever `status(for:)` may have changed for items no status report named: once
     /// the downloads are reconciled, and when they are put away.
+    func setServerIdentityChangedHandler(_ handler: @escaping @MainActor () -> Void)
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void)
 }
 
@@ -80,6 +81,7 @@ public extension DulcetDownloadControlling {
     func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {}
     func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void) {}
     func setAutomaticDownloadContactPermitted(_ permitted: Bool) {}
+    func setServerIdentityChangedHandler(_ handler: @escaping @MainActor () -> Void) {}
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {}
 }
 

@@ -117,6 +117,7 @@ private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading, Dul
         return RecordingCancellable()
     }
 
+    func rejectServerIdentity() { events.append("rejectIdentity"); setOnline(false) }
     func setOnline(_ reachable: Bool) { events.append("setOnline(\(reachable))") }
     func setForeground(_ foreground: Bool) { events.append("setForeground(\(foreground))") }
     func setNetworkConstrained(_ constrained: Bool) { events.append("setNetworkConstrained(\(constrained))") }
@@ -655,6 +656,38 @@ func tryAgainIsTheReconnectNeverAScreensOwnRead() throws {
         epochKnown: true, serverReportsNoEpoch: true, discardedPendingChanges: 0, errorKind: nil))
     #expect(session.connectionFailure == nil)
     #expect(session.serverReportsNoEpoch)
+}
+
+@Test @MainActor
+func rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    var negotiations = 0
+    session.onSavedReconnectRequested = { negotiations += 1 }
+    session.open(account: readerAccount, mode: .connected)
+    let old = try #require(factory.made.first)
+    #expect(old.connectCompletions.count == 1)
+    session.rejectServerIdentity()
+    #expect(old.events.contains("rejectIdentity"))
+    #expect(!session.isOnline)
+    #expect(session.connectionFailure == .serverIdentityChanged)
+    let refreshes = old.libraryRefreshes
+    old.answerConnections(DulcetReaderConnection(
+        epochKnown: true, serverReportsNoEpoch: true, discardedPendingChanges: 0, errorKind: nil))
+    #expect(!session.isOnline, "A held successful callback cannot reopen rejected authority")
+    #expect(session.connectionFailure == .serverIdentityChanged)
+    #expect(old.libraryRefreshes == refreshes)
+    let reconnects = old.events.filter { $0 == "reconnect" }.count
+    session.reconnect()
+    #expect(negotiations == 1)
+    #expect(old.events.filter { $0 == "reconnect" }.count == reconnects)
+    session.open(account: readerAccount, mode: .connected)
+    #expect(factory.made.count == 1, "The accepted lifetime must wait for the old reader thread")
+    #expect(old.events.last == "close")
+    old.finishClose()
+    #expect(factory.made.count == 2)
+    #expect(factory.made.last !== old)
+    #expect(session.connectionFailure == nil)
 }
 
 @Test @MainActor

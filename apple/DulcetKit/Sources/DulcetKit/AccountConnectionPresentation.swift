@@ -563,6 +563,8 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     private let artworkFetcher: (any DulcetArtworkFetching)?
     private let artworkMemoryCache = DulcetArtworkMemoryCache()
     private var artworkGeneration = 0
+    private var rejectedArtworkServerIDs: Set<String> = []
+    private var handlingIdentityRejection = false
     private let serverSearch: (any DulcetServerSearching)?
     private let playbackController: (any DulcetPlaybackControlling)?
     private let downloadController: (any DulcetDownloadControlling)?
@@ -816,13 +818,8 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 self.playbackController?.setNetworkAvailable(reachable)
             }
         }
-        librarySession?.onServerIdentityChanged = { [weak self] in
-            self?.playbackController?.rejectServerIdentity()
-            self?.downloadController?.rejectServerIdentity()
-            guard let self, self.pendingConnection == nil, self.currentSnapshot.accountConnection != .connecting,
-                  let saved = try? self.credentialStore?.load() else { return }
-            self.submit(saved, inPlace: true)
-        }
+        librarySession?.onServerIdentityChanged = { [weak self] in self?.handleServerIdentityChanged() }
+        downloadController?.setServerIdentityChangedHandler { [weak self] in self?.handleServerIdentityChanged() }
         librarySession?.onServerConnectionChanged = { [weak self] available in
             self?.playbackController?.setServerAvailable(available)
         }
@@ -1259,10 +1256,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             oldIdentity = persisted.isEmpty ? ((try? multi?.serverIdentity(providerInstanceID: targetID)) ?? "") : persisted
         } else { oldIdentity = "" }
         let replacement = identityPolicy.isReplacement(oldIdentity, account.serverIdentity)
-        if replacement {
-            playbackController?.rejectServerIdentity()
-            downloadController?.rejectServerIdentity()
-        }
+        if replacement { quarantineServerIdentity() }
         let samePrincipal = old.map { identityPolicy.samePrincipal($0.serverURL, $0.username, saved.serverURL, saved.username) } ?? true
         let destructive = old != nil && (replacement || (!samePrincipal && !aliasProof))
         let instanceID = destructive || targetID == nil ? providerInstanceIDFactory() : targetID!
@@ -2641,11 +2635,34 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         )
     }
 
+    private func quarantineServerIdentity() {
+        guard !handlingIdentityRejection else { return }
+        handlingIdentityRejection = true
+        defer { handlingIdentityRejection = false }
+        librarySession?.rejectServerIdentity()
+        if let providerInstanceID {
+            if rejectedArtworkServerIDs.insert(providerInstanceID).inserted { artworkGeneration += 1 }
+            (artworkFetcher as? any DulcetArtworkRemoteAccessControlling)?.rejectServerIdentity(serverID: providerInstanceID)
+        }
+        playbackController?.rejectServerIdentity()
+        downloadController?.rejectServerIdentity()
+    }
+
+    private func handleServerIdentityChanged() {
+        guard !handlingIdentityRejection else { return }
+        quarantineServerIdentity()
+        guard pendingConnection == nil, currentSnapshot.accountConnection != .connecting,
+              let saved = try? credentialStore?.load() else { return }
+        submit(saved, inPlace: true)
+    }
+
     private func configurePlayback(
         account: DulcetConnectedAccountSummary,
         request: DulcetAccountConnectRequest
     ) {
         guard let providerInstanceID else { return }
+        rejectedArtworkServerIDs.remove(providerInstanceID)
+        (artworkFetcher as? any DulcetArtworkRemoteAccessControlling)?.acceptServerIdentity(serverID: providerInstanceID)
         playbackController?.configure(account: DulcetPlaybackAccount(
             providerInstanceID: providerInstanceID,
             normalizedServerURL: account.normalizedServerURL,
@@ -2875,7 +2892,7 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
         let cachedOnly: Bool
         if case let .connected(account) = currentSnapshot.accountConnection {
             normalizedURL = account.normalizedServerURL
-            cachedOnly = false
+            cachedOnly = rejectedArtworkServerIDs.contains(reference.serverID)
         } else {
             normalizedURL = form.serverURL
             cachedOnly = true

@@ -25,6 +25,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var client: AppleDownloadClient?
     private var statusHandler:
         (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
+    private var identityChangedHandler: (@MainActor () -> Void)?
     private var stateRefreshHandler: (@MainActor () -> Void)?
     private var mediaBindingWillChangeHandler: (@MainActor (DulcetPlaybackAccount) -> Void)?
     private var mediaBindingWillBeReplacedHandler: (@MainActor () -> Void)?
@@ -162,6 +163,10 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
     ) {
         statusHandler = handler
+    }
+
+    func setServerIdentityChangedHandler(_ handler: @escaping @MainActor () -> Void) {
+        identityChangedHandler = handler
     }
 
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {
@@ -510,6 +515,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                 }
             }
         }
+        identityChangedHandler?()
     }
 
     private func validateRemoteAccess(_ completion: @escaping @MainActor (Bool) -> Void) {

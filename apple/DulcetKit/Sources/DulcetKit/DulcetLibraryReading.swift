@@ -95,6 +95,7 @@ public protocol DulcetLibraryReading: AnyObject {
     func reconnect(completion: @escaping @MainActor (DulcetReaderConnection) -> Void) -> any DulcetLibraryReaderCancellable
     /// Republishes local download playability without contacting the server.
     func downloadsChanged()
+    func rejectServerIdentity()
     func setOnline(_ reachable: Bool)
     func setForeground(_ foreground: Bool)
     func setNetworkConstrained(_ constrained: Bool)
@@ -110,6 +111,7 @@ public protocol DulcetLibraryReading: AnyObject {
 
 public extension DulcetLibraryReading {
     func downloadsChanged() {}
+    func rejectServerIdentity() { setOnline(false) }
 }
 
 @MainActor
@@ -216,6 +218,7 @@ public final class DulcetLibrarySession {
     public private(set) var myLibrary = DulcetMyLibrarySnapshot()
     @ObservationIgnored private var myLibrarySubscription: (any DulcetLibraryReaderCancellable)?
 
+    private var serverIdentityRejected = false
     public private(set) var reader: (any DulcetLibraryReading)?
     public private(set) var account: DulcetLibraryReaderAccount?
     public private(set) var mode: DulcetLibraryReaderMode = .none
@@ -297,7 +300,7 @@ public final class DulcetLibrarySession {
     /// Whether the reader may read the server now, as far as this session knows: connected, and
     /// not kept offline by a failed reconnect or by the network.
     public var isOnline: Bool {
-        mode == .connected && connectionFailure == nil && lastReachable != false
+        !serverIdentityRejected && mode == .connected && connectionFailure == nil && lastReachable != false
     }
 
     // MARK: Lifecycle
@@ -306,7 +309,7 @@ public final class DulcetLibrarySession {
     /// sends nothing; `connected` lets it read. A different account closes the old reader first.
     public func open(account: DulcetLibraryReaderAccount, mode requested: DulcetLibraryReaderMode) {
         guard let factory, requested != .none else { return }
-        if let reader, self.account == account {
+        if let reader, self.account == account, !serverIdentityRejected {
             if requested == .connected, mode != .connected {
                 mode = .connected
                 connectionFailure = nil
@@ -377,6 +380,7 @@ public final class DulcetLibrarySession {
             // before this call could read before saved-account negotiation succeeded.
             made.setOnline(false)
         }
+        serverIdentityRejected = false
         reader = made
         self.account = account
         libraryDepth = DulcetLibraryDepthState()
@@ -520,7 +524,7 @@ public final class DulcetLibrarySession {
     /// negotiation first; a running negotiation is joined. A reader whose
     /// setup failed has nothing to reconnect: it is replaced by a new one, which connects.
     public func reconnect() {
-        if mode == .deviceOnly {
+        if serverIdentityRejected || mode == .deviceOnly {
             onSavedReconnectRequested?()
             return
         }
@@ -613,9 +617,22 @@ public final class DulcetLibrarySession {
         lastReachable = nil
     }
 
+    /// Lasting rejection is distinct from a reachability update and survives foreground retries.
+    public func rejectServerIdentity() {
+        guard !serverIdentityRejected else { return }
+        serverIdentityRejected = true
+        reader?.rejectServerIdentity()
+        connectionFailure = .serverIdentityChanged
+        onServerConnectionChanged?(false)
+    }
+
     private func receive(_ connection: DulcetReaderConnection) {
-        onServerConnectionChanged?(connection.error == nil)
-        if connection.error == .serverIdentityChanged { onServerIdentityChanged?() }
+        guard !serverIdentityRejected || connection.error == .serverIdentityChanged else { return }
+        onServerConnectionChanged?(connection.error == nil && !serverIdentityRejected)
+        if connection.error == .serverIdentityChanged {
+            rejectServerIdentity()
+            onServerIdentityChanged?()
+        }
         if connection.error == nil { (reader as? any DulcetMyLibraryReading)?.refreshMyLibrary() }
         if connection.epochKnown {
             connectionFailure = nil

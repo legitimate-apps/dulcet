@@ -961,6 +961,33 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertTrue(fixture.controller.edit(.remove(DulcetQueueEntryID(upcoming))))
     }
 
+    func testRejectedArtworkCompletionCannotReplacePausedPlayersExistingImage() async throws {
+        let fixture = makeFixture(tracks: ["a"], artwork: Data([0xFF, 0xD8, 0xFF, 0x02]))
+        defer { fixture.controller.disconnect(); fixture.queue.close() }
+        defer { fixture.controller.disconnect(); fixture.queue.close() }
+        fixture.artworkFetcher.holdReplies = true
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let attempt = try await fixture.waitForPrepare(rawID: "a")
+        let session = try XCTUnwrap(fixture.session(ofPrepare: attempt))
+        fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: .seekable))
+        fixture.emit(.paused(attemptID: attempt, position: 20))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.phase == .paused && !fixture.artworkFetcher.requests.isEmpty }
+        XCTAssertEqual(fixture.artworkFetcher.requests.count, 1)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.phase, .paused, "The player must already be paused before rejection")
+        let old = Data([0xFF, 0xD8, 0xFF, 0x01])
+        fixture.engine.setNowPlayingArtwork(old, for: .init(session))
+        let prepares = fixture.engine.count("prepare")
+        fixture.controller.rejectServerIdentity()
+        fixture.controller.setServerAvailable(true)
+        fixture.artworkFetcher.releaseReplies() // deliberately delivers even after cancel
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(fixture.engine.artwork.count, 1, "A held remote reply must not replace the existing system image after rejection")
+        XCTAssertEqual(fixture.engine.artwork.last?.data, old)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.phase, .paused)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.sessionID?.rawValue, session)
+        XCTAssertEqual(fixture.engine.count("prepare"), prepares, "Quarantine must not restart the current player")
+    }
+
     func testArtworkReachesTheEngineAsValidatedBytesForItsOwnSession() async throws {
         let fixture = makeFixture(tracks: ["a", "b"], artwork: Data([0xFF, 0xD8, 0xFF, 0x01]))
         fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
@@ -1883,6 +1910,9 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
 private final class RecordingArtworkFetcher: DulcetArtworkFetching {
     private let data: Data?
     private(set) var requests: [DulcetArtworkFetchRequest] = []
+    var holdReplies = false
+    private var replies: [@MainActor () -> Void] = []
+    func releaseReplies() { let pending = replies; replies = []; pending.forEach { $0() } }
 
     init(data: Data?) { self.data = data }
 
@@ -1892,7 +1922,8 @@ private final class RecordingArtworkFetcher: DulcetArtworkFetching {
     ) -> any DulcetArtworkFetchOperation {
         requests.append(request)
         let outcome: DulcetArtworkFetchOutcome = data.map { .loaded($0) } ?? .unavailable
-        Task { @MainActor in completion(outcome) }
+        if holdReplies { replies.append { completion(outcome) } }
+        else { Task { @MainActor in completion(outcome) } }
         return NoopArtworkOperation()
     }
 }
