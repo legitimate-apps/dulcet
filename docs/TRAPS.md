@@ -357,6 +357,12 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     alone cannot explain that case; the blocking work remains UNKNOWN. The fixture
     proxy now records credential-free endpoint/phase timings (`tools/test-my-library-ui-proxy`)
     so a future failure can distinguish arrival, upstream completion and delivery.
+    OBSERVED in run 39938927349's iPhone album-tile drag: the bar existed as Loading with Play,
+    so a one-time `label == "Pause"` check skipped the toggle entirely. Playback then started
+    while the helper waited for Play; the activity tree contains no Pause tap. The shared album
+    drag setup now requires the named last track and enabled Pause together, then relaunches and
+    requires the same saved selection with enabled Play. A restored paused queue holds the drag's
+    baseline without a toggle race or a short fixture ending while the proof works.
 49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
     album or playlist in the reader's grids and lists is a `DulcetReaderItem`: a title, an id and
     counts, with its track list read on demand (`resolveTracks`). `dulcetQueueDragSource` needs the

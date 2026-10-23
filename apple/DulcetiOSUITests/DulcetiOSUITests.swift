@@ -2189,14 +2189,15 @@ final class DulcetiOSUITests: XCTestCase {
         print("DULCET DRAG FROM MENU before=\(before) after=\(after) drags=\(attempts) menu-left-open-after=\(menuLeftOpen)")
     }
 
-    /// Opens the album from its tile and plays its last track, so the bar is there to drop onto
-    /// and Up Next holds nothing of the album yet. Answers the bar.
+    /// Plays the album's last track, then restores that saved selection paused so a short
+    /// fixture cannot finish while a drag is counted. Answers the restored bar.
     @MainActor
     private func startPlayingTheAlbumsLastTrack(
         album: String,
         last: String,
         tile: XCUIElement,
-        in app: XCUIApplication
+        in app: XCUIApplication,
+        compact: Bool
     ) -> XCUIElement? {
         tile.tap()
         let row = app.buttons.matching(identifier: "dulcet.reader.track")
@@ -2206,27 +2207,49 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         row.tap()
-        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
-        guard bar.waitForExistence(timeout: 15) else {
-            XCTFail("Playing a track must show the now-playing bar: " + app.debugDescription)
+        // The loading bar exists before playback starts. In run 39938927349 its label
+        // was still Play at the conditional Pause check, so no toggle touch was sent; it
+        // became Pause while the helper waited for Play. Prove the selected track is playing
+        // before terminating, then use the same paused restoration as the track-menu proof.
+        guard waitForMiniPlayer(track: last, playing: true, in: app, timeout: 15) else {
+            XCTFail("The album's last track must actually start before its queue is restored paused: " + app.debugDescription)
             return nil
         }
-        // Paused, so the queue stays as it is: the corpus's tracks last about thirty seconds, and
-        // a track that ends while the proof is still working ends the queue, after which a drop
-        // starts playing what it carries and the count of what Up Next holds is no longer the
-        // drop's (OBSERVED on a loaded host: the canary ended, the first album became the playing
-        // track and the second drag's tracks followed it).
-        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
-        guard playPause.waitForExistence(timeout: 10) else {
-            XCTFail("The bar must offer play/pause: " + app.debugDescription)
+        app.terminate()
+        app.launch()
+        guard awaitLiveAccountConnection(in: app, compact: compact) else {
+            XCTFail("The restored queue's account must reconnect before reading its album")
             return nil
         }
-        if playPause.label == "Pause" { playPause.tap() }
-        guard waitForLabel("Play", of: playPause, timeout: 10) else {
-            XCTFail("Pause on the bar must reach playback; label stayed \(playPause.label)")
+        guard openLibraryAlbum(album, in: app, compact: compact) else { return nil }
+        // Reading the album supplies the catalog needed to resolve the saved queue selection.
+        guard waitForMiniPlayer(track: last, playing: false, in: app, timeout: 10) else {
+            XCTFail("The saved queue must restore the album's last track paused before a drag: " + app.debugDescription)
             return nil
         }
-        return bar
+        print("DULCET ALBUM DRAG PRECONDITION track=\(last) started=true restored-paused=true")
+        return app.buttons.matching(identifier: "dulcet.mini-player.open").element(boundBy: 0)
+    }
+
+    /// The title and transport must describe the same publication. A loading bar or an older
+    /// restored selection cannot supply the playing or paused precondition of a drag proof.
+    @MainActor
+    private func waitForMiniPlayer(track: String, playing: Bool, in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        repeat {
+            if let window = try? app.windows.element(boundBy: 0).snapshot() {
+                let elements = snapshotElements(in: window)
+                let bars = elements.filter { $0.elementType == .button && $0.identifier == "dulcet.mini-player.open" }
+                let controls = elements.filter { $0.elementType == .button && $0.identifier == "dulcet.mini-player.play-pause" }
+                if bars.count == 1, controls.count == 1,
+                   bars[0].label.contains(track), controls[0].isEnabled,
+                   controls[0].label == (playing ? "Pause" : "Play") {
+                    return true
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return false
     }
 
     /// A playlist row dragged out of its open context menu onto the bar adds every track of the
@@ -2273,7 +2296,7 @@ final class DulcetiOSUITests: XCTestCase {
         let tile = { app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch }
         guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
-              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app),
+              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: compact),
               openLibraryPlaylistsFromAnywhere(in: app, compact: compact) else { return }
         let row = { app.buttons.matching(identifier: "dulcet.library.playlist")
             .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch }
@@ -2311,7 +2334,7 @@ final class DulcetiOSUITests: XCTestCase {
         let tile = { app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch }
         guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
-              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app),
+              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: true),
               openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
         let field = app.textFields["dulcet.search.field"].firstMatch
         guard field.waitForExistence(timeout: 10) else {
@@ -2608,7 +2631,7 @@ final class DulcetiOSUITests: XCTestCase {
         }
         guard requireContextMenu(on: tile(), marker: "Add to Playlist\u{2026}", in: app) else { return }
 
-        guard let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app) else { return }
+        guard let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: compact) else { return }
         guard openAlphabeticalAlbumGrid(in: app, compact: compact),
               tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
               let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: compact) else { return }
