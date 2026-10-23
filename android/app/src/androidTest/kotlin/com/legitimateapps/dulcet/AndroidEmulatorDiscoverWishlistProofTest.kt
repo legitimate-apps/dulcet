@@ -13,6 +13,8 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -426,7 +428,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun await(what:String,condition:()->Boolean) {
         val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(30)
         while(!runCatching(condition).getOrDefault(false)) {
-            check(System.nanoTime()<deadline) {"Did not observe $what"};Thread.sleep(50)
+            if (System.nanoTime()>=deadline) {
+                println("DISCOVER PHONE timeout: $what\n"+runCatching {compose.onRoot(useUnmergedTree=true).printToString()}.getOrDefault("semantics unavailable"))
+                runCatching {capture("failure")}
+                error("Did not observe $what")
+            }
+            Thread.sleep(50)
         }
     }
     private fun capture(screen:String) {
