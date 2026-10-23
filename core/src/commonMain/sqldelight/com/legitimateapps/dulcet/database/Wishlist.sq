@@ -1,0 +1,62 @@
+CREATE TABLE wishlist_snapshot (
+  server_id TEXT NOT NULL,
+  filter_key TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  issue_seq INTEGER NOT NULL,
+  PRIMARY KEY (server_id, filter_key)
+);
+CREATE TABLE wish_clock (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  last_action_time INTEGER NOT NULL DEFAULT 0,
+  last_sequence INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE wish_intent (
+  server_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  row_key TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error TEXT,
+  ordinal INTEGER NOT NULL,
+  PRIMARY KEY (server_id, operation_id)
+);
+CREATE TABLE wish_receipt (
+  server_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  wish_id TEXT,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (server_id, operation_id)
+);
+
+selectSnapshot:
+SELECT * FROM wishlist_snapshot WHERE server_id = ? AND filter_key = ?;
+upsertSnapshot:
+INSERT OR REPLACE INTO wishlist_snapshot VALUES (?, ?, ?, ?);
+ensureClock:
+INSERT OR IGNORE INTO wish_clock (server_id) VALUES (?);
+selectClock:
+SELECT * FROM wish_clock WHERE server_id = ?;
+updateClock:
+UPDATE wish_clock SET last_action_time = ?, last_sequence = ? WHERE server_id = ?;
+selectIntents:
+SELECT * FROM wish_intent WHERE server_id = ? ORDER BY ordinal;
+selectIntent:
+SELECT * FROM wish_intent WHERE server_id = ? AND operation_id = ?;
+insertIntent:
+INSERT INTO wish_intent VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?);
+updateIntent:
+UPDATE wish_intent SET status = ?, error = ? WHERE server_id = ? AND operation_id = ?;
+countPending:
+SELECT count(*) FROM wish_intent WHERE server_id = ? AND status = 'pending';
+upsertReceipt:
+INSERT OR REPLACE INTO wish_receipt VALUES (?, ?, ?, ?);
+selectReceipt:
+SELECT * FROM wish_receipt WHERE server_id = ? AND operation_id = ?;
+selectReceiptsForWish:
+SELECT * FROM wish_receipt WHERE server_id = ? AND wish_id = ?;
+deleteProtectedForServer {
+  DELETE FROM wish_intent WHERE server_id = :server_id;
+  DELETE FROM wish_receipt WHERE server_id = :server_id;
+  DELETE FROM wish_clock WHERE server_id = :server_id;
+}

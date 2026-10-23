@@ -24,7 +24,7 @@ it are written down. This tool is those steps:
                                                            # every version with a seed (CI)
 
 Fixtures v1-v3 were written with SQLite 3.50.6, v4-v9 with SQLite 3.51.0, and v10-v11 with
-SQLite 3.54.0, and v12 with SQLite 3.53.4, by Python's sqlite3 module; none reserves bytes per page. Writing and --check
+SQLite 3.54.0, v12 with SQLite 3.53.4, and v13 with SQLite 3.54.0, by Python's sqlite3 module; none reserves bytes per page. Writing and --check
 require the SQLite version recorded for that fixture and refuse a result that reserves bytes, because
 a different build lays pages out differently and a regeneration would then differ for reasons that
 have nothing to do with the schema. --check is
@@ -39,6 +39,7 @@ set (last_issued is raised with MAX), so seeds stack when a schema is renumbered
 from __future__ import annotations
 
 import argparse
+import json
 import filecmp
 import shutil
 import sqlite3
@@ -50,7 +51,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tools/migration-fixtures"
 MIGRATIONS = ROOT / "core/src/commonMain/sqldelight/migrations"
 SQLITE_VERSION = "3.51.0"
-SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0", 11: "3.54.0", 12: "3.53.4"}
+SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0", 11: "3.54.0", 12: "3.53.4", 13: "3.54.0"}
 PAGE_SIZE = 4096
 
 
@@ -262,7 +263,23 @@ def seed_v12(connection):
     )
 
 
-SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11, 12: seed_v12}
+def seed_v13(connection):
+    """Scoped Discover cache and durable wish generations, independent of library membership."""
+    connection.execute("INSERT INTO discover_read VALUES (?, ?, ?, ?, ?, ?)",
+        ("server:fixture-alpha", "search:fixture", b"{}", 0, 50, 50))
+    connection.execute("INSERT INTO wishlist_snapshot VALUES (?, ?, ?, ?)",
+        ("server:fixture-alpha", "{}", '{"items":[],"stamp":null}', 50))
+    connection.execute("INSERT INTO wish_clock VALUES (?, ?, ?)", ("server:fixture-alpha", 1000, 51))
+    connection.execute("INSERT INTO wish_intent VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("server:fixture-alpha", "11111111-1111-4111-8111-111111111111", "add:11111111-1111-4111-8111-111111111111", "fixture-target",
+         json.dumps({"type": "com.legitimateapps.dulcet.core.WishMutation.Add", "operationId": "11111111-1111-4111-8111-111111111111", "actionTimeMillis": 1000,
+            "target": {"kind": "Song", "mbid": "22222222-2222-4222-8222-222222222222"},
+            "snapshot": {"title": "Fixture", "artist": None, "year": None, "artworkId": None}, "source": {"type": "search", "id": None}}), "pending", None, 51))
+    connection.execute("INSERT INTO wish_receipt VALUES (?, ?, ?, ?)",
+        ("server:fixture-alpha", "fixture-receipt", None, '{"applied":false,"wish":null,"removed":true}'))
+
+
+SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11, 12: seed_v12, 13: seed_v13}
 
 
 def require_sqlite_version(version):

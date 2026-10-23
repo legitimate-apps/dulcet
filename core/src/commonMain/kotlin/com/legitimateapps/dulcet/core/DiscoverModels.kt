@@ -54,11 +54,8 @@ data class DiscoverFailure(val code: String, val retryAtMillis: Long?, val retry
 // rate-limited, upstream-unavailable, cursor-expired, invalid-response, missing-art, conflict, storage.
 // Preserve unknown wire state separately; never put raw URLs or server exception text in code.
 @HiddenFromObjC
-@Serializable
 sealed interface DiscoverResult<out T> {
-    @Serializable
     data class Value<T>(val value: T) : DiscoverResult<T>
-    @Serializable
     data class Failed(val error: DiscoverFailure) : DiscoverResult<Nothing>
 }
 @HiddenFromObjC
@@ -78,6 +75,7 @@ data class DiscoverWish(val id: String, val userId: String, val target: Discover
 @Serializable
 data class WishFilter(val kind: String? = null, val state: String? = null,
     val includeFulfilledHistory: Boolean = false)
+@Serializable
 internal data class WishListSnapshot(val items: List<DiscoverWish>, val stamp: String?)
 @HiddenFromObjC
 @Serializable
@@ -93,6 +91,7 @@ sealed interface WishMutation {
     data class Reject(override val operationId: String, val target: DiscoverTarget,
         val libraryItem: DiscoverLibraryRef, val wishId: String?) : WishMutation
 }
+@Serializable
 internal data class WishReceipt(val applied: Boolean, val wish: DiscoverWish?, val removed: Boolean)
 internal interface DiscoverTransport {
     suspend fun search(kind: DiscoverKind, query: String, cursor: String?, limit: Int = 20): DiscoverResult<DiscoverPage>
