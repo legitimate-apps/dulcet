@@ -10,6 +10,7 @@ import XCTest
 @MainActor
 final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
     private var apps: [HostedApp] = []
+    private var previousProofMarkers = false
     private var env: [String: String] { ProcessInfo.processInfo.environment }
     private func required(_ key: String) throws -> String { try XCTUnwrap(env["DULCET_DISCOVER_" + key], key) }
     private func request(_ url: String, body: [String: Any]? = nil) async throws -> [String: Any] {
@@ -55,11 +56,20 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
     }
     override func setUp() async throws {
         continueAfterFailure = true
+#if DEBUG
+        previousProofMarkers = DulcetUIProofMarkers.isEnabled
+        DulcetUIProofMarkers.isEnabled = true
+#endif
         XCTAssertEqual(try required("DISPOSABLE"), "true")
         let reset = try await control("reset", [:])
         XCTAssertEqual(reset["reset"] as? Bool, true)
     }
-    override func tearDown() async throws { apps.forEach { $0.close() }; apps = [] }
+    override func tearDown() async throws {
+        apps.forEach { $0.close() }; apps = []
+#if DEBUG
+        DulcetUIProofMarkers.isEnabled = previousProofMarkers
+#endif
+    }
     private func launch(run: String = UUID().uuidString, credentials: any DulcetCredentialStoring = HostedCredentialStore(),
                         connect: Bool = true, other: Bool = false, nav: Bool = false, variant: String? = nil) async throws -> HostedApp {
         let server = try server(other: other, nav: nav)

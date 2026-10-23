@@ -11,7 +11,7 @@ enum DulcetUIProofMarkers {
     static let accessibilityIdentifier = "dulcet.debug.ui-markers"
 
 #if DEBUG
-    static let isEnabled = ProcessInfo.processInfo.arguments.contains(launchArgument)
+    static var isEnabled = ProcessInfo.processInfo.arguments.contains(launchArgument)
     static let log = DulcetUIProofMarkerLog()
     private static var navigationSequence = 0
     private static let logger = Logger(subsystem: "com.dulcet.navigation", category: "proof")
