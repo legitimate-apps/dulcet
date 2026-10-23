@@ -73,6 +73,8 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                     ActivityScenario.launch<Activity>(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)).use {
                         awaitTag("listenNow.surface")
                         observer.bind()
+                        // Keep this a single uninterrupted play with a finite natural end.
+                        observer.onController { it.setAutoplay(false) }
                         activate("browse.open")
                         awaitTag("library.surface")
                         activate("library.view.playlists")
@@ -87,21 +89,36 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         check(!serverHasPlaylist()) { "Viewing the real playlist must not record a listen" }
                         activate("playlist.entry.0")
                         requireMediaTimeAdvances(observer, "playlist-context-$platform")
-                        await("real playlist submitted play in relay", 90_000) {
-                            requests(relay).any { (path, query) ->
-                                path.contains("/scrobble") && query["submission"] == "true" &&
-                                    query["id"] == songId && query["dulcetContextType"] == "playlist" &&
-                                    query["dulcetContextId"] == playlistId
-                            }
+                        // Seeing the first request is not a closed observation window. Natural
+                        // completion ends the only session and synchronously captures its final
+                        // effects. The FIFO delivery barrier then joins those effects' sends,
+                        // including a duplicate emitted at the end, without stopping them early.
+                        await("the playlist's one-song queue to end naturally", 90_000) {
+                            !observer.state().hasSession
+                        }
+                        check(observer.state().error == null) { "The playlist play must end without a playback failure" }
+                        val pending = observer.awaitQueuedPlaybackDelivery()
+                        check(pending == 0) { "Successful playlist delivery must leave no pending plays: pending=$pending" }
+                        val submitted = requests(relay).filter { (path, query) ->
+                            path.contains("/scrobble") && query["submission"] == "true" && query["id"] == songId
+                        }
+                        val afterCount = probe.playCount(songId)
+                        check(submitted.size == 1) {
+                            "Expected exactly one submitted-play request for the fixture song after natural end and delivery barrier: " +
+                                "requests=${submitted.size} serverPlayDelta=${afterCount - beforeCount} pending=$pending"
+                        }
+                        check(submitted.single().second.let { query ->
+                            query["dulcetContextType"] == "playlist" && query["dulcetContextId"] == playlistId
+                        }) { "The sole submitted play must carry the activated playlist's context" }
+                        check(afterCount == beforeCount + 1) {
+                            "Expected exactly one server play after natural end and delivery barrier: before=$beforeCount after=$afterCount"
                         }
                         await("playlist in independent real-server Home") { serverHasPlaylist() }
-                        check(probe.playCount(songId) > beforeCount) { "No real submitted song play reached the server" }
                         val nowPlaying = requests(relay).filter { (path, query) -> path.contains("/scrobble") && query["submission"] == "false" }
                         check(nowPlaying.isNotEmpty()) { "The negative control must witness now-playing requests" }
                         check(nowPlaying.all { (_, query) -> "dulcetContextType" !in query && "dulcetContextId" !in query }) {
                             "Now-playing must carry no playlist context"
                         }
-                        observer.stopPlayback()
                         if (isTelevision()) InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
                         else activate("player.close")
                         activate("listenNow.open")
@@ -144,7 +161,10 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                                 .fetchSemanticsNodes().isNotEmpty()
                         }
                         compose.onNodeWithTag("playlist.title").assertTextEquals(name)
-                        println("PLAYLIST CONTEXT OBSERVED platform=$platform trigger=playlist-entry progressing-media=true submitted-context=true now-playing-context=false server-home=true rendered-home=true home-opens-playlist=true")
+                        println("PLAYLIST CONTEXT OBSERVED platform=$platform trigger=playlist-entry progressing-media=true " +
+                            "window=natural-end-and-delivery-barrier pending=$pending submitted-requests=${submitted.size} " +
+                            "server-play-delta=${afterCount - beforeCount} submitted-context=true now-playing-context=false " +
+                            "server-home=true rendered-home=true home-opens-playlist=true")
                     }
                 }
             }
