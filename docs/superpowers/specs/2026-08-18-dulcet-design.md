@@ -8007,6 +8007,27 @@ while another receipt is still validating. Deferred plans belong to the account 
 discarded on account retirement or identity rejection. Account-generation and media-binding guards
 still apply.
 
+**2026-10-22 — Keep rejection authoritative through sends and suspended replies.**
+Identity rejection is lasting account authorization, independent of hostname reachability. A reader
+records rejection and cannot send an outbox mutation even when the platform still reports reachable.
+Only a successful negotiation of the saved identity or explicit accepted account configuration can
+open a new authorization lifetime. Network and foreground notifications alone cannot clear it.
+All reader requests capture both the reader's rejection generation and the account's authorization
+token before transport. Recheck both after the suspended request, including its failure path, before
+parsing, caching, capability adoption or acknowledging a durable change. A response crossing rejection
+is treated as not received. Accepting the account again does not revive an older response.
+
+Clients that detect rejection outside the reader revoke the shared account authorization synchronously;
+reader publication can then follow on its confined executor. A token changes on rejection and explicit
+accepted reopening, not on an ordinary same-identity probe, upgrade or restart. Scrobble delivery checks
+its authorization around extension discovery and after the actual scrobble reply. A late successful
+reply retains the submitted play for retry; it does not acknowledge or delete the durable row.
+Downloaded and cached media remain until counted consent. Remote artwork, playback metadata/audio,
+AutoPlay fallback and download metadata/promotion must also check the captured authorization after
+suspension and before exposing replacement bytes or persisting replacement data. An existing cached
+cover or offline media file remains available through review and Cancel. These boundaries supplement
+the account-generation and media-binding checks; they do not broaden the protocol's identity guarantees.
+
 **2026-10-21 — Fence playback replies and new byte requests after identity rejection.**
 Known replacement rejection closes remote playback even when a caller has no optional connection
 gate. Recheck that boundary after asynchronous metadata, current resolution and preload resolution,

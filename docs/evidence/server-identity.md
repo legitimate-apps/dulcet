@@ -5,6 +5,35 @@ local random account ID, the latter is authenticated product type and, for an ad
 server, its origin's discovery instance ID. Software versions do not enter lineage. See spec §28
 for trust, migration and plain OpenSubsonic limits.
 
+## Lasting rejection and replies already in flight
+
+OBSERVED on published revision `4a946a68`: three review regressions fail before production changes.
+`SavedServerIdentityTest/rejectedReachableReaderKeepsFavouritePendingWithoutSending` observes an
+actual `star` request with the old album ID after rejection while `reachable` stays true.
+`rejectedReaderDiscardsAnUnpagedReplyBeforeItCanEnterTheOldCache` observes the replacement artist
+persisted in the old account's SQLite cache. `scrobbleReplyAcrossRejectionRetainsTheDurablePlay`
+observes one delivered play instead of zero after a held successful reply crosses rejection.
+The initial XML contains nine cases, three failures, zero errors and zero skips. Two additional
+controls also fail before the fix: accepting a validated reconnect revives an older held read, and
+a late favourite acknowledgement removes the pending mutation. That XML contains eleven cases,
+five failures, zero errors and zero skips.
+
+The shared reader now keeps sticky rejection separate from reachability. Every reader request
+captures a rejection generation and account authorization token and checks them after transport,
+before downstream readers or outboxes can cache, adopt or acknowledge the reply. Other account
+clients can revoke authorization synchronously before queued reader publication. The scrobble sender
+checks the same operation lifetime around capability discovery and after the scrobble response.
+Rejecting and later accepting an account cannot revive an older response. Same-identity background
+probes leave the accepted token stable. The original eleven shared tests pass unchanged after the
+first fix. The expanded `SavedServerIdentityTest` XML executes fourteen cases with zero failures,
+errors or skips, including external-rejection and reject/accept controls for the shared token seam.
+Final complete-suite XML counts and platform sweep results are recorded with the final revision.
+
+These are real SQLite, production reader/outbox and held transport observations. They establish
+request and persistence boundaries, not a rendered native server-swap tour. The earlier statement
+that rejection was fenced was incomplete for these suspended replies; the new tests exercise those
+missing paths explicitly.
+
 ## Android removal and queued retirement
 
 OBSERVED in core-ci run `39818140263`, TV job `119961936427`: CONF-52 had already

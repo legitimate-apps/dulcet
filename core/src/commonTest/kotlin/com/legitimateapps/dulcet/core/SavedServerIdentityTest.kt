@@ -1,5 +1,8 @@
 package com.legitimateapps.dulcet.core
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
@@ -41,6 +44,167 @@ class SavedServerIdentityTest {
         assertEquals(listOf("identity"), events)
         assertTrue(env.server.log.isEmpty(), "no epoch read or queued write may reach a replacement")
         assertFalse(reader.online)
+    }
+
+    @Test fun rejectedReachableReaderKeepsFavouritePendingWithoutSending() = sessionTest { env ->
+        var identityFailure: DomainError? = null
+        val session = LibraryReaderSession(env.database.database, env.cache(), env.server, env.scope,
+            formPost = false, foreground = false, validateServerIdentity = { identityFailure })
+        session.reader.connect()
+        identityFailure = DomainError.Protocol.ServerIdentityChanged
+        assertEquals(ReaderConnectionOutcome.Failed(identityFailure), session.reader.reconnect())
+        assertTrue(session.reader.reachable, "the platform still reports the saved hostname reachable")
+        val before = env.server.log.size
+        assertEquals(MutationRecord.Pending, session.favourites.setFavourite(
+            LibraryEntityRef(LibraryEntityKind.Album, albumId(4)), true))
+        advanceUntilIdle()
+        assertEquals(emptyList(), env.server.log.drop(before), "rejection must block every later outbox request")
+        assertEquals(1L, session.favourites.pendingCount(), "the old account's change stays pending")
+        identityFailure = null // the saved identity authenticates again, without replacement consent
+        assertIs<ReaderConnectionOutcome.Read>(session.reader.reconnect())
+        advanceUntilIdle()
+        assertEquals(1, env.server.log.drop(before).count { it.endpoint == "star" })
+        assertEquals(0L, session.favourites.pendingCount(), "accepted negotiation can resume the retained outbox")
+    }
+
+    @Test fun rejectedReaderDiscardsAnUnpagedReplyBeforeItCanEnterTheOldCache() = readerTest { env ->
+        var identityFailure: DomainError? = null
+        val cache = env.store.bind(ReaderEnv.BINDING)
+        val reader = env.reader(validateServerIdentity = { identityFailure })
+        reader.connect()
+        env.server.artists = listOf("replacement-only" to "Replacement Artist")
+        env.server.holdMatching = { it.endpoint == "getArtists" }
+        val publications = Publications(env.server)
+        val handle = reader.open(LibraryQuery.Artists(), publications)
+        advanceUntilIdle()
+        assertEquals(1, env.server.heldCount, "the unpaged reply is in flight")
+        identityFailure = DomainError.Protocol.ServerIdentityChanged
+        assertEquals(ReaderConnectionOutcome.Failed(identityFailure), reader.reconnect())
+        env.server.release()
+        advanceUntilIdle()
+        assertNull(cache.artist("replacement-only"), "late replacement rows must never enter A's cache")
+        assertTrue(publications.last.items.none { it.rawId == "replacement-only" })
+        handle.close()
+    }
+
+    @Test fun aValidatedReconnectCannotAuthorizeAReplyStartedBeforeRejection() = readerTest { env ->
+        var identityFailure: DomainError? = null
+        val reader = env.reader(validateServerIdentity = { identityFailure })
+        reader.connect()
+        env.server.holdMatching = { it.endpoint == "getArtists" }
+        val held = async { runCatching { reader.sendChecked("getArtists") } }
+        advanceUntilIdle()
+        assertEquals(1, env.server.heldCount)
+        identityFailure = DomainError.Protocol.ServerIdentityChanged
+        assertIs<ReaderConnectionOutcome.Failed>(reader.reconnect())
+        identityFailure = null
+        assertIs<ReaderConnectionOutcome.Read>(reader.reconnect())
+        assertTrue(reader.online, "the saved identity is accepted again")
+        env.server.release()
+        assertIs<ReaderSendRefused>(held.await().exceptionOrNull(),
+            "reaccepting the account cannot revive a response from the rejected generation")
+    }
+
+    @Test fun aLateFavouriteAcknowledgementAfterRejectionKeepsTheMutationPending() = sessionTest { env ->
+        var identityFailure: DomainError? = null
+        val session = LibraryReaderSession(env.database.database, env.cache(), env.server, env.scope,
+            formPost = false, foreground = false, validateServerIdentity = { identityFailure })
+        session.reader.connect()
+        env.server.holdBeforeApply += "star"
+        session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Album, albumId(4)), true)
+        advanceUntilIdle()
+        assertEquals(1, env.server.heldCount, "the star has been sent but not acknowledged")
+        identityFailure = DomainError.Protocol.ServerIdentityChanged
+        assertIs<ReaderConnectionOutcome.Failed>(session.reader.reconnect())
+        env.server.release()
+        advanceUntilIdle()
+        assertEquals(1L, session.favourites.pendingCount(), "late success cannot acknowledge A's durable mutation")
+    }
+
+    @Test fun externalRejectionBlocksReachableOutboxWithoutAReaderReconnect() = sessionTest { env ->
+        var authorization: Long? = 0L
+        val session = LibraryReaderSession(env.database.database, env.cache(), env.server, env.scope,
+            formPost = false, foreground = false, identityAuthorization = { authorization })
+        session.reader.connect()
+        authorization = null // a download or playback client detected the replacement first
+        val before = env.server.log.size
+        session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Album, albumId(4)), true)
+        advanceUntilIdle()
+        assertFalse(session.reader.canSend)
+        assertEquals(emptyList(), env.server.log.drop(before))
+        assertEquals(1L, session.favourites.pendingCount())
+    }
+
+    @Test fun externalRejectAndAcceptCannotReviveAnOlderUnpagedReply() = readerTest { env ->
+        var authorization: Long? = 0L
+        val reader = env.reader(identityAuthorization = { authorization })
+        reader.connect()
+        env.server.holdMatching = { it.endpoint == "getArtists" }
+        val held = async { runCatching { reader.sendChecked("getArtists") } }
+        advanceUntilIdle()
+        assertEquals(1, env.server.heldCount)
+        authorization = null
+        authorization = 1L // even if the reader never observed the rejected interval
+        env.server.release()
+        assertIs<ReaderSendRefused>(held.await().exceptionOrNull())
+    }
+
+    @Test fun externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay() = runTest {
+        val store = DulcetDatabaseStore.open(createTestDriver())
+        try {
+            val outbox = PersistentScrobbleOutbox(store.database, OutboxWallClock { 100 })
+            val play = RecordedPlaybackEvent.SubmittedPlay(ProviderItemId("old-server", "same-opaque-id"), PlaybackWallClockTime(50))
+            outbox.persistForAtLeastOnceDelivery(play)
+            var authorization: Long? = 0L
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val sender = ScrobbleEndpointSender(ScrobbleEndpointTransport {
+                entered.complete(Unit)
+                release.await()
+                AuthenticatedEndpointResponse(200, """{"subsonic-response":{"status":"ok"}}""".encodeToByteArray(),
+                    "http://fixture.invalid/rest/scrobble?<redacted>", AuthenticatedEndpointResponseHeaders(null, null, null, null, null),
+                    RequestTrace.observed("scrobble", "GET", "http://fixture.invalid/rest/scrobble?<redacted>",
+                        AuthenticationLocation.Query, emptySet(), emptySet(), emptySet(), "1.16.1", "fixture"))
+            }, identityAuthorization = { authorization })
+            val worker = ScrobbleOutboxDeliveryWorker(ServerId("old-server"), outbox, sender,
+                OutboxWallClock { 100 }, OutboxMonotonicClock { kotlin.time.Duration.ZERO }, ScrobbleOutboxDiagnosticSink {})
+            val drain = async { worker.onForeground() }
+            entered.await()
+            authorization = null
+            authorization = 1L
+            release.complete(Unit)
+            assertEquals(0, drain.await().deliveredCount)
+            assertEquals(play, outbox.pending(ServerId("old-server")).single().toSubmittedPlay())
+        } finally { store.close() }
+    }
+
+    @Test fun scrobbleReplyAcrossRejectionRetainsTheDurablePlay() = runTest {
+        val store = DulcetDatabaseStore.open(createTestDriver())
+        try {
+            val outbox = PersistentScrobbleOutbox(store.database, OutboxWallClock { 100 })
+            val play = RecordedPlaybackEvent.SubmittedPlay(ProviderItemId("old-server", "same-opaque-id"), PlaybackWallClockTime(50))
+            outbox.persistForAtLeastOnceDelivery(play)
+            var rejected = false
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val sender = ScrobbleEndpointSender(ScrobbleEndpointTransport {
+                entered.complete(Unit)
+                release.await()
+                AuthenticatedEndpointResponse(200, """{"subsonic-response":{"status":"ok"}}""".encodeToByteArray(),
+                    "http://fixture.invalid/rest/scrobble?<redacted>", AuthenticatedEndpointResponseHeaders(null, null, null, null, null),
+                    RequestTrace.observed("scrobble", "GET", "http://fixture.invalid/rest/scrobble?<redacted>",
+                        AuthenticationLocation.Query, emptySet(), emptySet(), emptySet(), "1.16.1", "fixture"))
+            }, authorizeRequest = { if (rejected) DomainError.Protocol.ServerIdentityChanged else null })
+            val worker = ScrobbleOutboxDeliveryWorker(ServerId("old-server"), outbox, sender,
+                OutboxWallClock { 100 }, OutboxMonotonicClock { kotlin.time.Duration.ZERO }, ScrobbleOutboxDiagnosticSink {})
+            val drain = async { worker.onForeground() }
+            entered.await()
+            rejected = true
+            release.complete(Unit)
+            assertEquals(0, drain.await().deliveredCount, "a reply across rejection is not an acknowledgement")
+            assertEquals(play, outbox.pending(ServerId("old-server")).single().toSubmittedPlay(),
+                "the exact durable play must survive a late successful reply")
+        } finally { store.close() }
     }
 
     @Test fun backgroundScrobbleDrainChecksIdentityBeforeAnyAttemptAndNeverDropsOldIds() = runTest {

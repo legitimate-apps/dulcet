@@ -1474,6 +1474,36 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
+            },
+            {
+              "observes": "Sticky reader rejection blocks an actual favourite send while platform reachability stays true, preserves the durable change, and resumes it only after validated reconnect. Executed on JVM; no rendered platform swap claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReachableReaderKeepsFavouritePendingWithoutSending"
+            },
+            {
+              "observes": "A held unpaged artist response released after rejection writes no replacement row to the old SQLite namespace and publishes no replacement artist. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReaderDiscardsAnUnpagedReplyBeforeItCanEnterTheOldCache"
+            },
+            {
+              "observes": "A held successful scrobble response crossing rejection does not acknowledge or delete the exact durable submitted play. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/scrobbleReplyAcrossRejectionRetainsTheDurablePlay"
+            },
+            {
+              "observes": "An external account authorization token changes through reject and accept while a reader reply is held; the old response remains refused even if the reader never observed the rejected interval. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotReviveAnOlderUnpagedReply"
+            },
+            {
+              "observes": "An external reject/accept cycle cannot turn a held old scrobble success into acknowledgement; its exact durable row remains pending. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
             }
           ],
           "promotion_condition": {
@@ -1533,6 +1563,36 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
+            },
+            {
+              "observes": "Sticky reader rejection blocks an actual favourite send while platform reachability stays true, preserves the durable change, and resumes it only after validated reconnect. Executed on JVM; no rendered platform swap claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReachableReaderKeepsFavouritePendingWithoutSending"
+            },
+            {
+              "observes": "A held unpaged artist response released after rejection writes no replacement row to the old SQLite namespace and publishes no replacement artist. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReaderDiscardsAnUnpagedReplyBeforeItCanEnterTheOldCache"
+            },
+            {
+              "observes": "A held successful scrobble response crossing rejection does not acknowledge or delete the exact durable submitted play. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/scrobbleReplyAcrossRejectionRetainsTheDurablePlay"
+            },
+            {
+              "observes": "An external account authorization token changes through reject and accept while a reader reply is held; the old response remains refused even if the reader never observed the rejected interval. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotReviveAnOlderUnpagedReply"
+            },
+            {
+              "observes": "An external reject/accept cycle cannot turn a held old scrobble success into acknowledgement; its exact durable row remains pending. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
             }
           ],
           "promotion_condition": {
@@ -1592,6 +1652,36 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
+            },
+            {
+              "observes": "Sticky reader rejection blocks an actual favourite send while platform reachability stays true, preserves the durable change, and resumes it only after validated reconnect. Executed on JVM; no rendered platform swap claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReachableReaderKeepsFavouritePendingWithoutSending"
+            },
+            {
+              "observes": "A held unpaged artist response released after rejection writes no replacement row to the old SQLite namespace and publishes no replacement artist. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReaderDiscardsAnUnpagedReplyBeforeItCanEnterTheOldCache"
+            },
+            {
+              "observes": "A held successful scrobble response crossing rejection does not acknowledge or delete the exact durable submitted play. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/scrobbleReplyAcrossRejectionRetainsTheDurablePlay"
+            },
+            {
+              "observes": "An external account authorization token changes through reject and accept while a reader reply is held; the old response remains refused even if the reader never observed the rejected interval. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotReviveAnOlderUnpagedReply"
+            },
+            {
+              "observes": "An external reject/accept cycle cannot turn a held old scrobble success into acknowledgement; its exact durable row remains pending. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
             }
           ],
           "promotion_condition": {
@@ -1645,6 +1735,36 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaylistPlayContextTest/closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds"
+            },
+            {
+              "observes": "Sticky reader rejection blocks an actual favourite send while platform reachability stays true, preserves the durable change, and resumes it only after validated reconnect. Executed on JVM; no rendered platform swap claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReachableReaderKeepsFavouritePendingWithoutSending"
+            },
+            {
+              "observes": "A held unpaged artist response released after rejection writes no replacement row to the old SQLite namespace and publishes no replacement artist. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReaderDiscardsAnUnpagedReplyBeforeItCanEnterTheOldCache"
+            },
+            {
+              "observes": "A held successful scrobble response crossing rejection does not acknowledge or delete the exact durable submitted play. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/scrobbleReplyAcrossRejectionRetainsTheDurablePlay"
+            },
+            {
+              "observes": "An external account authorization token changes through reject and accept while a reader reply is held; the old response remains refused even if the reader never observed the rejected interval. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotReviveAnOlderUnpagedReply"
+            },
+            {
+              "observes": "An external reject/accept cycle cannot turn a held old scrobble success into acknowledgement; its exact durable row remains pending. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
             }
           ],
           "promotion_condition": {
@@ -1764,6 +1884,36 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidPlaybackControllerTest/identityRejectionDuringPlaylistDiscoveryCannotSendTheRetainedAccountsSongOrPlaylistIds"
+            },
+            {
+              "observes": "Sticky reader rejection blocks an actual favourite send while platform reachability stays true, preserves the durable change, and resumes it only after validated reconnect. Executed on JVM; no rendered platform swap claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReachableReaderKeepsFavouritePendingWithoutSending"
+            },
+            {
+              "observes": "A held unpaged artist response released after rejection writes no replacement row to the old SQLite namespace and publishes no replacement artist. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReaderDiscardsAnUnpagedReplyBeforeItCanEnterTheOldCache"
+            },
+            {
+              "observes": "A held successful scrobble response crossing rejection does not acknowledge or delete the exact durable submitted play. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/scrobbleReplyAcrossRejectionRetainsTheDurablePlay"
+            },
+            {
+              "observes": "An external account authorization token changes through reject and accept while a reader reply is held; the old response remains refused even if the reader never observed the rejected interval. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotReviveAnOlderUnpagedReply"
+            },
+            {
+              "observes": "An external reject/accept cycle cannot turn a held old scrobble success into acknowledgement; its exact durable row remains pending. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
             }
           ],
           "promotion_condition": {
@@ -1883,6 +2033,36 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidPlaybackControllerTest/identityRejectionDuringPlaylistDiscoveryCannotSendTheRetainedAccountsSongOrPlaylistIds"
+            },
+            {
+              "observes": "Sticky reader rejection blocks an actual favourite send while platform reachability stays true, preserves the durable change, and resumes it only after validated reconnect. Executed on JVM; no rendered platform swap claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReachableReaderKeepsFavouritePendingWithoutSending"
+            },
+            {
+              "observes": "A held unpaged artist response released after rejection writes no replacement row to the old SQLite namespace and publishes no replacement artist. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/rejectedReaderDiscardsAnUnpagedReplyBeforeItCanEnterTheOldCache"
+            },
+            {
+              "observes": "A held successful scrobble response crossing rejection does not acknowledge or delete the exact durable submitted play. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/scrobbleReplyAcrossRejectionRetainsTheDurablePlay"
+            },
+            {
+              "observes": "An external account authorization token changes through reject and accept while a reader reply is held; the old response remains refused even if the reader never observed the rejected interval. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotReviveAnOlderUnpagedReply"
+            },
+            {
+              "observes": "An external reject/accept cycle cannot turn a held old scrobble success into acknowledgement; its exact durable row remains pending. Executed on JVM.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
             }
           ],
           "promotion_condition": {

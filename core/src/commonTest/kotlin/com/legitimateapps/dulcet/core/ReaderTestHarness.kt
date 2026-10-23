@@ -63,6 +63,8 @@ internal class ReaderEnv(
         overlay: LibraryMutationOverlay = LibraryMutationOverlay.None,
         downloads: DownloadedTrackSource = DownloadedTrackSource.None,
         outboxes: ReconnectOutboxes = ReconnectOutboxes.None,
+        validateServerIdentity: suspend () -> DomainError? = { null },
+        identityAuthorization: () -> Long? = { 0L },
     ): LibraryReader = LibraryReader(
         cache = store.bind(BINDING),
         transport = transport,
@@ -71,6 +73,8 @@ internal class ReaderEnv(
         overlay = overlay,
         downloads = downloads,
         outboxes = outboxes,
+        validateServerIdentity = validateServerIdentity,
+        identityAuthorization = identityAuthorization,
     )
 
     companion object {
