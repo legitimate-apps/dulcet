@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.res.Configuration
 import android.view.KeyEvent
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -16,7 +15,7 @@ import org.junit.runner.RunWith
 /** Production activity, reader and server: home at launch, an album opens, tabs still work. */
 @RunWith(AndroidJUnit4::class)
 class ListenNowEmulatorProofTest {
-    @get:Rule val compose = createEmptyComposeRule()
+    @get:Rule val compose = createHomeProofComposeRule()
     @Test fun homeLaunchAlbumAndCachedRelaunch() {
         val probe = DisposableServerProbe.fromInstrumentation()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
