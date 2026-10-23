@@ -487,6 +487,8 @@ assertEquals(0, unauthorizedDeliveries.size)
 
 ### Task 15: REST extensions and complete client contract documents
 
+Review amendment: both REST contracts document `completeness=known|unknown`; `status=held|partlyHeld|notHeld` carries the holding result. A partly held 8/12 edition with metadata has known completeness. `emittedRestCompletenessUsesTheDocumentedKnownUnknownEnum` compares real JSON/XML responses with the enum in both extension documents.
+
 Implementation note: the shared wish page cursor in `v1/Wishlist.kt` also binds the list revision,
 so a concurrent mutation expires both API and REST continuations. REST app adds require Discover
 but accept the displayed item snapshot without an upstream call in the mutation transaction,

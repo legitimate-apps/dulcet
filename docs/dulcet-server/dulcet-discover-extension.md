@@ -48,7 +48,7 @@ XML represents one child per row. No playback media or preview is provided by Di
 | Item | `id` opaque server id, `kind`, `title`, optional `artist`, `year`, `releaseDate`, `artworkId`, `disc`, `position`, `listenCount`, `primaryType`; `wishable` boolean; `externalIds`, `availability`, `links.link[]`, `artistMbids[]` |
 | `externalIds` | MusicBrainz UUIDs: `musicbrainzArtistId`, `musicbrainzReleaseGroupId`, `musicbrainzRecordingId`, and source-specific release/CAA ids when supplied. Canonical wish identity is kind plus the corresponding first three keys. These are external ids, never server catalog ids. |
 | `links.link` | `relation`, `url` (safe HTTP or HTTPS relation); open in the browser, never treat as a media URL |
-| `availability` | `status=held\|partlyHeld\|notHeld`, `completeness=complete\|partial\|unknown`; optional `matchedBy=mbid\|name`, `matchedTrackCount`, `totalTrackCount`, `editionReleaseId`; `libraryItems.item[]` |
+| `availability` | `status=held\|partlyHeld\|notHeld`, `completeness=known\|unknown`; optional `matchedBy=mbid\|name`, `matchedTrackCount`, `totalTrackCount`, `editionReleaseId`; `libraryItems.item[]` |
 | Local reference | `id` opaque local catalog id, `type=artist\|album\|song` (Dulcet API uses `track` for song references) |
 | Page | the method's row array; optional `nextCursor`; `fetchedAt` UTC RFC3339 timestamp, `ageSeconds` integer, `stale` boolean |
 | Artist | summary `item`, `albums` page with `album[]`, newest known release date first, unknown dates last |
@@ -69,8 +69,9 @@ while retaining version words and diacritics. A live, remix, demo, acoustic or i
 cannot satisfy another version. Ambiguous name matches stay partial. Albums are held only when
 one local album contains every track of a single known edition, with one local file per edition
 slot. Counts never pool across albums or substitute for track identity. For an 8-of-12 match,
-`matchedTrackCount=8`, `totalTrackCount=12`, `status=partlyHeld`, `completeness=partial`. Missing
-edition metadata leaves completeness unknown and omits counts. Artist held status may reflect
+`matchedTrackCount=8`, `totalTrackCount=12`, `status=partlyHeld`, `completeness=known`. Missing
+edition metadata leaves completeness unknown and omits counts. `known` means the edition
+metadata is available; `status` carries whether it is held, partly held or not held. Artist held status may reflect
 songs, but artist-wish fulfilment requires an album. Use returned local ids to route held items
 to ordinary library pages. **This isn't it** uses the rejection method in the Wishlist contract.
 

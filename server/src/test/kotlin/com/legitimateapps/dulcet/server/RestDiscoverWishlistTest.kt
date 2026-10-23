@@ -53,6 +53,35 @@ class RestDiscoverWishlistTest {
             } finally {ctx.close();ctx.db.close()}
         }
     }
+    @Test fun emittedRestCompletenessUsesTheDocumentedKnownUnknownEnum() = testApplication {
+        FixtureDiscoverUpstream().use { f -> val ctx=context(f)
+            try {
+                ctx.users.create("user","password",false)
+                val group=javaClass.getResource("/discover/musicbrainz/release-group.json")!!.readText()
+                val release=javaClass.getResource("/discover/musicbrainz/release.json")!!.readText()
+                f.json("/ws/2/release-group/$id",group)
+                f.json("/ws/2/release","""{"release-count":1,"releases":[$release]}""")
+                Fixtures.track(ctx.config.musicFolder.resolve("one.flac"),tags=mapOf("title" to "One","album" to "Album","artist" to "Artist","MUSICBRAINZ_RELEASEGROUPID" to id,"MUSICBRAINZ_TRACKID" to "33333333-3333-4333-8333-333333333333"))
+                ctx.scanner.scan()
+                application {dulcetModule(ctx)}
+                val doc=Files.readString(java.nio.file.Path.of("../docs/dulcet-server/dulcet-discover-extension.md"))
+                val documented=doc.substringAfter("completeness=").substringBefore('`').replace("\\|","|").split('|').toSet()
+                suspend fun album()=parse(client.get("/rest/getDulcetDiscoverAlbum?u=user&p=password&v=1.16.1&c=test&f=json&mbid=$id").bodyAsText()).child("dulcetDiscoverAlbum").child("item").child("availability")
+                val known=album();assertEquals("known",known["completeness"]!!.jsonPrimitive.content)
+                assertTrue(known["completeness"]!!.jsonPrimitive.content in documented,"Emitted known must belong to documented enum $documented")
+                assertEquals(setOf("known","unknown"),documented)
+                val wishlistDoc=Files.readString(java.nio.file.Path.of("../docs/dulcet-server/dulcet-wishlist-extension.md"))
+                assertEquals(documented,wishlistDoc.substringAfter("completeness=").substringBefore('`').replace("\\|","|").split('|').toSet())
+                val xml=client.get("/rest/getDulcetDiscoverAlbum?u=user&p=password&v=1.16.1&c=test&f=xml&mbid=$id").bodyAsText()
+                assertTrue(xml.contains("completeness=\"known\""))
+                assertTrue(known["status"]!!.jsonPrimitive.content in setOf("held","partlyHeld","notHeld"))
+                ctx.db.write {execute("DELETE FROM track")}
+                val unknown=album();assertEquals("unknown",unknown["completeness"]!!.jsonPrimitive.content)
+                assertTrue(unknown["completeness"]!!.jsonPrimitive.content in documented)
+                assertEquals("notHeld",unknown["status"]!!.jsonPrimitive.content)
+            } finally {ctx.close();ctx.db.close()}
+        }
+    }
     @Test fun wishClockCoversApiAdminAndScanButNotDuplicateAdd() = testApplication {
         FixtureDiscoverUpstream().use { f -> val ctx=context(f)
             try {

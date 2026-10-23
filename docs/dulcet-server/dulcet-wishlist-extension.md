@@ -50,7 +50,7 @@ either Discover or Wishlist enabled; a disabled Wishlist is never created or reo
 | `note`, `noteAt` | Optional integration/admin note, at most 1000 Unicode code points, and time set |
 | `fulfilledAt` | Optional server arrival time |
 | `libraryItem` | Optional local `id`, `type=artist\|album\|song` |
-| `availability` | Same three-state match, edition completeness/counts and `libraryItems.item[]` as Discover |
+| `availability` | Same `status=held\|partlyHeld\|notHeld`, `completeness=known\|unknown`, edition counts and `libraryItems.item[]` as Discover; `known` describes available edition metadata, while `status` describes holdings |
 | `revision` | Opaque version, also used by API conditional state updates |
 | Mutation `applied` | True only when this operation changed persistent state |
 | Mutation `wish` | Optional resulting live wish; omitted for a removed/cancelled generation |
