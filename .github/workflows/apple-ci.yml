@@ -139,11 +139,13 @@ jobs:
       # so this job links its own. `Build all Apple frameworks` -- the two device links and
       # `:core:macosArm64Test` -- runs once, in apple-conformance-core. 10, the cap that step carried
       # before its measured tail reached it; this step links three of its five frameworks and runs
-      # no tests, and has not been re-measured since.
+      # no tests. Run 40024093810 reached all three links but hit that ten-minute cold-build
+      # cap, with zero swap and load1 at most 28.7. Limit workers and give this compilation
+      # phase fifteen minutes; native execution keeps its separate unchanged bounds.
       - name: Build the Apple frameworks the platform legs read
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: >-
-          ./gradlew --no-daemon
+          ./gradlew --no-daemon --max-workers=2
           :core:linkDebugFrameworkMacosArm64
           :core:linkDebugFrameworkIosSimulatorArm64
           :core:linkDebugFrameworkTvosSimulatorArm64
