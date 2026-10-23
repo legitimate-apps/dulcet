@@ -3,12 +3,17 @@
 
 Start with --port 4784 --upstream-port 4783. /fixture/network?offline=1 closes app requests;
 control requests still succeed. The upstream stays reachable for independent server assertions.
-No traffic or credentials are logged. Terminate the process when the proof ends.
+Receipts name only the REST endpoint and phase, never authenticated URLs, headers or bodies.
+Terminate the process when the proof ends.
 """
 import argparse
 import http.client
+import itertools
+import json
+import re
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -17,6 +22,8 @@ parser.add_argument('--port', type=int, default=4784)
 parser.add_argument('--upstream-port', type=int, default=4783)
 args = parser.parse_args()
 offline = threading.Event()
+requests = itertools.count(1)
+receipt_lock = threading.Lock()
 
 class Proxy(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
@@ -24,12 +31,27 @@ class Proxy(BaseHTTPRequestHandler):
     def do_POST(self): self.forward()
     def forward(self):
         path = urlsplit(self.path)
+        started = time.monotonic()
+        request = next(requests)
+        endpoint = path.path.removeprefix('/rest/').removesuffix('.view')
+        if not path.path.startswith('/rest/') or not re.fullmatch('[A-Za-z][A-Za-z0-9]*', endpoint):
+            endpoint = 'fixture-control' if path.path == '/fixture/network' else 'other'
+        def receipt(phase, **details):
+            record = dict(request=request, endpoint=endpoint,
+                phase=phase, wallTimeMillis=time.time_ns() // 1_000_000,
+                elapsedMillis=round((time.monotonic() - started) * 1000), **details)
+            with receipt_lock:
+                print('MY LIBRARY REQUEST ' + json.dumps(record), flush=True)
+        receipt('received')
         if path.path == '/fixture/network':
             offline.set() if parse_qs(path.query).get('offline') == ['1'] else offline.clear()
             body = b'offline' if offline.is_set() else b'online'
             self.send_response(200); self.send_header('Content-Length', str(len(body)))
-            self.end_headers(); self.wfile.write(body); return
+            self.end_headers(); self.wfile.write(body)
+            receipt('delivered', status=200)
+            return
         if offline.is_set():
+            receipt('offline')
             self.connection.shutdown(socket.SHUT_RDWR)
             self.connection.close(); return
         connection = http.client.HTTPConnection('127.0.0.1', args.upstream_port, timeout=20)
@@ -39,11 +61,18 @@ class Proxy(BaseHTTPRequestHandler):
             connection.request(self.command, self.path, body=body, headers=headers)
             response = connection.getresponse()
             data = response.read()
+            receipt('upstream', status=response.status)
             self.send_response(response.status)
             for key, value in response.getheaders():
                 if key.lower() not in ('connection', 'transfer-encoding', 'content-length'): self.send_header(key, value)
             self.send_header('Content-Length', str(len(data)))
             self.end_headers(); self.wfile.write(data)
+            receipt('delivered', status=response.status)
+        except (OSError, http.client.HTTPException) as error:
+            # The old bare BrokenPipe traceback could not identify which connection read
+            # failed (run 39728604012). Keep phase and exception type, not its URL-bearing text.
+            receipt('failed', error=type(error).__name__)
+            self.close_connection = True
         finally: connection.close()
 
 ThreadingHTTPServer(('127.0.0.1', args.port), Proxy).serve_forever()
