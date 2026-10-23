@@ -70,12 +70,24 @@ jobs:
           :core:testAndroidHostTest
           :core:bundleAndroidMainAar
           :core:licensee
+      - name: Install pinned server test media tools
+        run: |
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = "ubuntu:24.04"
+          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
+          # https://github.com/actions/runner-images/issues/14823
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5 lsof
+          test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
+          ffmpeg -version
+          ffprobe -version
       - name: Build and self-test the Discover fixture
         timeout-minutes: 10
         run: |
           tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg lsof
           python3 tools/ci/prepare-discover-fixture
           export DULCET_DISCOVER_NAVIDROME_BIN="$RUNNER_TEMP/discover-bin/navidrome"
           python3 tools/test-discover-wishlist-fixture --junit build/discover-fixture-junit.xml
@@ -133,20 +145,6 @@ jobs:
       # probe real audio: install both tools instead of replacing media behaviour with a stub.
       # Ubuntu Noble's exact package version: https://packages.ubuntu.com/noble/ffmpeg
       # This is FFmpeg 6.1.1, also used by the pinned Linux conformance environment.
-      - name: Install pinned server test media tools
-        run: |
-          . /etc/os-release
-          test "$ID:$VERSION_ID" = "ubuntu:24.04"
-          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
-          # https://github.com/actions/runner-images/issues/14823
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
-          fi
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
-          test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
-          ffmpeg -version
-          ffprobe -version
       - name: Test Dulcet Server
         run: >-
           ./gradlew --no-daemon
@@ -462,6 +460,10 @@ jobs:
       - name: Provision the pinned disposable fixture
         timeout-minutes: 5
         run: |
+          # Use the same Ubuntu archive fallback as the existing server conformance leg.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg lsof
           python3 tools/ci/prepare-discover-fixture

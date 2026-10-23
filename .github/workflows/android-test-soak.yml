@@ -99,6 +99,10 @@ jobs:
         if: ${{ inputs.discover_fixture }}
         timeout-minutes: 10
         run: |
+          # Use the same Ubuntu archive fallback as the existing server conformance leg.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg lsof
           tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist
