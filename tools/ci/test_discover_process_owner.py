@@ -47,7 +47,7 @@ class ControlSampler:
                     bootDiskFreeGiB=100), []
 discover_simulator_health.HostSampler=ControlSampler
 print('CONTROL sampler installed', flush=True)
-sys.argv=[sys.argv[2], 'iphone']
+sys.argv=[sys.argv[2], os.environ.get('CONTROL_MODE','iphone')]
 runpy.run_path(sys.argv[0], run_name='__main__')
 '''
 
@@ -80,7 +80,7 @@ class OwnerTests(unittest.TestCase):
             finally:
                 if process.poll() is None:process.terminate();process.wait()
                 sentinel.terminate();sentinel.wait()
-    def runner_term(self, hosted=False):
+    def runner_term(self, hosted=False, mode="iphone"):
         # These executable controls record effects; no simulator or fixture is started.
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
@@ -96,7 +96,8 @@ elif name=='sim-lease':
     if sys.argv[1]=='create':(root/'device-lease').write_text('held');print('CONTROL-UDID')
     else:(root/'device-lease').unlink()
 elif name=='git':print('control-head')
-elif name=='xcodebuild':time.sleep(180)
+elif name=='xcodebuild':
+    (root/'boot-pid').write_text(str(os.getpid()));time.sleep(180)
 elif sys.argv[1:4]==['simctl','list','devices']:
     print(json.dumps({'devices':{'com.apple.CoreSimulator.SimRuntime.iOS-control':[{'udid':'CONTROL-UDID','name':'iPhone control','deviceTypeIdentifier':'control-phone-type'}]}}))
 elif sys.argv[1:3]==['simctl','create']:
@@ -113,24 +114,32 @@ elif sys.argv[1:3]==['simctl','spawn']:time.sleep(180)
             env=dict(os.environ,PATH=str(root)+os.pathsep+os.environ['PATH'],CONTROL_ROOT=str(root),DULCET_DISCOVER_DISPOSABLE='true',DULCET_DISCOVER_PROOF_OUTPUT=str(root/'report'))
             env.pop('GITHUB_ACTIONS',None);env.pop('RUNNER_ENVIRONMENT',None)
             if hosted:env.update(GITHUB_ACTIONS='true',RUNNER_ENVIRONMENT='github-hosted')
+            env['CONTROL_MODE']=mode
+            if mode=='macos':
+                for key in ['SERVER_URL','NAVIDROME_URL','CONTROL_URL','USERNAME','PASSWORD','OTHER_USERNAME','OTHER_PASSWORD']:
+                    env['DULCET_DISCOVER_'+key]='control'
             env.pop('DULCET_DISCOVER_HOST_GATE',None)
             env.pop('DULCET_DISCOVER_PROOF_UDID',None)
             with (root/'runner.log').open('w') as log:
                 runner=subprocess.Popen([sys.executable,'-c',CONTROL_LAUNCHER,str(HERE),str(HERE/'run-discover-wishlist-proofs')],env=env,stdout=log,stderr=subprocess.STDOUT)
                 try:
                     deadline=time.monotonic()+15
-                    while (not (root/'boot-pid').exists() or (not hosted and not (root/'sampler-used').exists())) and runner.poll() is None and time.monotonic()<deadline:time.sleep(.05)
+                    while (not (root/'boot-pid').exists() or (mode!='macos' and not hosted and not (root/'sampler-used').exists())) and runner.poll() is None and time.monotonic()<deadline:time.sleep(.05)
                     self.assertTrue((root/'boot-pid').exists(),
                         'runner_exit='+str(runner.poll())+' log='+(root/'runner.log').read_text()+
                         ' commands='+((root/'commands.jsonl').read_text() if (root/'commands.jsonl').exists() else 'none'))
-                    if not hosted:self.assertTrue((root/'sampler-used').exists())
+                    if not hosted and mode!='macos':self.assertTrue((root/'sampler-used').exists())
                     child=int((root/'boot-pid').read_text())
                     runner.terminate();runner.wait(timeout=30)
                     self.assertEqual(143,runner.returncode,(root/'runner.log').read_text())
-                    self.assertEqual('CONTROL-UDID',(root/'shutdown').read_text())
+                    if mode=='macos':
+                        command=next(row for row in map(json.loads,(root/'commands.jsonl').read_text().splitlines()) if row[0]=='xcodebuild')
+                        for setting in ['CODE_SIGN_STYLE=Manual','CODE_SIGN_IDENTITY=-','CODE_SIGN_ENTITLEMENTS=','DEVELOPMENT_TEAM=','PROVISIONING_PROFILE_SPECIFIER=']:
+                            self.assertIn(setting,command)
+                    else:self.assertEqual('CONTROL-UDID',(root/'shutdown').read_text())
                     self.assertFalse((root/'device-lease').exists())
                     self.assertFalse((root/'build-lease').exists())
-                    if hosted:
+                    if hosted and mode!='macos':
                         self.assertFalse((root/'hosted-device').exists())
                         self.assertEqual('CONTROL-UDID',(root/'deleted').read_text())
                     with self.assertRaises(ProcessLookupError):os.kill(child,0)
@@ -139,6 +148,8 @@ elif sys.argv[1:3]==['simctl','spawn']:time.sleep(180)
 
     def test_runner_term_shuts_device_and_releases_both_leases(self):self.runner_term()
     def test_hosted_runner_term_deletes_its_device_without_local_leases(self):self.runner_term(True)
+
+    def test_hosted_mac_uses_ad_hoc_signing(self):self.runner_term(True,"macos")
 
     def test_term_reaps_separate_child_group(self):self.exercise(False)
     def test_parent_death_triggers_cleanup(self):self.exercise(True)

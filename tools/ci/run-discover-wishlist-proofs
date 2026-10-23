@@ -190,7 +190,9 @@ def apple_proof(mode):
         selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
         command=['xcodebuild','test','-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
         if mode=='macos':
-            command += ['-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','180']
+            # Match the app-hosted Mac proofs: finite disposable tests use ad hoc signing.
+            command += ['CODE_SIGN_STYLE=Manual','CODE_SIGN_IDENTITY=-','CODE_SIGN_ENTITLEMENTS=','DEVELOPMENT_TEAM=','PROVISIONING_PROFILE_SPECIFIER=',
+                        '-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','180']
             for key in ['SERVER_URL','NAVIDROME_URL','CONTROL_URL','USERNAME','PASSWORD','OTHER_USERNAME','OTHER_PASSWORD','DISPOSABLE']:
                 command.append('DULCET_TEST_DISCOVER_'+key+'='+os.environ['DULCET_DISCOVER_'+key])
             command.append('DULCET_TEST_DISCOVER_CAPTURE_UPLOAD_URL=http://127.0.0.1:'+str(capture_server.server_address[1]))
