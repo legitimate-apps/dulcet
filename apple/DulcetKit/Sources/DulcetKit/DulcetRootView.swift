@@ -854,6 +854,7 @@ private enum DulcetSidebarSelection: Hashable {
     case destination(DulcetSidebarDestination)
     case section(DulcetLibrarySection)
     case myLibrarySection(DulcetMyLibrarySection)
+    case wishlist
 }
 
 private struct DulcetSidebar: View {
@@ -879,7 +880,14 @@ private struct DulcetSidebar: View {
                     if destinations.contains(.library) {
                         sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
                     }
-                    if store.myLibraryAvailable, destinations.contains(.library) {
+                    if destinations.contains(.library), store.librarySession?.discoverPublication?.access.canReadWishlist == true {
+                    Section {
+                        Label(DulcetStrings.wishlist, systemImage: "bookmark")
+                            .tag(DulcetSidebarSelection.wishlist)
+                            .accessibilityIdentifier("wishlist.destination")
+                    }
+                }
+                if store.myLibraryAvailable, destinations.contains(.library) {
                         sidebarRow(DulcetStrings.browseSection, symbol: "globe", destination: .browse)
                     }
                     if destinations.contains(.search) {
@@ -957,6 +965,7 @@ private struct DulcetSidebar: View {
     private var selection: Binding<DulcetSidebarSelection?> {
         Binding(
             get: {
+                if store.selectedDestination == .library, store.readerPath.first == .wishlist { return .wishlist }
                 if store.myLibraryAvailable, store.selectedDestination == .library,
                    store.myLibrarySection != .recent { return .myLibrarySection(store.myLibrarySection) }
                 if store.readerOwnsLibrary, store.selectedDestination == (store.myLibraryAvailable ? .browse : .library),
@@ -981,6 +990,8 @@ private struct DulcetSidebar: View {
                     }
                 case let .section(section):
                     store.selectLibrarySection(section)
+                case .wishlist:
+                    store.showReaderPage(.wishlist)
                 case let .myLibrarySection(section):
                     store.selectMyLibrarySection(section)
                 }

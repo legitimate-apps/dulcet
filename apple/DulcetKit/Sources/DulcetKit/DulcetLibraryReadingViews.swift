@@ -1337,6 +1337,11 @@ struct DulcetReaderHomeView: View {
                 Text(DulcetStrings.libraryBrowseHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
             }
+#if !os(tvOS)
+            if store.selectedDestination == .library, store.librarySession?.discoverPublication?.access.canReadWishlist == true {
+                DulcetReaderHomeLink(title: DulcetStrings.wishlist, symbolName: "bookmark", identifier: "wishlist.destination") { store.pushReaderPage(.wishlist) }
+            }
+#endif
             DulcetLibraryDepthHome(width: width)
             if listsSections {
                 // A phone's Library, as the platform's own music app lays it out: every section as
@@ -1694,6 +1699,9 @@ struct DulcetReaderRouteView: View {
 
     var body: some View {
         switch route {
+#if !os(tvOS)
+        case .wishlist: DulcetWishlistDestinationView()
+#endif
         case .songs: DulcetLibrarySongsPage(downloaded: false)
         case .downloaded: DulcetLibrarySongsPage(downloaded: true)
         case let .section(section): DulcetReaderSectionView(section: section)
