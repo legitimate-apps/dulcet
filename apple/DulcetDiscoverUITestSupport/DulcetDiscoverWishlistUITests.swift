@@ -404,8 +404,15 @@ import UIKit
         if cancel.waitForExistence(timeout: 2) { activate(cancel) }
         else {
             // The adaptive confirmation popover on Xcode 27 omits the cancel action from AX.
-            // Escape is native cancellation and cannot activate its destructive action.
+#if os(macOS)
             app.typeKey(.escape, modifierFlags: [])
+#else
+            // iPhone does not dismiss this popover with Escape. Use its native outside tap,
+            // guarding the actual geometry so the test cannot approve the replacement.
+            let outside = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+            XCTAssertFalse(consent.frame.contains(outside.screenPoint))
+            outside.tap()
+#endif
         }
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: consent)
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed)
