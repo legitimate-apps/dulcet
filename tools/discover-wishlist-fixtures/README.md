@@ -127,7 +127,7 @@ the app connection is offline. JSON requests/responses only:
 | Scenario | Trigger and observed effect |
 |---|---|
 | `normal` | Forward the real server response |
-| `delayed-old-query` | A query containing `old` waits 750 ms; a cancelled request can still answer |
+| `delayed-old-query` | A query containing `old` waits for a new answer (bounded at 90 s), then 750 ms; a cancelled request can still answer |
 | `rate-limit-120` | Search returns HTTP 429 with Retry-After 120 |
 | `stale-answer` | Real search data is labelled stale with original age 7200 seconds |
 | `offline` | Close app sockets; independent server/control operations continue |

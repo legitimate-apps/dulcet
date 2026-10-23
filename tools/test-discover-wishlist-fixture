@@ -43,6 +43,37 @@ class ModuleLoadingTests(unittest.TestCase):
                 self.assertEqual('127.0.0.1',server.server_name)
                 self.assertGreater(server.server_port,0)
 
+    def test_oldQuerySurvivesSlowNativeEditingUntilNewAnswer(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import io
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        state=proxy.FixtureProxy({'server':'http://127.0.0.1:1'})
+        state.name='delayed-old-query';state.revision=1
+        # Model the observed native keyboard edit taking twenty seconds. An old read
+        # must still await the newer answer, with a finite upper bound, at that point.
+        waits=[]
+        def newer_answer(timeout):
+            waits.append(timeout)
+            return timeout>=20
+        state.query_release=SimpleNamespace(wait=newer_answer)
+        replies=[]
+        handler=SimpleNamespace(path='/rest/searchDulcetDiscover?kind=song&query=old',
+            headers={},rfile=io.BytesIO(),command='GET',server=SimpleNamespace(role='proxy',fixture=state),
+            reply=lambda status,data,headers=None: replies.append((status,data)))
+        response=MagicMock(status=200)
+        response.read.return_value=json.dumps({'subsonic-response':{'dulcetDiscover':{'item':[{'title':'Fixture Song'}]}}}).encode()
+        response.getheaders.return_value=[]
+        connection=MagicMock();connection.getresponse.return_value=response
+        with patch.object(proxy.http.client,'HTTPConnection',return_value=connection),patch.object(proxy.time,'sleep'):
+            proxy.Handler.handle_request(handler)
+        self.assertEqual(200,replies[0][0],'old read expired before the native editor could submit its new query')
+        self.assertLessEqual(waits[0],90,'the fixture hold remains finite')
+        self.assertEqual('old',state.effects[-1]['payload'])
+        self.assertTrue(json.loads(replies[0][1])['subsonic-response']['dulcetDiscover']['item'][0]['title'].startswith('Obsolete old query'))
+
     def test_lostReceiptReplayWitnessContainsOnlyExactMutationFields(self):
         loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
         spec=importlib.util.spec_from_loader(loader.name,loader)

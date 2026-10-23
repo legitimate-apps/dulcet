@@ -130,7 +130,9 @@ class Handler(BaseHTTPRequestHandler):
                 if name=='delayed-old-query' and endpoint=='searchDulcetDiscover' and 'old' in params.get('query',[''])[0].lower():
                     with state.lock:query_release=state.query_release
                     state.effect(endpoint,revision,name,held=True)
-                    if not query_release.wait(15):return self.reply(504,{'error':'new query did not release old query'})
+                    if not query_release.wait(90):
+                        state.effect(endpoint,revision,name,expired=True)
+                        return self.reply(504,{'error':'new query did not release old query'})
                     time.sleep(.75)
                 if name=='held-detail' and endpoint in {'getDulcetDiscoverAlbum','getDulcetDiscoverArtist'}:
                     with state.lock:release=state.detail_release
