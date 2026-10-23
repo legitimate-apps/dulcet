@@ -368,9 +368,11 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         func send(_ characters: String, code: UInt16) throws {
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 let event = try XCTUnwrap(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: app.window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
-                // The XCTest host may stay inactive. Deliver to this actual window's
-                // responder chain, so another app's key window cannot consume the proof.
-                app.window.sendEvent(event)
+                // Inactive test windows do not dispatch key events through NSWindow.
+                // Feed the actual focused native responder, as AppKit's window does.
+                let responder = try XCTUnwrap(app.window.firstResponder)
+                if type == .keyDown { responder.keyDown(with: event) }
+                else { responder.keyUp(with: event) }
             }
         }
         // Like the hosted table proofs' makeFirstResponder, focus the rendered control
