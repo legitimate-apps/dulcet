@@ -47,7 +47,11 @@ public object AndroidServerIdentity {
     } }
     internal fun isRejected(id: String): Boolean = id in rejected
     public fun isVerified(id: String): Boolean = id in mutableVerified.value && !isRejected(id)
-    internal suspend fun validate(id: String, validation: suspend () -> DomainError?): DomainError? {
+    internal suspend fun validate(
+        id: String,
+        beforeRejectedNotification: suspend () -> Unit = {},
+        validation: suspend () -> DomainError?,
+    ): DomainError? {
         val generation = synchronized(validationLock) {
             // An independent background probe does not revoke established contact while in flight.
             // New connections explicitly requireValidation; each ID-using worker still gates its own batch.
@@ -76,7 +80,10 @@ public object AndroidServerIdentity {
                 }
             }
             // Do not acquire the composition registry's lock while holding the gate's lock.
-            if (notifyRejected) AndroidLibraryReader.currentFor(id)?.rejectServerIdentity()
+            if (notifyRejected) {
+                beforeRejectedNotification()
+                AndroidLibraryReader.currentFor(id)?.rejectServerIdentity()
+            }
             return outcome
         } catch (failure: Throwable) {
             synchronized(validationLock) {
