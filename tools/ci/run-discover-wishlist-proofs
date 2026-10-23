@@ -142,9 +142,9 @@ def apple_proof(mode):
                     if monitor_done.wait(15):return
             threading.Thread(target=monitor,daemon=True).start()
             # First-boot migration settles before compilation rather than competing with it.
-            run(['xcrun','simctl','boot',udid])
+            run(['xcrun','simctl','boot',udid],timeout=60)
             with (output/'bootstatus.log').open('w') as log:
-                run(['xcrun','simctl','bootstatus',udid,'-b'],stdout=log,stderr=subprocess.STDOUT)
+                run(['xcrun','simctl','bootstatus',udid,'-b'],stdout=log,stderr=subprocess.STDOUT,timeout=900)
             import time
             deadline=time.monotonic()+900
             while not boot_settled.wait(1):
