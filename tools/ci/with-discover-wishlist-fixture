@@ -17,7 +17,9 @@ import time
 import urllib.request
 
 REPO=Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(REPO/'tools/ci'))
 sys.path.insert(0,str(REPO/'tools/discover-wishlist-fixtures'))
+from discover_process_owner import ProcessOwner
 from fixture import IDS,USER,OTHER,ADMIN,PASSWORD,mbid,request,rest,rest_url
 
 class DiscoverFixture:
@@ -25,7 +27,7 @@ class DiscoverFixture:
         self.root=Path(root) if root else None;self.evidence=Path(evidence) if evidence else None
         self.navidrome=navidrome or os.environ.get('DULCET_DISCOVER_NAVIDROME_BIN') or shutil.which('navidrome')
         self.ffmpeg=ffmpeg or os.environ.get('DULCET_DISCOVER_FFMPEG') or shutil.which('ffmpeg')
-        self.children=[];self.handles=[];self.owned=False;self.urls={};self.ids=IDS;self.started=time.monotonic();self.defer_ready=False;self.deferring_signal=False;self.pending_signal=None
+        self.process_owner=ProcessOwner();self.children=[];self.handles=[];self.owned=False;self.urls={};self.ids=IDS;self.started=time.monotonic();self.defer_ready=False;self.deferring_signal=False;self.pending_signal=None
     def start_process(self,name,argv):
         handle=(self.root/(name+'.log')).open('w');self.handles.append(handle)
         env={k:v for k,v in os.environ.items() if not k.startswith(('DULCET_','ND_'))};env['JAVA_OPTS']='-Xmx256m'
@@ -34,13 +36,13 @@ class DiscoverFixture:
         # Defer the Python handler, not the OS signal mask: children must inherit normal signals.
         self.deferring_signal=True
         try:
-            child=subprocess.Popen(argv,**kwargs);self.children.append((name,child));return child
+            child=self.process_owner.spawn(argv,**kwargs);self.children.append((name,child));return child
         finally:
             self.deferring_signal=False
             if self.pending_signal is not None:raise SystemExit(128+self.pending_signal)
     def run_cli(self,*args,capture=False):
         env={k:v for k,v in os.environ.items() if not k.startswith('DULCET_')};env['JAVA_OPTS']='-Xmx256m'
-        result=subprocess.run([str(self.server_binary),*args,*self.settings],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=45)
+        result=self.process_owner.run([str(self.server_binary),*args,*self.settings],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=45)
         if result.returncode:raise RuntimeError('fixture CLI failed: '+args[0])
         if capture:return result.stdout.strip().splitlines()[-1]
     def wait(self,predicate):
@@ -60,7 +62,7 @@ class DiscoverFixture:
         self.start_process(role,args);return self.wait(lambda:json.loads(ready.read_text()) if ready.exists() else None)['url']
     def media(self,name,recording,album,release,track):
         path=self.root/name
-        subprocess.run([self.ffmpeg,'-v','error','-nostdin','-y','-f','lavfi','-i','sine=frequency=440:duration=2','-threads','1',
+        self.process_owner.run([self.ffmpeg,'-v','error','-nostdin','-y','-f','lavfi','-i','sine=frequency=440:duration=2','-threads','1',
             '-metadata',f'title=Fixture Song {recording:02d}','-metadata','artist=Fixture Artist','-metadata',f'album=Fixture Album {album:02d}',
             '-metadata','album_artist=Fixture Artist','-metadata',f'track={track}','-metadata','date=2026',
             '-metadata',f'MUSICBRAINZ_TRACKID={mbid(recording)}','-metadata',f'MUSICBRAINZ_ARTISTID={IDS["artist"]}',
@@ -147,12 +149,14 @@ class DiscoverFixture:
         'DULCET_DISCOVER_CONTROL_URL':self.urls['controlUrl'],'DULCET_DISCOVER_USERNAME':USER,'DULCET_DISCOVER_PASSWORD':PASSWORD,
         'DULCET_DISCOVER_OTHER_USERNAME':OTHER,'DULCET_DISCOVER_OTHER_PASSWORD':PASSWORD,'DULCET_DISCOVER_DISPOSABLE':'true'}
     def close(self):
+        self.process_owner.stopping=True
+        self.process_owner.terminate_children()
         report=[]
         for name,child in reversed(self.children):
-            if child.poll() is None:child.terminate()
-            try:child.wait(timeout=10)
-            except subprocess.TimeoutExpired:child.kill();child.wait(timeout=10)
+            self.process_owner.stop(child,grace=180 if name=='command' else 20)
+            if child in self.process_owner.children:self.process_owner.children.remove(child)
             report.append({'name':name,'pid':child.pid,'reaped':child.poll() is not None})
+        self.process_owner.close()
         for handle in self.handles:handle.close()
         if self.evidence and self.evidence.exists() and self.root and self.root.exists():
             logs=self.evidence/'logs';logs.mkdir(exist_ok=True)
@@ -166,8 +170,10 @@ def main():
     if not command:p.error('a command is required after --')
     f=DiscoverFixture(args.root,args.evidence,args.navidrome,args.ffmpeg);f.defer_ready=True
     def interrupted(signum,frame):
+        if f.process_owner.stopping:return
         if f.deferring_signal:f.pending_signal=signum
         else:raise SystemExit(128+signum)
+    f.process_owner.install()
     signal.signal(signal.SIGTERM,interrupted);signal.signal(signal.SIGINT,interrupted)
     try:
         f.start()

@@ -38,6 +38,21 @@ masking signals in the child. Cleanup terminates/waits, then kills a PID only if
 expires. It never searches for a process name. The command is tracked as well as the four fixture
 processes. The self-test keeps an unrelated live process as a positive cleanup control.
 
+The Apple proof runner and this wrapper own separate child process groups and watch their
+invoking parent. SIGTERM and parent loss stop the native build before simulator shutdown and
+lease release. `python3 -B tools/ci/test_discover_process_owner.py` checks TERM and parent loss
+without starting a native build. The wrapper cleanup controls also keep an unrelated process alive.
+
+Apple runner options are environment variables: `DULCET_DISCOVER_PROOF_RUNTIME` pins a full
+CoreSimulator runtime identifier; `DULCET_DISCOVER_PROOF_UDID` uses a caller-owned reusable lease.
+A borrowed device is shut down after each run and its lease remains the caller's responsibility.
+Without a supplied UDID, the runner creates and releases its own device. The runner records the
+actual runtime/device in `device.json` and samples launchd_sim children/RSS every ten seconds.
+More than 120 children or 3 GiB stops the run, retaining `simulator-balloon-top20.txt`.
+`DULCET_DISCOVER_HOST_GATE=/absolute/path/to/mac-settled` runs that host gate with `--wait 3600`
+before lease acquisition, simulator boot and xcodebuild. Local callers also gate before starting
+the fixture, and run only one native job/fixture stack at a time.
+
 The child command receives:
 
 | Environment variable | Meaning |
