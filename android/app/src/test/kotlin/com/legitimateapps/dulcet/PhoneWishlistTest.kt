@@ -35,13 +35,17 @@ class PhoneWishlistTest {
         compose.onNodeWithTag("wishlist.open").performClick()
         assertEquals(1,opened);assertEquals(0,source.added)
     }
-    @Test fun waitingRowHasRemoveAndSettledHistoryIsServerFiltered() {
+    @Test fun waitingRowHasRemoveInOverflowAndSettledHistoryInFilterMenu() {
         val pending=WishMutation.Add("add",1,DiscoverTarget(DiscoverKind.Song,"mbid"),WishSnapshot("Pending",null,null,null),WishSource("search",null))
         source.state=source.state.copy(wishes=listOf(WishRow("stable",null,pending,true,null)))
         host()
         compose.onNodeWithText("Waiting to sync").assertExists()
+        compose.onNodeWithTag("wishlist.remove.0").assertDoesNotExist()
+        compose.onNodeWithTag("wishlist.history").assertDoesNotExist()
+        compose.onNodeWithTag("wishlist.row.menu.0").performClick()
         compose.onNodeWithTag("wishlist.remove.0").performClick()
         assertEquals("stable",source.removed)
+        compose.onNodeWithTag("wishlist.filters").performClick()
         compose.onNodeWithTag("wishlist.history").performClick()
         compose.waitForIdle()
         assertTrue(source.filter.includeFulfilledHistory)
@@ -51,12 +55,16 @@ class PhoneWishlistTest {
         source.state=source.state.copy(wishes=listOf(row("fulfilled").let {it.copy(wish=it.wish!!.copy(libraryItem=expected,fulfilledAtMillis=4000))}))
         var opened:DiscoverLibraryRef?=null;host{opened=it}
         compose.onNodeWithTag("wishlist.row.state.0").assertTextContains("Arrived")
+        compose.onNodeWithTag("wishlist.arrival.0").assertDoesNotExist()
+        compose.onNodeWithTag("wishlist.row.menu.0").performClick()
         compose.onNodeWithTag("wishlist.arrival.0").performClick()
         assertEquals(expected,opened);assertEquals(0,source.added)
     }
-    @Test fun discoverOffStillReadsAndRemoves() {
+    @Test fun discoverOffStillReadsAndRemovesFromOverflow() {
         source.state=source.state.copy(access=source.state.access.copy(discoverAvailable=false,canSearch=false,canAddWish=false),wishes=listOf(row()))
-        host();compose.onNodeWithTag("wishlist.remove.0").performClick()
+        host()
+        compose.onNodeWithTag("wishlist.row.menu.0").performClick()
+        compose.onNodeWithTag("wishlist.remove.0").performClick()
         assertEquals("wanted",source.removed)
         compose.onNodeWithTag("wishlist.refresh").performClick()
         assertFalse(source.filter.includeFulfilledHistory)
@@ -66,7 +74,8 @@ class PhoneWishlistTest {
         host()
         compose.onNodeWithTag("wishlist.row.state.0").assertTextContains("future-state")
         compose.onNodeWithText("<b>plain note</b>",substring=true).assertExists()
-        compose.onNodeWithTag("wishlist.remove.0").assertExists()
+        compose.onNodeWithTag("wishlist.row.menu.0").performClick()
+        compose.onNodeWithTag("wishlist.remove.0").assertIsDisplayed()
     }
     @Test fun fiveStatesHaveTheApprovedLabels() {
         source.state=source.state.copy(wishes=listOf("wanted","requested","searching","unavailable","fulfilled").map { row(it) })
@@ -81,7 +90,8 @@ class PhoneWishlistTest {
         host()
         compose.onNodeWithText("Not saved",substring=true).assertExists()
         compose.onNodeWithText("Wish two",substring=true).assertExists()
-        compose.onNodeWithTag("wishlist.remove.1").assertExists()
+        compose.onNodeWithTag("wishlist.row.menu.1").performClick()
+        compose.onNodeWithTag("wishlist.remove.1").assertIsDisplayed()
     }
     @Test fun wishlistReadFailureKeepsSavedRowsAndNamesWishlist() {
         source.state=source.state.copy(wishes=listOf(row(key="saved")),wishlistError=DiscoverFailure("unreachable",null,true))

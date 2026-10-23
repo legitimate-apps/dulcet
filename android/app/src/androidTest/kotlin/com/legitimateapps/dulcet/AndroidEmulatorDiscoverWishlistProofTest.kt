@@ -16,8 +16,12 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -149,7 +153,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     await("server fulfilment reaches Arrived UI") { rowText("Fixture Song 01").contains("Arrived") }
                     capture("arrived")
                     PlaybackObserver(context,removeAccountDataOnClose=false).use { observer ->
-                        observer.bind();click("wishlist.arrival.${row("Fixture Song 01")}")
+                        observer.bind();val arrivalRow=openWishlistRowActions(row("Fixture Song 01"));click("wishlist.arrival.$arrivalRow")
                         observer.awaitCurrent(expected) {compose.mainClock.advanceTimeByFrame()}
                     }
                     openWishlist();remove("Fixture Song 01")
@@ -163,8 +167,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     openWishlist();row("Fixture Song 02")
                     fixture.stillHeld(held)
                     remove("Fixture Song 02")
-                    await("durable remove leaves the optimistic list") { !allVisibleText().contains("Fixture Song 02") }
                     fixture.stillHeld(held)
+                    await("durable remove leaves the optimistic list") { !allVisibleText().contains("Fixture Song 02") }
                     fixture.effect(held,"addToDulcetWishlist",delivered=true)
                     fixture.effect(held,"removeFromDulcetWishlist",delivered=true)
                     fixture.arm("normal");fixture.awaitNoWish(mbid(2))
@@ -280,13 +284,14 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             capture("search")
             click("discover.item.artist.0");awaitTag("discover.artist.surface")
             accessible("discover.back");capture("artist")
-            click("discover.item.album.0");awaitTag("discover.album.surface")
+            clickDisplayed("discover.item.album.0")
+            awaitTag("discover.album.surface")
             accessible("discover.album.edition.1");capture("album")
             click("discover.back");click("discover.back")
             fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync");visiblePending("discover.list");capture("pending")
             openWishlist();val index=row("Fixture Song 01")
-            accessible("wishlist.remove.$index")
             requireText("Waiting to sync");visiblePending("wishlist.list");capture("wishlist")
+            openWishlistRowActions(index);accessible("wishlist.remove.$index")
             println("DISCOVER PHONE accessible=true theme=${required("dulcetDiscoverTheme")} font-scale=$expectedScale")
         }
     }
@@ -327,11 +332,20 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         compose.onNodeWithTag("account.password").performTextReplacement(password)
         click("account.allow-local-http");click("account.submit")
     }
-    private fun remove(title:String){click("wishlist.remove.${row(title)}")}
+    private fun remove(title:String){
+        val index=openWishlistRowActions(row(title))
+        awaitTag("wishlist.remove.$index")
+        compose.onNodeWithTag("wishlist.remove.$index").performClick()
+    }
+    private fun openWishlistRowActions(index:Int):Int{
+        awaitTag("wishlist.row.menu.$index")
+        compose.onNodeWithTag("wishlist.row.menu.$index").performClick()
+        return index
+    }
     private fun row(title:String):Int {
-        compose.onNodeWithTag("wishlist.list").performScrollToNode(hasText(title,substring=true))
         var found:Int?=null
         await("Wishlist row $title") {
+            if(exists("wishlist.list"))runCatching {compose.onNodeWithTag("wishlist.list").performScrollToNode(hasText(title,substring=true))}
             val rows=compose.onAllNodes(SemanticsMatcher("Wishlist row") {node ->node.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("wishlist.row.")==true},useUnmergedTree=true).fetchSemanticsNodes()
             found=rows.firstOrNull {node ->nodeText(node).contains(title)}?.config?.getOrNull(SemanticsProperties.TestTag)?.substringAfterLast('.')?.toIntOrNull()
             found!=null
@@ -355,6 +369,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         }
         awaitTag(tag);compose.onNodeWithTag(tag).performClick();compose.waitForIdle()
     }
+    private fun clickDisplayed(tag:String) {
+        ensureDisplayed(tag)
+        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitForIdle()
+    }
     private fun visiblePending(container: String) {
         compose.onNodeWithTag(container).performScrollToNode(hasText("Waiting to sync"))
         compose.onNodeWithText("Waiting to sync").assertIsDisplayed()
@@ -362,14 +381,28 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun navigationControlsRemainLabeled() {
         listOf("library.open","browse.open","search.open","account.open").forEach(::accessible)
     }
-    private fun accessible(tag:String) {
-        awaitTag(tag)
-        if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isFailure) {
-            for (container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list")) {
-                if (exists(container)) runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
-                if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) break
+    private fun ensureDisplayed(tag:String) {
+        if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
+        for (container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list")) {
+            if (exists(container)) {
+                if (container == "discover.album.list" && tag.startsWith("discover.album.edition.")) {
+                    runCatching { compose.onNodeWithTag(container).performScrollToIndex(2) }
+                    compose.waitForIdle()
+                    if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
+                }
+                runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
+                if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
+                repeat(8) {
+                    compose.onNodeWithTag(container).performTouchInput { swipeUp() }
+                    compose.waitForIdle()
+                    if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
+                }
             }
         }
+        await("displayed $tag") { runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess }
+    }
+    private fun accessible(tag:String) {
+        ensureDisplayed(tag)
         compose.onNodeWithTag(tag).assertIsDisplayed().assertHasClickAction()
         val config=nodeConfig(tag)
         val name=text(tag).trim()

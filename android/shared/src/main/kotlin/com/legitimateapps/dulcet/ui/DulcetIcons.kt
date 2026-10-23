@@ -46,6 +46,13 @@ public object DulcetIcons {
         "M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z")
     public val PlaylistPlay: ImageVector = icon("PlaylistPlay",
         "M19 9H2v2h17V9zm0-4H2v2h17V5zM2 15h13v-2H2v2zm15-2v6l5-3-5-3z")
+    /** A wish: a bookmark ribbon, distinct from the favourite heart and the library plus. */
+    public val Wish: ImageVector = icon("Wish",
+        "M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z")
+    public val WishBorder: ImageVector = icon("WishBorder",
+        "M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2zm0 15l-5-2.18L7 18V5h10v13z")
+    public val FilterList: ImageVector = icon("FilterList",
+        "M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z")
     public val Add: ImageVector = icon("Add", "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z")
     /** Browse, the whole catalog: a grid of covers, distinct from Search's magnifier. */
     public val Browse: ImageVector = icon("Browse",

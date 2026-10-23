@@ -1,7 +1,6 @@
 package com.legitimateapps.dulcet
 
 import android.content.Context
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -17,7 +16,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -232,9 +230,9 @@ private fun MobileSearchResult(
         SearchResultType.Track -> R.string.search_kind_track
     })
     val credits = result.credits.joinToString { it.name }
-    ListItem(
-        headlineContent = { Text(result.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = {
+    PhoneMediaRow(
+        title = result.title,
+        supporting = {
             val notes = listOfNotNull(
                 resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
@@ -242,11 +240,11 @@ private fun MobileSearchResult(
             Text((listOf(kind, credits) + notes).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         },
-        leadingContent = {
+        leading = {
             if (account != null && result.type != SearchResultType.Artist) Artwork(account, result.artworkKey, result.title, 48.dp)
             else Icon(if (result.type == SearchResultType.Artist) DulcetIcons.Person else DulcetIcons.MusicNote, null)
         },
-        trailingContent = if (onPlay == null && onQueue == null) null else {
+        trailing = if (onPlay == null && onQueue == null) null else {
             {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     onPlay?.let { play ->
@@ -260,7 +258,8 @@ private fun MobileSearchResult(
                 }
             }
         },
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onActivate).testTag("search.result.$index"),
+        modifier = Modifier.testTag("search.result.$index"),
+        onClick = onActivate,
     )
 }
 

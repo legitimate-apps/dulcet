@@ -29,4 +29,8 @@
     <string name="discover_failed">Could not load this music. Try again.</string>
     <string name="discover_retry">Try again</string>
     <string name="discover_device_age">Cached on this device %1$d seconds ago</string>
+    <string name="discover_item_actions">Actions for %1$s</string>
+    <string name="discover_add_wish_named">Add %1$s to Wishlist</string>
+    <string name="discover_remove_wish_named">Remove %1$s from Wishlist</string>
+    <string name="discover_open_library_named">Open %1$s in your library</string>
 </resources>

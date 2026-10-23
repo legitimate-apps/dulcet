@@ -117,7 +117,7 @@ class PhoneWishlistIntegrationTest {
         fixture.arm("normal"); reconnect()
         await("the server acknowledged the durable add") { fixture.wish(mbid(1)) != null }
         await("pending clears only after acknowledgement") { session.publication.value?.wishes?.any { it.key == before.key && !it.pending } == true }
-        click("wishlist.remove.${row("Fixture Song 01")}")
+        clickRowAction("Fixture Song 01", "wishlist.remove.")
         await("removal sent") { fixture.wish(mbid(1)) == null }
         await("removed row leaves the display") { session.publication.value?.wishes?.none { it.wish?.target?.mbid == mbid(1) || it.pendingAdd?.target?.mbid == mbid(1) } == true }
     }
@@ -131,7 +131,7 @@ class PhoneWishlistIntegrationTest {
         showWishlist()
         await("optimistic lost-receipt row") { rowText("Fixture Song 02").contains("Waiting to sync") }
         val removeSince = fixture.cursor()
-        click("wishlist.remove.${row("Fixture Song 02")}")
+        clickRowAction("Fixture Song 02", "wishlist.remove.")
         fixture.arm("normal"); reconnect()
         await("generation removal crossed the wire") { fixture.requests(removeSince).any { it.getString("endpoint") == "removeFromDulcetWishlist" } }
         await("previous positively witnessed wish absent") { fixture.wish(mbid(2)) == null }
@@ -160,17 +160,17 @@ class PhoneWishlistIntegrationTest {
         session.refreshWishlist(WishFilter())
         showWishlist()
         await("Arrived is rendered from the fulfilled server state") { rowText("Fixture Song 01").contains("Arrived") }
-        click("wishlist.arrival.${row("Fixture Song 01")}")
+        clickRowAction("Fixture Song 01", "wishlist.arrival.")
         assertEquals(account.providerInstanceId, opened?.providerInstanceId)
         assertEquals(id, opened?.id)
         assertEquals(local.getString("type"), opened?.type)
         assertFalse(fixture.requests(beforeScan).any { it.getString("endpoint") == "addToDulcetLibrary" }, "scan fulfilment, never a client membership add")
         val beforeCorrection = fixture.cursor()
-        click("wishlist.reject.${row("Fixture Song 01")}")
+        clickRowAction("Fixture Song 01", "wishlist.reject.")
         await("correction crossed the wire") { fixture.requests(beforeCorrection).any { it.getString("endpoint") == "rejectDulcetDiscoverMatch" } }
         await("corrected wish returns to Wanted") { fixture.wish(mbid(1))?.getString("state") == "wanted" }
         assertTrue(fixture.libraryContains(id), "correction retains the independently verified My Library member")
-        click("wishlist.remove.${row("Fixture Song 01")}")
+        clickRowAction("Fixture Song 01", "wishlist.remove.")
         await("fulfilled wish removed") { fixture.wish(mbid(1)) == null }
         assertTrue(fixture.libraryContains(id), "wish removal retains the independently verified My Library member")
     }
@@ -209,6 +209,15 @@ class PhoneWishlistIntegrationTest {
             it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("wishlist.row.") == true
         }, useUnmergedTree = true).fetchSemanticsNodes()
         return checkNotNull(rows.firstOrNull { text(it).contains(title) }).config[SemanticsProperties.TestTag].substringAfterLast('.').toInt()
+    }
+    private fun openRowActions(title: String): Int {
+        val index = row(title)
+        compose.onNodeWithTag("wishlist.row.menu.$index").performClick()
+        compose.waitForIdle()
+        return index
+    }
+    private fun clickRowAction(title: String, tagPrefix: String) {
+        click(tagPrefix + openRowActions(title))
     }
     private fun rowText(title: String): String = runCatching {
         text(compose.onNodeWithTag("wishlist.row.${row(title)}", useUnmergedTree = true).fetchSemanticsNode())

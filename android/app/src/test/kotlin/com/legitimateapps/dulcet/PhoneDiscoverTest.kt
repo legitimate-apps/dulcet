@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet
 
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.*
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -58,8 +59,10 @@ class PhoneDiscoverTest {
         source.albums[null]=DiscoverAlbum(source.item("album"),listOf(DiscoverEdition("one",null,12,emptyList()),DiscoverEdition("two",null,9,emptyList())),"one",source.page(listOf(source.item("song",title="First edition"))))
         source.albums["two"]=source.albums[null]!!.copy(selectedReleaseId="two",tracks=source.page(listOf(source.item("song",title="Second edition"))))
         compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session,"album",{}, {},{}) } }
+        compose.onNodeWithTag("discover.album.list").performScrollToNode(hasText("First edition"))
         compose.onNodeWithText("First edition").assertExists()
         compose.onNodeWithTag("discover.album.edition.1").performClick()
+        compose.onNodeWithTag("discover.album.list").performScrollToNode(hasText("Second edition"))
         compose.onNodeWithText("Second edition").assertExists()
         compose.onNodeWithText("First edition").assertDoesNotExist()
         assertEquals("two",source.selected.last())
@@ -83,5 +86,40 @@ class PhoneDiscoverTest {
         search()
         compose.onNodeWithTag("discover.item.song.0").assertExists()
         compose.onNodeWithTag("discover.wish.song.0").assertDoesNotExist()
+    }
+    @Test fun matchCorrectionMovesIntoTheResultOverflow() {
+        val local=DiscoverLibraryRef("provider:test","album","local-album")
+        source.state=source.state.copy(groups=listOf(DiscoverGroup("album",source.page(listOf(
+            source.item("album",title="Held").copy(availability=DiscoverAvailability("held","known",null,null,null,null,listOf(local))))),false,null)))
+        search()
+        compose.onNodeWithTag("discover.openLibrary.album.0").assertIsDisplayed()
+        compose.onNodeWithTag("discover.reject.album.0.0").assertDoesNotExist()
+        compose.onNodeWithTag("discover.item.menu.album.0").performClick()
+        compose.onNodeWithTag("discover.reject.album.0.0").assertIsDisplayed()
+    }
+    @Test fun artistDetailNamesItsLibraryHeaderAndPrimaryWish() {
+        compose.setContent { MaterialTheme { PhoneDiscoverArtist(session,"artist",{},{},{}) } }
+        compose.onNodeWithTag("discover.artist.header").assertIsDisplayed()
+        compose.onNodeWithTag("discover.wish.artist.0").assertTextContains("Add to Wishlist")
+    }
+    @Test fun albumDetailNamesItsLibraryHeaderAndPrimaryWish() {
+        compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session,"album",{},{},{}) } }
+        compose.onNodeWithTag("discover.album.header").assertIsDisplayed()
+        compose.onNodeWithTag("discover.wish.album.0").assertTextContains("Add to Wishlist")
+    }
+    @Test fun availabilityHasAStableDiscoverTreatment() {
+        source.state=source.state.copy(groups=listOf(DiscoverGroup("song",source.page(listOf(source.item("song"))),false,null)))
+        search()
+        compose.onNodeWithTag("discover.availability.song.0").assertTextContains("Not in your library")
+    }
+    @Test
+    @Config(sdk=[35],qualifiers="w411dp-h891dp-port",fontScale=2f)
+    fun largestTextCardArtworkOpensTheAlbum() {
+        var opened:String?=null
+        compose.setContent { MaterialTheme { PhoneDiscoverArtist(session,"artist",{}, { opened=it }, {}) } }
+        compose.onNodeWithTag("discover.artist.list").performScrollToNode(hasTestTag("discover.item.album.0"))
+        compose.onNodeWithTag("discover.item.album.0").performTouchInput { click(Offset(8f,8f)) }
+        compose.waitForIdle()
+        assertEquals("album",opened)
     }
 }
