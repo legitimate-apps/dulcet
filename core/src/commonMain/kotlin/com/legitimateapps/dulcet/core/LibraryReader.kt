@@ -18,8 +18,12 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.serialization.json.*
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.ComparableTimeMark
@@ -123,8 +127,53 @@ internal class LibraryReader(
     // Reachability says nothing about who is behind the saved origin. Rejection survives network
     // and foreground reports until this reader authenticates its accepted identity again.
     internal val identityIsRejected: Boolean get() = identityRejected || identityAuthorization() == null
-    private var identityRejected = false
-    private var identityGeneration = 0L
+    // The authority stays the reader's existing state. Atomic visibility also covers queued UI replies.
+    private data class IdentityState(val rejected:Boolean=false,val generation:Long=0)
+    @OptIn(ExperimentalAtomicApi::class)
+    private val identityState=AtomicReference(IdentityState())
+    @OptIn(ExperimentalAtomicApi::class)
+    private var identityRejected:Boolean
+        get()=identityState.load().rejected
+        set(value){identityState.store(identityState.load().copy(rejected=value))}
+    @OptIn(ExperimentalAtomicApi::class)
+    private var identityGeneration:Long
+        get()=identityState.load().generation
+        set(value){identityState.store(identityState.load().copy(generation=value))}
+
+    /** Capture the existing reader generation and shared account epoch, never a feature-owned fence. */
+    internal fun captureRequestAuthorization():()->Boolean {
+        val generation=identityGeneration
+        val authorization=identityAuthorization()
+        return {authorization!=null && !refusesIdentity(generation,authorization)}
+    }
+
+    internal var extensionRevision=0L;private set
+    private var extensionAnswer:Map<String,Set<Int>>?=null
+    private val extensionLock=Mutex()
+    /** Shared detection for My Library and Discover; failed or retired replies are never answers. */
+    internal suspend fun readOpenSubsonicExtensions():Map<String,Set<Int>> = extensionLock.withLock {
+        extensionAnswer?.let {return@withLock it}
+        val revision=extensionRevision
+        val result=try {
+            val sent=sendChecked("getOpenSubsonicExtensions")
+            val payload=parseLibraryEnvelope(sent.response.body)?.payload
+                ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+            payload["openSubsonicExtensions"].toExtensionMapOrNull()
+                ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+        } catch(failure:LibraryRequestFailure) {
+            val absent=when(val error=failure.error) {
+                is DomainError.Server.Known -> error.code==70
+                is DomainError.Server.HttpStatus -> error.status==404 || error.status==501
+                else -> false
+            }
+            if(failure is ReaderSendRefused || !absent)throw failure
+            emptyMap()
+        }
+        if(revision!=extensionRevision)throw ReaderSendRefused()
+        extensionAnswer=result
+        result
+    }
+    private fun invalidateExtensions(){extensionRevision++;extensionAnswer=null}
 
     private suspend fun validateIdentity(): DomainError? {
         val generation = identityGeneration
@@ -147,6 +196,8 @@ internal class LibraryReader(
     private fun rejectIdentity() {
         identityRejected = true
         identityGeneration += 1
+        // Rejection also changes an already-offline screen; goOffline alone is then a no-op.
+        revalidateSurfaces()
     }
 
     /** Called on the reader's owner after another account client detects a replacement. */
@@ -404,6 +455,7 @@ internal class LibraryReader(
     }
 
     private suspend fun performReconnect(): ReaderConnectionOutcome {
+        invalidateExtensions()
         var transitioned = false
         return try {
             val identityFailure = validateIdentity()

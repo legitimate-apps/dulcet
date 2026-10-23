@@ -685,6 +685,7 @@ public class AndroidLibraryReader internal constructor(
                         playlistOutcomeListeners.clear()
                         acknowledgedFavourites.clear()
                         acknowledgedRatings.clear()
+                        closing?.session?.closeDiscoverClients()
                         closing?.session?.reader?.setForeground(false)
                     } catch (_: Throwable) {
                         // Closing is best effort and exports nothing.

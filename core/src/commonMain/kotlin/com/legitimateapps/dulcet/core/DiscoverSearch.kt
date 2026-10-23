@@ -73,6 +73,7 @@ internal class DiscoverSearch(
         val ticket=generation
         more[type]=scope.launch {read(type,cursor,ticket)}
     }
+    fun revalidate() {val text=query;query="";setQuery(text)}
     fun close() { closed=true;generation++;job?.cancel();more.values.forEach {it.cancel()};more.clear() }
     private fun current(ticket: Long)=!closed && active() && ticket==generation
     private fun emit() { if (!closed && active()) publish(query,groups.toList()) }

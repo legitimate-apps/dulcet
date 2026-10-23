@@ -350,6 +350,7 @@ public class AppleLibraryReaderClient internal constructor(
                     windows.toList().forEach(AppleLibraryWindowSubscription::closeFromClient)
                     searches.toList().forEach(AppleLibrarySearchSubscription::closeFromClient)
                     outcomeSubscriptions.toList().forEach(AppleLibraryFavouriteOutcomeSubscription::closeFromClient)
+                    closing?.session?.closeDiscoverClients()
                     closing?.session?.reader?.setForeground(false)
                 } catch (_: Throwable) {
                     // Closing is best effort and exports nothing.

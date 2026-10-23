@@ -28,7 +28,7 @@ class DiscoverWishlistTransportComponentsTest {
     }
 }
 
-/** Deliberately red until Task 7 provides the actual reader-owned DiscoverClient. */
+/** Reader-owned Discover session over disposable public REST endpoints. */
 class DiscoverWishlistConformanceTest {
     @Test fun productionRestReaderAndOutboxRoundTrip() = runBlocking {
         val result=DiscoverWishlistConformanceContract.observe(fixtureRequest())

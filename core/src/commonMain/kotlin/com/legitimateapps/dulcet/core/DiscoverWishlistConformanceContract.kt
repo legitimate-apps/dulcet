@@ -26,14 +26,94 @@ public data class DiscoverComponentObservation(val firstPageRows:Int,val secondP
 public data class DiscoverNavidromeBaseline(val login:Boolean,val albumCount:Int,val discoverAdvertised:Boolean,
     val wishlistAdvertised:Boolean,val requests:List<String>)
 
-/** Fixture-only probes of the existing REST components, not a replacement DiscoverClient/session. */
+/** Public REST evidence using the production session and isolated component probes. */
 @HiddenFromObjC
 public object DiscoverWishlistConformanceContract {
-    /** Task 7 supplies the actual session and its fence. Keep its conformance tests red until then. */
+    /** Actual reader session, identity negotiation, reconnect outbox and settled read path. */
     public suspend fun observe(request:DiscoverConformanceRequest):DiscoverConformanceObservation {
         requireFixture(request)
-        error("Task 7 required: LibraryReaderSession.openDiscoverClient and its authoritative identity fence are not implemented")
+        return withControl(request) {control ->
+            control.call("/control/reset",JsonObject(emptyMap()))
+            val start=control.call("/control/requests").discoverInteger("next")!!
+            val dispatcher=newLibraryReaderDispatcher()
+            val database=createLibrarySyncControlDatabase()
+            fun transport(provider:String,url:String)=KtorLibraryEndpointTransport(
+                LibraryBrowseRequest(provider,url,request.username,request.password,true),null,null,systemHostResolver())
+            val server=transport("discover-session",request.serverUrl)
+            val navidrome=transport("discover-navidrome",request.navidromeUrl)
+            try {
+                withContext(dispatcher) {
+                    val scope=CoroutineScope(coroutineContext+SupervisorJob())
+                    val seen=SeenCacheStore(database.primary,SeenCacheWallClock {Clock.System.now().toEpochMilliseconds()})
+                    fun session(provider:String,url:String,wire:LibraryEndpointTransport)=LibraryReaderSession(database.primary.database,
+                        seen.bind(CacheBinding(provider,url,request.username)),wire,scope,formPost=false,foreground=false,
+                        validateServerIdentity=ServerIdentityGate(database.primary.database,provider,
+                            AccountConnectionRequest(url,request.username,request.password,true))::validate)
+                    val dulcet=session("discover-session",request.serverUrl,server)
+                    val nav=session("discover-navidrome",request.navidromeUrl,navidrome)
+                    try {
+                        check(dulcet.reader.connectReporting() is ReaderConnectionOutcome.Read && nav.reader.connectReporting() is ReaderConnectionOutcome.Read)
+                        val client=dulcet.openDiscoverClient();val navClient=nav.openDiscoverClient()
+                        var publication:DiscoverPublication?=null
+                        client.observe {publication=it}
+                        client.refreshWishlist(WishFilter())
+                        suspend fun waitFor(predicate:()->Boolean){withTimeout(15_000){while(!predicate())delay(10)}}
+                        waitFor {publication?.wishlistSettled==true && publication?.wishlistLoading==false}
+                        check(publication!!.access.canSearch && publication!!.access.canAddWish)
+                        client.setQuery("Fixture")
+                        waitFor {publication?.groups?.singleOrNull {it.kind=="song"}?.page?.items?.isNotEmpty()==true}
+                        val target=publication!!.groups.single {it.kind=="song"}.page!!.items.first {it.target?.mbid=="00000001-1111-4111-8111-111111111111"}
+                        control.scenario("lost-add-receipt")
+                        val added=awaitDiscover<WishEnqueued> {client.add(target,WishSource("search",null),it)}.value()
+                        waitFor {DiscoverStore(database.primary.database,"discover-session").pendingCount()==1L}
+                        withTimeout(15_000){while(control.call("/control/state").discoverInteger("hits")!=1)delay(10)}
+                        check(control.call("/control/state").discoverRows("effects").single().discoverFlag("delivered")==true)
+                        control.scenario("normal")
+                        dulcet.reader.reconnect()
+                        waitFor {DiscoverStore(database.primary.database,"discover-session").pendingCount()==0L}
+                        val scan=control.call("/control/scenario",buildJsonObject {put("name","scan-arrival")})
+                        check(scan.discoverObj("scan").discoverFlag("completed")==true)
+                        client.refreshWishlist(WishFilter())
+                        waitFor {publication?.wishes?.any {it.wish?.target==target.target && it.wish?.state=="fulfilled"}==true}
+                        val arrived=publication!!.wishes.single {it.wish?.target==target.target}.wish!!
+                        val fulfilled=arrived.state=="fulfilled"
+                        dulcet.myLibrary.refresh()
+                        val member=dulcet.myLibrary.snapshot(MyLibrarySort.RecentlyAdded).songs.any {it.record.rawId==arrived.libraryItem?.id}
+                        awaitDiscover<WishEnqueued> {client.remove(added.rowKey,it)}.value()
+                        withTimeout(15_000){while(DiscoverStore(database.primary.database,"discover-session").pendingCount()!=0L)delay(10)}
+                        client.refreshWishlist(WishFilter())
+                        waitFor {publication?.wishlistLoading==false && publication?.wishes?.none {it.wish?.target==target.target || it.pendingAdd?.target==target.target}==true}
+                        // Retry the exact old add over public REST, independently of the reader overlay.
+                        val old=DiscoverStore(database.primary.database,"discover-session").intents().first {it.mutation.operationId==added.operationId}.mutation
+                        val replay=RestWishlistTransport(dulcet.reader).apply(old).value()
+                        check(replay.removed && replay.wish==null)
+                        val absent=RestWishlistTransport(dulcet.reader).snapshot(WishFilter()).value().items.none {it.target==target.target}
+                        dulcet.myLibrary.refresh()
+                        check(dulcet.myLibrary.snapshot(MyLibrarySort.RecentlyAdded).songs.any {it.record.rawId==arrived.libraryItem?.id})
+                        // Positive Navidrome login/catalog/observed-log control precedes this absence claim.
+                        val baseline=navidromeBaseline(request)
+                        check(baseline.login && baseline.albumCount>0 && baseline.requests.contains("getAlbumList2"))
+                        var navPublication:DiscoverPublication?=null
+                        navClient.observe {navPublication=it};navClient.refreshWishlist(WishFilter());navClient.setQuery("Fixture")
+                        waitFor {navPublication?.access?.detection=="known"}
+                        check(navPublication!!.access.discoverAvailable==false && navPublication!!.access.wishlistAvailable==false)
+                        awaitDiscover<DiscoverArtist> {navClient.artist("00000064-1111-4111-8111-111111111111",it)}
+                        awaitDiscover<WishEnqueued> {navClient.add(target,WishSource("search",null),it)}
+                        val trace=control.call("/control/requests?since=$start").discoverRows("requests")
+                        val requests=trace.filter {it.discoverText("channel")=="dulcet"}.map {it.discoverRequired("endpoint")}
+                        val navAdditional=trace.filter {it.discoverText("channel")=="navidrome"}.map {it.discoverRequired("endpoint")}.filter {it.contains("Dulcet")}
+                        DiscoverConformanceObservation(requests,navAdditional,fulfilled,member,absent)
+                    } finally {dulcet.closeDiscoverClients();nav.closeDiscoverClients();scope.cancel()}
+                }
+            } finally {server.close();navidrome.close();database.close();dispatcher.close()}
+        }
     }
+    private suspend fun <T> awaitDiscover(start:((DiscoverResult<T>)->Unit)->DiscoverOperation):DiscoverResult<T> =
+        suspendCancellableCoroutine {continuation ->
+            val operation=start {if(continuation.isActive)continuation.resumeWith(Result.success(it))}
+            continuation.invokeOnCancellation {operation.cancel()}
+        }
+
     public suspend fun navidromeBaseline(request:DiscoverConformanceRequest):DiscoverNavidromeBaseline {
         requireFixture(request)
         return withControl(request) {control ->
@@ -45,7 +125,6 @@ public object DiscoverWishlistConformanceContract {
                 body.discoverFlag("discoverAdvertised")==true,body.discoverFlag("wishlistAdvertised")==true,endpoints)
         }
     }
-    /** Tasks 2–6 only: real REST adapters and durable wish replay, with no session lifecycle claim. */
     public suspend fun observeComponents(request:DiscoverConformanceRequest):DiscoverComponentObservation {
         requireFixture(request)
         return withControl(request) {control ->
