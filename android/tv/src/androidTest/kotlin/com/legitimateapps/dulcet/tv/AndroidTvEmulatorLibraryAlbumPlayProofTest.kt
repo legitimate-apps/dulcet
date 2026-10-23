@@ -41,17 +41,25 @@ import org.junit.runner.RunWith
 class AndroidTvEmulatorLibraryAlbumPlayProofTest {
     @get:Rule val compose = createEmptyComposeRule()
 
-    @Test fun anAlbumOpenedFromTheLibraryWithTheRemotePlaysAsAMultiTrackQueue() {
+    @Test fun anAlbumOpenedFromTheLibraryWithTheRemotePlaysAsAMultiTrackQueue() =
+        proveAlbumPlay(DisposableServerProbe.fromInstrumentation())
+
+    @Test fun anAlbumPlayBetweenFailedAndSuccessfulReaderProbesRecoversWithoutAnotherPress() {
+        val probe = DisposableServerProbe.fromInstrumentation()
+        com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay -> proveAlbumPlay(probe, relay) }
+    }
+
+    private fun proveAlbumPlay(probe: DisposableServerProbe,
+        relay: com.legitimateapps.dulcet.emulator.ServerRelay? = null) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         check(context.packageManager.hasSystemFeature("android.software.leanback")) {
             "This proof must run on an Android TV device or emulator"
         }
-        val probe = DisposableServerProbe.fromInstrumentation()
         val expected = probe.albumSongIds(ALBUM)
         check(expected.size >= 2) { "The fixture album $ALBUM must hold several tracks, found ${expected.size}" }
         awaitQueuedBroadcastsDelivered()
-        connectSavedAccount(context, probe)
+        connectSavedAccount(context, probe, relay?.url ?: probe.baseUrl)
         PlaybackObserver(context).use { observer ->
             val launch = Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -92,11 +100,31 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 focus(cardTitled(ALBUM))
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 awaitNode("$ALBUM open with focus on Play", 60_000) { focused("album.play") }
+                if (relay != null) {
+                    observer.bind()
+                    val owner = checkNotNull(com.legitimateapps.dulcet.AndroidAccountCredentialStore(context).load()).id
+                    val contact = com.legitimateapps.dulcet.library.SavedAccountConnection.contact(owner)
+                    check(contact.isChosen() && contact.isOpen()) { "Control requires an already chosen, verified account" }
+                    val reader = checkNotNull(com.legitimateapps.dulcet.core.AndroidLibraryReader.currentFor(owner))
+                    val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+                    relay.makeUnreachable()
+                    reader.reconnect { answered.set(true) }
+                    await("control: a completed failed reader probe closes the chosen connection") {
+                        answered.get() && !contact.isOpen() && relay.refusedConnections.get() > 0
+                    }
+                    check(contact.isChosen()) { "A failed probe must not withdraw the person's connection choice" }
+                }
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
 
-                observer.bind()
+                if (relay == null) observer.bind()
                 await("the album queued before any AutoPlay continuation") {
                     observer.state().queue.count { !it.isAutoplay } == expected.size
+                }
+                if (relay != null) {
+                    check(observer.state().needsReconnect) { "Control requires Play to have been held with contact still closed" }
+                    awaitNode("the held album explains why it is waiting") { exists("tv.player.needsReconnect") }
+                    check(observer.state().positionMilliseconds == 0L) { "The closed relay must not have started streaming" }
+                    relay.makeReachable()
                 }
                 val state = observer.state()
                 check(state.queue.take(expected.size).map { it.track.rawId } == expected &&
@@ -107,7 +135,7 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 val position = requireMediaTimeAdvances(observer, "album play")
                 await("the TV's Now Playing in front") { resumed() == TvPlaybackActivity::class.java.name }
                 println("ANDROID TV EMULATOR LIBRARY OBSERVED leanback=true album=$ALBUM queue=${state.queue.size} " +
-                    "current=${state.currentIndex} media-ms=$position front=${resumed()}")
+                    "current=${state.currentIndex} media-ms=$position front=${resumed()} recovered=${relay != null}")
             }
         }
     }
