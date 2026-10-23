@@ -25,11 +25,32 @@ class DiscoverMatcherTest {
             execute("INSERT OR IGNORE INTO album_artist VALUES(?,'ar','Björk',0)",album)
         }
     }
-    @Test fun recordingMbidWinsButConflictingMbidCannotFallBack() = fixture { ctx,user,m ->
-        add(ctx,1,title="Different"); assertEquals("held",m.match(user,song(1)).status)
+    @Test fun recordingMbidWinsWithoutVersionConflictButConflictingMbidCannotFallBack() = fixture { ctx,user,m ->
+        add(ctx,1,title="Song 1 (live)"); assertEquals("notHeld",m.match(user,song(1)).status)
+        ctx.db.write { execute("UPDATE track SET title='Different' WHERE id='t1'") }
+        assertEquals("held",m.match(user,song(1)).status)
         assertEquals("notHeld",m.match(user,song(2,"Different")).status)
         ctx.db.write { execute("UPDATE track SET mbz_recording_id=NULL") }
         assertEquals("held",m.match(user,song(2,"Different")).status)
+    }
+    @Test fun recordingMbidNeverOverridesAnExplicitVersionMismatch() = fixture { ctx,user,m ->
+        add(ctx,1)
+        for(version in listOf("live","remix","demo","acoustic","instrumental")) {
+            ctx.db.write { execute("UPDATE track SET title=? WHERE id='t1'","Song 1 ($version)") }
+            assertEquals("notHeld",m.match(user,song(1)).status,"Local $version with a stale studio recording tag")
+            assertEquals("held",m.match(user,song(1,"Song 1 [${version.uppercase()}]")).status,"The same normalized version remains an MBID match")
+            ctx.db.write { execute("UPDATE track SET title='Song 1' WHERE id='t1'") }
+            assertEquals("notHeld",m.match(user,song(1,"Song 1 ($version)")).status,"Requested $version must not match studio")
+        }
+    }
+    @Test fun staleRecordingMbidCannotFillAnAlbumEditionSlotWithAnotherVersion() = fixture { ctx,user,m ->
+        add(ctx,1,title="Song 1 (live)")
+        val mismatch=m.match(user,album(),listOf(editions(1)))
+        assertEquals("partlyHeld",mismatch.status);assertEquals(0,mismatch.matchedTrackCount)
+        val live=editions(1).let { it.copy(tracks=it.tracks.map { slot -> slot.copy(title="Song 1 [LIVE]") }) }
+        assertEquals("held",m.match(user,album(),listOf(live)).status)
+        ctx.db.write { execute("UPDATE track SET title='Song 1 (live remix)' WHERE id='t1'") }
+        assertEquals("partlyHeld",m.match(user,album(),listOf(live)).status)
     }
     @Test fun namesFoldUnicodeWhitespaceAndPunctuationPreservingVersionWords() = fixture { ctx,user,m ->
         add(ctx,1,recording=null,title="  Bjo\u0308rk / One  ")

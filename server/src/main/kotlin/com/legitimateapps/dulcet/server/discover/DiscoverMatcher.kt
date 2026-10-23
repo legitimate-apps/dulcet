@@ -9,6 +9,11 @@ import java.util.Locale
 class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private val rejected:(String,DiscoverItem,LibraryRef)->Boolean={_,_,_->false}) {
     fun normalizeName(value:String)=Normalizer.normalize(value,Normalizer.Form.NFKC).lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}\\p{M}]+")," ").trim().replace(Regex("\\s+")," ")
     private fun same(a:String?,b:String?)= !a.isNullOrBlank() && !b.isNullOrBlank() && normalizeName(a)==normalizeName(b)
+    private val versionWords=setOf("live","remix","demo","acoustic","instrumental")
+    private fun sameVersion(a:String,b:String):Boolean {
+        fun versions(title:String)=normalizeName(title).split(' ').filter { it in versionWords }.toSet()
+        return versions(a)==versions(b)
+    }
     private fun identifier(value:String?)=mbidOrNull(value)
     private data class Track(val id:String,val albumId:String,val title:String,val artist:String,val album:String,val albumArtist:String,val recording:String?,val release:String?,val group:String?,val disc:Int?,val position:Int?)
     fun match(userId:String,item:DiscoverItem,editions:List<Edition>?=null):Availability {
@@ -27,7 +32,7 @@ class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private
         } }
         if(item.kind==DiscoverKind.Song) {
             val matches=tracks.mapNotNull { t ->
-                val by=if(!t.recording.isNullOrBlank()) if(identifier(t.recording)==target) "mbid" else null else if(same(t.title,item.title) && same(t.artist,item.artist)) "name" else null
+                val by=if(!t.recording.isNullOrBlank()) if(identifier(t.recording)==target && sameVersion(t.title,item.title)) "mbid" else null else if(same(t.title,item.title) && same(t.artist,item.artist)) "name" else null
                 if(by==null || rejected(userId,item,LibraryRef(t.id,"track")))null else LibraryRef(t.id,"track") to by
             }
             if(matches.isEmpty())return Availability()
@@ -65,7 +70,7 @@ class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private
         fun take(index:Int,mbid:Boolean) {
             val slot=slots[index]
             var choices=available.filter { t ->
-                if(mbid) !slot.recordingMbid.isNullOrBlank() && identifier(t.recording)==slot.recordingMbid
+                if(mbid) !slot.recordingMbid.isNullOrBlank() && identifier(t.recording)==slot.recordingMbid && sameVersion(t.title,slot.title)
                 else t.recording.isNullOrBlank() && same(t.title,slot.title) && same(t.artist,slot.artist)
             }
             val duplicate=slots.count { other -> if(mbid)other.recordingMbid==slot.recordingMbid else same(other.title,slot.title) && same(other.artist,slot.artist) }>1
