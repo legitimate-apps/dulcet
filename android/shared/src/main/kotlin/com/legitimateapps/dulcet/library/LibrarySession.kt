@@ -255,6 +255,15 @@ public class LibrarySession internal constructor(
         lyricsFacade ?: AndroidLibraryLyrics(reader, preferredLanguages).also { lyricsFacade = it }
 
     private var myLibrarySession: MyLibrarySession? = null
+    private var discoverWishlistSession: DiscoverWishlistSession? = null
+
+    /** Phone feature only. TV never opens this lazy facade. Shares this reader's identity fence. */
+    public val discoverWishlist: DiscoverWishlistSession
+        get() = discoverWishlistSession ?: DiscoverWishlistSession(CoreDiscoverWishlistSource(reader)).also {
+            discoverWishlistSession = it
+            it.refreshWishlist(com.legitimateapps.dulcet.core.WishFilter())
+        }
+
 
     /**
      * The account's My Library (spec §29.4, §29.9): what this account added on a server advertising
@@ -647,6 +656,7 @@ public class LibrarySession internal constructor(
         closed = true
         reconnectRegistration.close()
         myLibrarySession?.close()
+        discoverWishlistSession?.close()
         outcomeRegistration.close()
         playlistRegistration.close()
         playlistQuestions.close()

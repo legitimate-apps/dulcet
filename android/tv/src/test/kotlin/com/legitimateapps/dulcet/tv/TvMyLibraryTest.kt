@@ -63,6 +63,15 @@ class TvMyLibraryTest {
         context.getSharedPreferences("dulcet.ui", 0).edit().clear().commit()
     }
 
+    @Test fun tvCompositionDoesNotInstantiateFeature() {
+        host(FakeMyLibrarySource(available = false))
+        await("positive baseline catalog response") { server.requests("getAlbumList2").isNotEmpty() }
+        assertTrue(server.requests("getOpenSubsonicExtensions").isNotEmpty())
+        for (endpoint in listOf("searchDulcetDiscover", "getDulcetWishlist", "addDulcetWish")) {
+            assertTrue(server.requests(endpoint).isEmpty(), "TV must not create Discover: $endpoint")
+        }
+    }
+
     private fun host(source: FakeMyLibrarySource) {
         val myLibrary = MyLibrarySession(source).also { myLibrarySessions += it }
         compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = null, myLibrary = myLibrary) { _, _ -> } } }
