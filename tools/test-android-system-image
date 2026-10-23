@@ -35,7 +35,7 @@ if mode in ('http', 'zip', 'exhausted', 'timeout') and (attempt == 1 or mode in 
     (sdk / '.downloadIntermediates/partial.zip').write_text('partial download')
     if mode == 'timeout':
         subprocess.Popen([sys.executable, '-c',
-            'import time; from pathlib import Path; time.sleep(0.8); Path(' + repr(os.environ['CHILD_MARKER']) + ').write_text("orphan")'])
+            'import time; from pathlib import Path; time.sleep(1.5); Path(' + repr(os.environ['CHILD_MARKER']) + ').write_text("orphan")'])
         time.sleep(10)
     print('Error on ZipFile unknown archive' if mode == 'zip' else 'HTTP 502 from dl.google.com', flush=True)
     sys.exit(1)
@@ -152,9 +152,9 @@ class ImageControl(unittest.TestCase):
 
     def test_timeout_kills_java_process_group_before_retry(self):
         self.env['FAKE_MODE'] = 'timeout'
-        self.assert_failure(self.invoke(timeout=0.2), 'command-timeout-0.2s')
+        self.assert_failure(self.invoke(timeout=1), 'command-timeout-1s')
         self.assertEqual(self.attempts(), 3)
-        time.sleep(0.9)
+        time.sleep(1.6)
         self.assertFalse((self.root / 'orphan').exists(), 'installer child outlived timeout and cleanup')
 
     def prepare_boot(self):
@@ -179,6 +179,14 @@ class ImageControl(unittest.TestCase):
         result = self.invoke('verify-booted')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('api=34 target=android-tv abi=x86 avd=test', result.stdout)
+
+    def test_avdmanager_whitespace_around_equals_is_accepted(self):
+        avd = self.prepare_boot()
+        (avd / 'config.ini').write_text('image.sysdir.1 = system-images/android-34/google_apis/x86_64/\n')
+        result = self.invoke('verify-booted')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('ANDROID IMAGE BOOTED', result.stdout)
+        self.assertIn('image.sysdir.1 = system-images', result.stdout)
 
     def test_wrong_booted_api_is_rejected(self):
         self.prepare_boot()

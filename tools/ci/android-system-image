@@ -17,8 +17,12 @@ ATTEMPTS = 3
 
 
 def properties(path: Path) -> dict[str, str]:
-    return dict(line.strip().split('=', 1) for line in path.read_text().splitlines()
-                if '=' in line and not line.lstrip().startswith('#'))
+    result = {}
+    for line in path.read_text().splitlines():
+        if '=' in line and not line.lstrip().startswith('#'):
+            key, value = line.split('=', 1)
+            result[key.strip()] = value.strip()
+    return result
 
 
 def run(command: list[str], timeout: float, *, capture: bool = False) -> subprocess.CompletedProcess:
@@ -98,12 +102,16 @@ def verify_booted(args, sdk: Path, package: str, image: Path) -> None:
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', avd) or avd in {'.', '..'}:
         raise RuntimeError('invalid-running-avd-name')
     avd_home = Path(os.environ.get('ANDROID_AVD_HOME', str(Path.home() / '.android/avd')))
-    config = properties(avd_home / f'{avd}.avd/config.ini')
+    config_path = avd_home / f'{avd}.avd/config.ini'
+    config = properties(config_path)
+    for line in config_path.read_text().splitlines():
+        if line.split('=', 1)[0].strip() == 'image.sysdir.1':
+            print(f'ANDROID IMAGE AVD name={avd} config-entry={line.strip()}', flush=True)
     selected = Path(config.get('image.sysdir.1', ''))
     if not selected.is_absolute():
         selected = sdk / selected
     if selected.resolve() != image.resolve() or api != args.api_level or arch != args.arch:
-        raise RuntimeError(f'booted-image-mismatch expected={package} observed-api={api} observed-abi={arch}')
+        raise RuntimeError(f'booted-image-mismatch expected={package} observed-api={api} observed-abi={arch} observed-image={selected}')
     image_ready(image, package, args.api_level, args.target, args.arch)
     print(f'ANDROID IMAGE BOOTED package={package} api={api} target={args.target} abi={arch} avd={avd}', flush=True)
 
