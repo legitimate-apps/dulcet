@@ -357,8 +357,15 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
 
     private func focusAndPress(_ element: Any, key: String, code: UInt16, in app: HostedApp) async throws {
         let identifier = try XCTUnwrap(app.identifier(element))
-        NSApp.activate(ignoringOtherApps: true)
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = false
+        let running = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+        XCTAssertEqual(running.processIdentifier, ProcessInfo.processInfo.processIdentifier,
+                       "Launch Services must activate the existing XCTest host")
+        try await waitUntil(timeout: .seconds(5), "Launch Services must activate the XCTest host") { NSApp.isActive }
         app.window.makeKeyAndOrderFront(nil)
+        try await waitUntil(timeout: .seconds(3), "Hosted keyboard window must receive keys") { NSApp.keyWindow === app.window }
         XCTAssertTrue(NSApp.isFullKeyboardAccessEnabled, "The CI keyboard proof requires Full Keyboard Access")
         func focused() -> Bool {
             guard let current = app.firstElement(where: { app.identifier($0) == identifier }) as? NSObject else { return false }
@@ -368,11 +375,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         func send(_ characters: String, code: UInt16) throws {
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 let event = try XCTUnwrap(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: app.window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
-                // Inactive test windows do not dispatch key events through NSWindow.
-                // Feed the actual focused native responder, as AppKit's window does.
-                let responder = try XCTUnwrap(app.window.firstResponder)
-                if type == .keyDown { responder.keyDown(with: event) }
-                else { responder.keyUp(with: event) }
+                NSApp.sendEvent(event)
             }
         }
         // Like the hosted table proofs' makeFirstResponder, focus the rendered control
