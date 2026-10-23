@@ -1061,8 +1061,10 @@ the 24-hour HTTP response cache. Removed adds return terminal removed state on r
 re-add uses a new operation UUID, time and wish id. See the [durable operation sequences](../dulcet-server/dulcet-wishlist-extension.md#durable-offline-operations).
 
 The open state set is wanted, requested, searching, unavailable and fulfilled. Admins can set the
-first four with a note up to 1000 Unicode code points and optional If-Match; only a complete local
-match fulfils and adds to My Library atomically after a scan. A partial 8-of-12 album stays open.
+first four with a note up to 1000 Unicode code points and optional If-Match. An absent `note`
+preserves the existing note and `noteAt`, explicit JSON null clears both, and a string sets the
+note and refreshes `noteAt`, even when its text is unchanged. REST and MCP expose no admin state
+or note update operation. Only a complete local match fulfils and adds to My Library atomically after a scan. A partial 8-of-12 album stays open.
 Unknown edition metadata cannot fulfil an album. Fulfilled is historical even after local deletion;
 only a rejected linked match reopens wanted. Fulfilled older than 30 days leaves the default list,
 but remains directly readable and in snapshots. Hidden local references/counts are redacted.

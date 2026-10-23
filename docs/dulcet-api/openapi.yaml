@@ -8000,6 +8000,7 @@ components:
           - string
           - 'null'
           maxLength: 1000
+          description: Omit to preserve note and noteAt. Explicit null clears both. A string sets note and refreshes noteAt, even when unchanged.
       required:
       - state
     WishRejectMatch:

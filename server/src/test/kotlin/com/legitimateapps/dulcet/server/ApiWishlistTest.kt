@@ -67,6 +67,31 @@ class ApiWishlistTest {
             assertEquals(422,client.post("/dulcet/v1/me/wishes"){bearerAuth(token);header("Idempotency-Key",key);contentType(ContentType.Application.Json);setBody(input().toString())}.status.value)
         } finally {ctx.close();ctx.db.close()}
     }
+    @Test fun stateOnlyPatchPreservesNoteAndTimestampWhileExplicitNullClearsBoth() = testApplication {
+        val ctx=Fixtures.context(Files.createTempDirectory("wish-note-patch"))
+        try {
+            val user=ctx.users.create("user","password",false);val admin=ctx.users.create("admin","password",true)
+            val token=ctx.apiAuth.bootstrapPersonal(admin,setOf("admin"))
+            val wish=ctx.wishlist.add(user.id,addWishInput(input())).wish!!
+            application {dulcetModule(ctx)}
+            suspend fun patch(body:JsonObject):JsonObject {
+                val response=client.patch("/dulcet/v1/admin/wishes/${wish.id}") {bearerAuth(token);contentType(ContentType.Application.Json);setBody(body.toString())}
+                assertEquals(200,response.status.value,response.bodyAsText())
+                return Json.parseToJsonElement(response.bodyAsText()).jsonObject
+            }
+            val set=patch(j("state" to "requested","note" to "Check the edition"))
+            assertEquals("Check the edition",set["note"]!!.jsonPrimitive.content);assertNotEquals(JsonNull,set["noteAt"])
+            val kept=patch(j("state" to "searching"))
+            assertEquals(set["note"],kept["note"],"Omitted note preserves its value")
+            assertEquals(set["noteAt"],kept["noteAt"],"State changes must not refresh noteAt")
+            val cleared=patch(j("state" to "unavailable","note" to JsonNull))
+            assertEquals(JsonNull,cleared["note"]);assertEquals(JsonNull,cleared["noteAt"])
+            val reset=patch(j("state" to "requested","note" to "New note"))
+            assertEquals("New note",reset["note"]!!.jsonPrimitive.content);assertNotEquals(JsonNull,reset["noteAt"])
+            val noOp=patch(j("state" to "requested"))
+            assertEquals(reset["revision"],noOp["revision"]);assertEquals(reset["noteAt"],noOp["noteAt"])
+        } finally {ctx.close();ctx.db.close()}
+    }
     @Test fun historyRemainsAddressableAndVisibilityChangesInvalidateEtag() = testApplication {
         val ctx=Fixtures.context(Files.createTempDirectory("wish-history"))
         try {

@@ -130,7 +130,7 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             else Availability(if(refs.isEmpty())"notHeld" else "partlyHeld",refs,if(refs.isEmpty())null else wish.availability.matchedBy)
         return wish.copy(libraryItem=linked,availability=availability)
     }
-    fun setState(actor:Principal,wishId:String,state:String,note:String?,expectedRevision:String?):Wish {
+    fun setState(actor:Principal,wishId:String,state:String,note:String?,expectedRevision:String?,noteProvided:Boolean=true):Wish {
         if(!ctx.config.discover.wishlistEnabled)throw ApiProblem(404,"not-found")
         requireScopes(actor,"admin")
         text(note,1000)
@@ -140,9 +140,12 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             val wish=single("SELECT * FROM wishlist_wish WHERE id=?",wishId,map=store::row) ?: throw ApiProblem(404,"not-found")
             if(wish.state=="fulfilled")throw ApiProblem(409,"wish-fulfilled")
             if(expectedRevision!=null && expectedRevision!=wish.revision)throw ApiProblem(412,"precondition-failed")
-            if(wish.state!=state || wish.note!=note) {
+            // Presence and value are separate: omitted notes must keep their original timestamp.
+            val nextNote=if(noteProvided)note else wish.note
+            if(wish.state!=state || (noteProvided && (wish.note!=note || note!=null))) {
                 val now=clock()
-                execute("UPDATE wishlist_wish SET state=?,note=?,note_at=?,updated=? WHERE id=?",state,note,if(note==null)null else now,now,wishId)
+                val noteAt=if(!noteProvided)wish.noteAt else if(note==null)null else now
+                execute("UPDATE wishlist_wish SET state=?,note=?,note_at=?,updated=? WHERE id=?",state,nextNote,noteAt,now,wishId)
                 changed(wish.userId,wishId)
             }
             store.read(this,wish.userId,wishId)!!

@@ -44,6 +44,21 @@ class WishlistStateTest {
         assertFailsWith<ApiProblem> { s.setState(p,w.id,"requested",note+"x",null) }
         val cleared=s.setState(p,w.id,"wanted",null,null);assertNull(cleared.note);assertNull(cleared.noteAt)
     }
+    @Test fun omittedNotePreservesTimestampAndExplicitStringRefreshesIt() = fixture { ctx,_,p,_,w ->
+        var now=1_700_000_000_000L
+        val service=WishlistService(ctx) { now }
+        val set=service.setState(p,w.id,"requested","Edition note",null)
+        assertEquals(now,set.noteAt)
+        now+=1000
+        val kept=service.setState(p,w.id,"searching",null,set.revision,noteProvided=false)
+        assertEquals(set.note,kept.note);assertEquals(set.noteAt,kept.noteAt)
+        val refreshed=service.setState(p,w.id,"searching","Edition note",kept.revision)
+        assertEquals(now,refreshed.noteAt);assertNotEquals(kept.revision,refreshed.revision)
+        val noOp=service.setState(p,w.id,"searching",null,refreshed.revision,noteProvided=false)
+        assertEquals(refreshed.revision,noOp.revision);assertEquals(now,noOp.noteAt)
+        val cleared=service.setState(p,w.id,"searching",null,noOp.revision)
+        assertNull(cleared.note);assertNull(cleared.noteAt)
+    }
     @Test fun rejectionReopensOnlyLinkedPairAndSurvivesWishRemoval() = fixture { ctx,user,_,s,w ->
         Fixtures.track(ctx.config.musicFolder.resolve("one.flac"),tags=mapOf("title" to "One","artist" to "Artist","album" to "Album","MUSICBRAINZ_TRACKID" to mbid));ctx.scanner.scan()
         val track=ctx.db.read { string("SELECT id FROM track") }!!;val ref=LibraryRef(track,"track")

@@ -61,7 +61,10 @@ fulfilledAt and libraryItem, and mutation wish. Notes and snapshots are plain es
 Do not interpret HTML. Use the server artwork proxy, never contact an upstream image URL.
 
 The owner removes in any state. Admins/integrations use Dulcet API `admin` scope to move freely
-among wanted/requested/searching/unavailable, with an optional note (null clears it). They cannot
+among wanted/requested/searching/unavailable. In that API PATCH, an absent `note` preserves both
+the note and `noteAt`; explicit JSON null clears both; a string sets the note and refreshes
+`noteAt`, even if the text is unchanged. REST and MCP expose no admin state or note update
+operation. They cannot
 set fulfilled or leave fulfilled. The scanner alone fulfils a complete local match and atomically
 adds that item to the owner's My Library. Song adds the song, album the album, artist the artist.
 Membership already present is preserved. Missing files later do not reopen a fulfilled wish.
