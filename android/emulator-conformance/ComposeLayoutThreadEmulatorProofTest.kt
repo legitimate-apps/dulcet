@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ActivityScenario
@@ -29,6 +30,47 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 class ComposeLayoutThreadEmulatorProofTest {
     @get:Rule val compose = createHomeProofComposeRule()
+
+    @Test fun subcomposedScrollStartsAfterMeasureReturns() {
+        var measuring = false
+        var completed = false
+        var resumedDuringMeasure = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { activity ->
+            activity.onActivity { host ->
+                host.setContent {
+                    val list = rememberLazyListState()
+                    // Scaffold and lazy content subcompose while measuring. An eager effect
+                    // that scrolls an already measured list must not re-enter its owner here.
+                    SubcomposeLayout(Modifier.fillMaxSize()) { constraints ->
+                        measuring = true
+                        try {
+                            val child = subcompose("list") {
+                                LazyColumn(Modifier.fillMaxSize(), state = list) {
+                                    items(30) { Box(Modifier.height(100.dp)) }
+                                }
+                            }.single().measure(constraints)
+                            subcompose("scroll") {
+                                LaunchedEffect(Unit) {
+                                    resumedDuringMeasure = measuring
+                                    list.scrollToItem(2)
+                                    completed = true
+                                }
+                            }
+                            layout(child.width, child.height) { child.place(0, 0) }
+                        } finally {
+                            measuring = false
+                        }
+                    }
+                }
+            }
+            compose.waitForIdle()
+            compose.runOnIdle {
+                check(completed) { "The subcomposed scroll never completed" }
+                check(!resumedDuringMeasure) { "The Home proof resumed its scroll inside measurement" }
+            }
+            println("HOME LAYOUT REENTRY CONTROL subcomposed-scroll=true resumed-during-measure=false")
+        }
+    }
 
     @Test fun workerResumedScrollMeasuresOnlyOnUiThread() {
         val release = CompletableDeferred<Unit>()
