@@ -670,6 +670,8 @@ public class AndroidPlaybackController internal constructor(
             if (contactOpen() || !contact.isChosen() || authorization == null ||
                 authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return false
             val directive = replaceSelection(null) ?: return false
+            needsReconnect = true
+            publish()
             if (queue.snapshot().currentSession?.playbackSessionId == directive.playbackSessionId)
                 start(directive, authorization = authorization)
             return true

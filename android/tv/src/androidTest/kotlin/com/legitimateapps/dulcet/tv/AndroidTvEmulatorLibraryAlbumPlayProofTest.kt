@@ -105,6 +105,7 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                     val owner = checkNotNull(com.legitimateapps.dulcet.AndroidAccountCredentialStore(context).load()).id
                     val contact = com.legitimateapps.dulcet.library.SavedAccountConnection.contact(owner)
                     check(contact.isChosen() && contact.isOpen()) { "Control requires an already chosen, verified account" }
+                    check(observer.state().queue.isEmpty()) { "Control requires no earlier queue before Play" }
                     val reader = checkNotNull(com.legitimateapps.dulcet.core.AndroidLibraryReader.currentFor(owner))
                     val answered = java.util.concurrent.atomic.AtomicBoolean(false)
                     relay.makeUnreachable()
@@ -118,7 +119,9 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
 
                 if (relay == null) observer.bind()
                 await("the album queued before any AutoPlay continuation") {
-                    observer.state().queue.count { !it.isAutoplay } == expected.size
+                    observer.state().let { state ->
+                        state.queue.count { !it.isAutoplay } == expected.size && (relay == null || state.needsReconnect)
+                    }
                 }
                 if (relay != null) {
                     check(observer.state().needsReconnect) { "Control requires Play to have been held with contact still closed" }
