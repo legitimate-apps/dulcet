@@ -7918,6 +7918,22 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-23 - Android saved-account reconnect after identity rejection (#355).**
+A fresh authenticated negotiation validating the saved server identity clears Android's account
+rejection, including through the existing phone and TV Reconnect action. Pending changes then use
+the ordinary reader reconnect flush. A replacement still fails negotiation and retains the old
+account's pending changes without sending its IDs. Reopening advances the account authorization
+lifetime; it never restores the token used before rejection. Only the latest identity negotiation
+may publish its result. A rejection notification carries the authorization epoch that created it;
+on the reader owner, its epoch check and local rejection write are atomic against both validated
+reconnect and explicit consent acceptance. A notification delivered after newer acceptance is
+ignored; one delivered first is retired by the ordinary validated reconnect. The notification's
+registry lookup stays outside the gate lock. An older matching or mismatching reply or delayed
+notification cannot reopen or revoke the recovered account. Reader replies still check both their
+captured reader generation and account authorization after transport. This implements the existing
+lasting-fence contract, with no change to saved lineage, counted replacement consent, or the
+version-upgrade rule.
+
 **2026-10-23 — Pin `core-build` to `ubuntu-24.04`.**
 The server tests install Ubuntu Noble's exact FFmpeg (6.1.1, the version the pinned Linux
 conformance environment uses), and the step refuses any other release before a test runs. GitHub

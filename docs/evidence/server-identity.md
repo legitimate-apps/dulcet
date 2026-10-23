@@ -5,6 +5,66 @@ local random account ID, the latter is authenticated product type and, for an ad
 server, its origin's discovery instance ID. Software versions do not enter lineage. See spec §28
 for trust, migration and plain OpenSubsonic limits.
 
+## Android saved-account reconnect recovery (#355, 2026-10-23)
+
+OBSERVED baseline: production code at `26655b9b`, with the tests-only commit `c18d6207`,
+reproduces recovery failure through `LibrarySession.connectSavedAccount`, the handler installed on
+both Android Reconnect controls. `SavedIdentityReconnectTest` and `TvSavedIdentityReconnectTest`
+each execute two cases: the original-server recovery case fails with `Failed` instead of `Online`,
+and the replacement-still-present case passes. Both XML reports contain two cases, one failure,
+zero errors and zero skips. The initial saved server authenticates before each case. The server
+then changes product at the same loopback URL, the real reader rejects it, and a favourite remains
+in the durable outbox while the platform still reports a network. The recovery failure occurs
+after the fixture returns the saved product and the test calls the Reconnect handler again.
+
+The negative replacement controls already pass on main. They are regression controls, not claimed
+as red-before evidence. These host tests call the actual shared shell action and use production
+HTTP negotiation, reader and SQLite outbox. They do not drive rendered Compose controls or claim
+an emulator proof. Only the loopback server is a fixture; no LIVE fixture changes are involved.
+
+OBSERVED Linux baseline `39956617865`: `AndroidServerIdentityRaceTest` executes six cases,
+with four failures, zero errors and zero skips. Both newly added recovery controls fail before
+recovery can complete: `reconnectRecoveryCannotAdoptAReadStartedBeforeRejection` receives
+`ReaderConnectionOutcome.Failed` instead of `Read`, and
+`olderNegotiationsCannotRevokeOrReopenTheRecoveredAuthorization` receives
+`ServerIdentityChanged` instead of null. Two existing cases now require the specified fresh
+matching negotiation to succeed; their earlier assertions still reject older replies, but their
+new recovery assertions fail on main. The other two original controls pass.
+
+The fix clears rejection only in the existing current-generation successful-validation branch.
+Every production caller supplies `ServerIdentityGate.validate`, which authenticates and compares
+the durable saved lineage. Clearing rejection advances the authorization epoch. The epoch retired
+on rejection is never restored; a held reader request still fails its captured generation/token
+check after transport. Older matching and mismatching identity negotiations return `Cancelled`
+after recovery without changing verified contact or its token. An ordinary matching background
+probe does not advance the token. The held-reader and held-negotiation cases exercise those
+boundaries with the actual Android authorization object, production shared reader, and controlled
+transport. The negative replacement integration controls retain the old pending favourite and
+send no `star` while a new negotiation continues to reject the replacement.
+
+### Rejection notification ordering review
+
+OBSERVED baseline `d0a3b58b`, with only a narrow pre-notification pause seam and the new tests
+added in `ad68b219`: Linux run `39962068663` executes four cases, two failures, zero errors and
+zero skips. Both `aDelayedRejectionCannotCloseANewerReconnectOrStrandItsChanges` and
+`aDelayedRejectionCannotCloseANewerConsentOrStrandItsChanges` fail with
+"A stale rejection notification cannot close the reopened account". P1 has committed rejection,
+a favourite is durable and unsent, and the newer reconnect has reopened contact and flushed that
+favourite before P1's old notification is delivered. The opposite-order controls already pass on
+the baseline. These tests use the registered Android reader, real session and SQLite mutation
+outbox with a controlled transport and authenticated-identity verdicts supplied at the gate seam;
+they do not claim HTTP negotiation, rendered consent controls or device execution.
+
+Rejection delivery now carries its rejected authorization epoch. The gate checks that epoch and
+applies the reader-owner rejection under the same lock used by successful validation and consent
+acceptance. The registry lookup happens outside that lock, and the guarded write happens after
+dispatch to the reader owner. Acceptance before delivery makes the old notification a no-op.
+Delivery first retires the reader; the subsequent validated reconnect clears its local rejection
+and flushes normally. The notification sender also rechecks negotiation generation before returning
+its result. Acceptance never restores the old authorization token. All four ordering cases hold a
+read from before rejection until after recovery and require `ReaderSendRefused`, then verify that
+a new favourite flushes after the old notification has drained.
+
 ## Lasting rejection and replies already in flight
 
 OBSERVED on published revision `4a946a68`: three review regressions fail before production changes.

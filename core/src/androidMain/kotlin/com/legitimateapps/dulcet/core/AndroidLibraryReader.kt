@@ -584,11 +584,21 @@ public class AndroidLibraryReader internal constructor(
 
     /** A different account worker detected a replacement; retire this reader's pending replies. */
     public fun rejectServerIdentity() {
+        val id = account?.providerInstanceId ?: return
+        AndroidServerIdentity.rejectionEpoch(id)?.let(::rejectServerIdentity)
+    }
+
+    internal fun rejectServerIdentity(epoch: Long) {
+        val id = account?.providerInstanceId ?: return
         onReader {
-            automaticDownloadsMayStart = false
-            serverAvailableForPlayback = false
-            composition?.session?.reader?.rejectServerIdentity()
-            myLibraries.toList().forEach { it.republishAll() }
+            // Check AND write under acceptance's lock, after dispatch to the reader owner.
+            // Looking up this reader happened outside the gate lock to avoid registry inversion.
+            val applied = AndroidServerIdentity.applyRejection(id, epoch) {
+                automaticDownloadsMayStart = false
+                serverAvailableForPlayback = false
+                composition?.session?.reader?.rejectServerIdentity()
+            }
+            if (applied) myLibraries.toList().forEach { it.republishAll() }
         }
     }
 
