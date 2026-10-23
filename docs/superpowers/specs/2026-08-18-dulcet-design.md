@@ -6667,7 +6667,9 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 1. **Only STANDARD runners are free on public repositories. Larger and premium macOS runners are always
    billed** — included minutes cannot be applied to them. **No workflow in this repo may request a
    larger-runner label.** `runs-on` for Apple jobs is exactly `macos-latest` (or a pinned
-   `macos-<version>` when a toolchain pin demands it, §4.4) and never a larger-runner label. A CI lint
+   `macos-<version>` when a toolchain pin demands it, §4.4) and never a larger-runner label. Linux jobs
+   use `ubuntu-latest`, or a pinned standard `ubuntu-<LTS version>` when a job installs an exact
+   distribution package (`core-build`'s FFmpeg). A CI lint
    step asserts this, because the failure mode is a silent bill rather than a broken build.
 2. **Hosted macOS concurrency is capped well below Linux**, so a wide Apple matrix **queues rather than
    fans out** and a broad matrix makes CI slower, not faster. **OBSERVED 2026-09-24** (GitHub Docs,
@@ -6687,7 +6689,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 
 | workflow | runner | contents |
 |---|---|---|
-| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline and the Android shell unit tests; the `android-emulator` matrix runs the phone and TV playback proofs on an emulator, one leg per surface, and exports one attempt output per surface (`attempt-phone`, `attempt-tv`); `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator first requires every job it needs to report `success`, then downloads the Android-only JUnit artifacts, each by the attempt that produced it (a job output, as in §21.5 item 4), and resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
+| `core-ci.yml` | `ubuntu-latest`; `core-build` pinned to `ubuntu-24.04` | `core-build` runs the Gradle build/test/licence baseline and the Android shell unit tests; the `android-emulator` matrix runs the phone and TV playback proofs on an emulator, one leg per surface, and exports one attempt output per surface (`attempt-phone`, `attempt-tv`); `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator first requires every job it needs to report `success`, then downloads the Android-only JUnit artifacts, each by the attempt that produced it (a job output, as in §21.5 item 4), and resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
 | `apple-ci.yml` | pinned standard `macos-26` for the three legs (four slots: the iPadOS-and-iPhone leg is a two-member device matrix); `ubuntu-latest` for the aggregator | three parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance-core`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, the macOS app-host proofs, the library-sync, download and playback-integration legs on macOS, iOS/iPadOS and tvOS, the `core-conformance` suites on all three, and the tvOS UI proofs. `apple-conformance-ipad-iphone`, one member per device, each with the same closure, corpus and preconditions on its own server and the iOS-simulator framework: `apple-conformance-ipad` builds the iPadOS scheme and runs the play-count canary and the iPadOS proofs; `apple-conformance-iphone` builds the iPhone scheme and runs the iPhone search proof and the iPhone proofs through the skip probe and the streaming-quality cap. Each member uploads its own evidence artifact and reports its own attempt output (`attempt-ipad`, `attempt-iphone`), as `core-ci`'s emulator matrix does. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned every leg resolves every Apple `FEATURES.yml` evidence identity against every leg's JUnit. Future Apple-only measurements and tests join one of the three legs, never a fifth macOS slot without a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
@@ -7931,6 +7933,15 @@ notification cannot reopen or revoke the recovered account. Reader replies still
 captured reader generation and account authorization after transport. This implements the existing
 lasting-fence contract, with no change to saved lineage, counted replacement consent, or the
 version-upgrade rule.
+
+**2026-10-23 — Pin `core-build` to `ubuntu-24.04`.**
+The server tests install Ubuntu Noble's exact FFmpeg (6.1.1, the version the pinned Linux
+conformance environment uses), and the step refuses any other release before a test runs. GitHub
+moves the `ubuntu-latest` label to Ubuntu 26 from 2026-10-19 (OBSERVED: the runner notice in
+`core-ci` logs, https://github.com/actions/runner-images/issues/14748). So `core-build` now names the
+standard `ubuntu-24.04` label, and the CI lint allows `ubuntu-<LTS version>` beside the existing
+labels. Every other Linux job stays on `ubuntu-latest`. Moving the server tests to a newer FFmpeg is a
+separate change that has to re-establish the media fixtures on that version.
 
 **2026-10-22: Discover and Wishlist server contracts.**
 The approved [Discover and Wishlist design](2026-10-22-discover-and-wishlist-design.md) step 1
