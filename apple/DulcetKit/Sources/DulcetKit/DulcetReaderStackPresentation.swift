@@ -12,6 +12,14 @@ struct DulcetReaderStackPresentation<Route: Hashable, Context: Hashable> {
     private var replayed = false
     private(set) var presentedRoutes: Set<Route> = []
 
+    func displayedPath(for updated: Request) -> [Route] {
+        if request == updated { return path }
+        // A push changes the requested path before onChange records that request. Keep the
+        // new path visible in the existing stack, rather than rendering an empty root first.
+        // A different account/destination still waits for its own registration and replay.
+        return request?.context == updated.context ? updated.path : []
+    }
+
     mutating func request(_ updated: Request) {
         guard request != updated else { return }
         request = updated

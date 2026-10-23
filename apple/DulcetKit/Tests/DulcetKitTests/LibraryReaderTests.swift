@@ -2567,3 +2567,33 @@ func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
     #expect(source.queues.count == 1, "An account close revokes a late exact lookup too")
 }
 #endif
+
+@Test @MainActor func anAlbumPushNeverExposesAnEmptyPathWhileItsPresentationCatchesUp() {
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    store.selectDestination(.browse)
+    typealias Presentation = DulcetReaderStackPresentation<DulcetReaderRoute, String>
+    var presentation = Presentation()
+    let section = DulcetReaderRoute.section(.albums)
+    store.pushReaderPage(section)
+    presentation.request(.init(context: "account-A/browse", path: store.readerPath))
+    presentation.appeared(section)
+    let album = DulcetReaderRoute.album(.init(providerInstanceID: "provider-reader", rawID: "held-album"))
+    store.pushReaderPage(album)
+    let request = Presentation.Request(context: "account-A/browse", path: store.readerPath)
+    // SwiftUI reads the new body before onChange acknowledges the request. That read must
+    // not turn [albums, album] into a root, which later writes back a stale shorter path.
+    let displayed = presentation.displayedPath(for: request)
+    #expect(displayed == [section, album])
+    presentation.request(request)
+    presentation.appeared(album)
+    #expect(store.readerPath == [section, album])
+    #expect(presentation.displayedPath(for: request) == [section, album])
+    // A new account/destination still waits for its own request registration.
+    #expect(presentation.displayedPath(for: .init(context: "account-B/library", path: [album])).isEmpty)
+    // The ordinary Back transition remains accepted after actual presentation.
+    let accepted = presentation.wrote([section])
+    #expect(accepted)
+    store.popReaderFromStack(to: [section], presentedRoutes: presentation.presentedRoutes)
+    #expect(store.readerPath == [section])
+}
