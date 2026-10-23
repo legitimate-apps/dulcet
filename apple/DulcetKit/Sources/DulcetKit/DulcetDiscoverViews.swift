@@ -33,7 +33,7 @@ public struct DulcetDiscoverSearchView: View {
                                             }
                                             .buttonStyle(.plain)
                                             .accessibilityIdentifier("discover.item.\(item.id)")
-                                            .accessibilityLabel(item.title + ", " + DulcetDiscoverItemPresentation(item: item).availabilityText)
+                                            .accessibilityLabel(DulcetStrings.readerRowAccessibility(item.title, DulcetDiscoverItemPresentation(item: item).availabilityText))
                                         }
                                         if page.nextCursor != nil {
                                             Button(DulcetStrings.libraryLoadMore) { model.reader.loadMore(kind: group.kind) }
@@ -161,7 +161,7 @@ struct DulcetDiscoverDetailView: View {
                             }
                         }
                         .accessibilityIdentifier("discover.edition")
-                        .accessibilityValue(album.selectedReleaseId ?? "")
+                        .accessibilityValue(album.selectedReleaseId ?? DulcetStrings.discoverUnknownDate)
                     }
                     DulcetDiscoverStatusView(status: .init(age: album.tracks.age, error: detail.error, connection: model.publication?.connection ?? "online")) { detail.load(destination) }
                     if detail.requestedReleaseId == nil || album.selectedReleaseId == detail.requestedReleaseId {
@@ -203,7 +203,7 @@ struct DulcetDiscoverDetailView: View {
             }
         }
         .buttonStyle(.plain).accessibilityIdentifier("discover.item.\(item.id)")
-        .accessibilityLabel(item.title + ", " + DulcetDiscoverItemPresentation(item: item).availabilityText)
+        .accessibilityLabel(DulcetStrings.readerRowAccessibility(item.title, DulcetDiscoverItemPresentation(item: item).availabilityText))
     }
 }
 
@@ -225,7 +225,8 @@ struct DulcetDiscoverWishActions: View {
                     .accessibilityIdentifier("discover.wish")
             }
             ForEach(Array(DulcetDiscoverItemPresentation(item: item).libraryReferences.enumerated()), id: \.offset) { _, ref in
-                Button(ref.type == "song" ? DulcetStrings.play : DulcetStrings.discoverOpenLibrary) { openLibrary(ref) }
+                let actionTitle = ref.type == "song" ? DulcetStrings.play : DulcetStrings.discoverOpenLibrary
+                Button(actionTitle) { openLibrary(ref) }
                     .accessibilityIdentifier("discover.openLibrary")
                 if model.publication?.access.canRejectMatch == true {
                     Button(DulcetStrings.discoverReject) { model.reject(item, ref: ref, wishId: row?.wish?.id) }.accessibilityIdentifier("discover.reject")
