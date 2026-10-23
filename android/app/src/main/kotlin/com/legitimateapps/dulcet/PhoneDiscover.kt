@@ -232,7 +232,7 @@ internal fun DiscoverWishIcon(session: DiscoverWishlistSession, item: DiscoverIt
             modifier = modifier.testTag("discover.wish.${item.kind}.$index")) {
             Icon(DulcetIcons.Wish, stringResource(R.string.discover_remove_wish_named, item.title), tint = MaterialTheme.colorScheme.primary)
         }
-    } else if (access?.canAddWish == true && item.wishable && item.target != null && item.availability.status != "held") {
+    } else if (access?.canAddWish == true && item.wishable && item.target != null) {
         IconButton(onClick = { session.add(item, source) { failed((it as? DiscoverResult.Failed)?.error) } },
             modifier = modifier.testTag("discover.wish.${item.kind}.$index")) {
             Icon(DulcetIcons.WishBorder, stringResource(R.string.discover_add_wish_named, item.title), tint = MaterialTheme.colorScheme.primary)
