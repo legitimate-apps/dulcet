@@ -1522,6 +1522,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime"
+            },
+            {
+              "observes": "The existing hosted Mac account proof invokes two actual HTTP/artwork-cache controls: a held reply crossing rejection cannot populate disk or UI, while a matching-identity probe preserves the accepted reply and existing cover. These are nested assertions in the selected hosted method, with separate local case executions; no integrated live server-swap tour is claimed.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState"
             }
           ],
           "promotion_condition": {

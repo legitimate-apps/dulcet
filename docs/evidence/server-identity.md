@@ -56,9 +56,9 @@ These additional cases were established against the corresponding pre-fix seam d
 they are not represented as the three review regressions executed on unchanged `4a946a68`.
 
 The full common-code XML after these changes contains **1,211 JVM tests in 94 suites** and
-**1,300 macOS native tests in 96 suites**, each with zero failures, errors and skips. Mac, iOS Simulator
-and tvOS Simulator debug frameworks link, and iOS Simulator common tests compile. Subsequent native
-account-acceptance controls and platform integration counts are reported separately below.
+**1,301 macOS native tests in 96 suites**, each with zero failures, errors and skips. Mac, iOS Simulator
+and tvOS Simulator debug frameworks link, and iOS Simulator common tests compile. Native controls include synchronous cross-client reader rejection, download-first sender revocation,
+and matching/different explicit acceptance. Platform integration counts are reported separately below.
 
 ### Android platform sweep
 
@@ -82,6 +82,54 @@ OBSERVED after the final Android identity-seeding transaction: the complete Andr
 261 tests. Phone DEV, phone PROD and TV Kotlin compilation also pass. This is host execution and
 compilation evidence; fresh Linux repetition and real app flows have separate receipts and do not
 follow merely from these counts.
+
+### Apple platform sweep
+
+OBSERVED before the artwork fix: the paused-player artwork case fails two image assertions while
+its playback/session preservation assertions pass. A separate hosted Mac test holds real HTTP artwork
+and observes replacement bytes written to disk and delivered to UI after rejection; its matching-
+identity control passes. Those tests preserve accepted cached covers. The original fixture decoded
+with a PNG CRC warning; only fixture bytes were corrected, and the standalone RED repeated. A second
+hosted RED launch stopped before test execution in runner startup, so it is not claimed as another
+reproduced hosted failure.
+
+The native account lifetime is shared by database and provider across reader, download, playback
+queue delivery, legacy import and AutoPlay. A download client revokes authorization before returning
+its replacement failure, independently of queued source or reader notifications. Explicit different
+lineage acceptance retires old captures before writing SQL and renews only after successful durable
+acceptance. Matching acceptance stays stable. Swift artwork cache-actor insertion and UI completion,
+current/preload callbacks, resource access, AutoPlay adoption, and legacy browse/search adoption all
+check their captured lifetime. Existing offline covers and audio are retained. The AutoPlay facade
+also checks before and after every internal source request, so rejection of a held seed cannot send
+similar/top/random fallbacks.
+
+OBSERVED locally after the fix: the complete playback-system suite passes **48 tests with zero
+failures**. Three additional adapter cases separately pass: a download-first rejection refuses held
+current and preload plans before source notification, and a real matching-identity download probe
+preserves held current playback. Two actual HTTP AutoPlay controls pass: rejection after the held
+seed permits only `getSong`, while matching identity permits all six source requests and a candidate.
+These five cases and the paused-artwork proof are invoked through the existing download aggregate
+selected by CI (the paused-artwork proof is Mac-only). No workflow or CI helper edit is needed.
+Mac, iOS and tvOS shells compile against the final linked frameworks.
+
+OBSERVED: both hosted Mac artwork cases now pass, **two tests, zero failures**, in 0.765 seconds.
+The rejected held reply reaches neither disk cache nor UI; the matching-identity control retains the
+accepted cover and reply. The Mac and iOS integration test bundles also build. Local Xcode startup
+stalls occurred before test execution and are retained separately; validation uses the same compiled
+app/test binaries with a complete temporary local framework layout. No product assertion is changed.
+
+The unchanged hosted artwork helpers are also registered inside the existing CI-selected
+`DulcetMacAccountConnectAppTest/connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState`.
+That complete selected method passes locally: **one emitted test, zero failures**, in 0.729 seconds,
+with the artwork identity marker and original connection/persistence assertions. This is one aggregate
+execution containing the two helper controls, not two additional emitted test cases. The two separate
+artwork executions above establish their individual results. All three debug shells and the iOS download
+integration test bundle compile. The final exact-head full Apple workflow remains a separate gate.
+
+The full Mac Swift package passes **390 tests in 17 suites** with serial execution. An earlier parallel
+run has one existing shared system Now Playing title failure; its serial rerun passes without test
+changes. The new held-success session control also passes. These observations distinguish runtime
+checks, adapter controls and compilation from an integrated live server-swap UI tour.
 
 ## Android removal and queued retirement
 
