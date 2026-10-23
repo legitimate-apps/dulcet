@@ -2043,6 +2043,6 @@ for mode in ['iphone','ipad','macos','android']:
     good='      - run: '+command+'\n'
     if mode=='android':good='      - uses: emulator@pin\n        with:\n          script: ANDROID_SERIAL=emulator-5554 '+command+'\n'
     assert fixture_check((prefix+good).splitlines())==[]
-    for bad in [good.replace('tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/proof/fixture" -- ',''),good.replace(command,'echo '+command),good.replace('proofs '+mode,'proofs components'),good.replace('proofs '+mode,'proofs '+mode+' --self-test'),good+'        continue-on-error: true\n',good+'        if: false\n']:
+    for bad in [good.replace('tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/proof/fixture" -- ',''),good.replace(command,'echo '+command),good.replace('proofs '+mode,'proofs components'),good.replace('proofs '+mode,'proofs '+mode+' --self-test'),good.replace('proofs '+mode,'proofs '+mode+' --build-for-testing'),good+'        continue-on-error: true\n',good+'        if: false\n']:
         assert fixture_check((prefix+bad).splitlines()),bad
-print('Finite native fixture invocation controls: 28/28, all four surfaces and six negative mutations each')
+print('Finite native fixture invocation controls: 32/32, all four surfaces and seven negative mutations each')
