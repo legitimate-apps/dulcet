@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import java.util.UUID
@@ -39,6 +40,7 @@ class AndroidServerIdentityRaceTest {
         for (failure in listOf("success", "transport", "throw", "swap")) {
             val id = UUID.randomUUID().toString()
             assertNull(AndroidServerIdentity.validate(id) { null })
+            val acceptedAuthorization = AndroidServerIdentity.authorizationEpoch(id)
             val release = CompletableDeferred<Unit>()
             val probe = async { runCatching { AndroidServerIdentity.validate(id) {
                 release.await()
@@ -55,9 +57,11 @@ class AndroidServerIdentityRaceTest {
             release.complete(Unit)
             probe.await()
             assertEquals(failure == "success", AndroidServerIdentity.isVerified(id))
+            if (failure == "success") assertEquals(acceptedAuthorization, AndroidServerIdentity.authorizationEpoch(id),
+                "An ordinary matching probe must not retire accepted work")
             if (failure == "swap") {
                 AndroidServerIdentity.validate(id) { null }
-                assertFalse(AndroidServerIdentity.isVerified(id), "A confirmed swap stays quarantined")
+                assertTrue(AndroidServerIdentity.isVerified(id), "A fresh saved-identity negotiation reopens contact")
             }
         }
     }
@@ -74,7 +78,53 @@ class AndroidServerIdentityRaceTest {
         old.await()
         assertFalse(AndroidServerIdentity.isVerified(id), "late success must not restore old remote IDs")
         AndroidServerIdentity.validate(id) { null }
-        assertFalse(AndroidServerIdentity.isVerified(id), "mismatch requires explicit account acceptance")
+        assertTrue(AndroidServerIdentity.isVerified(id), "A fresh saved-identity negotiation reopens contact")
+    }
+
+    @Test fun reconnectRecoveryCannotAdoptAReadStartedBeforeRejection() = readerTest { env ->
+        val id = UUID.randomUUID().toString()
+        var failure: DomainError? = null
+        val reader = env.reader(
+            identityAuthorization = { AndroidServerIdentity.authorizationEpoch(id) },
+            validateServerIdentity = { AndroidServerIdentity.validate(id) { failure } },
+        )
+        reader.connect()
+        val originalAuthorization = AndroidServerIdentity.authorizationEpoch(id)
+        env.server.holdMatching = { it.endpoint == "getArtists" }
+        val oldReply = async { runCatching { reader.sendChecked("getArtists") } }
+        advanceUntilIdle()
+        assertEquals(1, env.server.heldCount)
+        failure = DomainError.Protocol.ServerIdentityChanged
+        assertIs<ReaderConnectionOutcome.Failed>(reader.reconnect())
+        assertNull(AndroidServerIdentity.authorizationEpoch(id))
+        failure = null
+        assertIs<ReaderConnectionOutcome.Read>(reader.reconnect(), "Saved-identity Reconnect must recover")
+        assertNotEquals(originalAuthorization, AndroidServerIdentity.authorizationEpoch(id),
+            "Reopening cannot restore the authorization captured before rejection")
+        env.server.release()
+        assertIs<ReaderSendRefused>(oldReply.await().exceptionOrNull(),
+            "A recovered account must still discard a reply crossing its rejection")
+    }
+
+    @Test fun olderNegotiationsCannotRevokeOrReopenTheRecoveredAuthorization() = runTest {
+        for (oldResult in listOf(null, DomainError.Protocol.ServerIdentityChanged)) {
+            val id = UUID.randomUUID().toString()
+            AndroidServerIdentity.validate(id) { null }
+            val originalAuthorization = AndroidServerIdentity.authorizationEpoch(id)
+            val release = CompletableDeferred<Unit>()
+            val oldProbe = async { AndroidServerIdentity.validate(id) { release.await(); oldResult } }
+            runCurrent()
+            AndroidServerIdentity.validate(id) { DomainError.Protocol.ServerIdentityChanged }
+            assertNull(AndroidServerIdentity.authorizationEpoch(id))
+            assertNull(AndroidServerIdentity.validate(id) { null }, "The current saved-identity negotiation recovers")
+            val recoveredAuthorization = AndroidServerIdentity.authorizationEpoch(id)
+            assertNotNull(recoveredAuthorization)
+            assertNotEquals(originalAuthorization, recoveredAuthorization)
+            release.complete(Unit)
+            assertEquals(DomainError.Transport.Cancelled, oldProbe.await(), "An older negotiation is never adopted")
+            assertTrue(AndroidServerIdentity.isVerified(id))
+            assertEquals(recoveredAuthorization, AndroidServerIdentity.authorizationEpoch(id))
+        }
     }
 
     @Test fun invalidatingAProbeBeforeItCompletesLeavesContactClosedAndOtherAccountsVerified() = runTest {

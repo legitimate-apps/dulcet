@@ -2034,6 +2034,54 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidDownloadControllerTest/queuedStreamCacheFinishCannotCrossRejectionAndAcceptance"
+            },
+            {
+              "observes": "OBSERVED Android host production Reconnect handler, authenticated loopback negotiation and durable outbox: after rejecting a replacement, the original saved identity reopens contact and acknowledges the retained favourite. This is handler integration evidence, not a rendered or device UI proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedIdentityReconnectTest/originalServerReturnsAndReconnectReopensContactAndFlushesPendingChanges"
+            },
+            {
+              "observes": "OBSERVED Android host production Reconnect handler: a fresh negotiation while the replacement remains keeps contact rejected and the favourite pending, with no star request to the replacement.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "SavedIdentityReconnectTest/replacementRemainsAndReconnectKeepsContactRejectedAndChangesPending"
+            },
+            {
+              "observes": "OBSERVED Android host: saved-identity reconnect recovers authorization without adopting a held reader reply started before rejection.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityRaceTest/reconnectRecoveryCannotAdoptAReadStartedBeforeRejection"
+            },
+            {
+              "observes": "OBSERVED Android host: an older matching or mismatching identity negotiation cannot override recovered authorization.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityRaceTest/olderNegotiationsCannotRevokeOrReopenTheRecoveredAuthorization"
+            },
+            {
+              "observes": "Android host registered reader and SQLite outbox with controlled transport: A rejection notification held after the gate decision cannot close a newer saved-identity reconnect; pending favourites flush before and after late delivery, and a pre-rejection held reply remains refused. No rendered UI or device claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityNotificationRaceTest/aDelayedRejectionCannotCloseANewerReconnectOrStrandItsChanges"
+            },
+            {
+              "observes": "Android host registered reader and SQLite outbox with controlled transport: A rejection notification held after the gate decision cannot close newer consent acceptance followed by validated reconnect; pending favourites flush and a pre-rejection held reply remains refused. No rendered UI or device claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityNotificationRaceTest/aDelayedRejectionCannotCloseANewerConsentOrStrandItsChanges"
+            },
+            {
+              "observes": "Android host registered reader and SQLite outbox with controlled transport: A rejection delivered before reconnect is cleared by the newer saved-identity validation; pending changes flush while a pre-rejection held reply stays refused. No rendered UI or device claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityNotificationRaceTest/reconnectAfterDeliveredRejectionReopensWithANewReplyFence"
+            },
+            {
+              "observes": "Android host registered reader and SQLite outbox with controlled transport: A rejection delivered before consent and validated reconnect does not strand pending changes or revive a pre-rejection held reply. No rendered UI or device claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityNotificationRaceTest/consentAfterDeliveredRejectionReopensWithANewReplyFence"
             }
           ],
           "promotion_condition": {
@@ -2225,6 +2273,54 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidDownloadControllerTest/queuedStreamCacheFinishCannotCrossRejectionAndAcceptance"
+            },
+            {
+              "observes": "OBSERVED Android host production Reconnect handler, authenticated loopback negotiation and durable outbox: after rejecting a replacement, the original saved identity reopens contact and acknowledges the retained favourite. This is handler integration evidence, not a rendered or device UI proof.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvSavedIdentityReconnectTest/originalServerReturnsAndReconnectReopensContactAndFlushesPendingChanges"
+            },
+            {
+              "observes": "OBSERVED Android host production Reconnect handler: a fresh negotiation while the replacement remains keeps contact rejected and the favourite pending, with no star request to the replacement.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvSavedIdentityReconnectTest/replacementRemainsAndReconnectKeepsContactRejectedAndChangesPending"
+            },
+            {
+              "observes": "OBSERVED Android host: saved-identity reconnect recovers authorization without adopting a held reader reply started before rejection.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityRaceTest/reconnectRecoveryCannotAdoptAReadStartedBeforeRejection"
+            },
+            {
+              "observes": "OBSERVED Android host: an older matching or mismatching identity negotiation cannot override recovered authorization.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityRaceTest/olderNegotiationsCannotRevokeOrReopenTheRecoveredAuthorization"
+            },
+            {
+              "observes": "Android host registered reader and SQLite outbox with controlled transport: A rejection notification held after the gate decision cannot close a newer saved-identity reconnect; pending favourites flush before and after late delivery, and a pre-rejection held reply remains refused. No rendered UI or device claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityNotificationRaceTest/aDelayedRejectionCannotCloseANewerReconnectOrStrandItsChanges"
+            },
+            {
+              "observes": "Android host registered reader and SQLite outbox with controlled transport: A rejection notification held after the gate decision cannot close newer consent acceptance followed by validated reconnect; pending favourites flush and a pre-rejection held reply remains refused. No rendered UI or device claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityNotificationRaceTest/aDelayedRejectionCannotCloseANewerConsentOrStrandItsChanges"
+            },
+            {
+              "observes": "Android host registered reader and SQLite outbox with controlled transport: A rejection delivered before reconnect is cleared by the newer saved-identity validation; pending changes flush while a pre-rejection held reply stays refused. No rendered UI or device claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityNotificationRaceTest/reconnectAfterDeliveredRejectionReopensWithANewReplyFence"
+            },
+            {
+              "observes": "Android host registered reader and SQLite outbox with controlled transport: A rejection delivered before consent and validated reconnect does not strand pending changes or revive a pre-rejection held reply. No rendered UI or device claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidServerIdentityNotificationRaceTest/consentAfterDeliveredRejectionReopensWithANewReplyFence"
             }
           ],
           "promotion_condition": {

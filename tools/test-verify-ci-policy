@@ -59,6 +59,20 @@ CASES = (
         job_name="self-hosted-comment-control",
     ),
     Case(
+        name="pinned Ubuntu LTS runner",
+        triggers="  pull_request:",
+        runs_on="    runs-on: ubuntu-24.04",
+        accepted=True,
+        job_name="pinned-ubuntu-control",
+    ),
+    Case(
+        name="larger runner spelled after an Ubuntu LTS label",
+        triggers="  pull_request:",
+        runs_on="    runs-on: ubuntu-24.04-8core",
+        accepted=False,
+        expected_error="only the standard hosted labels",
+    ),
+    Case(
         name="xlarge runner with workflow_dispatch only",
         triggers="  workflow_dispatch:",
         runs_on="    runs-on: macos-latest-xlarge",
