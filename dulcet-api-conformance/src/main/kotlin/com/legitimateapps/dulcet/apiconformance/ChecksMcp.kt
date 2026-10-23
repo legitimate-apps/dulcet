@@ -40,7 +40,8 @@ fun mcpChecks(): List<Check> = listOf(
         requires("DA-PRE-1")
         for (scopes in listOf(listOf("catalog:read"), READ_SCOPES, WRITE_SCOPES, ALL_SCOPES)) {
             val listed = mcpAs(scopes).listTools()
-            val expected = McpTools.forScopes(scopes)
+            val caps=run.capabilities ?: body(api("GET","getCapabilities","/capabilities",token=null)).also {run.capabilities=it}
+            val expected = McpTools.forScopes(scopes,caps.path("capabilities"))
             val names = listed.map { it.str("name") }
             ensure(names.toSet().size == names.size) { "tools/list for $scopes repeats a tool" }
             ensure(names.toSet() == expected.map { it.str("name") }.toSet()) {

@@ -14,6 +14,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.isDirectory
 import kotlin.io.path.name
 
+data class ScanDelta(val scanId:String,val trackIds:Set<String>,val albumIds:Set<String>,val artistIds:Set<String>)
+
 data class ScanResult(val added: Int, val updated: Int, val removed: Int, val unchanged: Int, val failed: Int, val refused: String? = null)
 
 /**
@@ -26,7 +28,9 @@ class Scanner(
     private val musicFolder: Path,
     private val probe: Probe,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val afterCatalogCommit:(ScanDelta)->Unit = {},
 ) {
+    init { db.write { execute("CREATE TABLE IF NOT EXISTS wishlist_scan_pending(id TEXT PRIMARY KEY,scan_id TEXT NOT NULL,track_ids TEXT NOT NULL,album_ids TEXT NOT NULL,artist_ids TEXT NOT NULL,next_attempt INTEGER NOT NULL DEFAULT 0)") } }
     private val log = LoggerFactory.getLogger(Scanner::class.java)
     private val running = AtomicBoolean(false)
     private val progress = AtomicInteger(0)
@@ -162,6 +166,7 @@ class Scanner(
         }
         progress.addAndGet(unchanged)
         val now = clock()
+        var delta:ScanDelta?=null
         db.write {
             // Issuance order must outlive journal retention and cannot be inferred from UUID order.
             execute("CREATE TABLE IF NOT EXISTS api_album_issued (ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE)")
@@ -288,10 +293,26 @@ class Scanner(
                 if(next.size == 1) { remapUserItem("artist",oldId,next.single()); recordReplacement("artist",oldId,next,"merged",now) }
                 else if(next.size > 1) recordReplacement("artist",oldId,next,"split",now)
             }
+            val scanId=java.util.UUID.randomUUID().toString()
+            val paths=probed.map { it.path }.toSet()
+            val changedTracks=query("SELECT id,path,album_id FROM track") { Triple(it.string("id"),it.string("path"),it.string("album_id")) }.filter { it.second in paths }
+            val trackIds=changedTracks.map { it.first }.toSet()
+            val albumIds=changedTracks.map { it.third }.toSet()
+            val artistIds=query("SELECT track_id,artist_id FROM track_artist WHERE role IN ('artist','albumartist')") { it.string("track_id") to it.string("artist_id") }.filter { it.first in trackIds }.map { it.second }.toSet()
+            delta=ScanDelta(scanId,trackIds,albumIds,artistIds)
+            fun pending(column:String,new:Set<String>):String {
+                val old=string("SELECT $column FROM wishlist_scan_pending WHERE id='pending'")
+                val values=old?.let { kotlinx.serialization.json.Json.parseToJsonElement(it) as kotlinx.serialization.json.JsonArray }?.map { (it as JsonPrimitive).content }.orEmpty()
+                return kotlinx.serialization.json.JsonArray((values+new).distinct().map { JsonPrimitive(it) }).toString()
+            }
+            val tracksJson=pending("track_ids",trackIds);val albumsJson=pending("album_ids",albumIds);val artistsJson=pending("artist_ids",artistIds)
+            execute("INSERT INTO wishlist_scan_pending VALUES('pending',?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET scan_id=excluded.scan_id,track_ids=excluded.track_ids,album_ids=excluded.album_ids,artist_ids=excluded.artist_ids,next_attempt=0",scanId,tracksJson,albumsJson,artistsJson)
+            execute("INSERT INTO meta(key,value) VALUES('discover_scan_stamp',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",scanId)
             execute("INSERT INTO meta(key, value) VALUES('last_scan', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", Instant.ofEpochMilli(now).toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_count', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", folderArt.size.toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_art_stamp', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", artStamp)
         }
+        delta?.let { runCatching { afterCatalogCommit(it) }.onFailure { log.warn("wish fulfilment wakeup deferred") } }
         val result = ScanResult(added = probed.count { existing[it.path] == null }, updated = probed.count { existing[it.path] != null }, removed = removed.size, unchanged = unchanged, failed = failed)
         log.info("scan finished in {} ms: {}", clock() - started, result)
         return result
@@ -393,14 +414,14 @@ class Scanner(
                album_artist, album_artist_id, track_no, disc_no, disc_subtitle, year, release_date, genre, duration, bitrate,
                sample_rate, channels, bit_depth, codec, suffix, content_type, compilation, mbz_track_id, mbz_recording_id,
                mbz_album_id, mbz_artist_id, mbz_album_artist_id, has_embedded_art, lyrics_sidecar, embedded_lyrics, comment, bpm,
-               rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak, created, updated, search)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak, created, updated, search, mbz_release_group_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             id, t.path, 1, t.parentDir, t.mtime, t.size, t.title, t.sortTitle, t.album, t.albumId, t.artistDisplay, t.artists.first().id,
             t.albumArtistDisplay, t.albumArtists.first().id, t.trackNo, t.discNo, t.discSubtitle, t.year, t.releaseDate, t.genres.firstOrNull(),
             t.duration, t.bitRate, t.sampleRate, t.channels, t.bitDepth, t.codec, t.suffix, t.contentType, t.compilation, t.mbzTrackId,
             t.mbzRecordingId, t.mbzAlbumId, t.mbzArtistId, t.mbzAlbumArtistId, t.hasEmbeddedArt, t.lyricsSidecar,
             t.embeddedLyrics.takeIf { it.isNotEmpty() }?.let { map -> JsonObject(map.mapValues { JsonPrimitive(it.value) }).toString() },
-            t.comment, t.bpm, t.rgTrackGain, t.rgTrackPeak, t.rgAlbumGain, t.rgAlbumPeak, created, updated, t.searchText(),
+            t.comment, t.bpm, t.rgTrackGain, t.rgTrackPeak, t.rgAlbumGain, t.rgAlbumPeak, created, updated, t.searchText(), t.mbzReleaseGroupId,
         )
         t.artists.forEachIndexed { index, credit -> execute("INSERT OR IGNORE INTO track_artist VALUES (?,?,?,?,?)", id, "artist", credit.id, credit.name, index) }
         t.albumArtists.forEachIndexed { index, credit -> execute("INSERT OR IGNORE INTO track_artist VALUES (?,?,?,?,?)", id, "albumartist", credit.id, credit.name, index) }

@@ -1,0 +1,902 @@
+[
+  {
+    "artist_mbid": "48646387-1664-4c9a-9139-9bfd091b823c",
+    "name": "BLACKPINK",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 2005,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "6f1a58bf-9b1b-49cf-a44a-6cefad7ae04f",
+    "name": "Dua Lipa",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 1884,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "3377f3bb-60fc-4403-aea9-7e800612e060",
+    "name": "Halsey",
+    "comment": "US singer/songwriter Ashley Frangipane",
+    "type": "Person",
+    "gender": "Female",
+    "score": 1783,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "f4fdbb4c-e4b7-47a0-b83b-d91bbfcfa387",
+    "name": "Ariana Grande",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 1712,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "8da127cc-c432-418f-b356-ef36210d82ac",
+    "name": "TWICE",
+    "comment": "South Korean girl group",
+    "type": "Group",
+    "gender": null,
+    "score": 1603,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "20244d07-534f-4eff-b4d4-930878889970",
+    "name": "Taylor Swift",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 1581,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "c8b03190-306c-4120-bb0b-6f2ebfc06ea9",
+    "name": "The Weeknd",
+    "comment": "Canadian R&B singer",
+    "type": "Person",
+    "gender": "Male",
+    "score": 1566,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "4f0cb3b7-6c06-4317-ae35-ddf3106a17ee",
+    "name": "Red Velvet",
+    "comment": "South Korean girl group",
+    "type": "Group",
+    "gender": null,
+    "score": 1486,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b8a7c51f-362c-4dcb-a259-bc6e0095f0a6",
+    "name": "Ed Sheeran",
+    "comment": "UK singer\u2010songwriter",
+    "type": "Person",
+    "gender": "Male",
+    "score": 1410,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "f4abc0b5-3f7a-4eff-8f78-ac078dbce533",
+    "name": "Billie Eilish",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 1407,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "e0140a67-e4d1-4f13-8a01-364355bee46e",
+    "name": "Justin Bieber",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 1314,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "cc197bad-dc9c-440d-a5b5-d52ba2e14234",
+    "name": "Coldplay",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 1221,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b3785a55-2cf6-497d-b8e3-cfa21a36f997",
+    "name": "EXO",
+    "comment": "South Korean-Chinese boy group",
+    "type": "Group",
+    "gender": null,
+    "score": 1212,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "e4bc69e2-a064-4f93-ada1-f7f209cc1cc3",
+    "name": "Selena Gomez",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 1173,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "5df62a88-cac9-490a-b62c-c7c88f4020f4",
+    "name": "Doja Cat",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 1157,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "28737730-ec70-4da5-89c5-77ac13c5c34d",
+    "name": "Khalid",
+    "comment": "American R&B singer\u2010songwriter",
+    "type": "Person",
+    "gender": "Male",
+    "score": 1135,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "7eb1ce54-a355-41f9-8d68-e018b096d427",
+    "name": "Harry Styles",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 1118,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "01b8b5bf-06cb-45da-85fb-61ada72fcd69",
+    "name": "Camila Cabello",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 1051,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "122d63fc-8671-43e4-9752-34e846d62a9c",
+    "name": "Katy Perry",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 961,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b1e26560-60e5-4236-bbdb-9aa5a8d5ee19",
+    "name": "Post Malone",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 947,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "0068ae6c-7156-40f9-a81f-39294af6a549",
+    "name": "i\u2010dle",
+    "comment": "fka (G)I\u2010DLE",
+    "type": "Group",
+    "gender": null,
+    "score": 941,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "650e7db6-b795-4eb5-a702-5ea2fc46c848",
+    "name": "Lady Gaga",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 907,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "142b343d-bf5a-428c-a64f-6d1a7566bbe9",
+    "name": "Stray Kids",
+    "comment": "South Korean boy group",
+    "type": "Group",
+    "gender": null,
+    "score": 897,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "fb588f59-af1a-493a-9508-ed487caa2a11",
+    "name": "MAMAMOO",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 888,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "add5f522-25df-41c4-815e-0ca9f60b83e4",
+    "name": "Ava Max",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 883,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "2f548675-008d-4332-876c-108b0c7ab9c5",
+    "name": "Sia",
+    "comment": "Australian singer\u2010songwriter",
+    "type": "Person",
+    "gender": "Female",
+    "score": 880,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b7d92248-97e3-4450-8057-6fe06738f735",
+    "name": "Shawn Mendes",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 851,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "2f3c4d70-0462-40da-bba3-0aec5772c556",
+    "name": "Cardi B",
+    "comment": "American rapper",
+    "type": "Person",
+    "gender": "Female",
+    "score": 848,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "1036b808-f58c-4a3e-b461-a2c4492ecf1b",
+    "name": "Nicki Minaj",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 847,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "bce172fc-51bb-43f7-9a25-b406a0a581d5",
+    "name": "ITZY",
+    "comment": "South Korean girl group",
+    "type": "Group",
+    "gender": null,
+    "score": 844,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "716a8be4-6f58-4e64-a1e6-fb3017f21bf6",
+    "name": "SUNMI",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 843,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "73e5e69d-3554-40d8-8516-00cb38737a1c",
+    "name": "Rihanna",
+    "comment": "Barbadian R&B/pop singer",
+    "type": "Person",
+    "gender": "Female",
+    "score": 830,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "9d17d14a-e81c-410e-a90b-b02b0a9de6f8",
+    "name": "NCT 127",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 828,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "e5712ceb-c37a-4c49-a11c-ccf4e21852d4",
+    "name": "Troye Sivan",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 822,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "525f1f1c-03f0-4bc8-8dfd-e7521f87631b",
+    "name": "Charlie Puth",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 812,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "272989c8-5535-492d-a25c-9f58803e027f",
+    "name": "SZA",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 807,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b6b21b0c-a706-4b46-a929-bd4d21b06cad",
+    "name": "MONSTA X",
+    "comment": "South Korean boy group",
+    "type": "Group",
+    "gender": null,
+    "score": 794,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "ec2bcb77-b9a1-49e2-bfe7-419586bbef48",
+    "name": "BIGBANG",
+    "comment": "South Korean boy band",
+    "type": "Group",
+    "gender": null,
+    "score": 793,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "0b30341b-b59d-4979-8130-b66c0e475321",
+    "name": "Lil Nas X",
+    "comment": "American rapper and singer",
+    "type": "Person",
+    "gender": "Male",
+    "score": 787,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "9fff2f8a-21e6-47de-a2b8-7f449929d43f",
+    "name": "Drake",
+    "comment": "Canadian rapper",
+    "type": "Person",
+    "gender": "Male",
+    "score": 771,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b9545342-1e6d-4dae-84ac-013374ad8d7c",
+    "name": "IU",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 764,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "faf4cefb-036c-4c88-b93a-5b03dd0a0e6b",
+    "name": "Demi Lovato",
+    "comment": "",
+    "type": "Person",
+    "gender": "Non-binary",
+    "score": 764,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "e04d239e-9fa8-49b3-b9b7-9e439c3cb1d1",
+    "name": "SEVENTEEN",
+    "comment": "South Korean boy group",
+    "type": "Group",
+    "gender": null,
+    "score": 764,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "70e5098b-c4ae-4cd7-9799-3c1b9b57c753",
+    "name": "SHINee",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 757,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "c0ef2ba5-a7b7-40ea-bd27-30acccfcac11",
+    "name": "Lauv",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 756,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "9d0ddf82-b7b1-45fc-a287-763df2b5d08a",
+    "name": "Odds",
+    "comment": "Canadian rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 755,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "6925db17-f35e-42f3-a4eb-84ee6bf5d4b0",
+    "name": "Olivia Rodrigo",
+    "comment": "US singer\u2010songwriter",
+    "type": "Person",
+    "gender": "Female",
+    "score": 752,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b629da42-c668-49d2-be67-498605ee2a13",
+    "name": "SUGA",
+    "comment": "BTS",
+    "type": "Person",
+    "gender": "Male",
+    "score": 726,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "260b6184-8828-48eb-945c-bc4cb6fc34ca",
+    "name": "Charli xcx",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 721,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "7e9bd05a-117f-4cce-87bc-e011527a8b18",
+    "name": "MILEY",
+    "comment": "Cyrus",
+    "type": "Person",
+    "gender": "Non-binary",
+    "score": 710,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "c33c2065-b1c3-4406-b066-d33a9e2ea71a",
+    "name": "OneRepublic",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 709,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "134e6410-6954-45d1-bd4a-0f2d2ad5471d",
+    "name": "Zara Larsson",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 702,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "9f6a8346-15f3-4ec4-a632-f5270b0945a3",
+    "name": "GOT7",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 688,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b7442f18-d9be-4185-8b51-482510046156",
+    "name": "Girls\u2019 Generation",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 686,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "2b786fb3-a116-4163-9b65-cf56f03c8a7f",
+    "name": "TAEYEON",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 686,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "bd04c7b4-530c-4802-ae16-962d004a5093",
+    "name": "EVERGLOW",
+    "comment": "South Korean girl group",
+    "type": "Group",
+    "gender": null,
+    "score": 684,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "854fbd52-9d01-4ce6-ac3e-8324e3ad753d",
+    "name": "MOMOLAND",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 680,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "a97f393a-13a7-4645-8bba-f10bd22d7228",
+    "name": "DREAMCATCHER",
+    "comment": "South Korean girl group",
+    "type": "Group",
+    "gender": null,
+    "score": 674,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "08525643-7a01-411e-8188-8bf57261c8b3",
+    "name": "CHUNG HA",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 673,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "830e5c4e-6b7d-431d-86ab-00c751281dc5",
+    "name": "5 Seconds of Summer",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 667,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "859d0860-d480-4efd-970c-c05d5f1776b8",
+    "name": "Beyonc\u00e9",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 666,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "ad4e8332-861d-4a49-8235-b72888714be4",
+    "name": "KARD",
+    "comment": "South Korean co\u2010ed group",
+    "type": "Group",
+    "gender": null,
+    "score": 659,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "9d027d72-790e-40ec-bbb7-61aa613457de",
+    "name": "TOMORROW X TOGETHER",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 652,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "33ca19f4-18c8-4411-98df-ac23890ce9f5",
+    "name": "Ellie Goulding",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 651,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "48652da5-f54c-4f65-9c11-0fc05df18075",
+    "name": "TAEMIN",
+    "comment": "South Korean singer; SHINee",
+    "type": "Person",
+    "gender": "Male",
+    "score": 650,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "e07d9474-00ea-4460-ac27-88b46b3d976e",
+    "name": "blackbear",
+    "comment": "hip hop artist",
+    "type": "Person",
+    "gender": "Male",
+    "score": 643,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "62cc95e0-86de-46e0-925a-353e330cf4e4",
+    "name": "EXID",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 639,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "38f59974-2f4d-4bfa-b2e3-d2696de1b675",
+    "name": "Little Mix",
+    "comment": "British girl group",
+    "type": "Group",
+    "gender": null,
+    "score": 639,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "45a663b5-b1cb-4a91-bff6-2bef7bbfdd76",
+    "name": "Britney Spears",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 633,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "e4a51f17-a57b-47b1-b37b-f552d0f8e9e6",
+    "name": "Travis Scott",
+    "comment": "US rapper",
+    "type": "Person",
+    "gender": "Male",
+    "score": 628,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "e3d5b5ec-101a-4529-9f2d-01dca64cf44e",
+    "name": "Anne\u2010Marie",
+    "comment": "British singer",
+    "type": "Person",
+    "gender": "Female",
+    "score": 623,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "6de0f914-3e60-4418-be3b-42e0feb6eb4d",
+    "name": "Jason Derulo",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 621,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "db8fad3a-e131-47a1-8782-c2ee93708cdd",
+    "name": "Bebe Rexha",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 620,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b7539c32-53e7-4908-bda3-81449c367da6",
+    "name": "Lana Del Rey",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 616,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "afb680f2-b6eb-4cd7-a70b-a63b25c763d5",
+    "name": "Bruno Mars",
+    "comment": "US singer",
+    "type": "Person",
+    "gender": "Male",
+    "score": 616,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "5a85c140-dcf9-4dd2-b2c8-aff0471549f3",
+    "name": "Sam Smith",
+    "comment": "English singer\u2010songwriter",
+    "type": "Person",
+    "gender": "Non-binary",
+    "score": 613,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "ee27b2d8-648c-4a9d-a68c-e55066959975",
+    "name": "Megan Thee Stallion",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 608,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "6e019bc6-5c23-4935-94f0-4a896631d846",
+    "name": "Jonas Brothers",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 603,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "a6c6897a-7415-4f8d-b5a5-3a5e05f3be67",
+    "name": "twenty one pilots",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 599,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "b9472588-93f3-4922-a1a2-74082cdf9ce8",
+    "name": "Panic! at the Disco",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 598,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "dfa98803-0f8e-4aac-a3d2-a2614db30074",
+    "name": "NCT U",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 591,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "cf0dbc16-4e24-4957-b5b4-955c8978f690",
+    "name": "ATEEZ",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 590,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "dc7c8277-d4b6-4bca-bdfe-50eee42536ac",
+    "name": "NCT DREAM",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 581,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "8fb5370b-9568-4b61-9da5-2aa12c9928db",
+    "name": "Lizzo",
+    "comment": "American rapper, singer and actress",
+    "type": "Person",
+    "gender": "Female",
+    "score": 580,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "37fa0bfd-8bf7-422c-a97a-f8deda49b3a4",
+    "name": "f(x)",
+    "comment": "South Korean girl group",
+    "type": "Group",
+    "gender": null,
+    "score": 580,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "8e494408-8620-4c6a-82c2-c2ca4a1e4f12",
+    "name": "Lorde",
+    "comment": "New Zealand singer\u2010songwriter",
+    "type": "Person",
+    "gender": "Female",
+    "score": 574,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "073ad467-4891-40a0-bf61-d55c41a38aec",
+    "name": "iKON",
+    "comment": "South Korean boy band",
+    "type": "Group",
+    "gender": null,
+    "score": 573,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "da9bf052-1a66-4737-be10-9f3987980b19",
+    "name": "PENTAGON",
+    "comment": "South Korean boy band",
+    "type": "Group",
+    "gender": null,
+    "score": 573,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "3b56979c-8c87-4e4e-997a-38c247a560e1",
+    "name": "CLC",
+    "comment": "South Korean girl group",
+    "type": "Group",
+    "gender": null,
+    "score": 572,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "e119e5ff-0de0-421c-a630-0516c6acede8",
+    "name": "2NE1",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 566,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "49948ebe-bf1c-4823-b470-f2c9ab018686",
+    "name": "IZ*ONE",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 565,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "381086ea-f511-4aba-bdf9-71c753dc5077",
+    "name": "Kendrick Lamar",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 562,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "acb2191f-0f55-4ec6-b7ff-ce73dea50f3e",
+    "name": "WINNER",
+    "comment": "South Korean boy group",
+    "type": "Group",
+    "gender": null,
+    "score": 562,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "4757df70-6c3e-46b8-99c0-a68644595c9a",
+    "name": "Julia Michaels",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 555,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "779351de-0da5-4943-928b-495a3c40e8c0",
+    "name": "JENNIE",
+    "comment": "BLACKPINK",
+    "type": "Person",
+    "gender": "Female",
+    "score": 554,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "56c4b861-0922-4c3a-a9b9-3bfcb00f8274",
+    "name": "Zedd",
+    "comment": "Russian\u2010German producer",
+    "type": "Person",
+    "gender": "Male",
+    "score": 554,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "3e1f2ee4-16be-4406-bf18-6173840cf2b1",
+    "name": "Martin Garrix",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 547,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "56756959-1e78-429c-b897-e1d056cb0225",
+    "name": "Tove Lo",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 547,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "58dccd50-1dcf-4674-8ba6-31058695d24d",
+    "name": "OH MY GIRL",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 541,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  },
+  {
+    "artist_mbid": "301b45a4-b8b9-410e-8344-4b4eaf96691a",
+    "name": "Marshmello",
+    "comment": "US | electronic",
+    "type": "Person",
+    "gender": "Male",
+    "score": 533,
+    "reference_mbid": "0d79fe8e-ba27-4859-bb8c-2f255f346853"
+  }
+]

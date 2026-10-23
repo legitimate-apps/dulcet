@@ -182,3 +182,13 @@ Fixed during bring-up, each found by a suite:
 - Playlist `readonly`, the admin view and empty-edit semantics were wrong.
 - Scrobbles of unknown ids were rejected.
 - A 2400-entry playlist replace was cut to 999 entries by Ktor's 1000-parameter limit.
+
+## Discover and Wishlist
+
+Optional independent version 1 extensions: [dulcetDiscover](dulcet-discover-extension.md) and
+[dulcetWishlist](dulcet-wishlist-extension.md). The contracts include methods, payloads, paging,
+errors, settings and durable offline operation sequences for client implementations.
+
+Server-only verification for these contracts is recorded in
+[Discover and Wishlist evidence](../evidence/discover-wishlist-server.md). The seven feature rows
+retain planned app cells until the later core and native lanes supply their own evidence.

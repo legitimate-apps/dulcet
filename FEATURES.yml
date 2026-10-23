@@ -6810,6 +6810,251 @@
           }
         }
       }
+    },
+    {
+      "id": "discover.search",
+      "title": "Search outside music metadata",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#2910-discover-and-wishlist",
+      "gates": [
+        "account:authenticated",
+        "server:dulcet.discover:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        }
+      }
+    },
+    {
+      "id": "discover.shelves",
+      "title": "Discover public and personal shelves",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#2910-discover-and-wishlist",
+      "gates": [
+        "account:authenticated",
+        "server:dulcet.discover:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        }
+      }
+    },
+    {
+      "id": "discover.pages",
+      "title": "Discover artist album and playlist pages",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#2910-discover-and-wishlist",
+      "gates": [
+        "account:authenticated",
+        "server:dulcet.discover:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        }
+      }
+    },
+    {
+      "id": "wishlist.add",
+      "title": "Add and remove personal wishes",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#2910-discover-and-wishlist",
+      "gates": [
+        "account:authenticated",
+        "server:dulcet.wishlist:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        }
+      }
+    },
+    {
+      "id": "wishlist.state",
+      "title": "Read wish states and integration notes",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#2910-discover-and-wishlist",
+      "gates": [
+        "account:authenticated",
+        "server:dulcet.wishlist:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        }
+      }
+    },
+    {
+      "id": "wishlist.fulfil",
+      "title": "Arrived wishes enter My Library after a scan",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#2910-discover-and-wishlist",
+      "gates": [
+        "account:authenticated",
+        "server:dulcet.wishlist:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        }
+      }
+    },
+    {
+      "id": "wishlist.api",
+      "title": "Discover and Wishlist server contracts",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#2910-discover-and-wishlist",
+      "gates": [
+        "account:authenticated",
+        "server:dulcet.wishlist:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+        }
+      }
     }
   ]
 }

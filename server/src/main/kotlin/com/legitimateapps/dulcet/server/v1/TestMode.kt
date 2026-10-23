@@ -33,6 +33,7 @@ class TestMode(private val ctx:ServerContext) {
     fun settings():JsonObject=value
     val mediaTtlSeconds:Long get()=value["mediaUrlTtlSeconds"]?.jsonPrimitive?.long ?: 21600L
     val artworkTtlSeconds:Long get()=value["artworkUrlTtlSeconds"]?.jsonPrimitive?.long ?: 604800L
+    val discoverArtworkAllowLoopback:Boolean get()=ctx.config.testMode && value["discoverArtworkAllowLoopback"]==JsonPrimitive(true)
     val webhookAllowPrivateTargets:Boolean get()=ctx.config.testMode && (value["webhooks"] as? JsonObject)?.get("allowPrivateTargets")==JsonPrimitive(true)
     val webhookRetryScheduleSeconds:List<Long>? get()=if(ctx.config.testMode) (value["webhooks"] as? JsonObject)?.get("retryScheduleSeconds")?.jsonArray?.map { it.jsonPrimitive.long } else null
     val webhookDisableAfterFailures:Int? get()=if(ctx.config.testMode) (value["webhooks"] as? JsonObject)?.get("disableAfterFailures")?.jsonPrimitive?.int else null
@@ -49,8 +50,9 @@ class TestMode(private val ctx:ServerContext) {
             if(n.isString || n.longOrNull==null || n.long<=0 || n.long>Int.MAX_VALUE) throw ApiProblem(400,"invalid-request")
             return n
         }
-        val parsed=body.filterKeys { it in setOf("autoApprove","syncRetentionSeconds","mediaUrlTtlSeconds","artworkUrlTtlSeconds","rateLimit","trustedClients","webhooks") }.mapValues { (name,raw) ->
+        val parsed=body.filterKeys { it in setOf("autoApprove","syncRetentionSeconds","mediaUrlTtlSeconds","artworkUrlTtlSeconds","rateLimit","trustedClients","webhooks","discoverArtworkAllowLoopback") }.mapValues { (name,raw) ->
             when(name) {
+                "discoverArtworkAllowLoopback" -> { val flag=raw as? JsonPrimitive ?: throw ApiProblem(400,"invalid-request");if(flag.isString || flag.booleanOrNull==null)throw ApiProblem(400,"invalid-request");flag }
                 "autoApprove" -> {
                     val array=raw as? JsonArray ?: throw ApiProblem(400,"invalid-request")
                     JsonArray(array.map { item ->

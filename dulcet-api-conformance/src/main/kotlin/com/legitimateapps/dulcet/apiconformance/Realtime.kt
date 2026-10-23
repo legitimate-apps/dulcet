@@ -342,5 +342,7 @@ object McpTools {
     val compared = listOf("name", "title", "description", "inputSchema", "outputSchema", "annotations")
 
     fun scopeOf(tool: JsonNode): String = tool.path("x-dulcet-scope").asText()
-    fun forScopes(scopes: Collection<String>): List<JsonNode> = all.filter { scopeOf(it) in scopes }
+    fun forScopes(scopes: Collection<String>, capabilities:JsonNode?=null): List<JsonNode> = all.filter { tool ->
+        scopeOf(tool) in scopes && (!tool.has("x-dulcet-capability") || capabilities?.path(tool.path("x-dulcet-capability").asText())?.path("versions")?.any {it.asInt()==1}==true)
+    }
 }
