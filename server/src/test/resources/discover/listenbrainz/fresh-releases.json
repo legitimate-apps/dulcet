@@ -1,0 +1,37 @@
+{
+  "payload": {
+    "releases": [
+      {
+        "artist_credit_name": "음율",
+        "artist_mbids": [
+          "0032b50f-81e1-43c4-8d8a-aec49c8c3e58"
+        ],
+        "caa_id": 46452823110,
+        "caa_release_mbid": "4c62aacc-0b98-4e96-8c21-0f6b23fc8b07",
+        "listen_count": 0,
+        "release_date": "2026-10-15",
+        "release_group_mbid": "4bef6897-613b-4892-b64f-f1fb28f93d26",
+        "release_group_primary_type": "Album",
+        "release_mbid": "4c62aacc-0b98-4e96-8c21-0f6b23fc8b07",
+        "release_name": "체스카에게 여름을",
+        "release_tags": []
+      },
+      {
+        "artist_credit_name": "효정",
+        "artist_mbids": [
+          "5ae83abc-5b0c-4f92-a836-2ee21d4b7189"
+        ],
+        "caa_id": 46483756201,
+        "caa_release_mbid": "f847f759-520f-4e53-abdf-fb75e3db6b9d",
+        "listen_count": 0,
+        "release_date": "2026-10-15",
+        "release_group_mbid": "73ec8126-997e-4505-9398-cd5645b50551",
+        "release_group_primary_type": "EP",
+        "release_mbid": "f847f759-520f-4e53-abdf-fb75e3db6b9d",
+        "release_name": "Lost&Found",
+        "release_tags": []
+      }
+    ],
+    "total_count": 2003
+  }
+}

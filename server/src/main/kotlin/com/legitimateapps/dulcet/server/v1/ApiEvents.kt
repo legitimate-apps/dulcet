@@ -227,7 +227,7 @@ class ApiEvents(private val ctx: ServerContext, private val clock: () -> Long = 
     }
     companion object {
         private val catalogTypes=setOf("artist","album","track","genre","source")
-        private val userTypes=setOf("itemState","playlist","play","queue")
+        private val userTypes=setOf("itemState","playlist","play","queue","wish")
         private val allTypes=setOf("changes","queue","playback","command","nowPlaying","scan","revoked","heartbeat")
     }
 }

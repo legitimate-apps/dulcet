@@ -50,6 +50,7 @@ data class TrackInfo(
     val rgTrackPeak: Double?,
     val rgAlbumGain: Double?,
     val rgAlbumPeak: Double?,
+    val mbzReleaseGroupId: String? = null,
 ) {
     val artistDisplay: String get() = artists.joinToString(DISPLAY_JOIN) { it.name }
     val albumArtistDisplay: String get() = albumArtists.joinToString(DISPLAY_JOIN) { it.name }
@@ -111,6 +112,7 @@ data class TrackInfo(
                 mbzTrackId = tags.tag("musicbrainzreleasetrackid"),
                 mbzRecordingId = tags.tag("musicbrainztrackid", "musicbrainzrecordingid"),
                 mbzAlbumId = mbzAlbumId,
+                mbzReleaseGroupId = tags.tag("musicbrainzreleasegroupid"),
                 mbzArtistId = tags.tag("musicbrainzartistid")?.substringBefore(';'),
                 mbzAlbumArtistId = tags.tag("musicbrainzalbumartistid")?.substringBefore(';'),
                 hasEmbeddedArt = tags.hasEmbeddedArt,
