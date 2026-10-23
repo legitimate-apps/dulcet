@@ -351,7 +351,10 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     UNKNOWN. The same run's iPad My Library failure was a snapshot timeout after a 60 s launch
     idle wait; its recording remained Connecting. Native diagnostics confirmed a main-loop work
     request went unanswered for 30 s while animation-idle replied immediately, but contained no
-    stack identifying the blocking work. The fixture
+    stack identifying the blocking work. In run 39908667699 attempt 2, launch idle and two
+    snapshots succeeded, the reader logged connected with successful Home/catalog responses,
+    then a later snapshot's main-loop work stalled for about 38 s. Initial connection failure
+    alone cannot explain that case; the blocking work remains UNKNOWN. The fixture
     proxy now records credential-free endpoint/phase timings (`tools/test-my-library-ui-proxy`)
     so a future failure can distinguish arrival, upstream completion and delivery.
 49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
