@@ -30,9 +30,12 @@ finally:
 # pressure must not kill a lease-control child before the test's deliberate TERM. Health policy
 # and real sampling are exercised separately by the health controls and native proof receipts.
 CONTROL_LAUNCHER = r'''
-import faulthandler, os, pathlib, runpy, sys, time
+import faulthandler, os, pathlib, runpy, socket, sys, time
 faulthandler.dump_traceback_later(8)
 print('CONTROL launcher started', flush=True)
+def reject_dns(*args, **kwargs):
+    raise RuntimeError('loopback capture must not depend on reverse DNS')
+socket.getfqdn=reject_dns
 sys.path.insert(0, sys.argv[1])
 import discover_simulator_health
 class ControlSampler:

@@ -83,7 +83,15 @@ def apple_proof(mode):
                 self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(b'{"stored":true}')
             except Exception:
                 self.send_response(400); self.end_headers()
-    capture_server=ThreadingHTTPServer(('127.0.0.1',0),CaptureReceiver)
+    class LoopbackCaptureServer(ThreadingHTTPServer):
+        def server_bind(self):
+            # HTTPServer adds a reverse-DNS lookup to TCPServer's bind. These callbacks
+            # use only a numeric loopback URL, so hostname discovery serves no purpose
+            # and can stall before native ownership/cleanup is installed.
+            from socketserver import TCPServer
+            TCPServer.server_bind(self)
+            self.server_name,self.server_port=self.server_address
+    capture_server=LoopbackCaptureServer(('127.0.0.1',0),CaptureReceiver)
     threading.Thread(target=capture_server.serve_forever,daemon=True).start()
     owner=ProcessOwner().install()
     lease=None;udid=None;owned_device=False;navigation_log=None;navigation_stream=None
