@@ -132,6 +132,9 @@ public interface AndroidServerContact {
     /** True once the person has chosen to contact the server in this process. */
     public fun isOpen(): Boolean
 
+    /** A foreground host chose this connection, even if verification is temporarily unavailable. */
+    public fun isChosen(): Boolean = isOpen()
+
     /** Returns once [isOpen] is true; at once when it already is. */
     public suspend fun awaitOpen()
 

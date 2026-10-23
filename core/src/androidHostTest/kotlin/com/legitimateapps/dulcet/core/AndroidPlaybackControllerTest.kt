@@ -59,6 +59,41 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun aChosenAlbumWaitsVisiblyBetweenFailedAndSuccessfulIdentityProbes() {
+        val owner = "provider:reconnecting-album:${java.util.UUID.randomUUID()}"
+        kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+        val contact = object : AndroidServerContact {
+            override fun isChosen() = true
+            override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+            override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+            override suspend fun awaitOpen() { AndroidServerIdentity.verified.first { owner in it } }
+        }
+        val reads = mutableListOf<String>()
+        try {
+            Fixture(accountOwner = owner, serverContact = contact, loadSong = { reads += it; song(it) }).use { f ->
+                assertTrue(contact.isOpen(), "Control: the account starts verified and connected")
+                kotlinx.coroutines.runBlocking {
+                    assertEquals(DomainError.Transport.Unreachable,
+                        AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable })
+                }
+                assertTrue(contact.isChosen(), "Control: a transient failure did not withdraw the connection choice")
+                assertFalse(contact.isOpen(), "Control: the completed failed probe closed contact before Play")
+                val tracks = listOf("first", "second").map { AndroidTrack(owner, it, "Title $it", null, "Album", 40_000) }
+                f.controller.playQueue(tracks, 0, AndroidQueueSource.Album, "Album", "album")
+                assertEquals(listOf("first", "second"), f.controller.state.value.queue.map { it.track.rawId },
+                    "Play between probes must retain the selected album visibly, rather than discard it")
+                assertTrue(f.controller.state.value.needsReconnect, "The held selection explains that it needs a connection")
+                assertTrue(reads.isEmpty() && f.prepared.isEmpty(), "Closed contact must send nothing")
+                kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+                settle(5)
+                assertEquals(listOf("first"), f.prepared.map { it.itemId.rawId },
+                    "The same server reopening must prepare the latest explicit Play exactly once")
+                assertTrue(f.probe.requested, "Recovery honors the person's Play without another press")
+                assertFalse(f.controller.state.value.needsReconnect)
+            }
+        } finally { AndroidServerIdentity.requireValidation(owner) }
+    }
+
     @Test fun identityRejectionDuringMetadataCannotRenameThePriorQueue() {
         val release = kotlinx.coroutines.CompletableDeferred<Unit>()
         val contact = ChosenContact().also { it.open.value = true }
