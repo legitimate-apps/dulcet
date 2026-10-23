@@ -102,6 +102,13 @@ class AndroidDiscoverTest {
         h.main.drainUntil {publications.any {it.access.canAddWish}}
         val positive=publications.last().generation
         val before=publications.size
+        // Production notifications follow a rejected identity decision. The reader intentionally
+        // ignores unbacked or stale notifications so an accepted replacement stays authorized.
+        runBlocking {
+            assertEquals(DomainError.Protocol.ServerIdentityChanged,
+                AndroidServerIdentity.validate(h.account.providerInstanceId) { DomainError.Protocol.ServerIdentityChanged })
+        }
+        assertNotNull(AndroidServerIdentity.rejectionEpoch(h.account.providerInstanceId))
         h.reader.rejectServerIdentity()
         h.main.drainUntil {publications.drop(before).any {it.access.error?.code=="identity-changed"}}
         val rejected=publications.drop(before).last {it.access.error?.code=="identity-changed"}
@@ -219,7 +226,14 @@ class AndroidDiscoverTest {
             return release
         }
         fun waitFor(what:String,done:()->Boolean)=Companion.waitFor(what,done)
-        fun close(){reader.close();runBlocking {withTimeout(30_000){reader.awaitTermination()}};main.drain();driver.close()}
+        fun close(){
+            reader.close()
+            runBlocking {
+                withTimeout(30_000){reader.awaitTermination()}
+                AndroidServerIdentity.validate(account.providerInstanceId) { null }
+            }
+            main.drain();driver.close()
+        }
     }
 
     companion object {

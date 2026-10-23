@@ -63,7 +63,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             fixture.effect(delayed,"searchDulcetDiscover")
             query("new")
             awaitTag("discover.item.artist.0")
+            fixture.effect(delayed,"searchDulcetDiscover",responsePayload="new")
+            fixture.effect(delayed,"searchDulcetDiscover",responsePayload="old")
+            compose.waitForIdle()
             check(text("discover.search.field").contains("new"))
+            check(!allVisibleText().contains("Obsolete old query")) {"An acknowledged old response replaced the new query rows"}
+            check(text("discover.item.artist.0").contains("Fixture Artist")) {"No positive new-query artist row"}
             click("discover.more.artist")
             awaitTag("discover.item.artist.20")
             click("discover.item.artist.0")
@@ -363,11 +368,18 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun exists(tag:String)=compose.onAllNodes(hasTestTag(tag),useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()
     private fun awaitTag(tag:String){await("visible $tag"){exists(tag)}}
     private fun click(tag:String) {
-        if(!exists(tag))for(container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list")) {
-            if(exists(container))runCatching {compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag))}
-            if(exists(tag))break
+        // The surface is mounted before its asynchronous page arrives. Retry the scroll after
+        // delivery rather than searching once while the LazyColumn contains only its header.
+        await("displayed click target $tag") {
+            if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isFailure) {
+                for (container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list")) {
+                    if(exists(container))runCatching {compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag))}
+                    if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) break
+                }
+            }
+            runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess
         }
-        awaitTag(tag);compose.onNodeWithTag(tag).performClick();compose.waitForIdle()
+        compose.onNodeWithTag(tag).performClick();compose.waitForIdle()
     }
     private fun clickDisplayed(tag:String) {
         ensureDisplayed(tag)
@@ -465,12 +477,13 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(effects.any {it.optBoolean("held")} && effects.none {it.optBoolean("holdReleased")}) {"Add hold ended before durable UI removal overlapped it"}
             record(JSONObject().put("type","holdStillActive").put("revision",ack.getLong("revision")))
         }
-        fun effect(ack:JSONObject,endpoint:String,delivered:Boolean=false,held:Boolean=false) {
+        fun effect(ack:JSONObject,endpoint:String,delivered:Boolean=false,held:Boolean=false,responsePayload:String?=null) {
             var witnessed: JSONObject?=null
             await("acknowledged ${ack.getString("scenario")} effect on $endpoint") {
                 witnessed=control("/control/state").getJSONArray("effects").objects().firstOrNull {effect ->
                     effect.getLong("revision")==ack.getLong("revision") && effect.getString("endpoint")==endpoint &&
-                        (!delivered || effect.optBoolean("delivered")) && (!held || effect.optBoolean("held"))
+                        (!delivered || effect.optBoolean("delivered")) && (!held || effect.optBoolean("held")) &&
+                        (responsePayload==null || (effect.optBoolean("response") && effect.optString("payload")==responsePayload))
                 }
                 witnessed!=null
             }
