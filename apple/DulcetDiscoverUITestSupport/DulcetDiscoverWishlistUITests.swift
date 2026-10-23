@@ -95,8 +95,14 @@ import UIKit
 #if os(macOS)
         let row = app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
 #else
-        let tab = app.tabBars.buttons["dulcet.tab." + section].firstMatch
-        let row = UIDevice.current.userInterfaceIdiom == .pad && !tab.waitForExistence(timeout: 2) ? app.staticTexts["dulcet.sidebar.\(section)"].firstMatch : tab
+        var tab = app.tabBars.buttons["dulcet.tab." + section].firstMatch
+        if !tab.waitForExistence(timeout: 2) {
+            // On a cold offline launch UIKit retains the native tab labels but drops the
+            // identifiers attached to SwiftUI's tabItem labels. Stay inside the real tab bar.
+            let titles = ["listenNow": "Listen Now", "library": "Library", "browse": "Browse", "search": "Search", "settings": "Connection"]
+            tab = app.tabBars.buttons[titles[section] ?? section].firstMatch
+        }
+        let row = UIDevice.current.userInterfaceIdiom == .pad && !tab.exists ? app.staticTexts["dulcet.sidebar.\(section)"].firstMatch : tab
 #endif
         XCTAssertTrue(row.waitForExistence(timeout: 30))
         let reachable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: row)
