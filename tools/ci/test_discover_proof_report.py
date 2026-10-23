@@ -2,7 +2,7 @@
 import copy
 from discover_proof_report import apple_report,expected_suite
 import unittest
-from discover_proof_report import validate_report, expected_tests
+from discover_proof_report import validate_report, expected_tests, native_exit_status
 
 class ReportTests(unittest.TestCase):
     def positive(self):
@@ -12,6 +12,14 @@ class ReportTests(unittest.TestCase):
                 ('rate-limit','served'),('scan-arrival','completed'),('lost-add-receipt','delivered')])],
             baseline=dict(login=True,albums=1,featureCalls=0),replay=dict(removed=True,applied=False))
     def test_positive(self):self.assertIsNone(validate_report(self.positive()).first_cause)
+    def test_post_suite_interrupt_requires_a_finalized_passing_report(self):
+        report=self.positive()
+        self.assertEqual(0,native_exit_status(130,True,report))
+        self.assertEqual(65,native_exit_status(65,False,report),'an ordinary build failure is retained')
+        report['finalized']=False
+        self.assertEqual(130,native_exit_status(130,True,report),'a completed console cannot replace a finalized bundle')
+        report=self.positive();report['cases'][0]['status']='failed'
+        self.assertEqual(130,native_exit_status(130,True,report),'a failed test cannot be normalized')
     def test_missing_expected_identity(self):
         report=self.positive();report['cases'].pop()
         self.assertEqual('expected-test-not-executed',validate_report(report).first_cause)

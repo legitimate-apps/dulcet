@@ -62,3 +62,8 @@ def apple_report(mode,summary,tree,acknowledgements,requests,selected=None):
     return dict(mode=mode,idiom=next(iter(idioms)) if len(idioms)==1 else None,
         finalized=bool(summary.get('finishTime')) and summary.get('totalTestCount')==len(cases) and bool(cases),
         cases=cases,effects=effects,baseline=baseline,replay=replay,selected=selected)
+
+def native_exit_status(code, interrupted, report):
+    """Preserve execution failures while handling our post-suite finalization interrupt."""
+    if interrupted and validate_report(report).first_cause is None:return 0
+    return code

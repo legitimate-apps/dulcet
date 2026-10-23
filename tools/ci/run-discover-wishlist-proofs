@@ -278,7 +278,7 @@ def apple_proof(mode):
         for capture in list(captures.glob('*.png'))+list(captures.glob('*.jpg')):
             run(['sips','-Z','800','-s','format','jpeg','-s','formatOptions','50',str(capture),'--out',str(capture.with_suffix('.jpg'))],stdout=subprocess.DEVNULL)
             if capture.suffix=='.png':capture.unlink()
-        from discover_proof_report import apple_report, validate_report
+        from discover_proof_report import apple_report, validate_report, native_exit_status
         acknowledgements=[json.loads(line) for line in (output/'acknowledgements.jsonl').read_text().splitlines()] if (output/'acknowledgements.jsonl').exists() else []
         report=apple_report(mode,json.loads(summary),json.loads(tests),acknowledgements,
             json.loads((output/'fixture-requests.json').read_text()),
@@ -294,9 +294,9 @@ def apple_proof(mode):
         (output/'validated-report.json').write_text(json.dumps(dict(**report,first_cause=verdict.first_cause),indent=2))
         if verdict.first_cause:raise RuntimeError(verdict.first_cause)
         counts=json.loads(summary)
-        (output/'counts.json').write_text(json.dumps(dict(total=counts['totalTestCount'],passed=counts['passedTests'],failed=counts['failedTests'],skipped=counts['skippedTests'],finalized=True),indent=2))
+        (output/'counts.json').write_text(json.dumps(dict(total=counts['totalTestCount'],passed=counts['passedTests'],failed=counts['failedTests'],skipped=counts['skippedTests'],finalized=True,finalizationInterrupted=interrupted,xcodebuildExitCode=code),indent=2))
         print(json.dumps(dict(output=str(output),suite=suite,**counts)))
-        return code
+        return native_exit_status(code,interrupted,report)
     finally:
         monitor_done.set()
         owner.stop_children()
