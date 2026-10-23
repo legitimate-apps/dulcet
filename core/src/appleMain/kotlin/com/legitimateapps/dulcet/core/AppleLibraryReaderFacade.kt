@@ -180,6 +180,12 @@ public class AppleLibraryReaderClient internal constructor(
         }
     }
 
+    /** Resolves a scoped local song directly, including a one-character title and an uncached
+     * reference. Uses this reader's transport/cache/identity fence; never searches by title. */
+    public fun lookupLibrarySong(reference: AppleDiscoverLibraryRef,
+        completion: (AppleLibrarySongLookup) -> Unit): AppleLibraryReaderOperation =
+        lookupScopedLibrarySong(this, reference, completion)
+
     // ---- Library windows --------------------------------------------------------------------------------
 
     /**

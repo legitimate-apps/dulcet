@@ -224,6 +224,50 @@ class AppleDiscoverFacadeTest {
         assertEquals(0L,h.pending());discover.close()
     }
 
+    @Test fun scopedSongLookupHandlesOneCharacterTitleAndRefusesForeignOrWrongIds()=facadeTest { h ->
+        val results=mutableListOf<AppleLibrarySongLookup>()
+        h.reader.lookupLibrarySong(AppleDiscoverLibraryRef("other-account","song","exact-id")){results+=it}
+        pumpUntil("foreign reference refusal"){results.size==1}
+        assertEquals("invalid-reference",results.last().errorKind);assertEquals(0,h.onReader {h.lookupRequests})
+        h.reader.setOnline(true)
+        h.waitFor("reader online"){h.onReader {h.session.load()?.reader?.online==true}}
+        h.reader.lookupLibrarySong(AppleDiscoverLibraryRef(h.provider,"song","exact-id")){
+            assertTrue(NSThread.isMainThread);results+=it
+        }
+        pumpUntil("exact one-character song"){results.size==2}
+        val item=assertNotNull(results.last().item)
+        assertEquals(h.provider,item.providerInstanceId);assertEquals("exact-id",item.rawId);assertEquals("A",item.title)
+        assertEquals("track",item.kind);assertNull(results.last().errorKind);assertEquals(1,h.onReader {h.lookupRequests})
+        h.reader.setOnline(false);h.onReader { }
+        h.reader.lookupLibrarySong(AppleDiscoverLibraryRef(h.provider,"song","exact-id")){results+=it}
+        pumpUntil("offline cached exact song"){results.size==3}
+        assertEquals("exact-id",results.last().item?.rawId);assertEquals(1,h.onReader {h.lookupRequests})
+        h.reader.setOnline(true)
+        h.waitFor("reader online again"){h.onReader {h.session.load()?.reader?.online==true}}
+        h.onReader {h.lookupWrongID=true}
+        h.reader.lookupLibrarySong(AppleDiscoverLibraryRef(h.provider,"song","different-id")){results+=it}
+        pumpUntil("wrong response identity refused"){results.size==4}
+        assertNull(results.last().item);assertEquals("not-found",results.last().errorKind)
+        assertEquals(2,h.onReader {h.lookupRequests})
+    }
+
+    @Test fun scopedSongLookupCancellationAndAccountEpochRevokeQueuedDelivery()=facadeTest { h ->
+        val results=mutableListOf<AppleLibrarySongLookup>()
+        val release=h.holdReader()
+        val operation=h.reader.lookupLibrarySong(AppleDiscoverLibraryRef(h.provider,"song","exact-id")){results+=it}
+        operation.cancel();release()
+        pumpUntil("cancelled lookup"){results.size==1}
+        assertEquals("cancelled",results.single().errorKind);assertEquals(0,h.onReader {h.lookupRequests})
+        h.reader.setOnline(true)
+        h.waitFor("reader online"){h.onReader {h.session.load()?.reader?.online==true}}
+        h.reader.lookupLibrarySong(AppleDiscoverLibraryRef(h.provider,"song","exact-id")){results+=it}
+        h.waitFor("lookup delivery queued"){h.onReader {h.lookupRequests==1}}
+        h.onReader { } // Completion queued on main, which is deliberately not pumped yet.
+        AppleLibraryReaderIdentityAuthorization.capture(h.identityName,h.provider).reject()
+        pumpUntil("epoch-revoked lookup"){results.size==2}
+        assertNull(results.last().item);assertEquals("identity-changed",results.last().errorKind)
+    }
+
     private fun facadeTest(failComposition:Boolean=false,malformed:Boolean=false,block:(Harness)->Unit){
         check(NSThread.isMainThread)
         val h=Harness(failComposition,malformed)
@@ -236,8 +280,15 @@ class AppleDiscoverFacadeTest {
         private val dispatcher:CloseableCoroutineDispatcher=newLibraryReaderDispatcher()
         val server=SessionTestServer()
         var malformedRequests=0
+        var lookupRequests=0
+        var lookupWrongID=false
         private val wire=object:LibraryEndpointTransport by server {
             override suspend fun request(endpoint:String,parameters:Map<String,String>):LibraryEndpointResponse {
+                if(endpoint=="getSong") {
+                    lookupRequests++
+                    val id=if(lookupWrongID) "wrong-id" else parameters["id"]
+                    return LibraryEndpointResponse(200,discoverEnvelope("\"song\":{\"id\":\"$id\",\"title\":\"A\",\"duration\":1}"),"https://fixture.invalid?<redacted>")
+                }
                 if(malformed && endpoint=="getOpenSubsonicExtensions")return LibraryEndpointResponse(200,
                     discoverEnvelope("\"openSubsonicExtensions\":[{\"name\":\"dulcetDiscover\",\"versions\":[1]}]"),"https://fixture.invalid?<redacted>")
                 if(malformed && endpoint=="getDulcetDiscoverArtist"){
