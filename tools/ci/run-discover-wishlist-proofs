@@ -5,11 +5,69 @@ import os
 from pathlib import Path
 import sys
 p=argparse.ArgumentParser(description=__doc__)
-p.add_argument('mode',choices=['components','sessions','iphone','ipad','mac','android'])
+p.add_argument('mode',choices=['components','sessions','iphone','ipad','mac','macos','android'])
 a=p.parse_args()
 if os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
-if a.mode in {'iphone','ipad','mac','android'}:p.error('native proof mode awaits its shell task; no UI result is synthesized')
+if a.mode=='android':p.error('native proof mode awaits its shell task; no UI result is synthesized')
 repo=Path(__file__).resolve().parents[2]
+def apple_proof(mode):
+    import json
+    import subprocess
+    import tempfile
+    import urllib.request
+    from datetime import datetime, timezone
+    mode='macos' if mode=='mac' else mode
+    output=Path(os.environ.get('DULCET_DISCOVER_PROOF_OUTPUT',str(repo/'build'/'discover-proofs'/mode/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))))
+    output.mkdir(parents=True,exist_ok=False)
+    captures=output/'captures';captures.mkdir()
+    session='dulcet-discover-'+mode+'-'+str(os.getpid())
+    lease=None;udid=None
+    def run(argv,**kw):return subprocess.run(argv,check=True,text=True,**kw)
+    try:
+        lease=run(['leg-lease','create','--kind','build' if mode=='macos' else 'build,sim','--session',session,'--project','dulcet','--pid',str(os.getpid()),'--wait','1800'],capture_output=True).stdout.strip()
+        if mode!='macos':
+            device=os.environ.get('DULCET_DISCOVER_PROOF_DEVICE','iPad Pro 13-inch (M5)' if mode=='ipad' else 'iPhone 18 Pro')
+            udid=run(['sim-lease','create','--project','dulcet','--device',device,'--owner-pid',str(os.getpid()),'--ephemeral','--purpose',session],capture_output=True).stdout.strip()
+            if not udid:raise RuntimeError('sim-lease returned no device')
+            run(['xcrun','simctl','boot',udid],stdout=subprocess.DEVNULL)
+            run(['xcrun','simctl','bootstatus',udid,'-b'],stdout=subprocess.DEVNULL)
+        target='DulcetDiscoverMacUITests' if mode=='macos' else 'DulcetiOSUITests'
+        suite={'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetDiscoverWishlistMacUITests'}[mode]
+        # Test products must live on the internal volume: Xcode 27 silently executes zero
+        # XCUITests from external DerivedData. Result bundles/captures stay with the report.
+        derived=Path(tempfile.gettempdir())/('dulcet-discover-'+mode)
+        env=os.environ.copy()
+        for key,value in os.environ.items():
+            if key.startswith('DULCET_DISCOVER_'):env['TEST_RUNNER_'+key]=value
+        env['TEST_RUNNER_DULCET_DISCOVER_CAPTURES']=str(captures)
+        env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
+        selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
+        command=['xcodebuild','test','-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
+        (output/'invocation.json').write_text(json.dumps(dict(mode=mode,suite=suite,udid=udid,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()),indent=2))
+        with (output/'xcodebuild.log').open('w') as log:
+            result=subprocess.run(command,cwd=repo,env=env,stdout=log,stderr=subprocess.STDOUT)
+        summary=run(['xcrun','xcresulttool','get','test-results','summary','--path',str(output/'proof.xcresult')],capture_output=True).stdout
+        (output/'summary.json').write_text(summary)
+        tests=run(['xcrun','xcresulttool','get','test-results','tests','--path',str(output/'proof.xcresult')],capture_output=True).stdout
+        (output/'tests.json').write_text(tests)
+        for endpoint in ['requests?since=0','state']:
+            with urllib.request.urlopen(os.environ['DULCET_DISCOVER_CONTROL_URL']+'/control/'+endpoint) as response:
+                (output/('fixture-'+endpoint.split('?')[0]+'.json')).write_bytes(response.read())
+        for capture in captures.glob('*.png'):
+            run(['sips','-Z','800','-s','format','jpeg','-s','formatOptions','50',str(capture),'--out',str(capture.with_suffix('.jpg'))],stdout=subprocess.DEVNULL)
+            capture.unlink()
+        counts=json.loads(summary)
+        print(json.dumps(dict(output=str(output),suite=suite,total=counts.get('totalTestCount'),passed=counts.get('passedTests'),failed=counts.get('failedTests'),skipped=counts.get('skippedTests'))))
+        if not counts.get('totalTestCount') or suite not in tests:raise RuntimeError('expected-test-not-executed')
+        if not os.environ.get('DULCET_DISCOVER_ONLY_TEST'):
+            expected=6 if mode=='macos' else 5
+            if counts.get('totalTestCount')!=expected:raise RuntimeError('unexpected-test-count')
+        return result.returncode or (1 if counts.get('failedTests') or counts.get('skippedTests') else 0)
+    finally:
+        if udid:subprocess.run(['sim-lease','release',udid],check=False)
+        if lease:subprocess.run(['leg-lease','release','--session',session],check=False)
+
+if a.mode in {'iphone','ipad','mac','macos'}:sys.exit(apple_proof(a.mode))
 runner=os.environ.get('DULCET_DISCOVER_GRADLE_RUNNER',str(repo/'tools/run-gradle-exclusive'))
 cls='DiscoverWishlistTransportComponentsTest' if a.mode=='components' else 'DiscoverWishlistConformanceTest'
 os.execv(runner,[runner,':core-conformance:jvmTest','--rerun','--tests','*'+cls])

@@ -581,12 +581,24 @@ targets:
     sources:
       - DulcetiOSUITests
       - DulcetMyLibraryUITestSupport
+      - DulcetDiscoverUITestSupport
     dependencies:
       - target: DulcetiOS
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev.ui-tests
         TEST_TARGET_NAME: DulcetiOS
+  DulcetDiscoverMacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - DulcetDiscoverUITestSupport
+    dependencies:
+      - target: DulcetMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.discover.macos.ui-tests
+        TEST_TARGET_NAME: DulcetMac
   DulcetTVUITests:
     type: bundle.ui-testing
     platform: tvOS
@@ -859,6 +871,7 @@ schemes:
       targets:
         - DulcetMacTests
         - DulcetMacUITests
+        - DulcetDiscoverMacUITests
         - DulcetPlaybackIntegrationTests
       environmentVariables:
         - variable: DULCET_CONFORMANCE_BASE_URL
