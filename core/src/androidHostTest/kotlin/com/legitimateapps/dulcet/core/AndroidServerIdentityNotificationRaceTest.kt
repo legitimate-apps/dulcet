@@ -26,8 +26,9 @@ class AndroidServerIdentityNotificationRaceTest {
         withTimeout(30_000) {
             val id = "provider:notification:${UUID.randomUUID()}"
             val account = AndroidLibraryReaderAccount(id, "https://fixture.invalid", "user", "password", false)
-            val driver = createTestDriver()
-            val database = DulcetDatabaseStore.open(driver)
+            // Use the production Android driver in a Robolectric sandbox. Loading JDBC here can
+            // register its driver in a sandbox classloader and poison the next plain JVM class.
+            val database = DulcetDriverFactory(RuntimeEnvironment.getApplication()).openDulcetDatabase()
             val server = SessionTestServer()
             val held = CompletableDeferred<Unit>()
             val releaseReply = CompletableDeferred<Unit>()
@@ -130,7 +131,7 @@ class AndroidServerIdentityNotificationRaceTest {
                 oldProbe?.cancel()
                 reader.close()
                 reader.awaitTermination()
-                driver.close()
+                database.close()
             }
         }
     }
