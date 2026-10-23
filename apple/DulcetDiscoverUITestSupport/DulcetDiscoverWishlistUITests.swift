@@ -474,6 +474,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         wishlist()
         let sidebar = app.descendants(matching: .any)["wishlist.destination"].firstMatch
         let detail = app.buttons["wishlist.refresh"].firstMatch
+        XCTAssertTrue(sidebar.isSelected, "The sidebar must select Wishlist rather than Library")
         XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
         let row = wishRow("Fixture Album 00")
         XCTAssertTrue(row.staticTexts["Waiting to sync"].exists)
@@ -482,6 +483,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         activate(row.buttons["wishlist.metadata"].firstMatch)
         let album = app.staticTexts["discover.album.title"].firstMatch
         XCTAssertTrue(album.waitForExistence(timeout: 30))
+        XCTAssertTrue(sidebar.isSelected, "A Wishlist metadata page keeps its sidebar destination selected")
         let window = app.windows.firstMatch
         let original = window.frame
         // Drag the native iPad window corner; a width assertion prevents rotation alone
