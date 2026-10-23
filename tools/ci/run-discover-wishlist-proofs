@@ -75,7 +75,13 @@ def apple_proof(mode):
     capture_server=ThreadingHTTPServer(('127.0.0.1',0),CaptureReceiver)
     threading.Thread(target=capture_server.serve_forever,daemon=True).start()
     lease=None;udid=None
-    def run(argv,**kw):return subprocess.run(argv,check=True,text=True,**kw)
+    def run(argv,**kw):
+        try:return subprocess.run(argv,check=True,text=True,**kw)
+        except subprocess.CalledProcessError as error:
+            # Preserve lease/simulator diagnostics even when their successful output is an ID.
+            if error.stdout:sys.stderr.write(error.stdout)
+            if error.stderr:sys.stderr.write(error.stderr)
+            raise
     try:
         lease=run(['leg-lease','create','--kind','build' if mode=='macos' else 'build,sim','--session',session,'--project','dulcet','--pid',str(os.getpid()),'--wait','7200'],capture_output=True).stdout.strip()
         if mode!='macos':
