@@ -841,6 +841,21 @@ internal class LibraryReader(
             }
         }
 
+    /** Preserve bytes, but use the identical issue/admission path as JSON requests. */
+    internal suspend fun sendBinary(
+        endpoint: String,
+        parameters: Map<String, String>,
+        maxBodyBytes: Int,
+    ): AuthenticatedEndpointResponse = permits.withPermit {
+        lateinit var binary: AuthenticatedEndpointResponse
+        issue(whileOffline = false) {
+            binary = transport.requestBinary(endpoint, parameters, maxBodyBytes)
+            // issue owns admission and sequence, not parsing. Never decode image bytes as text.
+            LibraryEndpointResponse(binary.statusCode, "", binary.redactedUrl, retryAfter = binary.headers.retryAfter)
+        }
+        binary
+    }
+
     /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
     internal suspend fun sendChecked(
         endpoint: String,
