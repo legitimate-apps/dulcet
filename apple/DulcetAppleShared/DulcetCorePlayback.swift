@@ -34,14 +34,17 @@ final class DulcetCorePlaybackWireSource: @unchecked Sendable {
     private var current: DulcetCorePlaybackWireLifetime?
     private var revoked = false
     private var binding: PlaybackEndpointAccount?
+    private let identityAccess: AppleServerIdentityAccess?
 
     /// Standalone factory callers retain one immutable client and cannot rotate its account.
     init(client: ApplePlaybackWireClient) {
+        identityAccess = nil
         binding = nil
         current = DulcetCorePlaybackWireLifetime(client: client, closesClient: false)
     }
 
-    init(account: PlaybackEndpointAccount) {
+    init(account: PlaybackEndpointAccount, identityAccess: AppleServerIdentityAccess? = nil) {
+        self.identityAccess = identityAccess
         binding = account
         current = DulcetCorePlaybackWireLifetime(client: ApplePlaybackWireClient(account: account))
     }
@@ -49,7 +52,7 @@ final class DulcetCorePlaybackWireSource: @unchecked Sendable {
     func select() -> DulcetCorePlaybackWireLifetime? {
         lock.lock()
         defer { lock.unlock() }
-        return revoked ? nil : current
+        return revoked || identityAccess?.authorized == false ? nil : current
     }
 
     @discardableResult
@@ -63,7 +66,7 @@ final class DulcetCorePlaybackWireSource: @unchecked Sendable {
         }
         let replacement = DulcetCorePlaybackWireLifetime(client: ApplePlaybackWireClient(account: account))
         lock.lock()
-        guard !revoked, self.binding === binding else { lock.unlock(); return false }
+        guard !revoked, identityAccess?.authorized != false, self.binding === binding else { lock.unlock(); return false }
         let previous = current
         current = replacement
         lock.unlock()
@@ -198,7 +201,13 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             plan: plan,
             rangeStart: range.start,
             rangeEndInclusive: range.endInclusive
-        ) { outcome in
+        ) { [weak source] outcome in
+            // Authorization may complete after the lineage was rejected. An old selected
+            // client cannot grant a new open merely because it survived cancellation.
+            guard source?.select() != nil else {
+                completion(.failure(.transport))
+                return
+            }
             guard let prepared = outcome.request, let url = URL(string: prepared.url) else {
                 completion(.failure(Self.failure(for: outcome.errorKind)))
                 return

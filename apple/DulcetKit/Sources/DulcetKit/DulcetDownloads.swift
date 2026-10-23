@@ -35,6 +35,8 @@ public struct DulcetOfflinePlaybackAsset: Sendable {
 @MainActor
 public protocol DulcetDownloadControlling: AnyObject {
     var downloadsEnabled: Bool { get }
+    /// Exact durable download count; nil refuses destructive replacement until readable.
+    var downloadCountToRemove: Int? { get }
     func setStatusHandler(
         _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
     )
@@ -43,6 +45,8 @@ public protocol DulcetDownloadControlling: AnyObject {
     /// Forced replacement also retires a previously authenticated alias.
     func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void)
     func configure(account: DulcetPlaybackAccount)
+    /// Stops remote transfers and late promotions after a known server replacement, retaining local media.
+    func rejectServerIdentity()
     /// Authenticated saved-credential continuity, committed before saving its canonical name.
     /// False means another provider/endpoint; a failed eligible adoption throws without purging.
     func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool
@@ -63,10 +67,13 @@ public protocol DulcetDownloadControlling: AnyObject {
     func disconnect()
     /// Called whenever `status(for:)` may have changed for items no status report named: once
     /// the downloads are reconciled, and when they are put away.
+    func setServerIdentityChangedHandler(_ handler: @escaping @MainActor () -> Void)
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void)
 }
 
 public extension DulcetDownloadControlling {
+    func rejectServerIdentity() {}
+    var downloadCountToRemove: Int? { 0 }
     func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool { false }
     func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {}
     func isSameMediaBinding(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool { false }
@@ -74,6 +81,7 @@ public extension DulcetDownloadControlling {
     func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {}
     func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void) {}
     func setAutomaticDownloadContactPermitted(_ permitted: Bool) {}
+    func setServerIdentityChangedHandler(_ handler: @escaping @MainActor () -> Void) {}
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {}
 }
 

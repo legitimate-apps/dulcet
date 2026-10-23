@@ -75,7 +75,7 @@ internal class AndroidCachingPlaybackResource(
                 return count
             }
         }
-        return AndroidPlaybackResponse(response.status, response.headers, input) {
+        return AndroidPlaybackResponse(response.status, response.headers, input, response.authorizeRead) {
             synchronized(lock) {
                 // Legacy sequential sinks need no extra EOF read after an exact complete200.
                 if (response.status == 200 && bodyLength != null && readBytes == bodyLength) finishLocked()

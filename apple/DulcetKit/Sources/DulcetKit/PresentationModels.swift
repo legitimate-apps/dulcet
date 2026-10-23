@@ -115,11 +115,13 @@ public struct DulcetConnectedAccountSummary: Sendable, Hashable {
     public let serverName: String
     public let normalizedServerURL: String
     public let canonicalUsername: String?
+    public let serverIdentity: String
 
-    public init(serverName: String, normalizedServerURL: String, canonicalUsername: String? = nil) {
+    public init(serverName: String, normalizedServerURL: String, canonicalUsername: String? = nil, serverIdentity: String = "") {
         self.serverName = serverName
         self.normalizedServerURL = normalizedServerURL
         self.canonicalUsername = canonicalUsername
+        self.serverIdentity = serverIdentity
     }
 }
 
@@ -146,6 +148,7 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
     case localNetworkPolicyRejected
     case redirectRejected
     case malformedEnvelope
+    case serverIdentityChanged
     case incompatibleProtocol
     case notASubsonicServer
     case responseTooLarge
@@ -178,7 +181,7 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
             .transport
         case .tlsUntrusted, .localNetworkPolicyRejected, .redirectRejected:
             .security
-        case .malformedEnvelope, .incompatibleProtocol, .notASubsonicServer, .responseTooLarge:
+        case .malformedEnvelope, .serverIdentityChanged, .incompatibleProtocol, .notASubsonicServer, .responseTooLarge:
             .protocol
         case .knownServerError, .unknownServerError, .unrecognizedFailure:
             .server

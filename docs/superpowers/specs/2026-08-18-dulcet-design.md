@@ -1281,8 +1281,9 @@ Every cached row is keyed by `server_id` (§9.2). Two accounts on one physical s
 `server_id`s.
 
 **Decision (resolves what revision 1 left open):** **queues are per-account, and exactly one account
-is "active" for playback at a time.** A queue may not mix items from different `server_id`s. Switching
-the active account stops playback, finalizes the current scrobble session, and swaps the queue. This
+is "active" for playback at a time.** A queue may not mix items from different `server_id`s. Account UI lists saved servers directly, with Add Server alongside them. Switching
+the active account stops playback, finalizes the current scrobble session, and restores its saved queue
+and resume position; each account keeps its own library and downloads. This
 is chosen because a mixed queue would require per-item credential and capability switching mid-playback
 with no user-visible model for what happens offline. Multi-account browsing (viewing library B while
 playing from library A) is deferred and is not a v1 feature.
@@ -3130,7 +3131,7 @@ MP4 tail probes. The core records interval coverage while writing directly to di
 requires every byte from zero to the exact resource length and the same §12.4 binary validation as a
 download. Unknown-length responses require a sequential body from offset zero through EOF. A seek,
 cancellation, failed response or truncated body never publishes a partial cache file. A 206 is
-eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance, and are additionally owned by the canonical endpoint URL and exact server-confirmed username (or exact submitted username when not supplied) binding. DNS host case, default HTTP(S) ports, equivalent IPv6 spellings, percent-triplet hex case and trailing base separators do not change that binding; path case, interior separators and escaped separators remain significant. Rebinding the actual endpoint or an unproven username purges the old binding's downloaded and cached media, including explicit downloads, before local lookup can serve the new binding. Successful authentication with the exact saved credentials may adopt the server-confirmed spelling at the same canonical origin and provider instance into the existing epoch; both saved spellings remain valid across an interrupted credential save (§28, 2026-10-21). Password-only and equivalent-endpoint refresh preserve installed current/preloaded playback and media; future requests use refreshed credentials. A real binding change synchronously stops and invalidates current and preloaded playback, cancels retired callbacks and releases file protections before any old file is deleted. Old executors and completions cannot publish into the new binding. A previously unbound media namespace cannot adopt bytes without proven ownership. Server-item reconciliation applies to these files too.
+eligible only with the resource's exact total length. Cache rows use the download identity, including the stable account/server instance bound to accepted server lineage (§28, 2026-10-21), and are additionally owned by the canonical endpoint URL and exact server-confirmed username (or exact submitted username when not supplied) binding. DNS host case, default HTTP(S) ports, equivalent IPv6 spellings, percent-triplet hex case and trailing base separators do not change that binding; path case, interior separators and escaped separators remain significant. Rebinding the actual endpoint or an unproven username purges the old binding's downloaded and cached media, including explicit downloads, before local lookup can serve the new binding. Successful authentication confirming the identical saved canonical principal retains that epoch even after typed-case or password changes; exact saved credentials may additionally adopt a server-confirmed spelling at the same canonical origin and provider instance into the existing epoch; both saved spellings remain valid across an interrupted credential save (§28, 2026-10-21). Password-only and equivalent-endpoint refresh preserve installed current/preloaded playback and media; future requests use refreshed credentials. A real binding change synchronously stops and invalidates current and preloaded playback, cancels retired callbacks and releases file protections before any old file is deleted. Old executors and completions cannot publish into the new binding. A previously unbound media namespace cannot adopt bytes without proven ownership. Server-item reconciliation applies to these files too.
 
 Offline playback prefers a validated local file, including a cached stream, before making a server
 read. Downloaded continues to mean deliberately retained downloads; the broader local-playable set
@@ -4007,7 +4008,9 @@ while the same album read as the admin user carried none of them. A cache keyed 
 show one user's favourites to another.
 
 **Structural binding.** A namespace records the normalized server URL and username it was filled
-from (`cache_binding`). Before any read, the cache compares the binding with the account presenting
+from (`cache_binding`), with accepted server lineage stored independently of cache eviction.
+A detected server replacement retires the provider namespace after explicit deletion consent (§28,
+2026-10-21). Before any read, the cache compares the binding with the account presenting
 the `providerInstanceId`; on any difference the namespace is purged in one transaction before a row
 is served. A reused or restored `providerInstanceId` therefore cannot surface another server's
 library — the property is enforced by the store, not remembered by a caller.
@@ -7913,6 +7916,26 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-22 — Serialize Android media removal with download retirement.**
+Account removal and the launch sweep use the download controllers' shared database executor for
+file deletion and binding revocation. They cannot revoke a binding between a queued download
+maintenance operation's ownership check and its protected-media read. Closing a controller removes
+its own protection contribution without reading its retired policy; live controllers sharing the
+same binding retain their protections. Queued close cleanup releases its offline writer and database
+store even if protection refresh fails. This ordering does not authorize a retired controller to
+reacquire a binding or change the counted-consent requirement before media removal.
+
+**2026-10-22 — Recheck account authorization after playlist capability discovery.**
+Playlist extension discovery can suspend after the outbox's identity check. A sender retired during
+that suspension remains closed after the answer returns; capability invalidation cannot reopen it.
+Android also checks the account's sticky identity rejection and contact authorization before
+discovery, after its response and immediately before sending a scrobble. Apple identity rejection
+switches the existing queue delivery composition to persistence only, cancelling retries and closing
+its sender while retaining submitted plays and playlist provenance. Passive reachability reports
+cannot restore that retired sender. A newly authenticated delivery composition may drain the same
+durable event. This adds no identity request per scrobble and preserves the reconnect capability
+invalidation, ordinary-server fallback and schema 12 playlist-context migration.
+
 **2026-10-21 — Bind Android reader reconnect to playlist capability revalidation.**
 A successful Android library-reader reconnect reports `ReaderConnectionOutcome.Read` through
 the matching account's playback server-availability notification. That notification now
@@ -7958,6 +7981,163 @@ native confirmation dialog with the existing item commands. Remote membership an
 navigation are observed independently. Native Menu focus failures in this grid do not establish
 that tvOS forbids context menus; the explicit launcher resolves the observed interaction gap.
 
+**2026-10-21 — Finish an authorized native transfer locally in device-only mode.**
+An Apple native transfer started after accepted server identity carries an in-memory authorization
+for that task and account generation. Its completed bytes may promote locally without a fresh
+identity request, including after new network contact becomes unavailable. This does not authorize
+another transfer. The current binding must still own the download; account retirement or known
+identity rejection invalidates the authorization, including a completion already delivered to the
+app. Consume the authorization at completion and never persist it or infer it from session task
+enumeration. Restored or otherwise unproven secured receipts still negotiate server identity before
+promotion. Device-only playback does not cause a new request merely to finish an already authorized
+transfer.
+
+**2026-10-21 — Let secured delivery completion win asynchronous preparation.**
+Restored or otherwise unproven receipt reconciliation validates server identity before promoting
+secured background-download bytes.
+When validated remote access opens, register the durable secured inbox before yielding to task
+enumeration or allowing new scheduling. While those receipt validations are in flight, both queue
+preparation and delivery of already prepared native plans wait for their results. A prepared
+download is permission to attempt a launch, not proof that its row is still pending: immediately
+before starting the native task, reread committed state and retire a preparation whose row has
+already become Complete or Stale. Finishing the last receipt validation resumes pending work. A
+completed receipt must not cause another transfer of the same download, and an ordinary queued
+successor must remain schedulable. Completing an unrelated receipt does not release this barrier
+while another receipt is still validating. Deferred plans belong to the account generation and are
+discarded on account retirement or identity rejection. Account-generation and media-binding guards
+still apply.
+
+**2026-10-22 — Keep rejection authoritative through sends and suspended replies.**
+Identity rejection is lasting account authorization, independent of hostname reachability. A reader
+records rejection and cannot send an outbox mutation even when the platform still reports reachable.
+Only a successful negotiation of the saved identity or explicit accepted account configuration can
+open a new authorization lifetime. Network and foreground notifications alone cannot clear it.
+All reader requests capture both the reader's rejection generation and the account's authorization
+token before transport. Recheck both after the suspended request, including its failure path, before
+parsing, caching, capability adoption or acknowledging a durable change. A response crossing rejection
+is treated as not received. Accepting the account again does not revive an older response.
+
+Clients that detect rejection outside the reader revoke the shared account authorization synchronously;
+reader publication can then follow on its confined executor. A token changes on rejection and explicit
+accepted reopening, not on an ordinary same-identity probe, upgrade or restart. Scrobble delivery checks
+its authorization around extension discovery and after the actual scrobble reply. A late successful
+reply retains the submitted play for retry; it does not acknowledge or delete the durable row.
+Downloaded and cached media remain until counted consent. Remote artwork, playback metadata/audio,
+AutoPlay fallback and download metadata/promotion must also check the captured authorization after
+suspension and before exposing replacement bytes or persisting replacement data. An existing cached
+cover or offline media file remains available through review and Cancel. These boundaries supplement
+the account-generation and media-binding checks; they do not broaden the protocol's identity guarantees.
+
+**2026-10-23 — Share rejection across clients and preserve durable identity through late probes.**
+Account authorization belongs to the provider namespace across reader, download, playback and delivery
+clients. Revocation is synchronous even when the reader or native UI still has a queued notification.
+Each client captures the accepted lifetime; explicit acceptance opens a fresh lifetime without reopening
+older clients or replies. A matching native acceptance and ordinary same-identity probes keep issued work
+valid. Native clients use the same database and provider key. Remote artwork, including cache-actor writes,
+and playback current/preload/AutoPlay callbacks check that captured lifetime before adopting a reply.
+Android audio checks headers, body reads and an already buffered prefix; queued stream-cache writes check
+their original lifetime when database work actually runs. Download resume metadata and promotion check
+again at persistence. These checks preserve existing local audio and artwork until counted consent.
+
+The legacy native library importer also authorizes each source request before and after suspension,
+then authorizes commit; its optional fallback cannot import a held replacement page. An identity probe
+rereads accepted lineage transactionally after authentication. If another negotiation accepted different
+lineage, or the account was removed while the probe waited, the old probe is cancelled without writing.
+Concurrent learning of the same identity remains successful. Explicit native lineage replacement revokes
+old callbacks before publishing SQL and opens the new lifetime only after durable acceptance succeeds.
+Saved metadata may seed only an empty lineage and cannot replace an authenticated identity.
+
+**2026-10-21 — Fence playback replies and new byte requests after identity rejection.**
+Known replacement rejection closes remote playback even when a caller has no optional connection
+gate. Recheck that boundary after asynchronous metadata, current resolution and preload resolution,
+before installing a plan or changing retained metadata or AutoPlay queue IDs. A late reply cannot
+reopen the old account. Installed remote resources refuse subsequent range/open authorization after
+rejection; Apple also revokes its wire source and rejects authorizations returning after revocation.
+Pending remote directives and preload callbacks are retired, while existing local files and already
+open playback bytes remain through review and Cancel. Only accepted account configuration can open
+a new Apple playback lifetime; ordinary reachability cannot lift identity quarantine. Confirmation
+still retires installed current and preloaded playback before any local-media deletion.
+
+**2026-10-21 — Keep established playback contact stable during independent validation.**
+Starting an ordinary background identity probe does not revoke an already established connection.
+Each reader, outbox delivery and download still validates before its own stored-ID batch. Explicit
+Connect or Reconnect invalidates contact first; a completed failed probe closes it, and a confirmed
+replacement remains quarantined until accepted account review. This prevents an outbox probe from
+stranding the restored paused queue after Connect. Android stream-cache writers also check known
+replacement rejection before beginning, appending or promoting a write; rejection preserves existing
+completed downloads and cache files while preventing late bytes from entering the old namespace.
+
+**2026-10-21 — Keep identity quarantine across background work and legacy account review.**
+The accepted database lineage takes precedence over saved credential metadata. Credential metadata
+seeds an empty identity store only; an older or product-only record cannot replace an instance ID
+learned during reconnect. Account negotiation compares against this accepted lineage before deciding
+whether replacement consent is needed.
+
+Download workers validate lineage before requesting stored song IDs and before publishing delivered
+media. A known replacement quarantines remote tasks, including callbacks already in flight, without
+removing existing files, partials, download rows or offline playback plans. Late successful probes
+cannot reopen a rejected account; explicit accepted account replacement is required. A transient
+identity-probe failure retains normal retry behavior. A same-server reader probe that supersedes a
+download probe also leaves a finite retry, after active probes finish and only if no replacement was
+rejected; it cannot strand a downloading row without a worker. A fresh process revalidates against durable
+accepted lineage before remote work. Cancel retains the old account and its local playback.
+On Android, Play chosen during an already chosen connection's identity probe waits for that probe;
+a rejected probe leaves Reconnect required. This wait never chooses Connect or delays a local file,
+and a newer selection or Stop supersedes it.
+
+
+**2026-10-21 — Bind saved accounts to server lineage and confirm destructive replacement.**
+The Kotlin core derives server identity from the authenticated OpenSubsonic envelope's `type`,
+normalized as an implementation identifier, plus the advertised Dulcet discovery document's
+`server.instanceId` when available. `serverVersion` remains display/diagnostic information and is
+never an ownership key: an upgrade or restart preserves a server's namespace. Dulcet's `type`
+(`dulcet`, or `Dulcet Server`) advertises `/.well-known/dulcet`; other implementations may advertise
+`dulcetDiscovery` version 1. Discovery is read at the connected origin's root, without credentials,
+without redirects, through the same TLS/local-network policy. Foreign URLs and display names in
+that document cannot contribute identity. Identity uses a structured tuple, so opaque instance IDs
+cannot inject an account or collide through a delimiter. A known instance ID cannot downgrade to
+an absent one. A changed product or changed instance ID is a replacement in either direction.
+
+This is origin-authorized lineage, not cryptographic attestation of a server's database. A server
+that controls the trusted origin can claim its previous identity. Plain OpenSubsonic provides no
+standard installation ID, so replacing Navidrome with another Navidrome that reports the same type
+cannot be distinguished from a restart. Legacy saved records that never stored a server product
+learn lineage on their first authenticated connection; a previously unknown optional product type
+may be learned without purging on an upgrade. Known legacy Android products migrate from
+the secure record's server type. These are explicit protocol/migration limits, not claims of swap
+detection. The observed acceptance tests and each platform's remaining evidence are recorded in
+`FEATURES.yml` and `docs/evidence/server-identity.md`.
+
+The account's accepted lineage is durable independently of the disposable seen-cache. Connection
+and reconnection validate it before any epoch read or queued mutation delivery; background scrobble
+drains validate before attempting old IDs. A mismatch keeps the old account offline and requests
+account review. Detection never deletes, adopts a new identity, or silently sends old IDs. After
+confirmation, playback and preloads are retired, the old reader is closed, local media and the old
+namespace are removed, and a fresh provider ID owns the replacement. Seen-cache, queue, resume,
+mutation/scrobble outboxes, artwork and media therefore cannot cross the replacement boundary.
+
+Account UI directly lists saved servers and offers Add Server on all six surfaces. Selecting one
+retires installed playback, selects its provider namespace, and restores its own library, downloads
+and paused queue; switching back restores that account's saved order, current entry and resume
+position. Saving another server retains existing credentials in secure storage and existing local
+data. Launch cleanup retains all saved provider IDs. Browsing one account while another plays
+remains deferred (§11.2).
+
+For #347, authenticated `getUser` confirmation of the exact saved canonical principal at the same
+origin and lineage retains media even when typed username case or password changed: saved `alice`,
+typed `Alice`, confirmed `alice` continues `alice`. Without a nonblank canonical username, the exact
+submitted spelling is authoritative; there is no inferred case folding. Legacy saved submitted
+addresses compare through the connection URL parser against the authenticated reached base URL;
+explicit schemes and encoded path separators remain significant. The existing exact-saved-
+credential proof may still learn an authenticated spelling alias at that origin. A real replacement
+that would remove media first states the number of stored downloaded tracks to remove and asks for
+confirmation, including zero. Count distinct stored audio track IDs across profiles, including
+queued, downloading and interrupted items and legacy rows without policy metadata; stream cache
+is also removed but is not presented as downloads.
+Cancel leaves credentials, active account, player, files and bindings unchanged. Counts that cannot
+be read fail closed. Adding or selecting a saved server preserves data and requires no deletion
+consent.
+
 **2026-10-21 — Preserve media across authenticated saved-username confirmation.**
 A successful reconnect with the exact saved username and password may confirm a different username
 spelling through authenticated `getUser`. When the stable provider instance, submitted endpoint
@@ -7965,9 +8145,9 @@ and confirmed endpoint all have the same canonical media origin, the core adopts
 into the current media epoch without deleting explicit downloads, automatic downloads or cache.
 It persists the authenticated spelling alongside the legacy spelling under the same epoch nonce,
 so an interruption between adoption and credential saving leaves either saved spelling usable.
-This is an authenticated alias for that epoch, not username case folding: an unproven typed username
+This is an authenticated alias for that epoch, not username case folding: a typed username without identical authenticated canonical confirmation
 still changes ownership, including when it reuses an alias accepted by an earlier authenticated
-reconnect. The account-entry adapters explicitly request the existing core replacement policy for
+reconnect. Identical canonical confirmation follows the newer #347 rule above. The account-entry adapters explicitly request the existing core replacement policy for
 that unproven change; this retires playback before deleting files and rotates the epoch, dropping
 all aliases. A changed saved credential record supersedes an old authentication result. The shells validate a candidate
 before changing playback, credentials or protection; invalid replacements preserve current/preloaded

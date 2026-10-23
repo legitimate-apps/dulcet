@@ -21,9 +21,9 @@ fun leaveEarlierRun(context: Context, accountId: String, serverUrl: String, queu
     SQLiteDatabase.openDatabase(context.getDatabasePath(DATABASE).path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
         db.beginTransaction()
         try {
-            db.insertOrThrow("queue_state", null, ContentValues().apply {
+            db.insertWithOnConflict("queue_state", null, ContentValues().apply {
                 put("server_id", accountId); put("current_position", 0); put("repeat_mode", "off"); put("shuffle_enabled", 0)
-            })
+            }, SQLiteDatabase.CONFLICT_REPLACE)
             queue.forEachIndexed { index, rawId ->
                 db.insertOrThrow("queue_entry", null, ContentValues().apply {
                     put("server_id", accountId); put("queue_entry_id", "earlier-entry-$index"); put("raw_id", rawId)
@@ -32,7 +32,7 @@ fun leaveEarlierRun(context: Context, accountId: String, serverUrl: String, queu
                     put("original_position", index); put("playback_position", index)
                 })
             }
-            db.insertOrThrow("active_queue", null, ContentValues().apply { put("singleton_id", 1); put("server_id", accountId) })
+            db.insertWithOnConflict("active_queue", null, ContentValues().apply { put("singleton_id", 1); put("server_id", accountId) }, SQLiteDatabase.CONFLICT_REPLACE)
             unsentPlays.forEachIndexed { index, rawId ->
                 db.insertOrThrow("scrobble_outbox", null, ContentValues().apply {
                     put("server_id", accountId); put("raw_id", rawId)

@@ -137,3 +137,62 @@ The required Android TV `AndroidTvMyLibraryProofTest/automaticLibraryRetentionAn
 invokes the same reusable `AndroidTvGridActionsProof` before its existing offline-library assertions.
 The standalone positive wrapper is capability-gated on ordinary servers and is not cited as the
 required Dulcet-phase execution. This preserves the existing case count and workflow selection.
+
+**2026-10-22 — Android TV instrumentation composition scheduling.** OBSERVED in
+`core-ci` run `39732020145`, job `119668986345`: the required combined TV proof first
+throws `CalledFromWrongThreadException` while the Compose test frame clock applies node
+removal from `DefaultDispatcher-worker-5` (06:16:24.295 UTC). Composition then stops idling;
+activity destruction exposes the later `SlotWriter` bounds exception (06:16:50.622 UTC).
+The grid-action and offline-library completion markers are absent, so this run proves neither
+chain. The proof classes now use the existing pinned Compose 1.11.4
+`junit4.v2.createEmptyComposeRule`, whose standard test dispatcher queues composition work.
+The legacy rule uses an unconfined test dispatcher. Assertions, remote actions, timeouts and
+dependencies are unchanged. Both instrumentation classes compile; runtime confirmation requires
+the subsequent complete TV emulator job. The source scheduling distinction is documented in the
+[pinned AndroidX test-rule source archive](https://dl.google.com/dl/android/maven2/androidx/compose/ui/ui-test-junit4-android/1.11.4/ui-test-junit4-android-1.11.4-sources.jar).
+
+**2026-10-22 — Android TV playlist proof readiness and remote traversal.** OBSERVED in
+[`core-ci` run `39779874129`, attempt 1](https://github.com/legitimate-apps/dulcet/actions/runs/39779874129/attempts/1):
+the real submitted playlist play and independent server Home assertions pass, but the rendered
+shelf wait fails with focus on Random at the lazy list's exact bottom. The helper's one-way
+Down sweep could not revisit the upper Recent Playlists row. The precise live-response timing
+is ASSUMED. Attempt 2 fails earlier waiting for the Browse Playlists category; its header being
+offscreen is ASSUMED because that wait did not retain an accessibility dump.
+
+The shared proof now awaits Browse readiness, reveals its category header with real Up presses,
+and revisits Home shelves with paced bidirectional remote movement and focus-progress checks.
+Each wait retains its existing 30-second bound; target checks occur on every poll. Failure dumps
+retain the accessibility tree. A focused local TV run then exposed a distinct content-readiness
+failure: the Playlists container existed before any live playlist row, so scrolling immediately
+could not find the newly created playlist. The proof now waits for the first actual row before
+its unchanged exact-name scroll and activation. Phone scrolling and all server/playback oracles
+are retained.
+
+OBSERVED on a fresh Android 34 TV emulator and disposable Dulcet Server: the required
+`ListenNowEmulatorProofTest.homeLaunchAlbumAndCachedRelaunch` passes **1/1 in 45.8 seconds**, zero
+failures/skips, including its original album/relaunch checks and the actual playlist playback
+chain. The receipt is `progressing-media=true submitted-context=true now-playing-context=false
+server-home=true rendered-home=true home-opens-playlist=true`. Both phone and TV instrumentation
+integrations compile. This is focused local runtime evidence; the subsequent complete CI job
+provides the final-head gate.
+
+**2026-10-22 — Reusable TV grid proof category readiness.** OBSERVED on published head
+`70caed4d`, [`core-ci` run `39799344375`, attempt 1](https://github.com/legitimate-apps/dulcet/actions/runs/39799344375/attempts/1):
+the required Dulcet Home case passes 1/1, zero failures/skips, in 39.636 seconds. Its actual
+playlist-context receipt confirms progressing media, submitted context, independent server Home,
+rendered Home and reopening the expected playlist; now-playing carries no context. The later
+automatic/offline My Library case fails its separate grid helper's passive
+`library.view.albums` wait before any grid or offline completion receipt. A hidden header is
+ASSUMED because that helper retained no failure accessibility dump. The separate core-build
+job times out downloading Ubuntu media packages before server tests; it is not a test failure.
+
+The reusable grid helper now awaits Browse's surface and reveals an absent category with paced
+real Up presses inside the existing 30-second wait, retaining an accessibility dump on failure.
+Grid, membership, queue and offline assertions are unchanged. OBSERVED on a fresh Android 34 TV
+emulator and disposable Dulcet Server: the exact
+`AndroidTvMyLibraryProofTest.automaticLibraryRetentionAndSameResponseCachePlayOffline` case passes
+**1/1 in 17.816 seconds**, zero failures/skips. The actual receipts confirm remote More/menu,
+server add/remove membership, album queueing and restored focus; four automatically downloaded
+songs; explicit downloads surviving removal and disabling automatic downloads; and 24,334 cached
+bytes replayed locally with zero server bytes, followed by cache-file removal. The affected TV
+instrumentation integration compiles. Final-head CI confirmation remains a separate gate.

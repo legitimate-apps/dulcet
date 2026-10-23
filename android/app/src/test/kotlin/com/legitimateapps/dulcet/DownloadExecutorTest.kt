@@ -87,6 +87,7 @@ class DownloadExecutorTest {
         // finish, then require that it SUCCEEDED: a failed or cancelled task still fails this.
         assertEquals(WorkInfo.State.SUCCEEDED, awaitFinished(task.id))
         assertEquals(1, server.requests.size)
+        assertEquals(1, server.identityRequests.size, "The worker authenticated the server before sending the stored track ID")
         val files = root.walkTopDown().filter { it.isFile }.toList()
         assertEquals(1, files.size, "exactly one promoted file: $files")
         assertContentEquals(AUDIO, files.single().readBytes())
@@ -230,6 +231,7 @@ class DownloadExecutorTest {
         private val socket = ServerSocket().apply { bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0)) }
         val url = "http://127.0.0.1:${socket.localPort}"
         val requests = CopyOnWriteArrayList<String>()
+        val identityRequests = CopyOnWriteArrayList<String>()
         /** The tracks' own reads (a download keeps its metadata, spec §16.13), counted apart from transfers. */
         val lookups = CopyOnWriteArrayList<String>()
         private val executor = Executors.newSingleThreadExecutor()
@@ -241,9 +243,21 @@ class DownloadExecutorTest {
                             val reader = client.getInputStream().bufferedReader(Charsets.US_ASCII)
                             val line = reader.readLine() ?: return@use
                             generateSequence { reader.readLine()?.takeIf { it.isNotEmpty() } }.toList()
-                            val lookup = line.split(' ').getOrNull(1).orEmpty().startsWith("/rest/getSong")
-                            if (lookup) lookups += line else requests += line
-                            val (type, body) = if (lookup) "application/json" to song(line) else "audio/wav" to AUDIO
+                            val target = line.split(' ').getOrNull(1).orEmpty()
+                            val lookup = target.startsWith("/rest/getSong")
+                            val identity = target.startsWith("/rest/ping.view")
+                            when { identity -> identityRequests += line; lookup -> lookups += line; else -> requests += line }
+                            val (type, body) = when {
+                                identity -> {
+                                    val query = android.net.Uri.parse(url + target)
+                                    check(query.getQueryParameter("u") in setOf("user", "USER"))
+                                    val salt = checkNotNull(query.getQueryParameter("s"))
+                                    check(query.getQueryParameter("t") == com.legitimateapps.dulcet.core.AccountConnectionContract.saltedToken("password", salt))
+                                    "application/json" to """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"fixture","serverVersion":"1"}}""".toByteArray()
+                                }
+                                lookup -> "application/json" to song(line)
+                                else -> "audio/wav" to AUDIO
+                            }
                             val header = "HTTP/1.1 200 OK\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\n" +
                                 "Connection: close\r\n\r\n"
                             client.getOutputStream().apply { write(header.toByteArray()); write(body); flush() }

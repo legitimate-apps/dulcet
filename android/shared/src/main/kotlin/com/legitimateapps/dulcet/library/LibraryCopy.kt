@@ -189,6 +189,7 @@ public fun Resources.errorPhrase(error: DomainError): String = getString(
     when (error) {
         DomainError.Transport.Unreachable, DomainError.Transport.Cancelled -> R.string.library_error_unreachable
         DomainError.Transport.Timeout -> R.string.library_error_timeout
+        DomainError.Protocol.ServerIdentityChanged -> R.string.account_identity_changed_message
         DomainError.Auth.InvalidCredentials -> R.string.library_error_credentials
         DomainError.Auth.Forbidden -> R.string.library_error_forbidden
         is DomainError.Server.Busy -> R.string.library_error_busy

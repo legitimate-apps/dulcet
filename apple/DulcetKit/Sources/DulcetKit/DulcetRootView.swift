@@ -120,6 +120,16 @@ private struct DulcetLibrarySessionChrome: ViewModifier {
             .dulcetLibraryNotices(store: store)
             .dulcetSignOutOffer(store: store)
             .dulcetPlaylistSheets(store: store)
+            .confirmationDialog(DulcetStrings.serverReplacementTitle, isPresented: Binding(
+                get: { store.pendingDownloadRemovalCount != nil },
+                set: { if !$0 { store.cancelServerReplacement() } }
+            ), titleVisibility: .visible) {
+                Button(DulcetStrings.serverReplacementAction, role: .destructive) { store.confirmServerReplacement() }
+                    .accessibilityIdentifier("dulcet.account.confirm-replacement")
+                Button(DulcetStrings.cancel, role: .cancel) { store.cancelServerReplacement() }
+            } message: {
+                Text(DulcetStrings.serverReplacementBody(downloadCount: store.pendingDownloadRemovalCount ?? 0))
+            }
             .onChange(of: store.librarySession?.readerGeneration) { _, _ in store.resetReaderNavigation() }
             // Foreground is "not in the background": an inactive app -- another window in
             // front, a system sheet -- still shows its library and keeps it current (§16.14).

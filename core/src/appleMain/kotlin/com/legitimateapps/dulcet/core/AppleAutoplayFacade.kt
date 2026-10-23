@@ -10,7 +10,8 @@ public class AppleAutoplayOutcome internal constructor(
 )
 
 /** Objective-C-compatible completion-handler facade for AutoPlay's track search (§14.8). */
-public class AppleAutoplayClient {
+public class AppleAutoplayClient(private val databaseName: String) {
+    public constructor() : this("dulcet.db")
     private val scope: CoroutineScope = MainScope()
 
     public fun startCandidates(
@@ -20,6 +21,7 @@ public class AppleAutoplayClient {
         count: Int,
         completion: (AppleAutoplayOutcome) -> Unit,
     ): AppleLibraryBrowseOperation {
+        val authorization = AppleLibraryReaderIdentityAuthorization.capture(databaseName, request.providerInstanceId)
         val operation = AppleLibraryOperationImpl(
             scope = scope,
             completion = completion,
@@ -35,7 +37,9 @@ public class AppleAutoplayClient {
                 operationName = "playback.autoplay",
             )
             try {
-                val tracks = AutoplayCandidateSource(coreRequest.providerInstanceId, transport)
+                val tracks = AutoplayCandidateSource(coreRequest.providerInstanceId, transport) {
+                    if (authorization.currentToken() == null) throw AuthenticatedEndpointFailure(DomainError.Protocol.ServerIdentityChanged)
+                }
                     .candidates(seedRawId, excludedRawIds.toSet(), count)
                 AppleAutoplayOutcome(tracks.map(LibraryTrack::toAppleDto), null)
             } finally {

@@ -3,6 +3,26 @@ import UIKit
 import XCTest
 
 final class DulcetTVUITests: XCTestCase {
+    private var liveAccountFixtures: [String: String] = [:]
+
+    /// Each unrelated proof and endpoint owns a disposable credential store. Relaunching
+    /// one endpoint preserves its saved account without borrowing a prior proof's account.
+    private func liveAccountFixtureArguments(serverURL: String) -> [String] {
+        let fixture = liveAccountFixtures[serverURL] ?? UUID().uuidString
+        liveAccountFixtures[serverURL] = fixture
+        return ["-dulcet-debug-account-fixture", fixture]
+    }
+
+    private func liveAccountLaunchArguments(
+        serverURL: String, username: String, password: String, extraArguments: [String] = []
+    ) -> [String] {
+        extraArguments + liveAccountFixtureArguments(serverURL: serverURL) + [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", serverURL,
+            "-dulcet-debug-account-username", username,
+            "-dulcet-debug-account-password", password,
+        ]
+    }
     /// Section order in the tvOS section bar, which is also the order the remote traverses.
     @MainActor
     func testListenNowLaunchAlbumAndRelaunch() throws {
@@ -12,9 +32,9 @@ final class DulcetTVUITests: XCTestCase {
         let url=try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
         XCTAssertEqual(URLComponents(string:url)?.host,"127.0.0.1")
         let app=XCUIApplication()
-        app.launchArguments=["-dulcet-debug-connect-account","-dulcet-debug-account-server-url",url,
-            "-dulcet-debug-account-username",try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
-            "-dulcet-debug-account-password",try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        app.launchArguments = liveAccountLaunchArguments(serverURL: url,
+            username: try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            password: try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"]))
         app.launch()
         XCTAssertTrue(waitForNavigationTitle("Listen Now",in:app,timeout:60),app.debugDescription)
         let refresh=app.buttons["dulcet.listenNow.refresh"].firstMatch
@@ -32,7 +52,7 @@ final class DulcetTVUITests: XCTestCase {
         let shot=XCTAttachment(screenshot:app.screenshot());shot.name="listen-now-tv";shot.lifetime = .keepAlways;add(shot)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout:20))
-        app.terminate(); app.launchArguments=[]; app.launch()
+        app.terminate(); app.launchArguments = liveAccountFixtureArguments(serverURL: url); app.launch()
         XCTAssertTrue(waitForNavigationTitle("Listen Now",in:app,timeout:30))
         XCTAssertTrue(album.waitForExistence(timeout:20))
         XCTAssertTrue(selectSection(app,"library"))
@@ -79,7 +99,7 @@ final class DulcetTVUITests: XCTestCase {
             defer { try? setOffline(false) }
             Thread.sleep(forTimeInterval: 23)
             XCTAssertFalse(historyContainsPlaylist(), "The failed submission must stay local")
-            app.terminate(); app.launchArguments = []; app.launch()
+            app.terminate(); app.launchArguments = liveAccountFixtureArguments(serverURL: connectedServer.url); app.launch()
             XCTAssertTrue(waitForNavigationTitle("Listen Now", in: app, timeout: 20))
             XCTAssertFalse(historyContainsPlaylist(), "Offline relaunch cannot deliver")
             try setOffline(false)
@@ -181,12 +201,7 @@ final class DulcetTVUITests: XCTestCase {
         }
         print("DULCET TV UNSEEDED ROOT " + app.debugDescription)
         app.terminate()
-        app.launchArguments = [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", serverURL,
-            "-dulcet-debug-account-username", username,
-            "-dulcet-debug-account-password", password,
-        ]
+        app.launchArguments = liveAccountLaunchArguments(serverURL: serverURL, username: username, password: password)
         app.launch()
 
         // Search is somewhere else, and only the section bar goes there.
@@ -480,12 +495,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertFalse(password.isEmpty)
 
         let app = XCUIApplication()
-        app.launchArguments = [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", serverURL,
-            "-dulcet-debug-account-username", username,
-            "-dulcet-debug-account-password", password,
-        ]
+        app.launchArguments = liveAccountLaunchArguments(serverURL: serverURL, username: username, password: password)
         app.launch()
         let launch = try awaitLaunchAndLiveConnection(app)
         if launch.section != "Connection" {
@@ -558,12 +568,7 @@ final class DulcetTVUITests: XCTestCase {
         let query = "Twenty Nine"
 
         let app = XCUIApplication()
-        app.launchArguments = [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", serverURL,
-            "-dulcet-debug-account-username", username,
-            "-dulcet-debug-account-password", password,
-        ]
+        app.launchArguments = liveAccountLaunchArguments(serverURL: serverURL, username: username, password: password)
         app.launch()
         _ = try awaitLaunchAndLiveConnection(app)
 
@@ -1503,7 +1508,7 @@ final class DulcetTVUITests: XCTestCase {
 
         // 2. Relaunch with the saved account: Listen Now, from what this device saw.
         app.terminate()
-        app.launchArguments = []
+        app.launchArguments = liveAccountFixtureArguments(serverURL: server.url)
         app.launch()
         XCTAssertTrue(waitForNavigationTitle("Listen Now", in: app, timeout: 30),
             "A saved account must open straight into Listen Now, not \(app.navigationBars.firstMatch.identifier.debugDescription): "
@@ -2405,13 +2410,9 @@ final class DulcetTVUITests: XCTestCase {
         let server = try disposableServer()
         let canary = "UI Playback Canary"
         let app = XCUIApplication()
-        app.launchArguments = [
-            "-dulcet-debug-scrobble-delivery-marker",
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", server.url,
-            "-dulcet-debug-account-username", server.username,
-            "-dulcet-debug-account-password", server.password,
-        ]
+        app.launchArguments = liveAccountLaunchArguments(serverURL: server.url,
+            username: server.username, password: server.password,
+            extraArguments: ["-dulcet-debug-scrobble-delivery-marker"])
         app.launch()
         _ = try awaitLaunchAndLiveConnection(app)
 
@@ -2516,12 +2517,8 @@ final class DulcetTVUITests: XCTestCase {
     @MainActor
     private func launchAndConnect(serverURL: String, server: Server) throws -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", serverURL,
-            "-dulcet-debug-account-username", server.username,
-            "-dulcet-debug-account-password", server.password,
-        ]
+        app.launchArguments = liveAccountLaunchArguments(serverURL: serverURL,
+            username: server.username, password: server.password)
         app.launch()
         _ = try awaitLaunchAndLiveConnection(app)
         return app

@@ -923,6 +923,8 @@ internal class LibraryReaderSession(
      */
     breaker: EndpointCircuitBreaker = EndpointCircuitBreaker(),
     myLibraryConfig: MyLibraryConfig = MyLibraryConfig(),
+    validateServerIdentity: suspend () -> DomainError? = { null },
+    identityAuthorization: () -> Long? = { 0L },
 ) {
     val outbox = MutationOutbox(database, cache)
     private lateinit var favouritesRef: LibraryFavourites
@@ -941,6 +943,8 @@ internal class LibraryReaderSession(
         scope = scope,
         config = config,
         overlay = outbox,
+        validateServerIdentity = validateServerIdentity,
+        identityAuthorization = identityAuthorization,
         downloads = downloads,
         // Each flush is independent: one whose database fails must not skip the next, nor the
         // epoch read that follows (§16.14). What one throws is recorded, never raised.

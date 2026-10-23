@@ -23,6 +23,7 @@ public enum DulcetReaderErrorKind: String, Sendable, Hashable, CaseIterable {
     case forbidden
     case authentication
     case `protocol`
+    case serverIdentityChanged
     case serverBusy
     case notFound
     case server

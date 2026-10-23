@@ -162,6 +162,8 @@ public data class ConnectedAccount(
     val requests: List<RequestTrace>,
     /** Server-confirmed identity from authenticated getUser; absent servers retain exact input. */
     val canonicalUsername: String? = null,
+    /** Stable server lineage. Software version is deliberately excluded. */
+    val serverIdentity: String = ServerIdentityPolicy.identity(serverType),
 )
 
 public sealed interface AccountConnectionResult {
@@ -269,6 +271,7 @@ public sealed interface DomainError {
             val serverVersion: ProtocolVersionLevel?,
         ) : Protocol
         public data object NotASubsonicServer : Protocol
+        public data object ServerIdentityChanged : Protocol
 
         /**
          * A successful answer larger than this client accepts for the request, refused whole and
@@ -366,6 +369,7 @@ private val DomainError.diagnosticKind: String
         DomainError.Protocol.UnexpectedBinary -> "Protocol.UnexpectedBinary"
         is DomainError.Protocol.Incompatible -> "Protocol.Incompatible"
         DomainError.Protocol.NotASubsonicServer -> "Protocol.NotASubsonicServer"
+        DomainError.Protocol.ServerIdentityChanged -> "Protocol.ServerIdentityChanged"
         DomainError.Protocol.TooLarge -> "Protocol.TooLarge"
         is DomainError.Server.Busy -> "Server.Busy"
         is DomainError.Server.Known -> "Server.Known"
@@ -410,6 +414,7 @@ public fun DomainError.toDiagnosticJson(): String {
             is DomainError.Protocol.UnexpectedContentType,
             DomainError.Protocol.UnexpectedBinary,
             DomainError.Protocol.NotASubsonicServer,
+            DomainError.Protocol.ServerIdentityChanged,
             DomainError.Protocol.TooLarge,
             DomainError.Auth.InvalidCredentials,
             DomainError.Auth.TokenAuthUnsupported,
@@ -473,7 +478,13 @@ public class AccountConnector private constructor(
     public suspend fun connect(request: AccountConnectionRequest): AccountConnectionResult =
         logSink.accountPhase("connect") { connectObserved(request) }
 
-    private suspend fun connectObserved(request: AccountConnectionRequest): AccountConnectionResult {
+    /** Authenticated identity-only probe for reconnects; permissions and canonical spelling are
+     * negotiated on the account form, never needed to decide whether old opaque IDs can be sent. */
+    internal suspend fun identify(request: AccountConnectionRequest, expectedIdentity: String = ""): AccountConnectionResult =
+        connectObserved(request, identityOnly = true, expectedIdentity = expectedIdentity)
+
+    private suspend fun connectObserved(request: AccountConnectionRequest,
+        identityOnly: Boolean = false, expectedIdentity: String = ""): AccountConnectionResult {
         val normalized = normalizeServerUrl(request.serverUrl, request.allowLocalHttp)
         if (normalized is NormalizedServerUrl.Invalid) {
             return AccountConnectionResult.Failed(normalized.error)
@@ -504,7 +515,7 @@ public class AccountConnector private constructor(
             normalized.candidates.forEachIndexed { index, baseUrl ->
                 traceRecorder.clear()
                 val result = try {
-                    connectNormalized(client, baseUrl, request, traceRecorder)
+                    connectNormalized(client, baseUrl, request, traceRecorder, identityOnly, expectedIdentity)
                 } catch (_: UnsupportedAuthenticationChallengeFailure) {
                     AccountConnectionResult.Failed(
                         DomainError.Auth.UnsupportedAuthenticationChallenge,
@@ -545,8 +556,10 @@ public class AccountConnector private constructor(
         baseUrl: String,
         request: AccountConnectionRequest,
         traceRecorder: RequestTraceRecorder,
+        identityOnly: Boolean = false,
+        expectedIdentity: String = "",
     ): AccountConnectionResult {
-        val extensionResponse = request(
+        val extensionResponse = if (identityOnly) WireResponse(404, "", "") else request(
             client = client,
             baseUrl = baseUrl,
             endpoint = "getOpenSubsonicExtensions",
@@ -575,6 +588,17 @@ public class AccountConnector private constructor(
             formPost = formPost,
             traceRecorder = traceRecorder,
         )
+        if (identityOnly) {
+            // Reconnect previously used the library transport. Keep its status-first busy and
+            // gateway semantics so a maintenance page remains retryable instead of appearing
+            // to be an unrelated server. A valid protocol error still has its protocol meaning.
+            try {
+                LibraryEndpointResponse(ping.statusCode, ping.body, ping.logicalRequestUrl,
+                    retryAfter = ping.retryAfter).okPayload()
+            } catch (failure: LibraryRequestFailure) {
+                return AccountConnectionResult.Failed(failure.error)
+            }
+        }
         val pingEnvelope = parseEnvelope(ping.body)
             ?: return AccountConnectionResult.Failed(
                 if (extensionListUnavailable) {
@@ -610,6 +634,21 @@ public class AccountConnector private constructor(
             return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
         }
 
+        val effectiveExtensions = if (extensionListUnavailable) emptyMap() else extensions
+        val serverType = pingEnvelope.string("type").orEmpty()
+        // Dulcet advertises its public discovery document through its implementation identifier;
+        // other implementations may advertise the explicit extension. Plain REST stays unchanged.
+        val instanceId = if (serverType.trim().lowercase() in setOf("dulcet", "dulcet server") ||
+            1 in extensions["dulcetDiscovery"].orEmpty() || ServerIdentityPolicy.requiresDiscovery(expectedIdentity, serverType)
+        ) discoverInstanceId(client, baseUrl, request.allowLocalHttp) else ""
+        if (identityOnly) return AccountConnectionResult.Connected(ConnectedAccount(
+            normalizedBaseUrl = baseUrl, allowsLocalHttp = request.allowLocalHttp,
+            protocolVersion = serverProtocolVersion, openSubsonic = pingEnvelope.boolean("openSubsonic") ?: false,
+            serverType = serverType, serverVersion = pingEnvelope.string("serverVersion").orEmpty(),
+            capabilities = CapabilitySet(emptyMap(), UserPermissions(false, false, false, false, false), true),
+            requests = traceRecorder.snapshot(), serverIdentity = ServerIdentityPolicy.identity(serverType, instanceId),
+        ))
+
         val userResponse = authenticatedRequest(
             client = client,
             baseUrl = baseUrl,
@@ -636,14 +675,14 @@ public class AccountConnector private constructor(
             return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
         }
 
-        val effectiveExtensions = if (extensionListUnavailable) emptyMap() else extensions
         return AccountConnectionResult.Connected(
             ConnectedAccount(
                 normalizedBaseUrl = baseUrl,
                 allowsLocalHttp = request.allowLocalHttp,
                 protocolVersion = serverProtocolVersion,
                 openSubsonic = pingEnvelope.boolean("openSubsonic") ?: false,
-                serverType = pingEnvelope.string("type").orEmpty(),
+                serverType = serverType,
+                serverIdentity = ServerIdentityPolicy.identity(serverType, instanceId),
                 serverVersion = pingEnvelope.string("serverVersion").orEmpty(),
                 capabilities = CapabilitySet(
                     extensions = effectiveExtensions,
@@ -660,6 +699,23 @@ public class AccountConnector private constructor(
                 canonicalUsername = user.string("username")?.takeIf { it.isNotBlank() },
             ),
         )
+    }
+
+    /** Same-origin, unauthenticated, no redirects: discovery cannot forward credentials or trust
+     * another host's lineage. TLS/local-network policy is the account connection's own policy. */
+    private suspend fun discoverInstanceId(client: HttpClient, baseUrl: String, allowLocalHttp: Boolean): String {
+        val origin = URLBuilder(baseUrl).apply { encodedPath = "/.well-known/dulcet"; parameters.clear() }.buildString()
+        val response = sendRequest(client, origin, Parameters.Empty, Parameters.Empty, false, allowLocalHttp)
+        if (response.status.value != 200) throw RedirectPolicyFailure(DomainError.Protocol.MalformedEnvelope)
+        val body = response.bodyAsText()
+        if (body.length > 65_536) throw RedirectPolicyFailure(DomainError.Protocol.TooLarge)
+        val document = try { Json.parseToJsonElement(body) as? JsonObject } catch (_: Exception) { null }
+        val server = document?.get("server") as? JsonObject
+        val instance = server?.get("instanceId") as? JsonPrimitive
+        if (document?.get("standard") != JsonPrimitive("dulcet") || instance == null || !instance.isString ||
+            instance.content.isBlank() || instance.content.length > 512 || instance.content.any { it.isISOControl() }
+        ) throw RedirectPolicyFailure(DomainError.Protocol.MalformedEnvelope)
+        return instance.content
     }
 
     private suspend fun authenticatedRequest(
@@ -746,6 +802,7 @@ public class AccountConnector private constructor(
                     statusCode = response.status.value,
                     body = logSink.accountPhase("$endpoint.body") { response.bodyAsText() },
                     logicalRequestUrl = traceRecorder.latestRedactedUrl(),
+                    retryAfter = response.headers[HttpHeaders.RetryAfter],
                 )
             }
 
@@ -856,6 +913,7 @@ public class AccountConnector private constructor(
         val statusCode: Int,
         val body: String,
         val logicalRequestUrl: String,
+        val retryAfter: String? = null,
     )
 
     private companion object {
@@ -1426,6 +1484,12 @@ private sealed interface NormalizedServerUrl {
     data class Valid(val candidates: List<String>) : NormalizedServerUrl
     data class Invalid(val error: DomainError) : NormalizedServerUrl
 }
+
+/** Legacy secure records can contain the originally submitted address rather than its reached
+ * base URL. Compare its parser candidates only after the caller authenticated the saved user. */
+internal fun savedServerEndpointMatches(savedInput: String, connectedUrl: String): Boolean =
+    (normalizeServerUrl(savedInput, allowLocalHttp = true) as? NormalizedServerUrl.Valid)
+        ?.candidates?.any { MediaBindingIdentity.sameEndpoint(it, connectedUrl) } == true
 
 private fun normalizeServerUrl(input: String, allowLocalHttp: Boolean): NormalizedServerUrl {
     val trimmed = input.trim()

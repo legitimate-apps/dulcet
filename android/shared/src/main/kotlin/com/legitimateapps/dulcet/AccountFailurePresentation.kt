@@ -65,6 +65,8 @@ public fun DomainError.accountFailurePresentation(): AccountFailurePresentation 
         R.string.error_security_message,
         R.string.error_security_recovery,
     )
+    DomainError.Protocol.ServerIdentityChanged -> AccountFailurePresentation(
+        R.string.account_replacement_title, R.string.account_identity_changed_message, R.string.account_identity_changed_recovery)
     DomainError.Protocol.MalformedEnvelope,
     is DomainError.Protocol.UnexpectedContentType,
     DomainError.Protocol.UnexpectedBinary,

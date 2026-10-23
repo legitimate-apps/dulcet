@@ -327,11 +327,14 @@ internal class DownloadPolicyEngine(
 
         currentCredentialGenerations.keys.forEach(::requireMediaBinding)
         check(isMediaBindingCurrent()) { "media binding was revoked" }
-        val rows = store.all().filter { !explicitlyBound || it.identity.serverId in mediaBindingEpochs }
+        val allRows = store.all()
+        val rows = allRows.filter { !explicitlyBound || it.identity.serverId in mediaBindingEpochs }
+        val inactiveIds = allRows.filter { explicitlyBound && it.identity.serverId !in mediaBindingEpochs }
+            .mapTo(mutableSetOf(), DownloadRecord::downloadId)
         rows.forEach { requireMediaBinding(it.identity.serverId) }
         val rowsById = rows.associateBy(DownloadRecord::downloadId)
         val activeTaskIds = outstandingTasks.map(OutstandingDownloadTask::downloadId).toSet()
-        val cancel = activeTaskIds.filterTo(mutableSetOf()) { it !in rowsById }
+        val cancel = activeTaskIds.filterTo(mutableSetOf()) { it !in rowsById && it !in inactiveIds }
         val interrupted = mutableSetOf<DownloadId>()
         val recovered = mutableSetOf<DownloadId>()
         val resumable = mutableSetOf<DownloadId>()
@@ -367,7 +370,7 @@ internal class DownloadPolicyEngine(
             }
         }
 
-        val deletedTemps = files.deleteUnownedTemporaryFiles(activeTaskIds + resumable)
+        val deletedTemps = files.deleteUnownedTemporaryFiles(activeTaskIds + resumable + inactiveIds)
         reconciled = true
         cacheReconciliationHandler?.invoke()
         return DownloadReconciliationResult(cancel, interrupted, recovered, deletedTemps)
@@ -711,7 +714,7 @@ internal class DownloadPolicyEngine(
         }
         val queries = database.serverDataQueries
         database.transaction {
-            database.libraryDepthQueries.deleteCategory(serverId, MEDIA_BINDING_CATEGORY)
+            database.libraryDepthQueries.deleteEntriesForServer(serverId)
             database.offlineLibraryQueries.deleteSettings(serverId)
             database.offlineLibraryQueries.deleteSourceSnapshots(serverId)
             queries.deleteMutationOutboxForServer(serverId)

@@ -68,6 +68,7 @@ import com.legitimateapps.dulcet.connectAndSaveAccount
 import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.statement
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -80,8 +81,26 @@ import kotlinx.coroutines.launch
 internal fun TvConnectScreen(
     connect: suspend (AccountConnectionRequest) -> AccountConnectionResult,
     store: AccountCredentialStore,
+    onCancelAdding: (() -> Unit)? = null,
     onConnected: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val replacement = remember(store) { com.legitimateapps.dulcet.AndroidAccountReplacement(context, store) }
+    val replacementOffer by replacement.offer.collectAsStateWithLifecycle()
+    replacementOffer?.let { offer ->
+        androidx.compose.ui.window.Dialog(onDismissRequest = { replacement.answer(false) }) {
+            Surface(Modifier.width(640.dp).testTag("account.replacement")) {
+                Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(stringResource(com.legitimateapps.dulcet.shared.R.string.account_replacement_title))
+                    Text(stringResource(com.legitimateapps.dulcet.shared.R.string.account_replacement_body, offer.downloadCount))
+                    Button(onClick = { replacement.answer(false) }, modifier = Modifier.testTag("account.replacement.cancel")) {
+                        Text(stringResource(R.string.tv_cancel)) }
+                    Button(onClick = { replacement.answer(true) }, modifier = Modifier.testTag("account.replacement.confirm")) {
+                        Text(stringResource(com.legitimateapps.dulcet.shared.R.string.account_replacement_confirm)) }
+                }
+            }
+        }
+    }
     var server by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -116,14 +135,14 @@ internal fun TvConnectScreen(
         message = R.string.tv_connecting
         attempt = scope.launch {
             val outcome = connectAndSaveAccount(AccountConnectionRequest(server, username, password, allowLocalHttp),
-                connect, store, stillWanted = { mine == generation })
+                connect, store, stillWanted = { mine == generation }, replacement = replacement)
             if (mine != generation) return@launch
             attempt = null
             when (outcome) {
                 is AccountConnectOutcome.Connected -> { message = null; onConnected() }
                 is AccountConnectOutcome.Failed -> { message = null; failure = outcome.error.accountFailurePresentation() }
                 AccountConnectOutcome.PersistenceFailed -> message = R.string.tv_error_persistence
-                AccountConnectOutcome.Superseded -> Unit
+                AccountConnectOutcome.Superseded -> { message = null }
             }
         }
     }
@@ -161,6 +180,8 @@ internal fun TvConnectScreen(
                 Button(onClick = ::submitOrCancel, modifier = Modifier.testTag("tv.connect.submit")) {
                     Text(stringResource(if (connecting) R.string.tv_cancel else R.string.tv_connect))
                 }
+                if (onCancelAdding != null) Button(onClick = onCancelAdding,
+                    modifier = Modifier.testTag("tv.account.add.cancel")) { Text(stringResource(R.string.tv_cancel)) }
                 // A failure says what every Android shell says (CONF-09c): its title, what happened and
                 // what to do, with the decided remedies.
                 val resources = LocalContext.current.resources

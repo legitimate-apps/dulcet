@@ -31,6 +31,333 @@ class AndroidPlaybackControllerTest {
     @Before fun dispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher(mainScheduler)) }
     @After fun resetDispatcher() { Dispatchers.resetMain() }
 
+    @Test fun aPlayChosenDuringIdentityValidationResumesOnlyWhenTheSameServerIsVerified() {
+        for (verified in listOf(true, false)) {
+            val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+            var open = false
+            val contact = object : AndroidServerContact {
+                override fun isOpen() = open
+                override suspend fun awaitOpen() { kotlinx.coroutines.awaitCancellation() }
+                override suspend fun awaitValidation() { release.await() }
+            }
+            Fixture(serverContact = contact).use { f ->
+                f.controller.playSong(OWNER, "song", "Song")
+                assertTrue(f.prepared.isEmpty(), "An unverified connection cannot resolve saved IDs")
+                assertFalse(f.probe.requested)
+                open = verified
+                release.complete(Unit)
+                settle(5)
+                if (verified) {
+                    assertEquals(listOf("song"), f.prepared.map { it.itemId.rawId },
+                        "A same-server probe must not discard the person's Play selection")
+                    assertTrue(f.probe.requested)
+                } else {
+                    assertTrue(f.prepared.isEmpty(), "A failed probe must leave remote contact closed")
+                    assertTrue(f.controller.state.value.needsReconnect)
+                }
+            }
+        }
+    }
+
+    @Test fun identityRejectionDuringMetadataCannotRenameThePriorQueue() {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val contact = ChosenContact().also { it.open.value = true }
+        var hold = false
+        var metadataStarted = false
+        Fixture(serverContact = contact, loadSong = { id ->
+            if (hold) {
+                metadataStarted = true
+                release.await()
+                song(id).copy(body = """{"subsonic-response":{"status":"ok","song":{"id":"$id","title":"Wrong server","suffix":"wav","duration":40}}}""".toByteArray())
+            } else song(id)
+        }).use { f ->
+            f.controller.playSong(OWNER, "same-id", "Original")
+            assertEquals("Original", f.controller.state.value.queue.single().track.title)
+            hold = true
+            f.controller.playSong(OWNER, "same-id", "Original")
+            assertTrue(metadataStarted)
+            contact.open.value = false
+            release.complete(Unit)
+            settle(5)
+            assertEquals("Original", f.controller.state.value.queue.single().track.title,
+                "A late replacement response cannot change the retained server's metadata")
+            assertEquals(1, f.prepared.size)
+            assertTrue(f.controller.state.value.needsReconnect)
+        }
+    }
+
+    @Test fun explicitAcceptanceCannotReviveHeldMetadataFromBeforeRejection() = heldMetadataAuthorization(rejectAndAccept = true)
+    @Test fun aTransientProbeStillAllowsHeldMetadataFromTheAcceptedServer() = heldMetadataAuthorization(rejectAndAccept = false)
+
+    private fun heldMetadataAuthorization(rejectAndAccept: Boolean) {
+        val owner = "provider:metadata-authorization:${java.util.UUID.randomUUID()}"
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var hold = false
+        var entered = false
+        Fixture(accountOwner = owner, loadSong = { id ->
+            if (hold) {
+                entered = true; release.await()
+                song(id).copy(body = """{"subsonic-response":{"status":"ok","song":{"id":"$id","title":"Late title","suffix":"wav","duration":40}}}""".toByteArray())
+            } else song(id)
+        }).use { f ->
+            f.controller.playSong(owner, "same-id", "Original")
+            assertEquals("Original", f.controller.state.value.queue.single().track.title)
+            hold = true
+            f.controller.playSong(owner, "same-id", "Original")
+            assertTrue(entered, "The actual current-entry metadata operation is suspended")
+            try {
+                kotlinx.coroutines.runBlocking {
+                    if (rejectAndAccept) {
+                        AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                        AndroidServerIdentity.accept(RuntimeEnvironment.getApplication(), owner,
+                            ServerIdentityPolicy.identity("navidrome", "confirmed-instance"))
+                    } else AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable }
+                }
+                release.complete(Unit)
+                settle(5)
+                assertEquals(if (rejectAndAccept) "Original" else "Late title",
+                    f.controller.state.value.queue.single().track.title,
+                    "Only a still-current authorization may adopt held metadata")
+                assertEquals(if (rejectAndAccept) 1 else 2, f.prepared.size,
+                    "Explicit consent cannot prepare the retired selection; a transient probe can")
+            } finally { release.complete(Unit) }
+        }
+    }
+
+    @Test fun identityRejectionDuringAutoplayCannotAppendReplacementServerIds() {
+        val release = kotlinx.coroutines.CompletableDeferred<List<AndroidTrack>>()
+        val contact = ChosenContact().also { it.open.value = true }
+        var candidatesStarted = false
+        Fixture(serverContact = contact, candidates = { _, _, _ -> candidatesStarted = true; release.await() }).use { f ->
+            f.controller.setAutoplay(true)
+            f.controller.playSong(OWNER, "original", "Original")
+            assertTrue(candidatesStarted)
+            assertEquals(listOf("original"), f.controller.state.value.queue.map { it.track.rawId })
+            contact.open.value = false
+            release.complete(listOf(AndroidTrack(OWNER, "wrong-server-id", "Wrong server", null, null, 40_000)))
+            settle(5)
+            assertEquals(listOf("original"), f.controller.state.value.queue.map { it.track.rawId },
+                "A late autoplay response cannot persist another server's IDs in the retained queue")
+            assertEquals(listOf("original"), f.prepared.map { it.itemId.rawId })
+        }
+    }
+
+    @Test fun identityRejectionDuringMetadataCannotResolveOrInstallTheRemoteSelection() {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val contact = ChosenContact().also { it.open.value = true }
+        var metadataStarted = false
+        val resolvedIds = mutableListOf<String>()
+        Fixture(serverContact = contact, loadSong = { id -> metadataStarted = true; release.await(); song(id) },
+            resolve = { request -> resolvedIds += request.itemId.rawId; resolved(request) }).use { f ->
+            f.controller.playSong(OWNER, "replacement", "Replacement")
+            assertTrue(metadataStarted)
+            contact.open.value = false
+            release.complete(Unit)
+            settle(5)
+            assertTrue(resolvedIds.isEmpty(), "A rejected account cannot resolve a late metadata response's stored ID")
+            assertTrue(f.prepared.isEmpty(), "A late response cannot install remote playback after rejection")
+            assertTrue(f.controller.state.value.needsReconnect)
+            assertTrue(f.controller.state.value.queue.isEmpty(), "The prior queue survives rejected selection")
+        }
+    }
+
+    @Test fun identityRejectionDuringResolutionCannotInstallTheRemotePlan() {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val contact = ChosenContact().also { it.open.value = true }
+        var resolutionStarted = false
+        Fixture(serverContact = contact, resolve = { request ->
+            resolutionStarted = true; release.await(); resolved(request)
+        }).use { f ->
+            f.controller.playSong(OWNER, "replacement", "Replacement")
+            assertTrue(resolutionStarted)
+            contact.open.value = false
+            release.complete(Unit)
+            settle(5)
+            assertTrue(f.prepared.isEmpty(), "A late plan cannot prepare or play remote bytes after identity rejection")
+            assertFalse(f.probe.requested)
+            assertTrue(f.controller.state.value.needsReconnect)
+        }
+    }
+
+    @Test fun aKnownIdentityRejectionCannotOpenAnotherRangeOfAnInstalledRemoteResource() {
+        PlaybackResourceReceiver(pcmWave()).use { receiver ->
+            val owner = "provider:${java.util.UUID.randomUUID()}"
+            Fixture(accountOwner = owner, baseUrl = receiver.url).use { f ->
+                f.controller.playSong(owner, "song", "Song")
+                val resource = f.controller.httpPlaybackResource(f.prepared.single())
+                val first = resource.open(0, 16)
+                try { assertEquals(16, first.input.readBytes().size) } finally { first.close() }
+                assertEquals(1, receiver.requestCount())
+                kotlinx.coroutines.runBlocking {
+                    AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                }
+                val next = runCatching { resource.open(16, 16) }
+                next.getOrNull()?.close?.invoke()
+                assertIs<AndroidPlaybackIOException>(next.exceptionOrNull(),
+                    "An installed resource cannot sign or send a new range after known replacement")
+                assertEquals(1, receiver.requestCount(), "No rejected old-ID range reaches the receiving socket")
+            }
+        }
+    }
+
+    @Test fun headersReleasedAfterIdentityRejectionCannotDeliverRemoteAudio() = rejectedResourceReply("headers")
+    @Test fun bodyReleasedAfterIdentityRejectionCannotDeliverRemoteAudio() = rejectedResourceReply("body")
+
+    private fun rejectedResourceReply(phase: String) {
+        for (reject in listOf(false, true)) {
+            val reached = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+            val hold = { reached.countDown(); check(release.await(10, java.util.concurrent.TimeUnit.SECONDS)); Unit }
+            PlaybackResourceReceiver(pcmWave(), beforeHeaders = if (phase == "headers") hold else ({}),
+                beforeBody = if (phase == "body") hold else ({}), allowClientDisconnect = true).use { receiver ->
+                val owner = "provider:held-resource:${java.util.UUID.randomUUID()}"
+                Fixture(accountOwner = owner, baseUrl = receiver.url).use { f ->
+                    f.controller.playSong(owner, "song", "Original")
+                    val plan = f.prepared.single()
+                    val delivered = java.util.concurrent.atomic.AtomicLong()
+                    val source = AndroidPlaybackDataSourceFactory(plan, f.controller.httpPlaybackResource(plan),
+                        { delivered.addAndGet(it) }).createDataSource()
+                    val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+                    val result = executor.submit<Throwable?> {
+                        try {
+                            source.open(androidx.media3.datasource.DataSpec(android.net.Uri.parse("dulcet://resource")))
+                            source.read(ByteArray(64), 0, 64)
+                            null
+                        } catch (failure: Throwable) { failure }
+                    }
+                    try {
+                        assertTrue(reached.await(10, java.util.concurrent.TimeUnit.SECONDS), "Real HTTP $phase must be held")
+                        receiver.assertAuthenticatedSong("song")
+                        if (reject) kotlinx.coroutines.runBlocking {
+                            AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                        }
+                        release.countDown()
+                        val failure = result.get(10, java.util.concurrent.TimeUnit.SECONDS)
+                        if (reject) {
+                            assertEquals(0L, delivered.get(), "Late $phase from a rejected server cannot deliver any audio to Media3")
+                            assertIs<AndroidPlaybackIOException>(failure)
+                        } else {
+                            assertNull(failure, "The same held reply from an accepted server remains playable")
+                            assertTrue(delivered.get() > 0, "Positive control must exercise actual validated audio delivery")
+                        }
+                    } finally {
+                        release.countDown(); source.close(); executor.shutdownNow()
+                        assertTrue(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun rejectionAfterOpenCannotDeliverTheAlreadyValidatedAudioPrefix() {
+        PlaybackResourceReceiver(pcmWave()).use { receiver ->
+            val owner = "provider:buffered-rejected:${java.util.UUID.randomUUID()}"
+            Fixture(accountOwner = owner, baseUrl = receiver.url).use { f ->
+                f.controller.playSong(owner, "song", "Original")
+                val plan = assertIs<RemotePlaybackWirePlan>(f.prepared.single())
+                val delivered = java.util.concurrent.atomic.AtomicLong()
+                val source = AndroidPlaybackDataSourceFactory(plan, f.controller.httpPlaybackResource(plan),
+                    { delivered.addAndGet(it) }).createDataSource()
+                try {
+                    source.open(androidx.media3.datasource.DataSpec(android.net.Uri.parse("dulcet://resource")))
+                    receiver.assertAuthenticatedSong("song")
+                    assertEquals(0L, delivered.get(), "open validates and buffers audio without delivering it")
+                    kotlinx.coroutines.runBlocking {
+                        AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                    }
+                    val result = runCatching { source.read(ByteArray(64), 0, 64) }
+                    assertEquals(0L, delivered.get(), "The already validated prefix must not bypass rejection")
+                    assertIs<AndroidPlaybackIOException>(result.exceptionOrNull())
+                } finally { source.close() }
+            }
+        }
+    }
+
+    @Test fun identityRejectionDuringAutoplaySeedPreventsEveryFollowupHttpRequest() {
+        AutoplayReceiver().use { receiver ->
+            val owner = "provider:autoplay-rejected:${java.util.UUID.randomUUID()}"
+            Fixture(accountOwner = owner, baseUrl = receiver.url, candidates = null).use { f ->
+                f.controller.setAutoplay(true)
+                f.controller.playSong(owner, "seed", "Original")
+                try {
+                    assertTrue(receiver.seedEntered.await(10, java.util.concurrent.TimeUnit.SECONDS),
+                        "The real production autoplay source must send its seed lookup")
+                    // Observe only completion through this private job; the oracle is receiving HTTP requests.
+                    val field = AndroidPlaybackController::class.java.getDeclaredField("autoplayJob").apply { isAccessible = true }
+                    val job = assertNotNull(field.get(f.controller) as? kotlinx.coroutines.Job)
+                    kotlinx.coroutines.runBlocking {
+                        AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                    }
+                    receiver.releaseSeed.countDown()
+                    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                    while (!job.isCompleted && System.nanoTime() < deadline) {
+                        mainScheduler.runCurrent(); shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(10)
+                    }
+                    assertTrue(job.isCompleted, "The seed reply must actually return before checking for forbidden requests")
+                    assertEquals(listOf("/rest/getSong.view"), receiver.paths.toList(),
+                        "Rejection during the seed reply must prevent similar/top/random fallback requests")
+                    assertEquals(listOf("seed"), f.controller.state.value.queue.map { it.track.rawId })
+                } finally { receiver.releaseSeed.countDown() }
+            }
+        }
+    }
+
+    @Test fun identityRejectionDuringPreloadMetadataCannotResolveOrPrepareTheNextTrack() = rejectedPreload("metadata")
+    @Test fun identityRejectionDuringPreloadResolutionCannotPrepareTheNextTrack() = rejectedPreload("resolve")
+
+    private fun rejectedPreload(phase: String) {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val contact = ChosenContact().also { it.open.value = true }
+        val incoming = PlayerProbe()
+        var holdNext = false
+        var started = false
+        val resolvedIds = mutableListOf<String>()
+        Fixture(serverContact = contact, overlapPlayer = { incoming.player }, loadSong = { id ->
+            if (holdNext && id == "b" && phase == "metadata") { started = true; release.await() }
+            song(id)
+        }, resolve = { request ->
+            resolvedIds += request.itemId.rawId
+            if (holdNext && request.itemId.rawId == "b" && phase == "resolve") { started = true; release.await() }
+            resolved(request)
+        }).use { f ->
+            f.controller.setAutoplay(false)
+            f.controller.setCrossfade(5)
+            f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Search, "Search")
+            assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId })
+            holdNext = true
+            ready(f)
+            progress(f, 0, 1_000)
+            assertTrue(started, "Setup: the next-track $phase request is held in flight")
+            contact.open.value = false
+            release.complete(Unit)
+            settle(5)
+            assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId },
+                "Identity rejection cannot install a late remote preload")
+            assertFalse(incoming.requested)
+            if (phase == "metadata") assertFalse("b" in resolvedIds,
+                "Rejected preload metadata cannot lead to an old-ID resolve request")
+        }
+    }
+
+    @Test fun aNewSelectionSupersedesAPlayWaitingForIdentityValidation() {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var open = false
+        val contact = object : AndroidServerContact {
+            override fun isOpen() = open
+            override suspend fun awaitOpen() { kotlinx.coroutines.awaitCancellation() }
+            override suspend fun awaitValidation() { release.await() }
+        }
+        Fixture(serverContact = contact).use { f ->
+            f.controller.playSong(OWNER, "old", "Old")
+            f.controller.playSong(OWNER, "new", "New")
+            open = true
+            release.complete(Unit)
+            settle(5)
+            assertEquals(listOf("new"), f.prepared.map { it.itemId.rawId })
+            assertTrue(f.probe.requested)
+        }
+    }
+
     @Test fun lateMetadataAfterNewSelectionCannotReplaceTheNewQueue() {
         var pending: Continuation<AuthenticatedEndpointResponse>? = null
         var lateReturns = 0
@@ -823,7 +1150,7 @@ class AndroidPlaybackControllerTest {
         }
     }
 
-    @Test fun anotherAccountsQueueIsRefusedAtEveryEntryPointBeforeAnyRequest() {
+    @Test fun anotherSavedAccountsQueueStaysUntouchedWhenStartupSelectsAnEmptyOwnQueue() {
         val loaded = mutableListOf<String>()
         Fixture(savedOwner = "different-account", savedSongs = listOf("x", "y", "z"),
             loadSong = { id -> loaded += id; song(id) }).use { f ->
@@ -832,12 +1159,15 @@ class AndroidPlaybackControllerTest {
             f.controller.play(); f.controller.next(); f.controller.previous(); f.controller.skipToPrevious()
             f.controller.jumpTo(entry); f.controller.setShuffle(true); f.controller.cycleRepeatMode()
             assertFalse(f.controller.moveEntry(entry, 0)); assertFalse(f.controller.removeEntry(entry))
-            assertFalse(f.controller.clearUpcoming())
+            assertTrue(f.controller.clearUpcoming(), "Clearing our selected empty queue is a successful no-op")
             f.controller.sessionPlayer.seekToNext(); f.controller.sessionPlayer.play()
             assertTrue(loaded.isEmpty(), "No request may be made for another account's queue")
             assertTrue(f.prepared.isEmpty())
             assertFalse(f.probe.requested)
-            assertEquals(DomainError.Auth.Forbidden, f.controller.state.value.error)
+            assertEquals(ServerId(OWNER), PersistentQueueStore(f.store.database).activeServerId(),
+                "Startup selects the saved account instead of exposing the other saved server's queue")
+            assertTrue(f.controller.state.value.queue.isEmpty(), "The selected account has no saved queue")
+            assertNull(f.controller.state.value.error)
             assertNull(f.controller.state.value.playbackSessionId, "The foreign queue must not become a session")
             assertEquals(foreign, PersistentQueueStore(f.store.database).load(ServerId("different-account")),
                 "The other account's queue must be left exactly as it was")
@@ -1624,7 +1954,9 @@ class AndroidPlaybackControllerTest {
         }.array()
 
     /** Supplies only the receiving socket. The controller builds its real HTTP resource and validator. */
-    private class PlaybackResourceReceiver(private val body: ByteArray) : AutoCloseable {
+    private class PlaybackResourceReceiver(private val body: ByteArray,
+        private val beforeHeaders: () -> Unit = {}, private val beforeBody: () -> Unit = {},
+        private val allowClientDisconnect: Boolean = false) : AutoCloseable {
         private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${socket.localPort}"
         private val requests = java.util.concurrent.CopyOnWriteArrayList<Map<String, String>>()
@@ -1653,16 +1985,21 @@ class AndroidPlaybackControllerTest {
                             val bytes = body.copyOfRange(start, end + 1)
                             val response = if (range == null) "200 OK" else "206 Partial Content"
                             val rangeHeader = if (range == null) "" else "Content-Range: bytes $start-$end/${body.size}\r\n"
+                            beforeHeaders()
                             client.getOutputStream().apply {
                                 write(("HTTP/1.1 $response\r\nContent-Type: application/octet-stream\r\nContent-Length: ${bytes.size}\r\n$rangeHeader" +
                                     "Connection: close\r\n\r\n").toByteArray())
+                                flush(); beforeBody()
                                 write(bytes); flush()
                             }
                         }
-                    } catch (error: Throwable) { if (!socket.isClosed) failures += error }
+                    } catch (error: Throwable) {
+                        if (!socket.isClosed && !(allowClientDisconnect && error is java.io.IOException)) failures += error
+                    }
                 }
             }
         }
+        fun requestCount() = requests.size
         fun assertAuthenticatedSong(id: String) {
             assertTrue(requests.isNotEmpty(), "The production source must reach the receiving HTTP socket")
             for (query in requests) {
@@ -1676,6 +2013,44 @@ class AndroidPlaybackControllerTest {
             socket.close(); executor.shutdown()
             assertTrue(executor.awaitTermination(6, java.util.concurrent.TimeUnit.SECONDS))
             assertTrue(failures.isEmpty(), "Playback receiving fixture failed: $failures")
+        }
+    }
+
+    private class AutoplayReceiver : AutoCloseable {
+        private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
+        val url = "http://127.0.0.1:${socket.localPort}"
+        val paths = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val seedEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseSeed = java.util.concurrent.CountDownLatch(1)
+        private val failures = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+        private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        init {
+            executor.submit {
+                while (!socket.isClosed) {
+                    try { socket.accept().use { client ->
+                        client.soTimeout = 10_000
+                        val reader = client.getInputStream().bufferedReader()
+                        val line = checkNotNull(reader.readLine()).split(' ')
+                        val path = java.net.URI(line[1]).path
+                        while (!reader.readLine().isNullOrEmpty()) { }
+                        paths += path
+                        val payload = if (path == "/rest/getSong.view") {
+                            seedEntered.countDown(); check(releaseSeed.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                            """"song":{"id":"seed","artistId":"replacement-artist","artist":"Replacement","genre":"Replacement"}"""
+                        } else """"${when { path.contains("SimilarSongs2") -> "similarSongs2"; path.contains("SimilarSongs") -> "similarSongs"; path.contains("TopSongs") -> "topSongs"; else -> "randomSongs" }}":{"song":[]}"""
+                        val bytes = """{"subsonic-response":{"status":"ok",$payload}}""".toByteArray()
+                        client.getOutputStream().apply {
+                            write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                            write(bytes); flush()
+                        }
+                    } } catch (failure: Throwable) { if (!socket.isClosed) failures += failure }
+                }
+            }
+        }
+        override fun close() {
+            releaseSeed.countDown(); socket.close(); executor.shutdown()
+            assertTrue(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(failures.isEmpty(), "Autoplay receiving fixture failed: $failures")
         }
     }
 
@@ -1746,6 +2121,42 @@ class AndroidPlaybackControllerTest {
                 assertFalse(f.probe.requested, "still paused: connecting asked for no sound")
                 assertFalse(f.controller.state.value.needsReconnect)
             }
+        }
+    }
+
+    @Test fun reconnectPreparesTheRestoredQueueWhileTheRealOutboxRevalidatesEstablishedContact() {
+        ScrobbleReceiver().use { receiver ->
+            AndroidServerIdentity.requireValidation(OWNER)
+            val chosen = kotlinx.coroutines.flow.MutableStateFlow(false)
+            val contact = object : AndroidServerContact {
+                override fun isOpen() = chosen.value && AndroidServerIdentity.isVerified(OWNER)
+                override suspend fun awaitOpen() {
+                    kotlinx.coroutines.flow.combine(chosen, AndroidServerIdentity.verified) { selected, verified ->
+                        selected && OWNER in verified
+                    }.first { it }
+                }
+                override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(OWNER) }
+            }
+            val loaded = java.util.concurrent.CopyOnWriteArrayList<String>()
+            Fixture(savedOwner = OWNER, baseUrl = receiver.url, onDelivery = null,
+                pendingPlays = listOf("played-before"), serverContact = contact,
+                loadSong = { id -> loaded += id; song(id) }).use { f ->
+                settle(5)
+                assertTrue(f.prepared.isEmpty())
+                assertTrue(loaded.isEmpty())
+                kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(OWNER) { null }) }
+                chosen.value = true
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                while ((f.prepared.isEmpty() || receiver.requests.none { it["submission"] == "true" }) &&
+                    System.nanoTime() < deadline) settle(5)
+                assertEquals(listOf("played-before"), receiver.requests.filter { it["submission"] == "true" }.map { it["id"] })
+                assertEquals(listOf("saved-song"), f.prepared.map { it.itemId.rawId },
+                    "The outbox's independent identity probe must not strand the restored queue after Connect")
+                assertEquals(setOf("saved-song"), loaded.toSet(), "Metadata and playback resolve only this server's restored entry")
+                assertFalse(f.probe.requested, "Reconnecting restores paused playback")
+                assertFalse(f.controller.state.value.needsReconnect)
+            }
+            AndroidServerIdentity.requireValidation(OWNER)
         }
     }
 
@@ -1893,6 +2304,41 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun identityRejectionDuringPlaylistDiscoveryCannotSendTheRetainedAccountsSongOrPlaylistIds() {
+        ScrobbleReceiver(holdExtensions = true).use { receiver ->
+            receiver.advertiseContext = true
+            val owner = "provider:${java.util.UUID.randomUUID()}"
+            Fixture(accountOwner = owner, baseUrl = receiver.url, onDelivery = null,
+                pendingPlays = listOf("retained-song"), pendingPlaylistId = "retained-playlist").use { f ->
+                val outbox = PersistentScrobbleOutbox(f.store.database, OutboxWallClock { System.currentTimeMillis() })
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                while (receiver.extensionEntered.count > 0 && System.nanoTime() < deadline) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    Thread.sleep(10)
+                }
+                assertEquals(0L, receiver.extensionEntered.count, "Setup: the real controller's authenticated discovery is held")
+                assertEquals("retained-playlist", outbox.pending(ServerId(owner)).single().playlistRawId)
+                kotlinx.coroutines.runBlocking {
+                    assertEquals(DomainError.Protocol.ServerIdentityChanged,
+                        AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged })
+                }
+                receiver.releaseExtensions.countDown()
+                val completed = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                while (receiver.requests.isEmpty() && outbox.pending(ServerId(owner)).singleOrNull()?.attemptCount == 0L &&
+                    System.nanoTime() < completed) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    Thread.sleep(10)
+                }
+                assertTrue(receiver.requests.isEmpty(),
+                    "Known rejection must fence the actual HTTP scrobble after a held extension answer")
+                val retained = outbox.pending(ServerId(owner)).single()
+                assertEquals("retained-song", retained.rawId)
+                assertEquals("retained-playlist", retained.playlistRawId)
+                assertEquals(1, receiver.extensionRequests.get(), "No rejected rediscovery may follow")
+            }
+        }
+    }
+
     @Test fun networkReconnectRediscoversPositiveAndNegativePlaylistContextWithoutReplacingPlayback() {
         ScrobbleReceiver().use { receiver ->
             Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
@@ -2011,7 +2457,10 @@ class AndroidPlaybackControllerTest {
     private class ScrobbleReceiver(
         private val refuseFirstSubmissions: Int = 0,
         private val goneId: String? = null,
+        private val holdExtensions: Boolean = false,
     ) : AutoCloseable {
+        val extensionEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseExtensions = java.util.concurrent.CountDownLatch(1)
         @Volatile var advertiseContext = false
         val extensionRequests = java.util.concurrent.atomic.AtomicInteger()
         private val refused = java.util.concurrent.atomic.AtomicInteger()
@@ -2030,17 +2479,27 @@ class AndroidPlaybackControllerTest {
                             val line = assertNotNull(reader.readLine()).split(' ')
                             val uri = java.net.URI(line[1])
                             assertEquals("GET", line[0])
+                            val identityProbe = uri.path == "/rest/ping.view"
                             val extensions = uri.path == "/rest/getOpenSubsonicExtensions.view"
-                            assertTrue(extensions || uri.path == "/rest/scrobble.view")
+                            assertTrue(identityProbe || extensions || uri.path == "/rest/scrobble.view")
                             while (!reader.readLine().isNullOrEmpty()) { /* drain request headers */ }
                             val query = uri.rawQuery.split('&').associate {
                                 val pair = it.split('=', limit = 2)
                                 java.net.URLDecoder.decode(pair[0], "UTF-8") to java.net.URLDecoder.decode(pair[1], "UTF-8")
                             }
-                            if (extensions) extensionRequests.incrementAndGet() else requests += query
-                            val refuse = query["submission"] == "true" && refused.getAndIncrement() < refuseFirstSubmissions
-                            val gone = query["submission"] == "true" && query["id"] == goneId
-                            val body = (if (extensions) """{"subsonic-response":{"status":"ok","openSubsonicExtensions":${if (advertiseContext) """[{"name":"dulcetHome","versions":[1]}]""" else "[]"}}}"""
+                            assertEquals("controller-canary", query["u"])
+                            val salt = assertNotNull(query["s"])
+                            assertEquals(AccountConnectionContract.saltedToken("controller-password-canary", salt), query["t"])
+                            if (extensions) {
+                                extensionRequests.incrementAndGet()
+                                extensionEntered.countDown()
+                                if (holdExtensions) assertTrue(releaseExtensions.await(30, java.util.concurrent.TimeUnit.SECONDS),
+                                    "The held extension fixture must be released")
+                            } else if (!identityProbe) requests += query
+                            val refuse = !identityProbe && !extensions && query["submission"] == "true" && refused.getAndIncrement() < refuseFirstSubmissions
+                            val gone = !identityProbe && !extensions && query["submission"] == "true" && query["id"] == goneId
+                            val body = (if (identityProbe) """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.60.0"}}"""
+                                else if (extensions) """{"subsonic-response":{"status":"ok","openSubsonicExtensions":${if (advertiseContext) """[{"name":"dulcetHome","versions":[1]}]""" else "[]"}}}"""
                                 else if (gone) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Song not found"}}}"""
                                 else if (refuse) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"unavailable"}}}"""
                                 else """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""").toByteArray()
@@ -2054,6 +2513,7 @@ class AndroidPlaybackControllerTest {
             }
         }
         override fun close() {
+            releaseExtensions.countDown()
             socket.close(); executor.shutdown()
             assertTrue(executor.awaitTermination(6, java.util.concurrent.TimeUnit.SECONDS))
             assertTrue(failures.isEmpty(), "Scrobble receiving fixture failed: $failures")
@@ -2094,8 +2554,11 @@ class AndroidPlaybackControllerTest {
         localPlans: AndroidLocalPlaybackSource? = null,
         /** Plays left in the outbox by an earlier run, by raw id, before the controller exists. */
         pendingPlays: List<String> = emptyList(),
+        pendingPlaylistId: String? = null,
         serverContact: AndroidServerContact? = null,
         overlapPlayer: (() -> androidx.media3.common.Player)? = null,
+        accountOwner: String = OWNER,
+        candidates: (suspend (String, Set<String>, Int) -> List<AndroidTrack>)? = { _, _, _ -> emptyList() },
     ) : AutoCloseable {
         private val context = RuntimeEnvironment.getApplication()
         private val databaseName = "playback-controller-${java.util.UUID.randomUUID()}.db"
@@ -2116,16 +2579,17 @@ class AndroidPlaybackControllerTest {
             val outbox = PersistentScrobbleOutbox(store.database, OutboxWallClock { System.currentTimeMillis() })
             pendingPlays.forEachIndexed { index, rawId ->
                 outbox.persistSynchronously(RecordedPlaybackEvent.SubmittedPlay(
-                    ProviderItemId(OWNER, rawId), PlaybackWallClockTime(System.currentTimeMillis() - 60_000 + index)))
+                    ProviderItemId(accountOwner, rawId), PlaybackWallClockTime(System.currentTimeMillis() - 60_000 + index),
+                    pendingPlaylistId?.let { ProviderItemId(accountOwner, it) }))
             }
             controller = AndroidPlaybackController(RuntimeEnvironment.getApplication(),
-                PlaybackEndpointAccount(OWNER, baseUrl, "controller-canary", "controller-password-canary", true),
+                PlaybackEndpointAccount(accountOwner, baseUrl, "controller-canary", "controller-password-canary", true),
                 AndroidPlaybackControllerBoundaries(store, if (realPlayer) null else probe.player,
                     if (realPlayer) null else { plan -> prepared += plan }, loadSong, resolve,
                     onDelivery?.let { callback -> { event -> callback(this, event) } },
                     localPlans = localPlans,
                     prepareLocalSource = if (realPlayer) null else { plan -> preparedLocal += plan },
-                    overlapPlayer = overlapPlayer),
+                    overlapPlayer = overlapPlayer, autoplayCandidates = candidates),
                 serverContact = serverContact)
         }
         override fun close() {

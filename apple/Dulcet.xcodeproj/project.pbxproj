@@ -212,6 +212,7 @@
 		BCD9083B767952FE28A12558 /* DulcetMacAccountConnectStatesAppTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DEC1B9AFECEC5027F346222 /* DulcetMacAccountConnectStatesAppTest.swift */; };
 		BD51746B8A8FE55FB7DF586A /* DulcetCorePlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */; };
 		BDFEB51EA2A8C8F8D7CE40DC /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6526031188E1F2E89174E6F9 /* DulcetKit */; };
+		BEFCBB326FCC67636BF826D1 /* navidrome-reference.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 15F1FBE62418F9CA54452CFD /* navidrome-reference.mp3 */; };
 		C004143475F1944F3C2F581D /* DulcetCorePlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D79D53B0A0E6E79AB1E14875 /* DulcetCorePlaybackController.swift */; };
 		C0A31800A3005536B6178B11 /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5C441DEB8813DCBC25896005 /* DulcetKit */; };
 		C0EF4AED14AD321DCC78AA07 /* DulcetSignedIPadAccountProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA421B878150150D813EBD5 /* DulcetSignedIPadAccountProbe.swift */; };
@@ -1425,6 +1426,7 @@
 			buildPhases = (
 				B506F6613DDBD66109ABDB46 /* Compile Kotlin Framework */,
 				57C88B60B2A7D36D7D7CB3D1 /* Sources */,
+				6BBA31FB8AD1BD5A1AE7B797 /* Resources */,
 				376C26F42A6C8F2D0ED34E09 /* Frameworks */,
 			);
 			buildRules = (
@@ -1674,6 +1676,14 @@
 			files = (
 				C6A07AF812C2DD16D510F191 /* Assets.xcassets in Resources */,
 				0D7D95152859DF1DBB0C3219 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6BBA31FB8AD1BD5A1AE7B797 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BEFCBB326FCC67636BF826D1 /* navidrome-reference.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
