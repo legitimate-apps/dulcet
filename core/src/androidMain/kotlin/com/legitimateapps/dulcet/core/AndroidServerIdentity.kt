@@ -89,12 +89,11 @@ public object AndroidServerIdentity {
                 }
             }
             // Do not acquire the composition registry's lock while holding the gate's lock.
-            rejectedEpoch?.let { epoch ->
-                beforeRejectedNotification()
-                AndroidLibraryReader.currentFor(id)?.rejectServerIdentity(epoch)
-            }
-            // Notification delivery can suspend in tests, and registry lookup can race acceptance.
-            // Its decision is subject to the same latest-negotiation rule as the original reply.
+            val epoch = rejectedEpoch ?: return outcome
+            beforeRejectedNotification()
+            AndroidLibraryReader.currentFor(id)?.rejectServerIdentity(epoch)
+            // Only rejection has this second delivery phase. Do not invalidate ordinary successful
+            // probes merely because a later background probe starts after they publish acceptance.
             return synchronized(validationLock) {
                 if (generations[id] == generation) outcome
                 else if (id in rejected) DomainError.Protocol.ServerIdentityChanged else DomainError.Transport.Cancelled
