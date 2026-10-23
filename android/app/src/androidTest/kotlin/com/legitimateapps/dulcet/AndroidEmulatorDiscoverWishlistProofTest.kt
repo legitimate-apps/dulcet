@@ -23,8 +23,6 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeUp
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -113,6 +111,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 freshAccount()
                 launch().use {
                     everywhere("arrival")
+                    // Search publishes artist, album and song groups incrementally. Establish
+                    // the actual song action before taking the transport offline.
+                    ensureDisplayed("discover.wish.song.0")
                     val offline=fixture.arm("offline")
                     click("discover.wish.song.0")
                     requireText("Waiting to sync")
@@ -138,8 +139,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     File(proofDirectory,"process-after.json").writeText(JSONObject()
                         .put("beforePid",persisted.getInt("beforeDeathPid",-1)).put("afterPid",Process.myPid())
                         .put("pendingRestored",true).toString())
-                    // Retain the actual cached Search card while the account is offline.
-                    // Returning to that card later must not replace it with fabricated metadata.
+                    // Restore the actual Search query before reconnect so its ordinary
+                    // revalidation and later held-item action are part of this proof.
                     everywhere("arrival");openWishlist()
                     // Replay the durable A intent, lose its real response, then remove A while
                     // offline. A scan races that durable removal before reconnect sends it.
@@ -156,8 +157,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     reconnect(activity);fixture.awaitNoWish(mbid(1))
                     fixture.replayRemovedAdd(addA)
                     fixture.awaitNoWish(mbid(1))
-                    // Re-add from the retained Search card, as a person can after removing A.
-                    // This does not issue a new query for an already-held item after the scan.
+                    // Re-add through the canonical Search item after A's removal and scan.
+                    // Reconnect may already have refreshed its availability to held.
                     click("search.open");click("discover.scope.everywhere")
                     click("discover.wish.song.0")
                     val generationB=fixture.awaitWish(mbid(1)).getString("id")
@@ -387,17 +388,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun exists(tag:String)=compose.onAllNodes(hasTestTag(tag),useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()
     private fun awaitTag(tag:String){await("visible $tag"){exists(tag)}}
     private fun click(tag:String) {
-        // The surface is mounted before its asynchronous page arrives. Retry the scroll after
-        // delivery rather than searching once while the LazyColumn contains only its header.
-        await("displayed click target $tag") {
-            if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isFailure) {
-                for (container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list")) {
-                    if(exists(container))runCatching {compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag))}
-                    if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) break
-                }
-            }
-            runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess
-        }
+        ensureDisplayed(tag)
         compose.onNodeWithTag(tag).performClick();compose.waitForIdle()
     }
     private fun clickDisplayed(tag:String) {
@@ -413,27 +404,22 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         listOf("library.open","browse.open","search.open","account.open").forEach(::accessible)
     }
     private fun ensureDisplayed(tag:String) {
-        if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
-        for (container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list")) {
-            if (exists(container)) {
-                if (container == "discover.album.list" && tag.startsWith("discover.album.edition.")) {
-                    runCatching { compose.onNodeWithTag(container).performScrollToIndex(2) }
-                    compose.waitForIdle()
-                    runCatching { compose.onNodeWithTag(tag).performScrollTo() }
-                    if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
-                }
-                runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
-                // Edition chips live in a horizontal scroller inside the lazy vertical item.
+        await("displayed $tag") {
+            if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
+            for (container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list")) {
+                if (!exists(container)) continue
+                // Incremental groups and album tracks arrive after the surface. Search from
+                // a known item on every retry, including after an earlier empty-page scroll.
+                val edition = container == "discover.album.list" && tag.startsWith("discover.album.edition.")
+                runCatching { compose.onNodeWithTag(container).performScrollToIndex(if (edition) 2 else 0) }
+                compose.waitForIdle()
+                if (!edition) runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
+                // Also bring a chip into its horizontal viewport inside the lazy item.
                 runCatching { compose.onNodeWithTag(tag).performScrollTo() }
-                if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
-                repeat(8) {
-                    compose.onNodeWithTag(container).performTouchInput { swipeUp() }
-                    compose.waitForIdle()
-                    if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return
-                }
+                if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
             }
+            false
         }
-        await("displayed $tag") { runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess }
     }
     private fun accessible(tag:String) {
         ensureDisplayed(tag)
