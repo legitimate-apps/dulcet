@@ -4,7 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 
-/** Records only a server accepted on the account form, after any replacement consent. */
+/** Authorizes saved server identity after negotiation or account-form replacement consent. */
 public object AndroidServerIdentity {
     private val mutableVerified = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
     public val verified: kotlinx.coroutines.flow.StateFlow<Set<String>> = mutableVerified
@@ -15,6 +15,14 @@ public object AndroidServerIdentity {
     private val authorizationEpochs = mutableMapOf<String, Long>()
     internal fun authorizationEpoch(id: String): Long? = synchronized(validationLock) {
         if (id in rejected) null else authorizationEpochs[id] ?: 0L
+    }
+    /** Reader-owner writes only; never acquire the composition registry or suspend in [apply]. */
+    internal fun applyRejection(id: String, epoch: Long, apply: () -> Unit): Boolean = synchronized(validationLock) {
+        if (id !in rejected || authorizationEpochs[id] != epoch) false
+        else { apply(); true }
+    }
+    internal fun rejectionEpoch(id: String): Long? = synchronized(validationLock) {
+        if (id in rejected) authorizationEpochs[id] else null
     }
     private fun retireAuthorization(id: String) {
         authorizationEpochs[id] = (authorizationEpochs[id] ?: 0L) + 1
@@ -47,7 +55,12 @@ public object AndroidServerIdentity {
     } }
     internal fun isRejected(id: String): Boolean = id in rejected
     public fun isVerified(id: String): Boolean = id in mutableVerified.value && !isRejected(id)
-    internal suspend fun validate(id: String, validation: suspend () -> DomainError?): DomainError? {
+    internal suspend fun validate(
+        id: String,
+        // Narrow race-test seam after the decision lock, before registry lookup and dispatch.
+        beforeRejectedNotification: suspend () -> Unit = {},
+        validation: suspend () -> DomainError?,
+    ): DomainError? {
         val generation = synchronized(validationLock) {
             // An independent background probe does not revoke established contact while in flight.
             // New connections explicitly requireValidation; each ID-using worker still gates its own batch.
@@ -56,23 +69,35 @@ public object AndroidServerIdentity {
         }
         try {
             val error = validation()
-            var notifyRejected = false
+            var rejectedEpoch: Long? = null
             val outcome = synchronized(validationLock) {
                 if (generations[id] != generation) {
                     if (id in rejected) DomainError.Protocol.ServerIdentityChanged else DomainError.Transport.Cancelled
                 } else {
                     if (error == DomainError.Protocol.ServerIdentityChanged && rejected.add(id)) {
                         retireAuthorization(id)
-                        notifyRejected = true
+                        rejectedEpoch = authorizationEpochs.getValue(id)
                     }
-                    if (error == null && id !in rejected) mutableVerified.update { it + id }
-                    else mutableVerified.update { it - id }
+                    if (error == null) {
+                        // The current probe authenticated saved lineage. Reopen with a new lifetime,
+                        // never the token captured by work started before rejection. Older probes
+                        // cannot reach this branch; ordinary matching probes keep accepted work valid.
+                        if (rejected.remove(id)) retireAuthorization(id)
+                        mutableVerified.update { it + id }
+                    } else mutableVerified.update { it - id }
                     if (id in rejected) DomainError.Protocol.ServerIdentityChanged else error
                 }
             }
             // Do not acquire the composition registry's lock while holding the gate's lock.
-            if (notifyRejected) AndroidLibraryReader.currentFor(id)?.rejectServerIdentity()
-            return outcome
+            val epoch = rejectedEpoch ?: return outcome
+            beforeRejectedNotification()
+            AndroidLibraryReader.currentFor(id)?.rejectServerIdentity(epoch)
+            // Only rejection has this second delivery phase. Do not invalidate ordinary successful
+            // probes merely because a later background probe starts after they publish acceptance.
+            return synchronized(validationLock) {
+                if (generations[id] == generation) outcome
+                else if (id in rejected) DomainError.Protocol.ServerIdentityChanged else DomainError.Transport.Cancelled
+            }
         } catch (failure: Throwable) {
             synchronized(validationLock) {
                 if (generations[id] == generation) mutableVerified.update { it - id }

@@ -273,7 +273,11 @@ public class AndroidPlaybackController internal constructor(
      * §15.3). A diagnostic counter only: nothing reads it yet but tests, and the person is not told.
      */
     public val refusedPlaysDropped: Long get() = refusedDrops.get()
-    private val deliveries = Channel<RecordedPlaybackEvent>(Channel.UNLIMITED)
+    private sealed interface DeliveryWork {
+        data class Event(val event: RecordedPlaybackEvent) : DeliveryWork
+        data class Barrier(val pending: CompletableDeferred<Int>) : DeliveryWork
+    }
+    private val deliveries = Channel<DeliveryWork>(Channel.UNLIMITED)
     private val retryDelivery = ScrobbleOutboxRetryLoop(scope, { worker.onForeground() })
     private var resolution: Job? = null
     private var startJob: Job? = null
@@ -486,11 +490,14 @@ public class AndroidPlaybackController internal constructor(
             transition.startDirective?.let { start(it) }
         }
         scope.launch {
-            for (event in deliveries) when (event) {
-                // Saved and not connected (§13.1): a downloaded song playing is not announced, and a
-                // finished play waits in the outbox, where capture() has already put it.
-                is RecordedPlaybackEvent.NowPlaying -> if (contactOpen()) sender.send(ScrobbleEndpointRequest(event))
-                is RecordedPlaybackEvent.SubmittedPlay -> if (contactOpen()) drain()
+            for (work in deliveries) when (work) {
+                is DeliveryWork.Barrier -> work.pending.complete(outbox.pending(ServerId(account.providerInstanceId)).size)
+                is DeliveryWork.Event -> when (val event = work.event) {
+                    // Saved and not connected (§13.1): a downloaded song playing is not announced,
+                    // and a finished play waits in the outbox, where capture() already put it.
+                    is RecordedPlaybackEvent.NowPlaying -> if (contactOpen()) sender.send(ScrobbleEndpointRequest(event))
+                    is RecordedPlaybackEvent.SubmittedPlay -> if (contactOpen()) drain()
+                }
             }
         }
         if (contactOpen()) scope.launch { drain() }
@@ -784,6 +791,19 @@ public class AndroidPlaybackController internal constructor(
         queueConfirmation = null
         dropHeldAdditions()
         command(PlaybackCommand.Stop(id()))
+    }
+
+    /**
+     * Observes completion of playback delivery work queued before this call, without initiating
+     * a send or cancelling one. Returns the durable plays still pending (for example after a
+     * refused send). Call after a session ends to witness its complete successful delivery
+     * window; while playback continues, later events can of course queue more work.
+     */
+    public suspend fun awaitQueuedPlaybackDelivery(): Int = withContext(Dispatchers.Main.immediate) {
+        check(!closed) { "The playback controller is closed" }
+        val pending = CompletableDeferred<Int>()
+        deliveries.send(DeliveryWork.Barrier(pending))
+        pending.await()
     }
 
     /** Moves to the next entry. At the end of the queue without repeat-all it does nothing. */
@@ -1417,7 +1437,7 @@ public class AndroidPlaybackController internal constructor(
             is PlaybackCoreEffect.RecordPlaybackEvent -> {
                 if (effect.event is RecordedPlaybackEvent.SubmittedPlay) outbox.persistSynchronously(effect.event)
                 if (boundaries?.enqueueDelivery != null) boundaries.enqueueDelivery.invoke(effect.event)
-                else check(deliveries.trySend(effect.event).isSuccess)
+                else check(deliveries.trySend(DeliveryWork.Event(effect.event)).isSuccess)
             }
             is PlaybackCoreEffect.PersistResumePosition -> resumes.save(effect.itemId, effect.position)
             is PlaybackCoreEffect.ClearResumePosition -> resumes.clear(effect.itemId)

@@ -23,6 +23,9 @@ class LoopbackLibraryServer : AutoCloseable {
     private val socket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
     val url = "http://127.0.0.1:${socket.localPort}"
 
+    /** Optional envelope implementation identity for saved-account reconnect proofs. */
+    @Volatile var serverType: String? = null
+
     /** The genres `getGenres` lists, in the server's order. */
     @Volatile var genres: List<String> = listOf("Jazz", "Ambient")
 
@@ -226,7 +229,7 @@ class LoopbackLibraryServer : AutoCloseable {
                 ?.let { (id, title) -> """"song":${genreSong(id, title)}""" }
             else -> null
         }
-        return """{"subsonic-response":{"status":"ok","version":"1.16.1"${payload?.let { ",$it" }.orEmpty()}}}"""
+        return """{"subsonic-response":{"status":"ok","version":"1.16.1"${serverType?.let { ",\"type\":${quote(it)}" }.orEmpty()}${payload?.let { ",$it" }.orEmpty()}}}"""
     }
 
     /** A playlist read or write, answered from [playlists]; null for any other endpoint, or without them. */

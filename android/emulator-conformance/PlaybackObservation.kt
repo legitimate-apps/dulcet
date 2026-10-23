@@ -125,6 +125,15 @@ class PlaybackObserver(private val context: Context, private val removeAccountDa
 
     fun stopPlayback() { instrumentation.runOnMainSync { service?.playback?.stop() } }
 
+    /** Waits behind the production delivery consumer; it neither flushes nor stops playback. */
+    fun awaitQueuedPlaybackDelivery(): Int {
+        var controller: com.legitimateapps.dulcet.core.AndroidPlaybackController? = null
+        onController { controller = it }
+        return runBlocking {
+            kotlinx.coroutines.withTimeout(30_000) { checkNotNull(controller).awaitQueuedPlaybackDelivery() }
+        }
+    }
+
     /** Runs [block] on the main thread against the service's production controller. */
     fun onController(block: (com.legitimateapps.dulcet.core.AndroidPlaybackController) -> Unit) {
         var ran = false
