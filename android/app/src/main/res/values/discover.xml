@@ -26,7 +26,7 @@
     <string name="discover_age">Source age: %1$d seconds</string>
     <string name="discover_age_unknown">Source age unknown</string>
     <string name="discover_busy">Server is busy. Try again in %1$d min</string>
-    <string name="discover_failed">Could not load this music. Try again.</string>
+    <string name="discover_failed">Could not load this music</string>
     <string name="discover_retry">Try again</string>
     <string name="discover_device_age">Cached on this device %1$d seconds ago</string>
     <string name="discover_item_actions">Actions for %1$s</string>

@@ -103,6 +103,32 @@ fit. Full accessibility names are preserved; body/dialog text remains at the sys
 visible. Native-font
 layout tests provide the positive measurement that legacy Robolectric font stubs could not.
 
+## Step 3: phone design pass
+
+The plain step-2 screens were brought in line with the rest of the phone app by reusing Library's
+own visuals rather than drawing new ones. `PhoneLibraryVisuals.kt` holds Library's artwork frame,
+centred detail header, filled/tonal detail actions, album card and numbered track row; Library keeps
+its exact behavior by delegating to them. Search's media row is `PhoneMediaRow.kt`, shared by server
+search and Everywhere results. Discover's artist and album pages use the Library header with wish as
+the primary action, Open in your library for held items and match correction behind the top-bar
+overflow; discographies use the Library album card and tracks use the Library row. Held and not-held
+music carry a small availability label, and wish is a bookmark glyph, never a heart or plus. Wishlist
+is a compact list: state labels on each row, row actions in an overflow, all filters under one
+top-bar filter action, and offline/retry through the standard notice.
+
+Review then removed the remaining mismatches: the source-age line is caption-weight provenance beside
+the attribution, not a filled bar; artist-grid tiles keep clean covers with their actions in the
+tile's long-press menu, as Library's cards do; artist rows lead with Library's monogram placeholder;
+and the refresh banner names the failure once, leaving "Try again" to its button.
+
+Evidence: `testDevDebugUnitTest` 268 tests, `testProdDebugUnitTest` 268, `testDebugUnitTest` (TV) 95,
+all with 0 failures, 0 errors and 0 skips, read from the JUnit XML. The ten-phase disposable-fixture
+emulator proof reran clean: 10 tests, 0 failures, 0 errors, 0 skips, with light, dark and
+largest-font captures of Search, the artist page, the album page and Wishlist retained in the design
+leg's evidence root (`after5/` for the redesign, `after6/` for the review fixes), each JPEG at most
+800 px on the long side. The proof's `accessible` helper scrolls before requiring a tag to exist, so
+largest-font items outside a lazy list's composed window are reached the way `click()` already did.
+
 ## Integration handoff
 
 Feature evidence for the Android phone: `discover.search`, `wishlist.add`, `wishlist.state`,

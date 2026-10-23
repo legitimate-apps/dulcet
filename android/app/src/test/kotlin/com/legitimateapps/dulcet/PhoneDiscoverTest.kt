@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -58,7 +59,7 @@ class PhoneDiscoverTest {
     @Test fun editionSelectionShowsOnlySelectedTracks() {
         source.albums[null]=DiscoverAlbum(source.item("album"),listOf(DiscoverEdition("one",null,12,emptyList()),DiscoverEdition("two",null,9,emptyList())),"one",source.page(listOf(source.item("song",title="First edition"))))
         source.albums["two"]=source.albums[null]!!.copy(selectedReleaseId="two",tracks=source.page(listOf(source.item("song",title="Second edition"))))
-        compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session,"album",{}, {},{}) } }
+        compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session,"album",{},{}) } }
         compose.onNodeWithTag("discover.album.list").performScrollToNode(hasText("First edition"))
         compose.onNodeWithText("First edition").assertExists()
         compose.onNodeWithTag("discover.album.edition.1").performClick()
@@ -103,7 +104,7 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.wish.artist.0").assertTextContains("Add to Wishlist")
     }
     @Test fun albumDetailNamesItsLibraryHeaderAndPrimaryWish() {
-        compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session,"album",{},{},{}) } }
+        compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session,"album",{},{}) } }
         compose.onNodeWithTag("discover.album.header").assertIsDisplayed()
         compose.onNodeWithTag("discover.wish.album.0").assertTextContains("Add to Wishlist")
     }
@@ -121,5 +122,29 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.item.album.0").performTouchInput { click(Offset(8f,8f)) }
         compose.waitForIdle()
         assertEquals("album",opened)
+    }
+    @Test fun albumCardKeepsArtCleanAndMovesActionsIntoItsMenu() {
+        val local=DiscoverLibraryRef("provider:test","album","local-album")
+        val held=source.item("album").copy(availability=DiscoverAvailability("held","known",null,12,12,null,listOf(local)))
+        var opened:String?=null; var openedLibrary:DiscoverLibraryRef?=null
+        compose.setContent { MaterialTheme { DiscoverAlbumCard(session,held,0,WishSource("artist","artist"),{openedLibrary=it},{opened=it}) } }
+        compose.onNodeWithTag("discover.openLibrary.album.0").assertDoesNotExist()
+        compose.onNodeWithTag("discover.reject.album.0.0").assertDoesNotExist()
+        compose.onNodeWithTag("discover.item.menu.album.0").assertDoesNotExist()
+        compose.onNodeWithTag("discover.item.album.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.onNodeWithTag("discover.openLibrary.album.0").assertIsDisplayed()
+        compose.onNodeWithTag("discover.reject.album.0.0").assertIsDisplayed()
+        compose.onNodeWithTag("discover.openLibrary.album.0").performClick()
+        assertEquals("local-album",openedLibrary?.id)
+        compose.onNodeWithTag("discover.item.album.0").performSemanticsAction(SemanticsActions.OnClick)
+        assertEquals("album",opened)
+    }
+    @Test fun albumCardMenuOffersWishForNotHeldMusic() {
+        compose.setContent { MaterialTheme { DiscoverAlbumCard(session,source.item("album"),0,WishSource("artist","artist"),{},{}) } }
+        compose.onNodeWithTag("discover.wish.album.0").assertDoesNotExist()
+        compose.onNodeWithTag("discover.item.album.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.onNodeWithTag("discover.wish.album.0").assertIsDisplayed()
+        compose.onNodeWithTag("discover.wish.album.0").performClick()
+        assertEquals(1,source.added)
     }
 }

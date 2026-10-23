@@ -19,16 +19,14 @@
     <string name="wishlist_waiting">Waiting to sync</string>
     <string name="wishlist_not_saved">Not saved</string>
     <string name="wishlist_added">Added %1$s</string>
-    <string name="wishlist_updated">Updated %1$s</string>
     <string name="wishlist_arrived_at">Arrived %1$s</string>
-    <string name="wishlist_note_at">Note updated %1$s</string>
     <string name="wishlist_open_arrival">Open in your library</string>
     <string name="wishlist_reject">This isn\'t it</string>
     <string name="wishlist_remove">Remove wish</string>
     <string name="wishlist_remove_named">Remove wish for %1$s</string>
     <string name="wishlist_open_named">Open %1$s in your library</string>
     <string name="wishlist_reject_named">Correct the library match for %1$s</string>
-    <string name="wishlist_refresh_failed">Could not refresh Wishlist. Try again.</string>
+    <string name="wishlist_refresh_failed">Could not refresh Wishlist</string>
     <string name="wishlist_filters">Filter Wishlist</string>
     <string name="wishlist_row_actions">Actions for %1$s</string>
 </resources>

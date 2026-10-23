@@ -123,7 +123,7 @@ internal fun DiscoverItemRow(session: DiscoverWishlistSession, item: DiscoverIte
                 }
             },
             leading = {
-                if (item.kind == "artist") Icon(DulcetIcons.Person, null, Modifier.size(40.dp).padding(8.dp))
+                if (item.kind == "artist") Monogram(item.title, 48.dp)
                 else DiscoverArtwork(session, item.artworkId, item.title, 48.dp)
             },
             trailing = {
@@ -270,11 +270,13 @@ internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, f
     if (page?.age?.stale == true || page?.age?.fromDeviceCache == true) DiscoverNoticeCard {
         Text(stringResource(R.string.discover_cached), Modifier.testTag("discover.notice.stale"))
     }
-    page?.age?.let { age -> DiscoverNoticeCard {
-        Text(age.sourceAgeSeconds?.let { stringResource(R.string.discover_age, it) } ?: stringResource(R.string.discover_age_unknown), Modifier.testTag("discover.age"), style = MaterialTheme.typography.bodySmall)
+    // Provenance metadata reads as a caption beside the credit line, never as a notice card.
+    page?.age?.let { age ->
+        Text(age.sourceAgeSeconds?.let { stringResource(R.string.discover_age, it) } ?: stringResource(R.string.discover_age_unknown),
+            Modifier.testTag("discover.age"), style = MaterialTheme.typography.bodySmall)
         if (age.stale || age.fromDeviceCache) Text(stringResource(R.string.discover_device_age,
             ((System.currentTimeMillis() - age.receivedAtMillis).coerceAtLeast(0) / 1000)), style = MaterialTheme.typography.bodySmall)
-    } }
+    }
     if (error != null) {
         val deadline = remember(error.retryAtMillis) {
             SystemClock.elapsedRealtime() + ((error.retryAtMillis ?: 0) - System.currentTimeMillis()).coerceAtLeast(0)

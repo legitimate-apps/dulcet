@@ -15,7 +15,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -262,7 +261,7 @@ internal fun PhoneApp(
             route?.startsWith("discoverArtist:") == true -> PhoneDiscoverArtist(discoverSession,
                 route.removePrefix("discoverArtist:"), openDiscoverLibrary, openDiscoverAlbum, actions.back)
             route?.startsWith("discoverAlbum:") == true -> PhoneDiscoverAlbum(discoverSession,
-                route.removePrefix("discoverAlbum:"), openDiscoverLibrary, openDiscoverArtist, actions.back)
+                route.removePrefix("discoverAlbum:"), openDiscoverLibrary, actions.back)
             route?.startsWith("album:") == true ->
                 AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions,
                     myLibrary = myLibrarySession.takeIf { split })

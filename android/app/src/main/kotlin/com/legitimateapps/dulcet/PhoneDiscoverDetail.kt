@@ -1,16 +1,11 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -25,7 +20,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -132,7 +126,7 @@ internal fun DiscoverTrackRow(
     }
 }
 
-/** A Discover discography card in the shape Library album grids use. */
+/** A Discover discography card in the shape Library album grids use: clean art, tap opens, actions on long press. */
 @Composable
 internal fun DiscoverAlbumCard(
     session: DiscoverWishlistSession,
@@ -143,33 +137,65 @@ internal fun DiscoverAlbumCard(
     openAlbum: (String) -> Unit,
 ) {
     val publication by session.publication.collectAsState()
+    val access = publication?.access
     val wish = publication?.wishes?.firstOrNull {
         (it.wish?.target ?: it.pendingAdd?.target) == item.target && item.target != null
     }
     var saveError by remember(session, item.id) { mutableStateOf<DiscoverFailure?>(null) }
-    Column(Modifier.fillMaxWidth()) {
-        Box {
-            AlbumCardVisual(
-                title = item.title,
-                subtitle = listOfNotNull(item.artist, item.releaseDate ?: item.year?.toString())
-                    .joinToString(" · ").takeIf { it.isNotBlank() },
-                modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
-                artwork = {
-                    Box {
-                        DiscoverArtwork(session, item.artworkId, item.title, null,
-                            Modifier.fillMaxWidth().aspectRatio(1f))
-                        DiscoverAvailabilityText(item.availability,
-                            tag = "discover.availability.${item.kind}.$index",
-                            modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
-                    }
+    val openRef = item.availability.libraryItems.firstOrNull()
+    val canRemove = wish != null && access?.canRemoveWish == true
+    val canAdd = !canRemove && access?.canAddWish == true && item.wishable && item.target != null && item.availability.status != "held"
+    val canReject = access?.canRejectMatch == true && item.availability.libraryItems.isNotEmpty()
+    val menuItems: (@Composable (closeMenu: () -> Unit) -> Unit)? =
+        if (openRef == null && !canRemove && !canAdd && !canReject) null else { close ->
+            openRef?.let { ref ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.discover_open_library)) },
+                    leadingIcon = { Icon(DulcetIcons.LibraryMusic, null) },
+                    onClick = { close(); openLibrary(ref) },
+                    modifier = Modifier.testTag("discover.openLibrary.${item.kind}.$index"),
+                )
+            }
+            if (canRemove || canAdd) DropdownMenuItem(
+                text = { Text(stringResource(if (canRemove) R.string.discover_remove_wish else R.string.discover_add_wish)) },
+                leadingIcon = { Icon(if (canRemove) DulcetIcons.Wish else DulcetIcons.WishBorder, null) },
+                onClick = {
+                    close()
+                    if (canRemove) session.remove(checkNotNull(wish).key) { saveError = (it as? DiscoverResult.Failed)?.error }
+                    else session.add(item, source) { saveError = (it as? DiscoverResult.Failed)?.error }
                 },
-                onClick = item.target?.let { target -> { openAlbum(target.mbid) } },
+                modifier = Modifier.testTag("discover.wish.${item.kind}.$index"),
             )
-            Row(Modifier.align(Alignment.TopEnd).padding(6.dp).clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f))) {
-                DiscoverItemActions(session, item, index, source, wish, publication?.access, openLibrary) { saveError = it }
+            if (canReject) item.availability.libraryItems.forEachIndexed { refIndex, ref ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.discover_reject)) },
+                    leadingIcon = { Icon(DulcetIcons.Edit, null) },
+                    onClick = {
+                        close()
+                        session.reject(item, ref, wish?.wish?.id) { saveError = (it as? DiscoverResult.Failed)?.error }
+                    },
+                    modifier = Modifier.testTag("discover.reject.${item.kind}.$index.$refIndex"),
+                )
             }
         }
+    Column(Modifier.fillMaxWidth()) {
+        AlbumCardVisual(
+            title = item.title,
+            subtitle = listOfNotNull(item.artist, item.releaseDate ?: item.year?.toString())
+                .joinToString(" · ").takeIf { it.isNotBlank() },
+            modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
+            artwork = {
+                Box {
+                    DiscoverArtwork(session, item.artworkId, item.title, null,
+                        Modifier.fillMaxWidth().aspectRatio(1f))
+                    DiscoverAvailabilityText(item.availability,
+                        tag = "discover.availability.${item.kind}.$index",
+                        modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
+                }
+            },
+            menuItems = menuItems,
+            onClick = item.target?.let { target -> { openAlbum(target.mbid) } },
+        )
         if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
         (saveError ?: wish?.error)?.let { failure ->
             Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),

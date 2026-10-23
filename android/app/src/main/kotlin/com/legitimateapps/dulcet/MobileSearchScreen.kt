@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet
 
-import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -241,8 +240,9 @@ private fun MobileSearchResult(
                 overflow = TextOverflow.Ellipsis)
         },
         leading = {
-            if (account != null && result.type != SearchResultType.Artist) Artwork(account, result.artworkKey, result.title, 48.dp)
-            else Icon(if (result.type == SearchResultType.Artist) DulcetIcons.Person else DulcetIcons.MusicNote, null)
+            if (result.type == SearchResultType.Artist) Monogram(result.title, 48.dp)
+            else if (account != null) Artwork(account, result.artworkKey, result.title, 48.dp)
+            else Icon(DulcetIcons.MusicNote, null)
         },
         trailing = if (onPlay == null && onQueue == null) null else {
             {
