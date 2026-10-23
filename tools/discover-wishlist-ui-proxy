@@ -20,7 +20,7 @@ from fixture import IDS,request,rest,png,upstream
 
 class FixtureProxy:
     def __init__(self,config):
-        self.config=config;self.lock=threading.RLock();self.revision=0;self.name='normal';self.hits=0;self.effects=[];self.requests=[];self.remove_seen=threading.Event();self.lost=False;self.detail_release=threading.Event()
+        self.config=config;self.lock=threading.RLock();self.revision=0;self.name='normal';self.hits=0;self.effects=[];self.requests=[];self.remove_seen=threading.Event();self.lost=False;self.detail_release=threading.Event();self.query_release=threading.Event()
         self.scenarios=json.loads((Path(__file__).parent/'discover-wishlist-fixtures/scenarios.json').read_text())['scenarios']
     def state(self):
         with self.lock:return dict(scenario=self.name,revision=self.revision,armed=True,hits=self.hits,effects=list(self.effects),healthy=True)
@@ -47,8 +47,8 @@ class FixtureProxy:
     def scenario(self,name,reset=False):
         if name not in self.scenarios:raise ValueError('unknown scenario')
         with self.lock:
-            self.detail_release.set()
-            self.detail_release=threading.Event()
+            self.detail_release.set();self.query_release.set()
+            self.detail_release=threading.Event();self.query_release=threading.Event()
             self.revision+=1;self.name=name;self.hits=0;self.effects=[];self.lost=False;self.remove_seen.clear()
             ack=self.state()
         if reset or name=='identity-replacement':ack.update(identity=self.restore(),reset=reset)
@@ -114,7 +114,11 @@ class Handler(BaseHTTPRequestHandler):
                 state.requests.append({'sequence':len(state.requests)+1,'channel':'navidrome' if nav else 'dulcet','endpoint':endpoint,'revision':revision})
             if not nav:
                 if name=='offline':state.effect(endpoint,revision,name);return self.disconnect()
-                if name=='delayed-old-query' and 'old' in params.get('query',[''])[0].lower():state.effect(endpoint,revision,name);time.sleep(.75)
+                if name=='delayed-old-query' and endpoint=='searchDulcetDiscover' and 'old' in params.get('query',[''])[0].lower():
+                    with state.lock:query_release=state.query_release
+                    state.effect(endpoint,revision,name,held=True)
+                    if not query_release.wait(15):return self.reply(504,{'error':'new query did not release old query'})
+                    time.sleep(.75)
                 if name=='held-detail' and endpoint in {'getDulcetDiscoverAlbum','getDulcetDiscoverArtist'}:
                     with state.lock:release=state.detail_release
                     state.effect(endpoint,revision,name,held=True)
@@ -155,7 +159,10 @@ class Handler(BaseHTTPRequestHandler):
                         for row in page['item'][:2]:row.update(externalIds={},wishable=False)
                         page['item'][0]['kind']='future';page['item'][0]['availability']['status']='future'
                     state.effect(endpoint,revision,name);data=json.dumps(decoded).encode()
-                return self.reply(response.status,data,headers)
+                self.reply(response.status,data,headers)
+                if not nav and endpoint=='searchDulcetDiscover' and name=='delayed-old-query' and 'old' not in params.get('query',[''])[0].lower():
+                    state.query_release.set()
+                return
             finally:connection.close()
         except (ValueError,KeyError):self.reply(400,{'error':'fixture control or shape rejected'})
         except Exception as error:self.reply(502,{'error':'fixture failure','type':type(error).__name__})

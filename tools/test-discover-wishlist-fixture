@@ -102,9 +102,17 @@ class FixtureTests(unittest.TestCase):
     def test_scenariosWitnessDelayStaleOfflineAndFutureMetadata(self):
         f=self.fixture;url=f.urls['controlUrl']
         ack=f.scenario('delayed-old-query');started=time.monotonic()
-        old=f.rest('searchDulcetDiscover',kind='song',query='old')['dulcetDiscover']['item']
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pending=pool.submit(f.rest,'searchDulcetDiscover',kind='song',query='old')
+            deadline=time.monotonic()+10
+            while not any(e.get('held') for e in call(url,'/control/state')['effects']):
+                self.assertLess(time.monotonic(),deadline);time.sleep(.02)
+            self.assertFalse(pending.done())
+            new=f.rest('searchDulcetDiscover',kind='song',query='Fixture')['dulcetDiscover']['item']
+            old=pending.result(timeout=5)['dulcetDiscover']['item']
         self.assertGreaterEqual(time.monotonic()-started,.6)
-        new=f.rest('searchDulcetDiscover',kind='song',query='Fixture')['dulcetDiscover']['item']
+        payloads=[e['payload'] for e in call(url,'/control/state')['effects'] if e.get('response')]
+        self.assertEqual(['new','old'],payloads,'new response must precede obsolete response')
         self.assertNotEqual([r['title'] for r in old],[r['title'] for r in new])
         self.assertTrue(all(r['title'].startswith('Obsolete old query · ') for r in old))
         self.assertTrue(all(not r['title'].startswith('Obsolete old query · ') for r in new))

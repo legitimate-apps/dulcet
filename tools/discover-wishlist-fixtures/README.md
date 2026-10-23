@@ -153,7 +153,8 @@ traffic on Navidrome, and production-client scan arrival/lost-response removal. 
 observes the healthy baseline before reaching that missing integration. None is skipped, and no
 parallel `DiscoverClient` or identity fence substitutes for the missing session.
 
-The `delayed-old-query` response now prefixes only old-query row titles with `Obsolete old query · `;
+The `delayed-old-query` control holds an old request until a new answer has been written, then
+delays it 750 ms. It prefixes only old-query row titles with `Obsolete old query · `;
 normal/new payloads retain the recorded titles. Its response effects include `response: true` and
 `payload: old|new`, so an order proof can distinguish the answers after both have returned.
 

@@ -2,7 +2,7 @@
   "version": 1,
   "scenarios": {
     "normal": "Pass through to the disposable server.",
-    "delayed-old-query": "Delay old queries by 750 ms and prefix only their row titles with Obsolete old query; acknowledge response payload old/new.",
+    "delayed-old-query": "Hold an old query until a new query is served, then delay 750 ms and prefix only old row titles with Obsolete old query; acknowledge distinct response payloads in order.",
     "rate-limit-120": "Search answers HTTP 429 and Retry-After 120; each injection is counted.",
     "stale-answer": "Search passes through, then carries stale=true and original age 7200 seconds.",
     "offline": "Close app connections while control and independent server assertions remain available.",
