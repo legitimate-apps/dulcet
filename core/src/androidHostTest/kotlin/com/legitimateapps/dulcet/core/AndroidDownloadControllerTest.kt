@@ -857,6 +857,74 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    @Test fun queuedStreamCacheAppendCannotCrossRejectionAndAcceptance() = queuedStreamCacheAuthorization("append")
+    @Test fun queuedStreamCacheFinishCannotCrossRejectionAndAcceptance() = queuedStreamCacheAuthorization("finish")
+
+    private fun queuedStreamCacheAuthorization(phase: String) = runBlocking {
+        for (rejectAndAccept in listOf(false, true)) WireServer { WireReply(200, AUDIO) }.use { server ->
+            val accountId = "identity-queued-cache:${java.util.UUID.randomUUID()}"
+            val controller = controller(server, RecordingTasks(), serverId = accountId)
+            assertTrue(controller.awaitReconciled())
+            fun plan(rawId: String): RemotePlaybackWirePlan {
+                val base = playbackPlan(session = "cache:$rawId", attempt = "cache:$rawId")
+                val item = ProviderItemId(accountId, rawId)
+                return RemotePlaybackWirePlan(base.playbackSessionId, base.attemptId, item, base.path,
+                    base.deliveryProtocol, AudioContainer.Wav, base.transcode,
+                    PlaybackContentLength.Exact(AUDIO.size.toLong()), "stream", mapOf("id" to rawId),
+                    base.resolutionRequest.copy(itemId = item))
+            }
+            val kept = assertNotNull(controller.beginStreamCacheWrite(plan("kept"), 200, "audio/wav", AUDIO.size.toLong(), 0))
+            kept.append(AUDIO, 0, AUDIO.size); kept.finish()
+            val oldPath = assertNotNull(controller.localPlan("kept")).absolutePath
+            assertContentEquals(AUDIO, File(oldPath).readBytes(), "The positive cache really contains playable audio")
+            val pending = assertNotNull(controller.beginStreamCacheWrite(plan("pending"), 200, "audio/wav", AUDIO.size.toLong(), 0))
+            if (phase == "finish") pending.append(AUDIO, 0, AUDIO.size)
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val blocker = CoroutineScope(Dispatchers.IO).launch(AndroidDownloadController.databaseDispatcher) {
+                entered.countDown(); check(release.await(10, TimeUnit.SECONDS))
+            }
+            val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+            val operationThread = java.util.concurrent.atomic.AtomicReference<Thread>()
+            var result: java.util.concurrent.Future<Throwable?>? = null
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS), "The real download database dispatcher is held")
+                result = executor.submit<Throwable?> {
+                    operationThread.set(Thread.currentThread())
+                    try { if (phase == "append") pending.append(AUDIO, 0, AUDIO.size) else pending.finish(); null }
+                    catch (failure: Throwable) { failure }
+                }
+                // Completion timing alone cannot prove that the callback reached its database
+                // boundary. Its real runBlocking frame proves it entered the API and queued there.
+                withTimeout(10_000) {
+                    while (operationThread.get()?.stackTrace?.any {
+                        it.className == "kotlinx.coroutines.BlockingCoroutine" && it.methodName == "joinBlocking"
+                    } != true) delay(5)
+                }
+                assertFalse(result.isDone)
+                if (rejectAndAccept) {
+                    AndroidServerIdentity.validate(accountId) { DomainError.Protocol.ServerIdentityChanged }
+                    AndroidServerIdentity.accept(context, accountId, ServerIdentityPolicy.identity("navidrome", "confirmed-instance"))
+                } else AndroidServerIdentity.validate(accountId) { DomainError.Transport.Unreachable }
+                release.countDown()
+                val failure = result.get(10, TimeUnit.SECONDS)
+                if (rejectAndAccept && phase == "append") assertIs<IllegalStateException>(failure,
+                    "Already-read bytes queued for the database must not append after their authorization was retired")
+                else assertNull(failure)
+                if (phase == "append") pending.finish()
+                if (rejectAndAccept) assertNull(controller.localPlan("pending"), "A retired cache write must not promote")
+                else assertContentEquals(AUDIO, File(assertNotNull(controller.localPlan("pending")).absolutePath).readBytes(),
+                    "A transient probe must not retire the queued cache write")
+                assertEquals(oldPath, assertNotNull(controller.localPlan("kept")).absolutePath)
+                assertContentEquals(AUDIO, File(oldPath).readBytes(), "Rejection and consent preserve the old offline cache")
+            } finally {
+                release.countDown(); blocker.join(); result?.get(10, TimeUnit.SECONDS)
+                executor.shutdownNow(); assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS))
+                pending.abort()
+            }
+        }
+    }
+
     @Test fun anIdentityRejectionDuringTransferPreservesItsPartialAndPreventsPromotion() = runBlocking {
         for (resetConnection in listOf(false, true)) {
             val reached = CountDownLatch(1)
@@ -886,6 +954,38 @@ class AndroidDownloadControllerTest {
                     assertEquals("downloading", inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsOne().state)
                 } finally { release.countDown() }
             }
+        }
+    }
+
+    @Test fun headersReleasedAfterIdentityRejectionCannotChangeDownloadResumeMetadata() = runBlocking {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        WireServer {
+            entered.countDown()
+            check(release.await(10, TimeUnit.SECONDS))
+            WireReply(200, AUDIO)
+        }.use { server ->
+            val accountId = "identity-headers:${java.util.UUID.randomUUID()}"
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks, serverId = accountId)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = tasks.started.single()
+            val before = inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsOne()
+            assertNull(before.platform_resume_data, "Positive checkpoint: the transfer has no response metadata yet")
+            val running = async(Dispatchers.IO) { runCatching { controller.runTask(task) } }
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS), "The real stream response is held before headers")
+                assertEquals(1, server.requests.size)
+                AndroidServerIdentity.validate(accountId) { DomainError.Protocol.ServerIdentityChanged }
+                release.countDown()
+                val result = running.await()
+                val after = inspect().database.downloadsQueries.selectDownloadsForServer(accountId).executeAsOne()
+                assertContentEquals(before.platform_resume_data, after.platform_resume_data,
+                    "Headers arriving after rejection cannot persist the replacement server's resume length")
+                assertEquals(before.state, after.state, "The old download's state remains intact")
+                assertTrue(result.exceptionOrNull() is CancellationException || result.getOrNull() == AndroidDownloadRunOutcome.NotRunnable)
+                assertTrue(files().isEmpty(), "A rejected response cannot create partial or promoted audio")
+            } finally { release.countDown() }
         }
     }
 

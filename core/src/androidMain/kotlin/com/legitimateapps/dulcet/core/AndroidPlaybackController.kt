@@ -253,7 +253,7 @@ public class AndroidPlaybackController internal constructor(
             closed || !contactOpen() -> DomainError.Transport.Cancelled
             else -> null
         }
-    })
+    }, identityAuthorization = { AndroidServerIdentity.authorizationEpoch(account.providerInstanceId) })
     private val wall = OutboxWallClock(System::currentTimeMillis)
     private val outbox = PersistentScrobbleOutbox(store.database, wall)
     private val refusedDrops = AtomicLong()
@@ -511,6 +511,9 @@ public class AndroidPlaybackController internal constructor(
     private fun contactOpen(): Boolean = !AndroidServerIdentity.isRejected(account.providerInstanceId) &&
         (serverContact?.isOpen() ?: true)
 
+    private fun authorizesRemoteReply(authorization: Long?): Boolean = !closed && contactOpen() &&
+        authorization != null && authorization == AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
+
     /**
      * The person chose Connect or Reconnect: what waited for it goes now, as it does for an account
      * connected in this process. The outbox drains, the queue is named, and the restored entry is
@@ -610,6 +613,7 @@ public class AndroidPlaybackController internal constructor(
         val previousWantsPlay = wantsPlay
         wantsPlay = true
         val generation = requestGeneration
+        val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
         // Additions held for a queue this one supersedes would have been replaced by it.
         dropHeldAdditions()
         resolution?.cancel()
@@ -626,7 +630,7 @@ public class AndroidPlaybackController internal constructor(
                 // probe follows the ordinary Reconnect path below. Local playback never waits.
                 if (!downloaded) serverContact?.awaitValidation()
                 if (generation != requestGeneration || closed) return@launch
-                if (!downloaded && !contactOpen()) {
+                if (!downloaded && !authorizesRemoteReply(authorization)) {
                     // Saved and not connected (§13.1): the song needs the server, so nothing is
                     // sent and the queue stays as it was; the surface offers Reconnect.
                     if (generation == requestGeneration) {
@@ -643,7 +647,7 @@ public class AndroidPlaybackController internal constructor(
                 }
                 val song = if (downloaded || knownOffline) null else loadSong(chosen.rawId)
                 if (generation != requestGeneration || closed) return@launch
-                if (!downloaded && !contactOpen()) {
+                if (!downloaded && !authorizesRemoteReply(authorization)) {
                     dropHeldAdditions(); wantsPlay = false; needsReconnect = true; publish()
                     return@launch
                 }
@@ -679,7 +683,12 @@ public class AndroidPlaybackController internal constructor(
                 if (queue.snapshot().currentSession?.playbackSessionId == directive.playbackSessionId) {
                     start(directive, song?.takeIf { directive.itemId.rawId == chosen.rawId })
                 }
-            } catch (_: CancellationException) { throw CancellationException() }
+            } catch (cancelled: CancellationException) {
+                if (generation == requestGeneration && !closed && !contactOpen()) {
+                    dropHeldAdditions(); wantsPlay = false; needsReconnect = true; publish()
+                }
+                throw cancelled
+            }
             // A queue that never came to be takes what was added to it along with it. Cancellation
             // drops nothing here: whoever cancelled -- a new play or Stop -- has dropped them already.
             // Nor does a read that fails after this resolution was superseded -- a read that ignores
@@ -1064,6 +1073,7 @@ public class AndroidPlaybackController internal constructor(
         if (closed || !ownsActiveQueue() || !contactOpen() || autoplayJob?.isActive == true) return
         val request = queue.takeAutoplayRequest() ?: return
         // Start dispatched: publication must finish before an immediate fake transport answers.
+        val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId) ?: return
         autoplayJob = scope.launch(start = CoroutineStart.LAZY) {
             val tracks = try {
                 boundaries?.autoplayCandidates?.invoke(request.seed.rawId, request.excludedRawIds, request.count)
@@ -1073,8 +1083,11 @@ public class AndroidPlaybackController internal constructor(
                                 account.username, account.password, account.allowLocalHttp),
                             saltSource = null, logSink = null, hostResolver = systemHostResolver(),
                         ).also { autoplayTransport = it }
-                        AutoplayCandidateSource(account.providerInstanceId, transport)
-                            .candidates(request.seed.rawId, request.excludedRawIds, request.count).map { track ->
+                        AutoplayCandidateSource(account.providerInstanceId, transport) {
+                            if (closed || !contactOpen() ||
+                                authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId))
+                                throw CancellationException("autoplay authorization retired")
+                        }.candidates(request.seed.rawId, request.excludedRawIds, request.count).map { track ->
                                 AndroidTrack(track.id.providerInstanceId, track.id.rawId, track.title,
                                     track.credits.joinToString { it.name }, track.albumTitle,
                                     track.duration.inWholeMilliseconds, track.artworkKey, track.albumRawId)
@@ -1082,7 +1095,8 @@ public class AndroidPlaybackController internal constructor(
                     }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { emptyList() }
-            if (closed || !contactOpen()) return@launch
+            if (closed || !contactOpen() ||
+                authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return@launch
             tracks.forEach(::remember)
             captureEdit(queue.appendAutoplay(request.key, tracks.map {
                 PlaybackQueueItem(ProviderItemId(it.providerInstanceId, it.rawId), it.durationMilliseconds?.milliseconds, it.albumRawId)
@@ -1131,7 +1145,10 @@ public class AndroidPlaybackController internal constructor(
     /** [container] is null for a format this device cannot play directly; it is then transcoded. */
     private data class Song(val container: AudioContainer?, val duration: kotlin.time.Duration?, val track: AndroidTrack)
     private suspend fun loadSong(rawId: String): Song {
+        val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
+        if (!authorizesRemoteReply(authorization)) throw CancellationException("metadata authorization retired")
         val response = boundaries?.loadSong?.invoke(rawId) ?: requests.request("getSong", mapOf("id" to rawId))
+        if (!authorizesRemoteReply(authorization)) throw CancellationException("metadata authorization retired")
         val envelope = parseLibraryEnvelope(response.body.decodeToString())
         if (response.statusCode in 200..299 && envelope != null && envelope.status == "failed") {
             // The server's own answer names whose failure it is: code 70 is a song it no longer
@@ -1165,7 +1182,7 @@ public class AndroidPlaybackController internal constructor(
             duration?.inWholeMilliseconds ?: known?.durationMilliseconds,
             field("coverArt")?.takeIf { it.isNotBlank() } ?: known?.artworkKey,
             field("albumId") ?: known?.albumRawId)
-        if (!closed && contactOpen()) remember(track)
+        if (authorizesRemoteReply(authorization)) remember(track)
         return Song(container, duration, track)
     }
 
@@ -1209,13 +1226,16 @@ public class AndroidPlaybackController internal constructor(
         val key = plan.androidItemId?.let { metadata[it] }?.artworkKey ?: return
         if (artworkBytes?.first == key) return
         val repository = artwork ?: return
+        val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
+        val cachedOnly = !contactOpen()
         artworkJob = scope.launch {
             // Saved and not connected (§13.1): only what this device has kept.
-            val bytes = try { repository.load(key, SESSION_ARTWORK_PIXELS, cachedOnly = !contactOpen()) }
+            val bytes = try { repository.load(key, SESSION_ARTWORK_PIXELS, cachedOnly = cachedOnly) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { null } ?: return@launch
+            if (closed || activePlan?.androidAttemptId != plan.androidAttemptId ||
+                (!cachedOnly && !authorizesRemoteReply(authorization))) return@launch
             artworkBytes = key to bytes
-            if (closed || activePlan?.androidAttemptId != plan.androidAttemptId) return@launch
             val player = exo as? ExoPlayer ?: return@launch
             if (player.mediaItemCount == 1) player.replaceMediaItem(0, mediaItem(plan))
         }
@@ -1272,6 +1292,7 @@ public class AndroidPlaybackController internal constructor(
         heldStart = null
         val session = directive.playbackSessionId
         val generation = requestGeneration
+        val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
         startJob?.cancel()
         startJob = scope.launch {
             var pendingLease: AndroidLocalPlaybackLease? = null
@@ -1305,7 +1326,10 @@ public class AndroidPlaybackController internal constructor(
                     loadArtwork(plan)
                     return@launch
                 }
-                if (holdRemoteStartIfContactClosed(directive)) return@launch
+                if (!authorizesRemoteReply(authorization)) {
+                    holdRemoteStartIfContactClosed(directive)
+                    return@launch
+                }
                 // Availability is deliberately cheap; a file may disappear between queue
                 // selection and validation. Only an authorized explicit retry may probe past an
                 // observed outage, and OS loss still refuses the wire even for that retry.
@@ -1315,7 +1339,10 @@ public class AndroidPlaybackController internal constructor(
                 }
                 val song = knownSong ?: loadSong(directive.itemId.rawId)
                 if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
-                if (holdRemoteStartIfContactClosed(directive)) return@launch
+                if (!authorizesRemoteReply(authorization)) {
+                    holdRemoteStartIfContactClosed(directive)
+                    return@launch
+                }
                 // A format with no direct-play container goes through the profile's transcoding
                 // target on the legacy path (`stream?format=`). That path reads the source container
                 // only when no format is requested, so the target stands in for an unnamed source.
@@ -1326,7 +1353,10 @@ public class AndroidPlaybackController internal constructor(
                     .withStreamingQuality(streamingQuality.currentQuality)
                 val result = boundaries?.resolve?.invoke(request) ?: wire.resolve(request)
                 if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
-                if (holdRemoteStartIfContactClosed(directive)) return@launch
+                if (!authorizesRemoteReply(authorization)) {
+                    holdRemoteStartIfContactClosed(directive)
+                    return@launch
+                }
                 when (result) {
                     is PlaybackResolutionResult.Failed -> failBeforeStart(directive, result.error)
                     is PlaybackResolutionResult.Resolved -> {
@@ -1338,7 +1368,10 @@ public class AndroidPlaybackController internal constructor(
                         loadArtwork(result.plan)
                     }
                 }
-            } catch (_: CancellationException) { throw CancellationException() }
+            } catch (cancelled: CancellationException) {
+                if (generation == requestGeneration && !closed) holdRemoteStartIfContactClosed(directive)
+                throw cancelled
+            }
             catch (error: AndroidPlaybackIOException) { failBeforeStart(directive, error.error, generation) }
             catch (_: Exception) { failBeforeStart(directive, DomainError.Transport.Unreachable, generation) }
             finally { pendingLease?.close() }
@@ -1519,6 +1552,7 @@ public class AndroidPlaybackController internal constructor(
         preloadTriedBoundary = boundary
         val directive = queue.preloadNext(session.playbackSessionId).preloadDirective ?: return
         preloadAttempt = directive.attemptId
+        val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
         preloadJob = scope.launch {
             var pendingLease: AndroidLocalPlaybackLease? = null
             try {
@@ -1528,10 +1562,10 @@ public class AndroidPlaybackController internal constructor(
                 val plan = if (local != null) AndroidLocalPlaybackPlan(directive.playbackSessionId,
                     directive.attemptId, directive.itemId, local)
                 else {
-                    if (!contactOpen()) { discardOverlap(directive.attemptId); return@launch }
+                    if (!authorizesRemoteReply(authorization)) { discardOverlap(directive.attemptId); return@launch }
                     val song = loadSong(directive.itemId.rawId)
                     if (closed || preloadAttempt != directive.attemptId) return@launch
-                    if (!contactOpen()) { discardOverlap(directive.attemptId); return@launch }
+                    if (!authorizesRemoteReply(authorization)) { discardOverlap(directive.attemptId); return@launch }
                     val target = ANDROID_PROFILE.transcodingProfiles.first().container
                     val request = PlaybackResolveRequest(directive.playbackSessionId, directive.attemptId,
                         directive.itemId, song.container ?: target, false, ANDROID_PROFILE,
@@ -1539,7 +1573,7 @@ public class AndroidPlaybackController internal constructor(
                         .withStreamingQuality(streamingQuality.currentQuality)
                     val result = boundaries?.resolve?.invoke(request) ?: wire.resolve(request)
                     if (closed || preloadAttempt != directive.attemptId) return@launch
-                    if (!contactOpen()) { discardOverlap(directive.attemptId); return@launch }
+                    if (!authorizesRemoteReply(authorization)) { discardOverlap(directive.attemptId); return@launch }
                     when (result) {
                         is PlaybackResolutionResult.Resolved -> result.plan
                         is PlaybackResolutionResult.Failed -> {
@@ -1549,7 +1583,7 @@ public class AndroidPlaybackController internal constructor(
                     }
                 }
                 if (closed || preloadAttempt != directive.attemptId) return@launch
-                if (plan is RemotePlaybackWirePlan && !contactOpen()) { discardOverlap(directive.attemptId); return@launch }
+                if (plan is RemotePlaybackWirePlan && !authorizesRemoteReply(authorization)) { discardOverlap(directive.attemptId); return@launch }
                 if (plan is RemotePlaybackWirePlan && !wire.transcodeBudget.maySchedule(
                     PlaybackWireRequestPurpose.Preload, plan.isTranscoded(),
                     ActiveTranscodeCounts(currentPlayback = if ((activePlan as? RemotePlaybackWirePlan)?.isTranscoded() == true) 1 else 0))) {

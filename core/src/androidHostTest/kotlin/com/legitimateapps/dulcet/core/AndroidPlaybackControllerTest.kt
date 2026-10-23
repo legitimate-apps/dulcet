@@ -86,6 +86,44 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun explicitAcceptanceCannotReviveHeldMetadataFromBeforeRejection() = heldMetadataAuthorization(rejectAndAccept = true)
+    @Test fun aTransientProbeStillAllowsHeldMetadataFromTheAcceptedServer() = heldMetadataAuthorization(rejectAndAccept = false)
+
+    private fun heldMetadataAuthorization(rejectAndAccept: Boolean) {
+        val owner = "provider:metadata-authorization:${java.util.UUID.randomUUID()}"
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var hold = false
+        var entered = false
+        Fixture(accountOwner = owner, loadSong = { id ->
+            if (hold) {
+                entered = true; release.await()
+                song(id).copy(body = """{"subsonic-response":{"status":"ok","song":{"id":"$id","title":"Late title","suffix":"wav","duration":40}}}""".toByteArray())
+            } else song(id)
+        }).use { f ->
+            f.controller.playSong(owner, "same-id", "Original")
+            assertEquals("Original", f.controller.state.value.queue.single().track.title)
+            hold = true
+            f.controller.playSong(owner, "same-id", "Original")
+            assertTrue(entered, "The actual current-entry metadata operation is suspended")
+            try {
+                kotlinx.coroutines.runBlocking {
+                    if (rejectAndAccept) {
+                        AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                        AndroidServerIdentity.accept(RuntimeEnvironment.getApplication(), owner,
+                            ServerIdentityPolicy.identity("navidrome", "confirmed-instance"))
+                    } else AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable }
+                }
+                release.complete(Unit)
+                settle(5)
+                assertEquals(if (rejectAndAccept) "Original" else "Late title",
+                    f.controller.state.value.queue.single().track.title,
+                    "Only a still-current authorization may adopt held metadata")
+                assertEquals(if (rejectAndAccept) 1 else 2, f.prepared.size,
+                    "Explicit consent cannot prepare the retired selection; a transient probe can")
+            } finally { release.complete(Unit) }
+        }
+    }
+
     @Test fun identityRejectionDuringAutoplayCannotAppendReplacementServerIds() {
         val release = kotlinx.coroutines.CompletableDeferred<List<AndroidTrack>>()
         val contact = ChosenContact().also { it.open.value = true }
@@ -158,6 +196,108 @@ class AndroidPlaybackControllerTest {
                 assertIs<AndroidPlaybackIOException>(next.exceptionOrNull(),
                     "An installed resource cannot sign or send a new range after known replacement")
                 assertEquals(1, receiver.requestCount(), "No rejected old-ID range reaches the receiving socket")
+            }
+        }
+    }
+
+    @Test fun headersReleasedAfterIdentityRejectionCannotDeliverRemoteAudio() = rejectedResourceReply("headers")
+    @Test fun bodyReleasedAfterIdentityRejectionCannotDeliverRemoteAudio() = rejectedResourceReply("body")
+
+    private fun rejectedResourceReply(phase: String) {
+        for (reject in listOf(false, true)) {
+            val reached = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+            val hold = { reached.countDown(); check(release.await(10, java.util.concurrent.TimeUnit.SECONDS)); Unit }
+            PlaybackResourceReceiver(pcmWave(), beforeHeaders = if (phase == "headers") hold else ({}),
+                beforeBody = if (phase == "body") hold else ({}), allowClientDisconnect = true).use { receiver ->
+                val owner = "provider:held-resource:${java.util.UUID.randomUUID()}"
+                Fixture(accountOwner = owner, baseUrl = receiver.url).use { f ->
+                    f.controller.playSong(owner, "song", "Original")
+                    val plan = f.prepared.single()
+                    val delivered = java.util.concurrent.atomic.AtomicLong()
+                    val source = AndroidPlaybackDataSourceFactory(plan, f.controller.httpPlaybackResource(plan),
+                        { delivered.addAndGet(it) }).createDataSource()
+                    val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+                    val result = executor.submit<Throwable?> {
+                        try {
+                            source.open(androidx.media3.datasource.DataSpec(android.net.Uri.parse("dulcet://resource")))
+                            source.read(ByteArray(64), 0, 64)
+                            null
+                        } catch (failure: Throwable) { failure }
+                    }
+                    try {
+                        assertTrue(reached.await(10, java.util.concurrent.TimeUnit.SECONDS), "Real HTTP $phase must be held")
+                        receiver.assertAuthenticatedSong("song")
+                        if (reject) kotlinx.coroutines.runBlocking {
+                            AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                        }
+                        release.countDown()
+                        val failure = result.get(10, java.util.concurrent.TimeUnit.SECONDS)
+                        if (reject) {
+                            assertEquals(0L, delivered.get(), "Late $phase from a rejected server cannot deliver any audio to Media3")
+                            assertIs<AndroidPlaybackIOException>(failure)
+                        } else {
+                            assertNull(failure, "The same held reply from an accepted server remains playable")
+                            assertTrue(delivered.get() > 0, "Positive control must exercise actual validated audio delivery")
+                        }
+                    } finally {
+                        release.countDown(); source.close(); executor.shutdownNow()
+                        assertTrue(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun rejectionAfterOpenCannotDeliverTheAlreadyValidatedAudioPrefix() {
+        PlaybackResourceReceiver(pcmWave()).use { receiver ->
+            val owner = "provider:buffered-rejected:${java.util.UUID.randomUUID()}"
+            Fixture(accountOwner = owner, baseUrl = receiver.url).use { f ->
+                f.controller.playSong(owner, "song", "Original")
+                val plan = assertIs<RemotePlaybackWirePlan>(f.prepared.single())
+                val delivered = java.util.concurrent.atomic.AtomicLong()
+                val source = AndroidPlaybackDataSourceFactory(plan, f.controller.httpPlaybackResource(plan),
+                    { delivered.addAndGet(it) }).createDataSource()
+                try {
+                    source.open(androidx.media3.datasource.DataSpec(android.net.Uri.parse("dulcet://resource")))
+                    receiver.assertAuthenticatedSong("song")
+                    assertEquals(0L, delivered.get(), "open validates and buffers audio without delivering it")
+                    kotlinx.coroutines.runBlocking {
+                        AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                    }
+                    val result = runCatching { source.read(ByteArray(64), 0, 64) }
+                    assertEquals(0L, delivered.get(), "The already validated prefix must not bypass rejection")
+                    assertIs<AndroidPlaybackIOException>(result.exceptionOrNull())
+                } finally { source.close() }
+            }
+        }
+    }
+
+    @Test fun identityRejectionDuringAutoplaySeedPreventsEveryFollowupHttpRequest() {
+        AutoplayReceiver().use { receiver ->
+            val owner = "provider:autoplay-rejected:${java.util.UUID.randomUUID()}"
+            Fixture(accountOwner = owner, baseUrl = receiver.url, candidates = null).use { f ->
+                f.controller.setAutoplay(true)
+                f.controller.playSong(owner, "seed", "Original")
+                try {
+                    assertTrue(receiver.seedEntered.await(10, java.util.concurrent.TimeUnit.SECONDS),
+                        "The real production autoplay source must send its seed lookup")
+                    // Observe only completion through this private job; the oracle is receiving HTTP requests.
+                    val field = AndroidPlaybackController::class.java.getDeclaredField("autoplayJob").apply { isAccessible = true }
+                    val job = assertNotNull(field.get(f.controller) as? kotlinx.coroutines.Job)
+                    kotlinx.coroutines.runBlocking {
+                        AndroidServerIdentity.validate(owner) { DomainError.Protocol.ServerIdentityChanged }
+                    }
+                    receiver.releaseSeed.countDown()
+                    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                    while (!job.isCompleted && System.nanoTime() < deadline) {
+                        mainScheduler.runCurrent(); shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(10)
+                    }
+                    assertTrue(job.isCompleted, "The seed reply must actually return before checking for forbidden requests")
+                    assertEquals(listOf("/rest/getSong.view"), receiver.paths.toList(),
+                        "Rejection during the seed reply must prevent similar/top/random fallback requests")
+                    assertEquals(listOf("seed"), f.controller.state.value.queue.map { it.track.rawId })
+                } finally { receiver.releaseSeed.countDown() }
             }
         }
     }
@@ -1814,7 +1954,9 @@ class AndroidPlaybackControllerTest {
         }.array()
 
     /** Supplies only the receiving socket. The controller builds its real HTTP resource and validator. */
-    private class PlaybackResourceReceiver(private val body: ByteArray) : AutoCloseable {
+    private class PlaybackResourceReceiver(private val body: ByteArray,
+        private val beforeHeaders: () -> Unit = {}, private val beforeBody: () -> Unit = {},
+        private val allowClientDisconnect: Boolean = false) : AutoCloseable {
         private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${socket.localPort}"
         private val requests = java.util.concurrent.CopyOnWriteArrayList<Map<String, String>>()
@@ -1843,13 +1985,17 @@ class AndroidPlaybackControllerTest {
                             val bytes = body.copyOfRange(start, end + 1)
                             val response = if (range == null) "200 OK" else "206 Partial Content"
                             val rangeHeader = if (range == null) "" else "Content-Range: bytes $start-$end/${body.size}\r\n"
+                            beforeHeaders()
                             client.getOutputStream().apply {
                                 write(("HTTP/1.1 $response\r\nContent-Type: application/octet-stream\r\nContent-Length: ${bytes.size}\r\n$rangeHeader" +
                                     "Connection: close\r\n\r\n").toByteArray())
+                                flush(); beforeBody()
                                 write(bytes); flush()
                             }
                         }
-                    } catch (error: Throwable) { if (!socket.isClosed) failures += error }
+                    } catch (error: Throwable) {
+                        if (!socket.isClosed && !(allowClientDisconnect && error is java.io.IOException)) failures += error
+                    }
                 }
             }
         }
@@ -1867,6 +2013,44 @@ class AndroidPlaybackControllerTest {
             socket.close(); executor.shutdown()
             assertTrue(executor.awaitTermination(6, java.util.concurrent.TimeUnit.SECONDS))
             assertTrue(failures.isEmpty(), "Playback receiving fixture failed: $failures")
+        }
+    }
+
+    private class AutoplayReceiver : AutoCloseable {
+        private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
+        val url = "http://127.0.0.1:${socket.localPort}"
+        val paths = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val seedEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseSeed = java.util.concurrent.CountDownLatch(1)
+        private val failures = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+        private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        init {
+            executor.submit {
+                while (!socket.isClosed) {
+                    try { socket.accept().use { client ->
+                        client.soTimeout = 10_000
+                        val reader = client.getInputStream().bufferedReader()
+                        val line = checkNotNull(reader.readLine()).split(' ')
+                        val path = java.net.URI(line[1]).path
+                        while (!reader.readLine().isNullOrEmpty()) { }
+                        paths += path
+                        val payload = if (path == "/rest/getSong.view") {
+                            seedEntered.countDown(); check(releaseSeed.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                            """"song":{"id":"seed","artistId":"replacement-artist","artist":"Replacement","genre":"Replacement"}"""
+                        } else """"${when { path.contains("SimilarSongs2") -> "similarSongs2"; path.contains("SimilarSongs") -> "similarSongs"; path.contains("TopSongs") -> "topSongs"; else -> "randomSongs" }}":{"song":[]}"""
+                        val bytes = """{"subsonic-response":{"status":"ok",$payload}}""".toByteArray()
+                        client.getOutputStream().apply {
+                            write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                            write(bytes); flush()
+                        }
+                    } } catch (failure: Throwable) { if (!socket.isClosed) failures += failure }
+                }
+            }
+        }
+        override fun close() {
+            releaseSeed.countDown(); socket.close(); executor.shutdown()
+            assertTrue(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(failures.isEmpty(), "Autoplay receiving fixture failed: $failures")
         }
     }
 
@@ -2374,7 +2558,7 @@ class AndroidPlaybackControllerTest {
         serverContact: AndroidServerContact? = null,
         overlapPlayer: (() -> androidx.media3.common.Player)? = null,
         accountOwner: String = OWNER,
-        candidates: suspend (String, Set<String>, Int) -> List<AndroidTrack> = { _, _, _ -> emptyList() },
+        candidates: (suspend (String, Set<String>, Int) -> List<AndroidTrack>)? = { _, _, _ -> emptyList() },
     ) : AutoCloseable {
         private val context = RuntimeEnvironment.getApplication()
         private val databaseName = "playback-controller-${java.util.UUID.randomUUID()}.db"

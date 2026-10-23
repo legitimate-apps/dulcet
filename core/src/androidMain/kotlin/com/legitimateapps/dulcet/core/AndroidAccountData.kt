@@ -52,12 +52,16 @@ public class AndroidAccountData internal constructor(
         openStore = { DulcetDriverFactory(context.applicationContext).openDulcetDatabase() },
         artworkRoot = artworkRootFor(context.applicationContext, serverId),
         downloadRoot = downloadRootFor(context.applicationContext),
-        senderFor = { account -> ScrobbleEndpointSender(account) },
+        senderFor = { account -> ScrobbleEndpointSender(account, identityAuthorization = {
+            AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
+        }) },
         wall = OutboxWallClock(System::currentTimeMillis),
         monotonic = OutboxMonotonicClock { SystemClock.elapsedRealtime().milliseconds },
         closeLibraryReader = ::closeProcessLibraryReader,
-        validateIdentity = { store, account -> ServerIdentityGate(store.database, account.providerInstanceId,
-            AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate() },
+        validateIdentity = { store, account -> AndroidServerIdentity.validate(account.providerInstanceId) {
+            ServerIdentityGate(store.database, account.providerInstanceId,
+                AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+        } },
     )
 
     init {

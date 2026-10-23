@@ -10,6 +10,15 @@ public object AndroidServerIdentity {
     public val verified: kotlinx.coroutines.flow.StateFlow<Set<String>> = mutableVerified
     private val validationLock = Any()
     private val generations = mutableMapOf<String, Long>()
+    // Routine probes do not retire accepted work. A rejection or explicit consent does, including
+    // reject→accept while an older HTTP reply is held on another dispatcher.
+    private val authorizationEpochs = mutableMapOf<String, Long>()
+    internal fun authorizationEpoch(id: String): Long? = synchronized(validationLock) {
+        if (id in rejected) null else authorizationEpochs[id] ?: 0L
+    }
+    private fun retireAuthorization(id: String) {
+        authorizationEpochs[id] = (authorizationEpochs[id] ?: 0L) + 1
+    }
     private val validating = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Int>>(emptyMap())
     /** Waits only for probes already in flight; it never chooses Connect or authenticates by itself. */
     public suspend fun awaitValidation(id: String) { validating.first { (it[id] ?: 0) == 0 } }
@@ -45,16 +54,23 @@ public object AndroidServerIdentity {
         }
         try {
             val error = validation()
-            return synchronized(validationLock) {
+            var notifyRejected = false
+            val outcome = synchronized(validationLock) {
                 if (generations[id] != generation) {
                     if (id in rejected) DomainError.Protocol.ServerIdentityChanged else DomainError.Transport.Cancelled
                 } else {
-                    if (error == DomainError.Protocol.ServerIdentityChanged) rejected += id
+                    if (error == DomainError.Protocol.ServerIdentityChanged && rejected.add(id)) {
+                        retireAuthorization(id)
+                        notifyRejected = true
+                    }
                     if (error == null && id !in rejected) mutableVerified.update { it + id }
                     else mutableVerified.update { it - id }
                     if (id in rejected) DomainError.Protocol.ServerIdentityChanged else error
                 }
             }
+            // Do not acquire the composition registry's lock while holding the gate's lock.
+            if (notifyRejected) AndroidLibraryReader.currentFor(id)?.rejectServerIdentity()
+            return outcome
         } catch (failure: Throwable) {
             synchronized(validationLock) {
                 if (generations[id] == generation) mutableVerified.update { it - id }
@@ -70,7 +86,10 @@ public object AndroidServerIdentity {
         }
     }
     public fun accept(context: Context, providerInstanceId: String, identity: String) {
-        val generation = synchronized(validationLock) { nextGeneration(providerInstanceId) }
+        val generation = synchronized(validationLock) {
+            retireAuthorization(providerInstanceId)
+            nextGeneration(providerInstanceId)
+        }
         val store = DulcetDriverFactory(context.applicationContext).openDulcetDatabase()
         try {
             ServerIdentityStore(store.database).accept(providerInstanceId, identity)
