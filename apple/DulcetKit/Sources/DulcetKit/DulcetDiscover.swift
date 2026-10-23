@@ -396,3 +396,9 @@ public extension DulcetLibrarySession {
 #endif
     }
 }
+
+/// Optional metadata already delivered by Discover; used to resolve an exact scoped Library song
+/// through the existing catalog reader. No external id is interpreted as a Library id.
+@MainActor public protocol DulcetDiscoverLibraryMetadataProviding: AnyObject {
+    func title(for reference: DulcetDiscoverLibraryRef) -> String?
+}

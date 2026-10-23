@@ -185,6 +185,7 @@ public final class DulcetPresentationStore {
     /// left -- deriving the stack from the snapshot reset it to the grid on every return.
     public private(set) var libraryPath: [DulcetLibraryRoute] = []
     /// The reader's Library stack, outermost first, while the reader draws the library.
+    @ObservationIgnored var discoverLibrarySearch: (any DulcetLibrarySearchSubscribing)?
     public private(set) var myLibrarySection: DulcetMyLibrarySection = .recent
     public func selectMyLibrarySection(_ section: DulcetMyLibrarySection) {
         navigate(to: .library)

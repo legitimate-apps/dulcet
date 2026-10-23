@@ -2137,7 +2137,31 @@ struct DulcetReaderSearchScreen: View {
     @Bindable var store: DulcetPresentationStore
     @State private var model = DulcetReaderSearchModel()
 
+    @State private var scope = DulcetDiscoverSearchScope.server
     var body: some View {
+#if os(iOS) || os(macOS)
+        VStack(spacing: 0) {
+            if store.librarySession?.discoverPublication?.access.discoverAvailable == true {
+                Picker(DulcetStrings.discoverScope, selection: $scope) {
+                    Text(DulcetStrings.discoverYourServer).tag(DulcetDiscoverSearchScope.server)
+                    Text(DulcetStrings.discoverEverywhere).tag(DulcetDiscoverSearchScope.everywhere)
+                }.pickerStyle(.segmented).padding(DulcetSpacing.sm).accessibilityIdentifier("discover.scope")
+            }
+            if scope == .everywhere, let session = store.librarySession, let reader = session.discover,
+               session.discoverPublication?.access.discoverAvailable == true {
+                DulcetDiscoverSearchView(reader: reader, openLibrary: store.openDiscoverLibrary).id(session.readerGeneration)
+            } else { serverSearch }
+        }
+        .onChange(of: store.librarySession?.readerGeneration) { _, _ in scope = .server }
+        .onChange(of: store.librarySession?.discoverPublication?.access.discoverAvailable) { _, available in
+            if available != true { scope = .server }
+        }
+#else
+        serverSearch
+#endif
+    }
+
+    private var serverSearch: some View {
         DulcetSearchView(
             recentSearches: store.librarySession?.libraryDepth.recentSearches ?? [],
             onRememberSearch: { store.librarySession?.rememberSearch($0) },
@@ -2157,7 +2181,7 @@ struct DulcetReaderSearchScreen: View {
         )
         .onAppear(perform: open)
         .onDisappear { model.close() }
-        .onChange(of: store.searchQuery) { _, query in model.updateQuery(query) }
+        .onChange(of: store.searchQuery) { _, query in if scope == .server { model.updateQuery(query) } }
         .onChange(of: store.librarySession?.readerGeneration) { _, _ in open() }
     }
 
@@ -2262,6 +2286,48 @@ private struct DulcetSignOutOfferDialog: ViewModifier {
             return count.map(DulcetStrings.readerSignOutPendingOnline) ?? DulcetStrings.readerSignOutPendingUnknown
         case .asking(online: false):
             return count.map(DulcetStrings.readerSignOutPending) ?? DulcetStrings.readerSignOutPendingUnknown
+        }
+    }
+}
+#endif
+
+#if os(iOS) || os(macOS)
+extension DulcetPresentationStore {
+    func openDiscoverLibrary(_ reference: DulcetDiscoverLibraryRef) {
+        guard let session = librarySession, let account = session.account,
+              reference.providerInstanceId == account.providerInstanceID else { return }
+        let id = DulcetProviderItemID(providerInstanceID: reference.providerInstanceId, rawID: reference.id)
+        discoverLibrarySearch?.close(); discoverLibrarySearch = nil
+        switch reference.type {
+        case "album": showReaderPage(.album(id))
+        case "artist": showReaderPage(.artist(id))
+        case "song":
+            (session.reader as? any DulcetMyLibraryReading)?.refreshMyLibrary()
+            if let track = session.myLibrary.songs.first(where: { $0.id == id })?.playableTrack {
+                playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
+                return
+            }
+            // A bounded title search supplies real local track metadata. Only the exact server
+            // reference can play, even if other editions have the same title.
+            let title = (session.discover as? any DulcetDiscoverLibraryMetadataProviding)?.title(for: reference)
+                ?? session.discoverPublication?.wishes.first(where: { $0.wish?.libraryItem == reference })?.wish?.snapshot.title
+            guard let title, !title.isEmpty else { session.post(DulcetStrings.discoverLookupUnavailable); return }
+            let generation = session.readerGeneration
+            var finished = false
+            discoverLibrarySearch = session.subscribeSearch { [weak self, weak session] publication in
+                guard let self, let session, session === self.librarySession, generation == session.readerGeneration,
+                      publication.query == title, !finished else { return }
+                if let row = publication.rows.first(where: { $0.id == id }), !row.isUnavailableOffline,
+                   let track = row.result.playableTrack {
+                    finished = true; self.discoverLibrarySearch?.close(); self.discoverLibrarySearch = nil
+                    self.playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
+                } else if publication.scope != .deviceWhileServerPending {
+                    finished = true; self.discoverLibrarySearch?.close(); self.discoverLibrarySearch = nil
+                    session.post(DulcetStrings.discoverLookupUnavailable)
+                }
+            }
+            discoverLibrarySearch?.updateQuery(title)
+        default: session.post(DulcetStrings.discoverLookupUnavailable)
         }
     }
 }

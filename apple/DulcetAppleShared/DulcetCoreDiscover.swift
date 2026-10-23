@@ -268,13 +268,16 @@ extension DulcetCoreLibraryReader: DulcetDiscoverProviding {
     }
 }
 
-@MainActor final class DulcetCoreDiscover: DulcetDiscoverReading {
+@MainActor final class DulcetCoreDiscover: DulcetDiscoverReading, DulcetDiscoverLibraryMetadataProviding {
     private let client: AppleDiscoverClient
     private let lifetime = DulcetDiscoverLifetime()
     private var closed = false
     // Core item constructors are private. Only the bridge retains core command arguments;
     // equality with the copied value prevents substituting an unrelated or modified payload.
     private var items: [DulcetDiscoverItem: AppleDiscoverItem] = [:]
+    func title(for reference: DulcetDiscoverLibraryRef) -> String? {
+        items.keys.first { $0.availability.libraryItems.contains(reference) }?.title
+    }
     init(reader: AppleLibraryReaderClient) { client = AppleDiscoverClient(reader: reader) }
     private func remember(_ item: AppleDiscoverItem) { items[DulcetDiscoverItem(copy: item)] = item }
     private func remember(_ page: AppleDiscoverPage) {
