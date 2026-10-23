@@ -23,9 +23,9 @@ enum HostedAppError: Error {
 final class HostedApp {
     let store: DulcetPresentationStore
     let streamingQuality: DulcetCoreStreamingQuality
-    private let session: DulcetLibrarySession
+    let session: DulcetLibrarySession
     private let controller: DulcetCorePlaybackController
-    private let window: NSWindow
+    let window: NSWindow
     let hostingView: NSView
     private let defaultsSuite: String
     private let previousEnhancedUI: Any
@@ -36,7 +36,9 @@ final class HostedApp {
     /// draws there. `downloadController` stands in for the device's downloads, for a proof of
     /// what the rows offer and show; with none, the app keeps no downloads.
     init(serverURL: String, username: String, password: String, run: String = UUID().uuidString,
-         toolbar: Bool = false, downloadController: (any DulcetDownloadControlling)? = nil) async throws {
+         toolbar: Bool = false, downloadController: (any DulcetDownloadControlling)? = nil,
+         credentialStore: any DulcetCredentialStoring = HostedCredentialStore(), connect: Bool = true,
+         colorScheme: ColorScheme? = nil, textSize: DynamicTypeSize = .large) async throws {
         defaultsSuite = "dulcet-mac-hosted-\(run)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuite))
         streamingQuality = DulcetCoreStreamingQuality(defaults: defaults)
@@ -47,12 +49,16 @@ final class HostedApp {
         controller.streamingQuality = streamingQuality
         session = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: "dulcet-mac-hosted-reader-\(run).db", readsDownloads: downloadController != nil))
         let providerInstanceID = "macos-hosted-\(run)"
+        var firstProviderID: String? = providerInstanceID
         store = DulcetPresentationStore(source: DulcetAccountDataSource(
             connector: DulcetCoreAccountConnector(),
-            credentialStore: HostedCredentialStore(),
+            credentialStore: credentialStore,
             playbackController: controller,
             downloadController: downloadController,
-            providerInstanceIDFactory: { providerInstanceID },
+            providerInstanceIDFactory: {
+                if let id = firstProviderID { firstProviderID = nil; return id }
+                return UUID().uuidString
+            },
             librarySession: session
         ))
         store.streamingQualitySetting = streamingQuality
@@ -60,18 +66,20 @@ final class HostedApp {
         store.accountUsername = username
         store.accountPassword = password
         store.accountAllowLocalHTTP = true
-        store.submitAccountConnection()
+        if connect { store.submitAccountConnection() }
 
         let enhancedUI = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
         previousEnhancedUI = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
         NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
-        let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
+        let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store)
+            .environment(\.dynamicTypeSize, textSize).preferredColorScheme(colorScheme))
         if toolbar { hosting.sceneBridgingOptions = [.toolbars] }
         hosting.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
         hostingView = hosting
         window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        if let colorScheme { window.appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua) }
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
 
@@ -79,7 +87,7 @@ final class HostedApp {
         let store = store
         try await waitUntil(timeout: .seconds(20),
                             "connect: state=\(store.snapshot.state) mode=\(session.mode)") {
-            store.snapshot.accountConnected && session.mode == .connected && session.reader != nil
+            connect ? (store.snapshot.accountConnected && session.mode == .connected && session.reader != nil) : session.reader != nil
         }
     }
 
@@ -96,7 +104,9 @@ final class HostedApp {
 
     func close() {
         controller.disconnect()
-        window.orderOut(nil)
+        window.close()
+        window.contentView = nil
+        session.close()
         NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface"))
         UserDefaults.standard.removePersistentDomain(forName: defaultsSuite)
     }
@@ -473,7 +483,7 @@ final class HostedApp {
             try await Task.sleep(for: .milliseconds(100))
         } while ContinuousClock.now < deadline
         let tree = descendants(of: root).compactMap { element -> String? in
-            guard let id = identifier(element), id.hasPrefix("dulcet.") else { return nil }
+            guard let id = identifier(element), ["dulcet.", "discover.", "wishlist."].contains(where: id.hasPrefix) else { return nil }
             return "\(id)=\(label(element) ?? "nil")"
         }
         XCTFail("\(description) never appeared; dulcet elements: \(tree.joined(separator: "; "))")
@@ -496,6 +506,31 @@ final class HostedApp {
     func firstElement(where matches: (Any) -> Bool) -> Any? {
         hostingView.layoutSubtreeIfNeeded()
         return descendants(of: hostingView).first(where: matches)
+    }
+
+    func containsLabel(_ title: String, in element: Any) -> Bool {
+        descendants(of: element).contains { label($0) == title }
+    }
+
+    func childElement(identifiedBy id: String, in element: Any) -> Any? {
+        descendants(of: element).first { identifier($0) == id }
+    }
+
+    /// Deliver the same wheel event the detail's native scroll view receives from a person.
+    /// Lazy SwiftUI groups do not enter the accessibility tree until they approach the viewport.
+    func scrollDetail(by pixels: Int32) throws {
+        let content = try XCTUnwrap(window.contentView)
+        let point = NSPoint(x: content.bounds.minX + content.bounds.width * 0.75, y: content.bounds.midY)
+        let hit = content.hitTest(point)
+        let scroll = try XCTUnwrap(sequence(first: hit, next: { $0?.superview })
+            .lazy.compactMap { $0 as? NSScrollView }.first,
+            "The visible detail must hit a scroll view; hit \(hit.map { String(describing: type(of: $0)) } ?? "nil")")
+        let before = scroll.contentView.bounds.origin
+        let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                      wheel1: pixels, wheel2: 0, wheel3: 0))
+        scroll.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: cg)))
+        hostingView.layoutSubtreeIfNeeded()
+        print("OBSERVED Mac detail wheel \(pixels): \(before) -> \(scroll.contentView.bounds.origin)")
     }
 
     func press(_ element: Any, named name: String) throws {
@@ -555,7 +590,7 @@ final class HostedApp {
         return result
     }
 
-    private func selectTableRow(_ element: Any) throws -> NSTableView {
+    func selectTableRow(_ element: Any) throws -> NSTableView {
         let screenFrame = try frame(element)
         let point = window.convertPoint(fromScreen: NSPoint(x: screenFrame.midX, y: screenFrame.midY))
         let content = try XCTUnwrap(window.contentView)
@@ -581,7 +616,7 @@ final class HostedApp {
         return table
     }
 
-    private func sendText(_ text: String, to target: NSWindow? = nil) throws {
+    func sendText(_ text: String, to target: NSWindow? = nil) throws {
         let target = target ?? window
         for character in text {
             let value = String(character)
@@ -596,7 +631,7 @@ final class HostedApp {
         }
     }
 
-    private func sendReturn() throws {
+    func sendReturn() throws {
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             let event = try XCTUnwrap(NSEvent.keyEvent(
                 with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,

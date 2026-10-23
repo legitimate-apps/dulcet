@@ -1,6 +1,12 @@
 countRowsForServer:
 SELECT sum(row_count) FROM (
-  SELECT count(*) AS row_count FROM mutation_outbox WHERE server_id = :server_id
+  SELECT count(*) AS row_count FROM discover_read WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM wishlist_snapshot WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM wish_intent WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM wish_receipt WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM wish_clock WHERE server_id = :server_id
+  UNION ALL
+  SELECT count(*) FROM mutation_outbox WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM download WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM download_policy_state WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM offline_media_retention WHERE server_id = :server_id
@@ -46,7 +52,12 @@ SELECT sum(row_count) FROM (
 -- accounts that are no longer saved (spec §14.7). The same tables, in the same order; a core test
 -- compares the two lists.
 selectServerIdsWithRows:
-SELECT server_id FROM mutation_outbox
+SELECT server_id FROM discover_read
+UNION SELECT server_id FROM wishlist_snapshot
+UNION SELECT server_id FROM wish_intent
+UNION SELECT server_id FROM wish_receipt
+UNION SELECT server_id FROM wish_clock
+UNION SELECT server_id FROM mutation_outbox
 UNION SELECT server_id FROM download
 UNION SELECT server_id FROM download_policy_state
 UNION SELECT server_id FROM offline_media_retention
@@ -151,6 +162,8 @@ DELETE FROM deletion_reconciliation WHERE server_id = ?;
 -- (§14.7) deletes the account's downloads in the same transaction, so no pin outlives its reason.
 -- Disposable depth metadata follows the cache; accepted identity and media lineage survive a cache reset.
 deleteSeenCacheForServer {
+  DELETE FROM discover_read WHERE server_id = :server_id;
+  DELETE FROM wishlist_snapshot WHERE server_id = :server_id;
   DELETE FROM library_depth_entry WHERE server_id = :server_id AND category NOT IN ('download.mediaBinding', 'account.serverIdentity');
   DELETE FROM my_library_item WHERE server_id = :server_id;
   DELETE FROM my_library_state WHERE server_id = :server_id;

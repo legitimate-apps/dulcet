@@ -98,22 +98,7 @@ internal interface MyLibraryTransport {
 
 /** [MyLibraryTransport] over OpenSubsonic `/rest`, through the reader's own slots, issue order and offline rule. */
 internal class OpenSubsonicMyLibraryTransport(private val reader: LibraryReader) : MyLibraryTransport {
-    override suspend fun advertisedVersions(): Set<Int> {
-        val sent = try {
-            reader.sendChecked("getOpenSubsonicExtensions")
-        } catch (failure: LibraryRequestFailure) {
-            // Only a missing/unimplemented endpoint establishes that there is no extension list.
-            // Auth, permission, generic and unknown failures are not capability answers.
-            val endpointUnavailable = when (val error = failure.error) {
-                is DomainError.Server.Known -> error.code == 70
-                is DomainError.Server.HttpStatus -> error.status == 404 || error.status == 501
-                else -> false
-            }
-            if (failure !is ReaderSendRefused && endpointUnavailable) return emptySet()
-            throw failure
-        }
-        return parseOpenSubsonicExtensionVersions(sent.response.body, DULCET_LIBRARY_EXTENSION)
-    }
+    override suspend fun advertisedVersions():Set<Int> = reader.readOpenSubsonicExtensions()[DULCET_LIBRARY_EXTENSION].orEmpty()
 
     override suspend fun page(offset: Int, size: Int, sinceEpochMillis: Long?): MyLibraryPage {
         val parameters = buildMap {

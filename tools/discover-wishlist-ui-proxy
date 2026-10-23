@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Finite loopback upstream or app fault proxy. Logs contain endpoint names, never credentials."""
+import argparse
+from datetime import datetime,timezone,timedelta
+import http.client
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+import json
+from pathlib import Path
+import shutil
+import socket
+import sys
+# Extensionless module caches resemble controls to the recursive CI policy inventory.
+# Keep fixture/helper imports source-only, including independently launched children.
+sys.dont_write_bytecode = True
+import threading
+import time
+from urllib.parse import parse_qs,urlsplit
+sys.path.insert(0,str(Path(__file__).resolve().parent/'discover-wishlist-fixtures'))
+from fixture import IDS,request,rest,png,upstream
+
+class FixtureProxy:
+    def __init__(self,config):
+        self.config=config;self.lock=threading.RLock();self.revision=0;self.name='normal';self.hits=0;self.effects=[];self.requests=[];self.remove_seen=threading.Event();self.lost=False;self.detail_release=threading.Event();self.query_release=threading.Event()
+        self.scenarios=json.loads((Path(__file__).parent/'discover-wishlist-fixtures/scenarios.json').read_text())['scenarios']
+    def state(self):
+        with self.lock:return dict(scenario=self.name,revision=self.revision,armed=True,hits=self.hits,effects=list(self.effects),healthy=True)
+    def effect(self,endpoint,revision,name,**extra):
+        with self.lock:
+            self.hits+=1;self.effects.append(dict(endpoint=endpoint,revision=revision,scenario=name,**extra))
+    def api(self,path,body=None,method=None):return request(self.config['server']+'/dulcet/v1'+path,body,method,{'Authorization':'Bearer '+self.config['token']})
+    def baseline(self):
+        base=self.config['navidrome']
+        login=rest(base,'ping')['status']=='ok';albums=rest(base,'getAlbumList2',type='alphabeticalByName',size='1')['albumList2'].get('album',[])
+        extensions=rest(base,'getOpenSubsonicExtensions')['openSubsonicExtensions'];names={e['name'] for e in extensions}
+        # The same positive requests go through the observed proxy; absence has a known witness.
+        for endpoint,parameters in [('ping',{}),('getAlbumList2',{'type':'alphabeticalByName','size':'1'}),('getOpenSubsonicExtensions',{})]:
+            from fixture import rest_url
+            request(rest_url(self.config['proxy']+'/navidrome',endpoint,**parameters))
+        if not login or not albums or names.intersection({'dulcetDiscover','dulcetWishlist'}):raise ValueError('unhealthy Navidrome baseline')
+        return dict(login=True,albums=len(albums),discoverAdvertised=False,wishlistAdvertised=False)
+    def restore(self):
+        self.api('/admin/test/checkpoints/'+self.config['checkpoint']+'/restore',{},'POST')
+        # The artwork override is in-memory and reset by restore/restart.
+        self.api('/admin/test/settings',{'discoverArtworkAllowLoopback':True},'PUT')
+        for path in Path(self.config['music']).glob('arrival*.flac'):path.unlink()
+        return request(self.config['server']+'/.well-known/dulcet')['server']
+    def scenario(self,name,reset=False):
+        if name not in self.scenarios:raise ValueError('unknown scenario')
+        with self.lock:
+            self.detail_release.set();self.query_release.set()
+            self.detail_release=threading.Event();self.query_release=threading.Event()
+            self.revision+=1;self.name=name;self.hits=0;self.effects=[];self.lost=False;self.remove_seen.clear()
+            ack=self.state()
+        if reset or name=='identity-replacement':ack.update(identity=self.restore(),reset=reset)
+        if name=='scan-arrival':
+            shutil.copyfile(self.config['arrival'],str(Path(self.config['music'])/'arrival.flac'))
+            rest(self.config['server'],'startScan',user=self.config['admin'])
+            deadline=time.monotonic()+30
+            while time.monotonic()<deadline:
+                scan=rest(self.config['server'],'getScanStatus',user=self.config['admin'])['scanStatus']
+                wishes=rest(self.config['server'],'getDulcetWishlist',size='100')['dulcetWishlist']['wish']
+                candidate=[w for w in wishes if w['externalIds'].get('musicbrainzRecordingId')==IDS['arrival']]
+                if not scan.get('scanning') and (not candidate or candidate[0]['state']=='fulfilled'):break
+                time.sleep(.1)
+            else:raise ValueError('scan/arrival deadline')
+            self.effect('startScan',ack['revision'],name,completed=True)
+            ack['scan']={'completed':True,'count':scan.get('count')}
+        return ack
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self,*args):pass
+    def do_GET(self):self.handle_request()
+    def do_POST(self):self.handle_request()
+    def do_PUT(self):self.handle_request()
+    def reply(self,status,data,headers=None):
+        if not isinstance(data,bytes):data=json.dumps(data).encode()
+        self.send_response(status)
+        for key,value in (headers or {'Content-Type':'application/json'}).items():self.send_header(key,value)
+        self.send_header('Content-Length',str(len(data)));self.end_headers()
+        try:self.wfile.write(data)
+        except (BrokenPipeError,ConnectionResetError):pass
+    def disconnect(self):
+        self.close_connection=True
+        try:self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:pass
+        self.connection.close()
+    def handle_request(self):
+        target=urlsplit(self.path);q=parse_qs(target.query);body=self.rfile.read(int(self.headers.get('Content-Length','0')))
+        try:
+            if self.server.role=='upstream':
+                if target.path=='/health':return self.reply(200,{'healthy':True})
+                if target.path.startswith('/release-group/') and target.path.endswith('/front-250'):
+                    return self.reply(307,b'',{'Location':'/images/front.png'})
+                if target.path=='/images/front.png':return self.reply(200,png(),{'Content-Type':'image/png'})
+                return self.reply(200,upstream(target.path,q))
+            state=self.server.fixture
+            if target.path.startswith('/control/'):
+                if target.path=='/control/state':return self.reply(200,state.state())
+                if target.path=='/control/requests':
+                    since=int(q.get('since',['0'])[0])
+                    with state.lock:return self.reply(200,{'requests':state.requests[since:],'next':len(state.requests)})
+                if target.path=='/control/baseline':return self.reply(200,state.baseline())
+                if target.path=='/control/scenario' and self.command=='POST':return self.reply(200,state.scenario(json.loads(body)['name']))
+                if target.path=='/control/release-detail' and self.command=='POST':
+                    state.detail_release.set()
+                    return self.reply(200,dict(released=True,revision=state.revision))
+                if target.path=='/control/reset'  and self.command=='POST':return self.reply(200,state.scenario('normal',reset=True))
+                return self.reply(404,{'error':'unknown control'})
+            nav=target.path.startswith('/navidrome/');path=self.path.removeprefix('/navidrome') if nav else self.path
+            if not (path.startswith('/rest/') or path.startswith('/.well-known/dulcet')):return self.reply(404,{'error':'fixture path refused'})
+            params={**q,**parse_qs(body.decode() if body else '')};endpoint=urlsplit(path).path.rsplit('/',1)[-1].removesuffix('.view')
+            with state.lock:
+                name=state.name;revision=state.revision
+                state.requests.append({'sequence':len(state.requests)+1,'channel':'navidrome' if nav else 'dulcet','endpoint':endpoint,'revision':revision})
+            if not nav:
+                if name=='offline':state.effect(endpoint,revision,name);return self.disconnect()
+                if name=='delayed-old-query' and endpoint=='searchDulcetDiscover' and 'old' in params.get('query',[''])[0].lower():
+                    with state.lock:query_release=state.query_release
+                    state.effect(endpoint,revision,name,held=True)
+                    if not query_release.wait(15):return self.reply(504,{'error':'new query did not release old query'})
+                    time.sleep(.75)
+                if name=='held-detail' and endpoint in {'getDulcetDiscoverAlbum','getDulcetDiscoverArtist'}:
+                    with state.lock:release=state.detail_release
+                    state.effect(endpoint,revision,name,held=True)
+                    released=release.wait(90)
+                    state.effect(endpoint,revision,name,released=released)
+                    if not released:return self.reply(504,{'error':'fixture detail hold expired'})
+                if name=='rate-limit-120'  and endpoint=='searchDulcetDiscover':
+                    state.effect(endpoint,revision,name);return self.reply(429,{'error':'fixture rate limit'},{'Retry-After':'120','Content-Type':'application/json'})
+                if name=='remove-before-add':
+                    if endpoint=='removeFromDulcetWishlist':state.effect(endpoint,revision,name)
+                    if endpoint=='addToDulcetWishlist':
+                        state.effect(endpoint,revision,name,held=True)
+                        state.remove_seen.wait(2)
+            upstream_base=state.config['navidrome' if nav else 'server'];url=urlsplit(upstream_base)
+            connection=http.client.HTTPConnection(url.hostname,url.port,timeout=30)
+            try:
+                headers={k:v for k,v in self.headers.items() if k.lower() not in {'host','connection','content-length'}}
+                connection.request(self.command,path,body,headers);response=connection.getresponse();data=response.read();headers={k:v for k,v in response.getheaders() if k.lower() not in {'connection','content-length','transfer-encoding'}}
+                if not nav and name=='remove-before-add' and endpoint=='removeFromDulcetWishlist':
+                    if json.loads(data)['subsonic-response']['status']=='ok':state.remove_seen.set()
+                if not nav and name=='lost-add-receipt'  and endpoint=='addToDulcetWishlist':
+                    with state.lock:
+                        lose=not state.lost;state.lost=True
+                    if lose:
+                        if json.loads(data)['subsonic-response']['status']!='ok':raise ValueError('lost-response add was not delivered')
+                        state.effect(endpoint,revision,name,delivered=True);return self.disconnect()
+                if not nav and endpoint=='searchDulcetDiscover' and name=='delayed-old-query':
+                    decoded=json.loads(data);page=decoded['subsonic-response']['dulcetDiscover']
+                    old='old' in params.get('query',[''])[0].lower()
+                    if old:
+                        for row in page['item']:row['title']='Obsolete old query · '+row['title']
+                    state.effect(endpoint,revision,name,response=True,payload='old' if old else 'new')
+                    data=json.dumps(decoded).encode()
+                if not nav and endpoint=='searchDulcetDiscover' and name in {'stale-answer','future-metadata'}:
+                    decoded=json.loads(data);page=decoded['subsonic-response']['dulcetDiscover']
+                    if name=='stale-answer':page.update(stale=True,ageSeconds=7200,fetchedAt=(datetime.now(timezone.utc)-timedelta(seconds=7200)).isoformat())
+                    else:
+                        for row in page['item'][:2]:row.update(externalIds={},wishable=False)
+                        page['item'][0]['kind']='future';page['item'][0]['availability']['status']='future'
+                    state.effect(endpoint,revision,name);data=json.dumps(decoded).encode()
+                self.reply(response.status,data,headers)
+                if not nav and endpoint=='searchDulcetDiscover' and name=='delayed-old-query' and 'old' not in params.get('query',[''])[0].lower():
+                    state.query_release.set()
+                return
+            finally:connection.close()
+        except (ValueError,KeyError):self.reply(400,{'error':'fixture control or shape rejected'})
+        except Exception as error:self.reply(502,{'error':'fixture failure','type':type(error).__name__})
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--role',choices=['upstream','proxy'],required=True);p.add_argument('--ready',type=Path,required=True);p.add_argument('--config',type=Path);args=p.parse_args()
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.daemon_threads=True;server.role=args.role
+    base='http://127.0.0.1:'+str(server.server_port)
+    if args.role=='proxy':
+        config=json.loads(args.config.read_text());config['proxy']=base;server.fixture=FixtureProxy(config)
+    args.ready.write_text(json.dumps({'url':base,'pid':__import__('os').getpid()}))
+    server.serve_forever()
+if __name__=='__main__':main()

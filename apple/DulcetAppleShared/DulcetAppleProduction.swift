@@ -1110,6 +1110,7 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
     /// Made on first use, one per reader (DulcetCorePlaylistsLyrics.swift).
     var playlistClient: AppleLibraryPlaylistClient?
     var lyricsClient: AppleLibraryLyricsClient?
+    var discoverAdapter: DulcetCoreDiscover?
     var myLibraryClient: AppleMyLibraryClient?
     var myLibraryPublication: AppleMyLibraryPublication?
     var myLibraryCoreSubscription: AppleMyLibrarySubscription?
@@ -1244,6 +1245,8 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
     }
 
     func close(completion: @escaping @MainActor () -> Void) {
+        discoverAdapter?.close()
+        discoverAdapter = nil
         client.close {
             MainActor.assumeIsolated { completion() }
         }

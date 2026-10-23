@@ -215,6 +215,8 @@ public final class DulcetLibrarySession {
     public internal(set) var libraryDepth = DulcetLibraryDepthState()
     public internal(set) var libraryDepthRevision = 0
     @ObservationIgnored var libraryDepthReadGeneration = 0
+    public private(set) var discoverPublication: DulcetDiscoverPublication?
+    @ObservationIgnored private var discoverSubscription: (any DulcetLibraryReaderCancellable)?
     public private(set) var myLibrary = DulcetMyLibrarySnapshot()
     @ObservationIgnored private var myLibrarySubscription: (any DulcetLibraryReaderCancellable)?
 
@@ -398,6 +400,24 @@ public final class DulcetLibrarySession {
         readerSetupFailed = false
         let generation = readerGeneration
         refreshLibraryDepth()
+#if !os(tvOS)
+        if let discover = (made as? any DulcetDiscoverProviding)?.openDiscover() {
+            discoverSubscription = discover.observe { [weak self] publication in
+                guard let self, self.readerGeneration == generation,
+                      self.account?.providerInstanceID == publication.providerInstanceId else { return }
+#if DEBUG
+                if self.discoverPublication?.access != publication.access {
+                    let access = publication.access
+                    DulcetUIProofMarkers.record("discover-access:\(publication.providerInstanceId):\(access.detection):\(access.error?.code ?? "ok"):read=\(access.canReadWishlist):remove=\(access.canRemoveWish):advertised=\(access.wishlistAvailable)")
+                }
+#endif
+                self.discoverPublication = publication
+            }
+            // The child begins unresolved. Its first refresh negotiates extensions before any
+            // feature endpoint; absent extensions stop in the core without a Wishlist request.
+            discover.refreshWishlist(.init())
+        }
+#endif
         myLibrary = DulcetMyLibrarySnapshot()
         if let library = made as? any DulcetMyLibraryReading {
             myLibrarySubscription = library.subscribeMyLibrary { [weak self] publication in
@@ -476,6 +496,9 @@ public final class DulcetLibrarySession {
 
     private func detachReader(_ reader: any DulcetLibraryReading, completion: @escaping @MainActor () -> Void) {
         stopReachability()
+        discoverSubscription?.cancel()
+        discoverSubscription = nil
+        discoverPublication = nil
         myLibrarySubscription?.cancel()
         myLibrarySubscription = nil
         myLibrary = DulcetMyLibrarySnapshot()

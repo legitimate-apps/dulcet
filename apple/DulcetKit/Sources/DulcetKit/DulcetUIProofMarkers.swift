@@ -1,4 +1,5 @@
 import SwiftUI
+import OSLog
 
 /// Evidence a UI proof reads to learn that a HANDLER ran, not merely that the screen ended up
 /// looking right. A title that changed after a swipe could have changed for another reason; the
@@ -10,9 +11,23 @@ enum DulcetUIProofMarkers {
     static let accessibilityIdentifier = "dulcet.debug.ui-markers"
 
 #if DEBUG
-    static let isEnabled = ProcessInfo.processInfo.arguments.contains(launchArgument)
+    static var isEnabled = ProcessInfo.processInfo.arguments.contains(launchArgument)
     static let log = DulcetUIProofMarkerLog()
+    private static var navigationSequence = 0
+    private static let logger = Logger(subsystem: "com.dulcet.navigation", category: "proof")
 #endif
+
+    static func navigation(writer: String, oldDestination: String, newDestination: String,
+                           oldPath: String, newPath: String, detail: String) {
+#if DEBUG
+        guard isEnabled else { return }
+        navigationSequence += 1
+        let receipt = "NAV|\(navigationSequence)|\(writer)|dest=\(oldDestination)->\(newDestination)|path=\(oldPath)->\(newPath)|\(detail)"
+        record(receipt)
+        print(receipt)
+        logger.notice("\(receipt, privacy: .public)")
+#endif
+    }
 
     /// Records that a handler ran, when proofs are enabled; otherwise nothing.
     static func record(_ marker: @autoclosure () -> String) {

@@ -1337,6 +1337,11 @@ struct DulcetReaderHomeView: View {
                 Text(DulcetStrings.libraryBrowseHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
             }
+#if !os(tvOS)
+            if store.selectedDestination == .library, store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
+                DulcetReaderHomeLink(title: DulcetStrings.wishlist, symbolName: "bookmark", identifier: "wishlist.destination") { store.pushReaderPage(.wishlist) }
+            }
+#endif
             DulcetLibraryDepthHome(width: width)
             if listsSections {
                 // A phone's Library, as the platform's own music app lays it out: every section as
@@ -1694,6 +1699,10 @@ struct DulcetReaderRouteView: View {
 
     var body: some View {
         switch route {
+#if !os(tvOS)
+        case .wishlist: DulcetWishlistDestinationView()
+        case let .discover(destination): DulcetDiscoverReaderDestinationView(destination: destination)
+#endif
         case .songs: DulcetLibrarySongsPage(downloaded: false)
         case .downloaded: DulcetLibrarySongsPage(downloaded: true)
         case let .section(section): DulcetReaderSectionView(section: section)
@@ -2137,7 +2146,31 @@ struct DulcetReaderSearchScreen: View {
     @Bindable var store: DulcetPresentationStore
     @State private var model = DulcetReaderSearchModel()
 
+    @State private var scope = DulcetDiscoverSearchScope.server
     var body: some View {
+#if os(iOS) || os(macOS)
+        VStack(spacing: 0) {
+            if store.librarySession?.discoverPublication?.access.discoverAvailable == true {
+                Picker(DulcetStrings.discoverScope, selection: $scope) {
+                    Text(DulcetStrings.discoverYourServer).tag(DulcetDiscoverSearchScope.server)
+                    Text(DulcetStrings.discoverEverywhere).tag(DulcetDiscoverSearchScope.everywhere)
+                }.pickerStyle(.segmented).padding(DulcetSpacing.sm).accessibilityIdentifier("discover.scope")
+            }
+            if scope == .everywhere, let session = store.librarySession, let reader = session.discover,
+               session.discoverPublication?.access.discoverAvailable == true {
+                DulcetDiscoverSearchView(reader: reader, openLibrary: store.openDiscoverLibrary).id(session.readerGeneration)
+            } else { serverSearch }
+        }
+        .onChange(of: store.librarySession?.readerGeneration) { _, _ in scope = .server }
+        .onChange(of: store.librarySession?.discoverPublication?.access.discoverAvailable) { _, available in
+            if available != true { scope = .server }
+        }
+#else
+        serverSearch
+#endif
+    }
+
+    private var serverSearch: some View {
         DulcetSearchView(
             recentSearches: store.librarySession?.libraryDepth.recentSearches ?? [],
             onRememberSearch: { store.librarySession?.rememberSearch($0) },
@@ -2157,7 +2190,7 @@ struct DulcetReaderSearchScreen: View {
         )
         .onAppear(perform: open)
         .onDisappear { model.close() }
-        .onChange(of: store.searchQuery) { _, query in model.updateQuery(query) }
+        .onChange(of: store.searchQuery) { _, query in if scope == .server { model.updateQuery(query) } }
         .onChange(of: store.librarySession?.readerGeneration) { _, _ in open() }
     }
 
@@ -2262,6 +2295,51 @@ private struct DulcetSignOutOfferDialog: ViewModifier {
             return count.map(DulcetStrings.readerSignOutPendingOnline) ?? DulcetStrings.readerSignOutPendingUnknown
         case .asking(online: false):
             return count.map(DulcetStrings.readerSignOutPending) ?? DulcetStrings.readerSignOutPendingUnknown
+        }
+    }
+}
+#endif
+
+#if os(iOS) || os(macOS)
+extension DulcetPresentationStore {
+    func openDiscoverLibrary(_ reference: DulcetDiscoverLibraryRef) {
+        guard let session = librarySession, let account = session.account,
+              reference.providerInstanceId == account.providerInstanceID else { return }
+        let id = DulcetProviderItemID(providerInstanceID: reference.providerInstanceId, rawID: reference.id)
+        discoverLibraryLookupID = nil
+        discoverLibraryLookup?.cancel(); discoverLibraryLookup = nil
+        switch reference.type {
+        case "album":
+            DulcetUIProofMarkers.record("discover-library:\(id.providerInstanceID):album:\(id.rawID)")
+            showReaderPage(.album(id))
+        case "artist":
+            DulcetUIProofMarkers.record("discover-library:\(id.providerInstanceID):artist:\(id.rawID)")
+            showReaderPage(.artist(id))
+        case "song":
+            (session.reader as? any DulcetMyLibraryReading)?.refreshMyLibrary()
+            if let track = session.myLibrary.songs.first(where: { $0.id == id })?.playableTrack {
+                DulcetUIProofMarkers.record("discover-play:\(track.id.providerInstanceID):\(track.id.rawID)")
+                playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
+                return
+            }
+            guard let lookup = session.reader as? any DulcetLibrarySongLookingUp else {
+                session.post(DulcetStrings.discoverLookupUnavailable); return
+            }
+            let generation = session.readerGeneration
+            let requestID = UUID()
+            discoverLibraryLookupID = requestID
+            discoverLibraryLookup = lookup.lookupLibrarySong(reference) { [weak self, weak session] item in
+                guard let self, let session, session === self.librarySession,
+                      generation == session.readerGeneration, self.discoverLibraryLookupID == requestID else { return }
+                self.discoverLibraryLookupID = nil
+                self.discoverLibraryLookup = nil
+                guard let item, item.id == id, !item.isUnavailableOffline, let track = item.playableTrack else {
+                    session.post(DulcetStrings.discoverLookupUnavailable); return
+                }
+                DulcetUIProofMarkers.record("discover-play:\(track.id.providerInstanceID):\(track.id.rawID)")
+                self.playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
+            }
+        default: session.post(DulcetStrings.discoverLookupUnavailable)
         }
     }
 }

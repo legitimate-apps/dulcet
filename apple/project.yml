@@ -581,6 +581,7 @@ targets:
     sources:
       - DulcetiOSUITests
       - DulcetMyLibraryUITestSupport
+      - DulcetDiscoverUITestSupport
     dependencies:
       - target: DulcetiOS
     settings:
@@ -861,6 +862,33 @@ schemes:
         - DulcetMacUITests
         - DulcetPlaybackIntegrationTests
       environmentVariables:
+        - variable: DULCET_DISCOVER_SERVER_URL
+          value: "$(DULCET_TEST_DISCOVER_SERVER_URL)"
+          isEnabled: true
+        - variable: DULCET_DISCOVER_NAVIDROME_URL
+          value: "$(DULCET_TEST_DISCOVER_NAVIDROME_URL)"
+          isEnabled: true
+        - variable: DULCET_DISCOVER_CONTROL_URL
+          value: "$(DULCET_TEST_DISCOVER_CONTROL_URL)"
+          isEnabled: true
+        - variable: DULCET_DISCOVER_USERNAME
+          value: "$(DULCET_TEST_DISCOVER_USERNAME)"
+          isEnabled: true
+        - variable: DULCET_DISCOVER_PASSWORD
+          value: "$(DULCET_TEST_DISCOVER_PASSWORD)"
+          isEnabled: true
+        - variable: DULCET_DISCOVER_OTHER_USERNAME
+          value: "$(DULCET_TEST_DISCOVER_OTHER_USERNAME)"
+          isEnabled: true
+        - variable: DULCET_DISCOVER_OTHER_PASSWORD
+          value: "$(DULCET_TEST_DISCOVER_OTHER_PASSWORD)"
+          isEnabled: true
+        - variable: DULCET_DISCOVER_DISPOSABLE
+          value: "$(DULCET_TEST_DISCOVER_DISPOSABLE)"
+          isEnabled: true
+        - variable: DULCET_DISCOVER_CAPTURE_UPLOAD_URL
+          value: "$(DULCET_TEST_DISCOVER_CAPTURE_UPLOAD_URL)"
+          isEnabled: true
         - variable: DULCET_CONFORMANCE_BASE_URL
           value: "$(DULCET_TEST_CONFORMANCE_BASE_URL)"
           isEnabled: true
