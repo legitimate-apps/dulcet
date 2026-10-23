@@ -99,18 +99,9 @@ class AndroidTvGridActionsProof(private val compose: ComposeTestRule) {
         }
     }
     private fun awaitTag(tag: String) {
-        var lastMove = 0L
         try {
             compose.waitUntil("$tag exists", 30_000) {
-                val found = compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
-                // Browse's first live card can take focus and move its category header out
-                // of composition. Reveal it with the remote before selecting a category.
-                val now = android.os.SystemClock.elapsedRealtime()
-                if (!found && tag.startsWith("library.view.") && now - lastMove >= 500) {
-                    remote(KeyEvent.KEYCODE_DPAD_UP)
-                    lastMove = android.os.SystemClock.elapsedRealtime()
-                }
-                found
+                compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
             }
         } catch (failure: Throwable) {
             println(compose.onRoot(useUnmergedTree = true).printToString())
@@ -118,9 +109,13 @@ class AndroidTvGridActionsProof(private val compose: ComposeTestRule) {
         }
     }
     private fun select(tag: String) {
-        awaitTag(tag)
-        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
-        compose.waitForIdle()
+        if (tag.startsWith("library.view.")) {
+            compose.focusTvBrowseCategory(tag)
+        } else {
+            awaitTag(tag)
+            compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
+            compose.waitForIdle()
+        }
         compose.onNodeWithTag(tag).assertIsFocused()
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
     }
