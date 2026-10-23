@@ -1,0 +1,96 @@
+package com.legitimateapps.dulcet.core
+
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import java.util.UUID
+import kotlin.test.*
+
+/** Independent acceptance for remote-contact publication ordering across asynchronous probes. */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+class AndroidServerIdentityRaceTest {
+    @Test fun validationWaitsForEveryProbeAndCancellationOrFailureReleasesTheWaiter() = runTest {
+        for (throws in listOf(false, true)) {
+            val id = UUID.randomUUID().toString()
+            val release = CompletableDeferred<Unit>()
+            val cancelled = async { AndroidServerIdentity.validate(id) { kotlinx.coroutines.awaitCancellation() } }
+            val probe = async {
+                runCatching { AndroidServerIdentity.validate(id) {
+                    release.await()
+                    if (throws) error("identity fixture failure") else null
+                } }
+            }
+            runCurrent()
+            val waiter = async { AndroidServerIdentity.awaitValidation(id) }
+            runCurrent()
+            assertFalse(waiter.isCompleted)
+            cancelled.cancel()
+            runCurrent()
+            assertFalse(waiter.isCompleted, "One cancelled probe cannot release another active probe")
+            release.complete(Unit)
+            probe.await()
+            waiter.await()
+            assertEquals(!throws, AndroidServerIdentity.isVerified(id))
+        }
+    }
+
+    @Test fun establishedContactStaysOpenDuringBackgroundValidationButClosesOnFailure() = runTest {
+        for (failure in listOf("success", "transport", "throw", "swap")) {
+            val id = UUID.randomUUID().toString()
+            assertNull(AndroidServerIdentity.validate(id) { null })
+            val release = CompletableDeferred<Unit>()
+            val probe = async { runCatching { AndroidServerIdentity.validate(id) {
+                release.await()
+                when (failure) {
+                    "transport" -> DomainError.Transport.Cancelled
+                    "throw" -> error("identity fixture failure")
+                    "swap" -> DomainError.Protocol.ServerIdentityChanged
+                    else -> null
+                }
+            } } }
+            runCurrent()
+            assertTrue(AndroidServerIdentity.isVerified(id),
+                "Starting an independent background probe cannot revoke already established contact")
+            release.complete(Unit)
+            probe.await()
+            assertEquals(failure == "success", AndroidServerIdentity.isVerified(id))
+            if (failure == "swap") {
+                AndroidServerIdentity.validate(id) { null }
+                assertFalse(AndroidServerIdentity.isVerified(id), "A confirmed swap stays quarantined")
+            }
+        }
+    }
+
+    @Test fun aLateSuccessfulProbeCannotReopenContactAfterANewerSwapDetection() = runTest {
+        val id = UUID.randomUUID().toString()
+        val releaseOld = CompletableDeferred<Unit>()
+        val old = async { AndroidServerIdentity.validate(id) { releaseOld.await(); null } }
+        runCurrent()
+        assertEquals(DomainError.Protocol.ServerIdentityChanged,
+            AndroidServerIdentity.validate(id) { DomainError.Protocol.ServerIdentityChanged })
+        assertFalse(AndroidServerIdentity.isVerified(id))
+        releaseOld.complete(Unit)
+        old.await()
+        assertFalse(AndroidServerIdentity.isVerified(id), "late success must not restore old remote IDs")
+        AndroidServerIdentity.validate(id) { null }
+        assertFalse(AndroidServerIdentity.isVerified(id), "mismatch requires explicit account acceptance")
+    }
+
+    @Test fun invalidatingAProbeBeforeItCompletesLeavesContactClosedAndOtherAccountsVerified() = runTest {
+        val id = UUID.randomUUID().toString()
+        val other = UUID.randomUUID().toString()
+        AndroidServerIdentity.validate(other) { null }
+        assertTrue(AndroidServerIdentity.isVerified(other))
+        val release = CompletableDeferred<Unit>()
+        val probe = async { AndroidServerIdentity.validate(id) { release.await(); null } }
+        runCurrent()
+        AndroidServerIdentity.requireValidation(id)
+        release.complete(Unit)
+        probe.await()
+        assertFalse(AndroidServerIdentity.isVerified(id))
+        assertTrue(AndroidServerIdentity.isVerified(other), "independent server verification cannot be lost")
+        AndroidServerIdentity.validate(id) { null }
+        assertTrue(AndroidServerIdentity.isVerified(id))
+    }
+}

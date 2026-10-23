@@ -55,7 +55,7 @@ internal class AccountConnectViewModel internal constructor(
     private val credentialStore: AccountCredentialStore,
     defaults: ChannelDefaults,
     accountData: AccountDataGateway = CoreAccountDataGateway(application),
-    playbackRelease: PlaybackRelease = ServicePlaybackRelease(application),
+    private val playbackRelease: PlaybackRelease = ServicePlaybackRelease(application),
     removalJournal: AccountRemovalJournal = AccountRemovalJournal(application),
 ) : AndroidViewModel(application) {
     constructor(application: Application) : this(
@@ -70,6 +70,28 @@ internal class AccountConnectViewModel internal constructor(
     val state: StateFlow<AccountConnectUiState> = mutableState.asStateFlow()
     private var connectionJob: Job? = null
     private var connectionGeneration: Long = 0
+    val replacement = AndroidAccountReplacement(application, credentialStore, playbackRelease, accountData)
+    private val mutableAdding = MutableStateFlow(false)
+    val adding = mutableAdding.asStateFlow()
+    fun savedAccounts(): List<StoredAccount> = runCatching { credentialStore.savedAccounts() }.getOrDefault(emptyList())
+    fun addServer() {
+        mutableAdding.value = true
+        mutableState.value = AccountConnectUiState()
+    }
+    fun cancelAdding() {
+        connectionGeneration += 1
+        connectionJob?.cancel()
+        mutableAdding.value = false
+        restoreSavedAccount()
+    }
+    fun switchServer(id: String) {
+        viewModelScope.launch {
+            if (selectSavedServer(id, credentialStore, playbackRelease)) {
+                mutableAdding.value = false
+                restoreSavedAccount()
+            }
+        }
+    }
 
     /** Signing out and removing the account (spec §14.7). */
     val signOut = AccountSignOut(
@@ -117,8 +139,15 @@ internal class AccountConnectViewModel internal constructor(
                 gateway::connect,
                 credentialStore,
                 stillWanted = { submittedGeneration == connectionGeneration },
+                replacement = replacement,
             )
-            if (submittedGeneration != connectionGeneration || outcome == AccountConnectOutcome.Superseded) return@launch
+            if (submittedGeneration != connectionGeneration) return@launch
+            if (outcome == AccountConnectOutcome.Superseded) {
+                mutableState.update { it.copy(status = AccountConnectStatus.Idle) }
+                connectionJob = null
+                return@launch
+            }
+            if (outcome is AccountConnectOutcome.Connected) mutableAdding.value = false
             mutableState.update { current ->
                 when (outcome) {
                     is AccountConnectOutcome.Connected -> current.copy(
@@ -160,7 +189,9 @@ internal class AccountConnectViewModel internal constructor(
         connectionGeneration += 1
         connectionJob?.cancel()
         connectionJob = null
+        mutableAdding.value = false
         mutableState.value = AccountConnectUiState(serverUrl = initialServerUrl)
+        restoreSavedAccount()
     }
 
     private fun updateFields(transform: AccountConnectUiState.() -> AccountConnectUiState) {

@@ -179,3 +179,10 @@ final class DulcetArtworkMemoryCache {
         if let old = entries.removeValue(forKey: key) { byteCount -= old.cost }
     }
 }
+
+/// Revokes remote requests without removing artwork already accepted into the local cache.
+@MainActor
+public protocol DulcetArtworkRemoteAccessControlling: AnyObject {
+    func rejectServerIdentity(serverID: String)
+    func acceptServerIdentity(serverID: String)
+}

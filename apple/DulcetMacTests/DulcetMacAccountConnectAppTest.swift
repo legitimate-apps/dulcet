@@ -1,5 +1,6 @@
 import AppKit
 import DulcetCore
+import Network
 import SwiftUI
 import XCTest
 @testable import DulcetKit
@@ -613,6 +614,11 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     }
 
     func connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState() async throws {
+        // Keep the production HTTP/cache quarantine controls in this existing CI-selected host proof.
+        let artworkIdentity = DulcetMacArtworkIdentityAppTest()
+        try await artworkIdentity.testRejectedArtworkReplyCannotPopulateSavedAccountsDiskOrUI()
+        try await artworkIdentity.testSameIdentityNegotiationKeepsAcceptedArtworkReplyAndCachedCover()
+        print("ARTWORK IDENTITY PASS rejected=disk+ui-blocked cached-cover=retained matching-probe=accepted")
         let baseURL = try XCTUnwrap(
             ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],
             "apple-ci must supply the live conformance fixture URL"
@@ -1851,4 +1857,190 @@ private final class ReaderDeferredConnector: DulcetAccountConnecting {
 @MainActor
 private final class ReaderDeferredOperation: DulcetAccountConnectOperation {
     func cancel() {}
+}
+
+@MainActor
+final class DulcetMacArtworkIdentityAppTest: XCTestCase {
+    /// The reply belongs to the rejected namespace even when the account UI has not yet
+    /// completed its replacement negotiation. Exercise the real HTTP facade and disk cache.
+    func testRejectedArtworkReplyCannotPopulateSavedAccountsDiskOrUI() async throws {
+        try await proveHeldArtworkReply(rejectIdentity: true)
+    }
+
+    func testSameIdentityNegotiationKeepsAcceptedArtworkReplyAndCachedCover() async throws {
+        try await proveHeldArtworkReply(rejectIdentity: false)
+    }
+
+    private func proveHeldArtworkReply(rejectIdentity: Bool) async throws {
+        let png = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="))
+        let server = try ArtworkReviewServer(image: png)
+        defer { server.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-art-rejection-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = DulcetArtworkDiskCache(rootDirectory: root)
+        let oldKey = DulcetArtworkCacheKey(serverID: "art-account", artworkKey: "old-cover", sizeBucket: .pixels256)
+        let lateKey = DulcetArtworkCacheKey(serverID: "art-account", artworkKey: "late-cover", sizeBucket: .pixels256)
+        await cache.insert(png, for: oldKey)
+        let fetcher = DulcetCoreArtworkFetcher(cache: cache)
+        let credentials = ArtworkReviewCredentials()
+        let request = DulcetAccountConnectRequest(serverURL: server.baseURL.absoluteString,
+            username: "fixture", password: "fixture", allowLocalHTTP: true)
+        try credentials.save(request, providerInstanceID: "art-account", serverIdentity: "navidrome")
+        let connector = ArtworkReviewConnector()
+        let session = DulcetLibrarySession(factory: nil)
+        let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+            artworkFetcher: fetcher, librarySession: session)
+        let store = DulcetPresentationStore(source: source)
+        let accepted = DulcetAccountConnectOutcome.connected(.init(serverName: "Saved music",
+            normalizedServerURL: request.serverURL, canonicalUsername: "fixture", serverIdentity: "navidrome"))
+        connector.complete(accepted)
+        var loadedReplies = 0
+        let operation = store.loadArtwork(.init(serverID: "art-account", artworkKey: "late-cover"), sizeBucket: .pixels256) {
+            if case .loaded = $0 { loadedReplies += 1 }
+        }
+        defer { operation?.cancel() }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "production artwork request was not held") {
+            server.requestPaths.contains { $0.contains("getCoverArt") }
+        }
+        if rejectIdentity {
+            session.onServerIdentityChanged?()
+            connector.complete(.connected(.init(serverName: "Replacement", normalizedServerURL: request.serverURL,
+                canonicalUsername: "fixture", serverIdentity: "dulcet")))
+            store.cancelServerReplacement()
+        } else {
+            store.submitAccountConnection()
+            connector.complete(accepted)
+        }
+        server.releaseStreams()
+        if !rejectIdentity {
+            try await waitUntil(timeout: .seconds(5), failureMessage: "same-identity response was wrongly discarded") { loadedReplies == 1 }
+        } else {
+            // A cancelled URLSession completion may never deliver. Give the released local reply
+            // time to reach the facade; success here must remain absent, not be retried.
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        let late = await cache.data(for: lateKey)
+        let old = await cache.data(for: oldKey)
+        XCTAssertEqual(loadedReplies, rejectIdentity ? 0 : 1, "Rejected remote bytes must not reach UI completion")
+        XCTAssertEqual(late, rejectIdentity ? nil : png, "Rejected remote bytes must not enter the saved account disk cache")
+        XCTAssertEqual(old, png, "Quarantine and consent cancellation must preserve old offline cover bytes")
+        var cachedCover: Data?
+        let cachedOperation = store.loadArtwork(.init(serverID: "art-account", artworkKey: "old-cover"), sizeBucket: .pixels256) {
+            if case let .loaded(data) = $0 { cachedCover = data }
+        }
+        defer { cachedOperation?.cancel() }
+        try await waitUntil(timeout: .seconds(3), failureMessage: "old cached cover was no longer readable") { cachedCover == png }
+        XCTAssertEqual(server.requestPaths.filter { $0.contains("getCoverArt") }.count, 1,
+            "Reading the retained cached cover must not reopen remote artwork")
+    }
+
+    private func waitUntil(timeout: Duration, failureMessage: String, _ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(condition(), failureMessage)
+    }
+}
+@MainActor
+private final class ArtworkReviewConnector: DulcetAccountConnecting {
+    var requests: [DulcetAccountConnectRequest] = []
+    private var completion: (@MainActor (DulcetAccountConnectOutcome) -> Void)?
+    func connect(_ request: DulcetAccountConnectRequest,
+                 completion: @escaping @MainActor (DulcetAccountConnectOutcome) -> Void) -> any DulcetAccountConnectOperation {
+        requests.append(request); self.completion = completion
+        return ArtworkReviewOperation()
+    }
+    func complete(_ outcome: DulcetAccountConnectOutcome) { completion?(outcome); completion = nil }
+}
+
+@MainActor
+private final class ArtworkReviewOperation: DulcetAccountConnectOperation { func cancel() {} }
+
+
+@MainActor
+private final class ArtworkReviewCredentials: DulcetSavedServerCredentialStoring {
+    private var records: [String: (DulcetAccountConnectRequest, String)] = [:]
+    var providerInstanceID: String?
+    private(set) var savedProviderInstanceIDs: [String] = []
+    var serverIdentity: String { providerInstanceID.flatMap { records[$0]?.1 } ?? "" }
+    func load() throws -> DulcetAccountConnectRequest? { providerInstanceID.flatMap { records[$0]?.0 } }
+    func load(providerInstanceID: String) throws -> DulcetAccountConnectRequest {
+        try XCTUnwrap(records[providerInstanceID]?.0)
+    }
+    func serverIdentity(providerInstanceID: String) throws -> String { records[providerInstanceID]?.1 ?? "" }
+    func activate(providerInstanceID: String) throws { self.providerInstanceID = providerInstanceID }
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        try save(request, providerInstanceID: providerInstanceID ?? "new", serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        try save(request, providerInstanceID: providerInstanceID, serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String, serverIdentity: String) throws {
+        records[providerInstanceID] = (request, serverIdentity)
+        if !savedProviderInstanceIDs.contains(providerInstanceID) { savedProviderInstanceIDs.append(providerInstanceID) }
+        self.providerInstanceID = providerInstanceID
+    }
+    func delete() throws { if let providerInstanceID { try delete(providerInstanceID: providerInstanceID) } }
+    func delete(providerInstanceID: String) throws {
+        records[providerInstanceID] = nil
+        savedProviderInstanceIDs.removeAll { $0 == providerInstanceID }
+        if self.providerInstanceID == providerInstanceID { self.providerInstanceID = nil }
+    }
+}
+
+
+/// One held image reply on a disposable loopback port. The production authenticated HTTP
+/// client still constructs, sends and validates getCoverArt; only the peer is controlled.
+private final class ArtworkReviewServer: @unchecked Sendable {
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "dulcet.artwork-review-http")
+    private let lock = NSLock()
+    private let image: Data
+    private var paths: [String] = []
+    private var holding = true
+    private var replies: [@Sendable () -> Void] = []
+    var requestPaths: [String] { lock.withLock { paths } }
+    var baseURL: URL { URL(string: "http://127.0.0.1:\(listener.port!.rawValue)")! }
+    init(image: Data) throws {
+        self.image = image
+        listener = try NWListener(using: .tcp, on: .any)
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: self?.queue ?? .global())
+            self?.receive(connection, accumulated: Data())
+        }
+        listener.start(queue: queue)
+        guard ready.wait(timeout: .now() + 5) == .success, listener.port != nil else {
+            listener.cancel(); throw NSError(domain: "ArtworkReviewServer", code: 1)
+        }
+    }
+    func releaseStreams() {
+        let pending = lock.withLock { holding = false; let pending = replies; replies = []; return pending }
+        pending.forEach { $0() }
+    }
+    func stop() { releaseStreams(); listener.cancel() }
+    private func receive(_ connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, done, error in
+            guard let self else { connection.cancel(); return }
+            var bytes = accumulated
+            if let data { bytes.append(data) }
+            guard bytes.range(of: Data("\r\n\r\n".utf8)) != nil else {
+                if done || error != nil { connection.cancel() } else { self.receive(connection, accumulated: bytes) }
+                return
+            }
+            let path = String(decoding: bytes, as: UTF8.self).split(separator: " ").dropFirst().first.map(String.init) ?? ""
+            self.lock.withLock { self.paths.append(path) }
+            var response = Data("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: \(self.image.count)\r\nConnection: close\r\n\r\n".utf8)
+            response.append(self.image)
+            let responseBytes = response
+            let send: @Sendable () -> Void = {
+                connection.send(content: responseBytes, completion: .contentProcessed { _ in connection.cancel() })
+            }
+            let held = self.lock.withLock {
+                if self.holding { self.replies.append(send); return true }; return false
+            }
+            if !held { send() }
+        }
+    }
 }

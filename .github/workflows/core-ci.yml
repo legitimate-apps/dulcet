@@ -113,13 +113,13 @@ jobs:
         run: |
           . /etc/os-release
           test "$ID:$VERSION_ID" = "ubuntu:24.04"
-          # Runs 39831584121 and 39836200785 exhausted the build budget in the Azure mirror:
-          # first metadata stalled, then progressing package downloads stayed near 40 kB/s.
-          # Prefer the existing official HTTPS fallback without changing package/signature checks.
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
-          # Bound failed requests as well; a progressing slow transfer does not hit these timeouts.
-          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 update
-          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
+          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
+          # https://github.com/actions/runner-images/issues/14823
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
           test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
           ffmpeg -version
           ffprobe -version
@@ -162,6 +162,7 @@ jobs:
           # The core's Android host tests carry CONF-82 and CONF-87, whose reader rules the
           # disposable corpus cannot reach; their server is scripted inside the test.
           path: |
+            core/build/test-results/jvmTest
             core/build/test-results/testAndroidHostTest
             android/app/build/test-results/testDevDebugUnitTest
             android/app/build/test-results/testProdDebugUnitTest
@@ -341,13 +342,13 @@ jobs:
         run: |
           . /etc/os-release
           test "$ID:$VERSION_ID" = "ubuntu:24.04"
-          # Runs 39831584121 and 39836200785 exhausted the build budget in the Azure mirror:
-          # first metadata stalled, then progressing package downloads stayed near 40 kB/s.
-          # Prefer the existing official HTTPS fallback without changing package/signature checks.
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
-          # Bound failed requests as well; a progressing slow transfer does not hit these timeouts.
-          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 update
-          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
+          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
+          # https://github.com/actions/runner-images/issues/14823
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
           test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
       - name: Build the app, instrumented tests and disposable Dulcet Server
         run: ./gradlew --no-daemon --max-workers=2 ${{ matrix.build }} :server:installDist

@@ -372,7 +372,15 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             val expected = (0 until songs.length()).map { songs.getJSONObject(it).getString("id") }
             assertTrue(expected.size >= 3, "setup: a multi-track album")
 
-            if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+            // Resuming after the service bind rebuilds the root. Listen Now owns the initial
+            // bar focus; settle it before selecting Library, then settle the library's card focus.
+            await("the root restored after the service binding") { exists("listenNow.surface") || exists("library.surface") }
+            if (!exists("library.surface")) {
+                await("the restored Listen Now tab to take focus") { focused("listenNow.open") }
+                show("library.open")
+            }
+            await("the library selected after the service binding") { exists("library.surface") }
+            await("the selected library's first card to take focus") { focused("library.home.0.item.0") }
             press("library.view.albums")
             await("the albums screen") { exists("library.albums.item.0") }
             compose.onNodeWithTag("library.albums").performScrollToNode(hasText(ALBUM))
@@ -460,6 +468,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             assertTrue(name !in server.playlists().values, "setup: no playlist of that name yet")
 
             if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+            await("Library and its initial card focus before opening Albums") {
+                exists("library.surface") && focused("library.home.0.item.0")
+            }
             press("library.view.albums")
             await("the albums screen") { exists("library.albums.item.0") }
             compose.onNodeWithTag("library.albums").performScrollToNode(hasText(ALBUM))
@@ -678,6 +689,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
             // The playlist and its page are seen once, so the chooser and the page have them offline.
             if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+            await("Library and its initial card focus before opening Playlists") {
+                exists("library.surface") && focused("library.home.0.item.0")
+            }
             press("library.view.playlists")
             await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
             focus(cardWithText("library.playlists.item.", name))
@@ -794,7 +808,11 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     private fun revealHomeSections() {
         if (!exists("library.surface")) return
         repeat(3) { if (!exists("library.view.albums")) key(Key.DirectionUp) }
-        check(exists("library.view.albums")) { "UP did not reveal the library sections" }
+        check(exists("library.view.albums")) {
+            val tags = compose.onAllNodes(SemanticsMatcher("tagged") { SemanticsProperties.TestTag in it.config }, useUnmergedTree = true)
+                .fetchSemanticsNodes().map { it.config[SemanticsProperties.TestTag] }
+            "UP did not reveal the library sections; focused=${focusedTags()}; tags=$tags"
+        }
     }
 
     private fun focus(tag: String) {
