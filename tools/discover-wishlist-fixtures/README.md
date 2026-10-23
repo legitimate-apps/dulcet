@@ -43,7 +43,8 @@ invoking parent. SIGTERM and parent loss stop the native build before simulator 
 lease release. `python3 -B tools/ci/test_discover_process_owner.py` checks TERM and parent loss
 without starting a native build. The wrapper cleanup controls also keep an unrelated process alive.
 
-Apple runner options are environment variables: `DULCET_DISCOVER_PROOF_RUNTIME` pins a full
+Hosted Actions jobs use isolated runner-owned devices without local lease tools. Local Apple
+runs use build and simulator leases. Runner options are environment variables: `DULCET_DISCOVER_PROOF_RUNTIME` pins a full
 CoreSimulator runtime identifier; `DULCET_DISCOVER_PROOF_UDID` uses a caller-owned reusable lease.
 A borrowed device is shut down after each run and its lease remains the caller's responsibility.
 Without a supplied UDID, the runner creates and releases its own device. The runner records the
@@ -71,10 +72,11 @@ The child command receives:
 | `DULCET_DISCOVER_DISPOSABLE` | `true`; conformance refuses an absent marker |
 
 No tool falls back to a preconfigured server. Android runners reverse the proxy's dynamic TCP port
-before launching the emulator app. Apple/Android shell builders add their native runner modes to
-`tools/ci/run-discover-wishlist-proofs`; those modes currently fail explicitly rather than synthesize
-UI evidence. `components` runs the existing Tasks 2–6 transport/outbox probes; `sessions` runs the
-intentionally unfinished Task 7 session probes. `DULCET_DISCOVER_GRADLE_RUNNER` can select the caller's
+before launching the emulator app. `tools/ci/run-discover-wishlist-proofs` implements finite `iphone`, `ipad`, `macos` and `android`
+native modes. Apple modes require finalized xcresult identities, the actual device idiom and
+causal fixture receipts. Android records one JUnit case per instrumentation phase, including
+before/after process death and light/dark/largest-text phases. `components` runs the transport/outbox
+probes; `sessions` runs the production session conformance probes. `DULCET_DISCOVER_GRADLE_RUNNER` can select the caller's
 build-capacity wrapper; otherwise the runner uses `tools/run-gradle-exclusive`.
 
 ## Corpus and upstream
@@ -141,7 +143,7 @@ real disposable server. The cancellation self-test proves remove-before-add leav
 removed; the lost-response test also scans, observes Arrived/My Library, removes, retries the old add
 and independently reads membership again.
 
-## Tests and pending session integration
+## Fixture and session tests
 
 ```sh
 python3 tools/test-discover-wishlist-fixture --junit /path/to/fixture.xml

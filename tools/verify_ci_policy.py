@@ -1125,6 +1125,31 @@ def discover_native_condition_errors(lines: list[str]) -> list[str]:
     return result
 
 
+def discover_native_fixture_errors(lines: list[str]) -> list[str]:
+    """Each dedicated native job drives its full mode inside the finite fixture."""
+    errors = []
+    for name, start, end in job_spans(lines):
+        modes = {"discover-wishlist-" + mode: mode for mode in ("iphone", "ipad", "macos", "android")}
+        if name not in modes:
+            continue
+        invoked = False
+        for step in job_steps(lines, start, end):
+            if step.get("if") or step.get("continue-on-error", "false") != "false":
+                continue
+            inputs = step.get("with") or {}
+            source = str(step.get("run", "")) + "\n" + str(inputs.get("script", ""))
+            for words in evidence_commands(source):
+                command = next((i for i, word in enumerate(words) if not re.match(r"^\w+=", word)), 0)
+                if words[command] != "tools/ci/with-discover-wishlist-fixture" or "--" not in words:
+                    continue
+                child = words[words.index("--") + 1:]
+                if child == ["tools/ci/run-discover-wishlist-proofs", modes[name]]:
+                    invoked = True
+        if not invoked:
+            errors.append(f"job {name} must execute its full native mode inside with-discover-wishlist-fixture in a blocking step")
+    return errors
+
+
 # spec §21.1 caveat 1: runs-on for every job is a STANDARD hosted label and nothing else. A larger
 # runner is billed even on a public repository and fails as a bill, not as a red build, so this is
 # an allowlist rather than a list of forbidden suffixes: any label not matched here is refused,
@@ -1170,6 +1195,7 @@ for workflow in workflows:
     # left alone had uploaded under attempt 1. Checked in every workflow, not only the two known
     # aggregators, so a new aggregator cannot reintroduce it.
     errors.extend(discover_native_condition_errors(lines))
+    errors.extend(discover_native_fixture_errors(lines))
     errors.extend(partial_rerun_errors(workflow, lines))
     # core-ci's stale-evidence argument rests on its result check running before any download.
     # That was enforced only for apple-ci, and twelve edits to the real core-ci.yml that defeat it
