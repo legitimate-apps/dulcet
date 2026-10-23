@@ -47,6 +47,7 @@ import com.legitimateapps.dulcet.ui.DroppedAdditionsNotice
 import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.library.ArtistPlayResult
 import com.legitimateapps.dulcet.library.LibraryLifecycle
+import com.legitimateapps.dulcet.core.DiscoverLibraryRef
 import com.legitimateapps.dulcet.library.playAlbum
 import com.legitimateapps.dulcet.library.playArtist
 import com.legitimateapps.dulcet.library.playTracks
@@ -126,6 +127,8 @@ internal fun PhoneApp(
     // My Library (spec §29.4): with `dulcetLibrary` advertised, Library is the account's own library
     // and the catalog moves to Browse; without it, everything is exactly as it always was.
     val myLibrarySession = myLibrary ?: library.myLibrary
+    val discoverSession = library.discoverWishlist
+    val discoverPublication by discoverSession.publication.collectAsState()
     val myLibraryPublication by myLibrarySession.state.collectAsState()
     val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
     if (!split && tab == PhoneTab.Browse) tab = PhoneTab.Library
@@ -197,6 +200,15 @@ internal fun PhoneApp(
         SearchActivation(context, openAlbum = { routes += "album:$it" }, openArtist = { routes += "artist:$it" })
     }
 
+    val openDiscoverLibrary: (DiscoverLibraryRef) -> Unit = { ref ->
+        if (ref.providerInstanceId == provider) when (ref.type) {
+            "artist" -> routes += "artist:${ref.id}"
+            "album" -> routes += "album:${ref.id}"
+            "song" -> { plays.play { it.playSong(provider, ref.id, "") }; playerOpen = true }
+        }
+    }
+    val openDiscoverArtist: (String) -> Unit = { routes += "discoverArtist:$it" }
+    val openDiscoverAlbum: (String) -> Unit = { routes += "discoverAlbum:$it" }
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
         back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, tabs = {
         // Above the tabs on the library's home, the screen that offers to reconnect the saved account.
@@ -239,6 +251,10 @@ internal fun PhoneApp(
         // over it, so Back from a playlist returns to the playlists, not to the home rows.
         val saved = rememberSaveableStateHolder()
         when {
+            route?.startsWith("discoverArtist:") == true -> PhoneDiscoverArtist(discoverSession,
+                route.removePrefix("discoverArtist:"), openDiscoverLibrary, openDiscoverAlbum, actions.back)
+            route?.startsWith("discoverAlbum:") == true -> PhoneDiscoverAlbum(discoverSession,
+                route.removePrefix("discoverAlbum:"), openDiscoverLibrary, openDiscoverArtist, actions.back)
             route?.startsWith("album:") == true ->
                 AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions,
                     myLibrary = myLibrarySession.takeIf { split })
@@ -260,11 +276,13 @@ internal fun PhoneApp(
                 LibraryHome(account, library, actions, playingRawId,
                     title = SharedR.string.library_browse, myLibrary = myLibrarySession)
             }
-            else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account, { result ->
+            else -> saved.SaveableStateProvider("search") { PhoneSearchScopes(discoverSession, server = {
+                MobileSearchScreen(searchPresenter, searchActivation::activate, account, { result ->
                 plays.play { it.playSong(result.id.providerInstanceId, result.id.rawId, result.title) }
             }, (if (playback != null) { result, insertion ->
                 if (!queueSearchResult(playback, provider, result, insertion, libraryName)) queueEditRefused(context)
-            } else null))
+            } else null), embedded = discoverPublication?.access?.discoverAvailable == true)
+            }, openLibrary = openDiscoverLibrary, openArtist = openDiscoverArtist, openAlbum = openDiscoverAlbum) }
         }
     }
     // One session for every tab and detail page, started with the activity. The search tab's

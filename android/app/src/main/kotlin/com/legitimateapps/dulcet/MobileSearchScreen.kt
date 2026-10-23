@@ -87,6 +87,8 @@ internal fun MobileSearchScreen(
     onPlay: ((SearchResultItem) -> Unit)? = null,
     /** Play Next and Add to Queue for a track result; null disables the items (spec §14.1). */
     onQueue: ((SearchResultItem, AndroidQueueInsertion) -> Unit)? = null,
+    /** Scope host supplies the Search heading and status-bar inset when extensions are available. */
+    embedded: Boolean = false,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
     val recents by presenter.recents.collectAsStateWithLifecycle()
@@ -94,10 +96,10 @@ internal fun MobileSearchScreen(
     var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp, vertical = 16.dp),
+            modifier = Modifier.fillMaxSize().then(if (embedded) Modifier else Modifier.statusBarsPadding()).padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium,
+            if (!embedded) Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold)
             OutlinedTextField(
                 value = state.query,
