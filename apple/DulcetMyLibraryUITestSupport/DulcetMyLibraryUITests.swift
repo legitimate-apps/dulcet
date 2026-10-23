@@ -541,10 +541,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
         if UIDevice.current.userInterfaceIdiom == .pad {
-            // Resolve the indexed result after the account publishes its sidebar. The retained
-            // iPad failure's firstMatch wait reported absent while its own failure hierarchy
-            // contained this exact StaticText. The indexed query avoids that early shortcut.
-            return app.descendants(matching: .any).matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
+            // iPad sidebar choices are explicit buttons. Resolve the indexed action itself,
+            // including its selected trait, rather than a label or a former List cell.
+            return app.buttons.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
         }
         let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
@@ -632,13 +631,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // before reading destination content; make at most one second real row tap.
             let firstSelection = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
             if XCTWaiter.wait(for: [firstSelection], timeout: 3) != .completed {
-                let row = app.cells.containing(.staticText, identifier: "dulcet.sidebar.\(section)").firstMatch
+                let row = app.buttons.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
                 guard row.waitForExistence(timeout: 3) else {
                     XCTFail("Missing native sidebar row for \(section): \(app.debugDescription)")
                     return
                 }
-                print("MY LIBRARY IPAD unacknowledged-sidebar-tap target=\(section) retry=cell")
-                row.tap()
+                if !row.isSelected {
+                    print("MY LIBRARY IPAD unacknowledged-sidebar-tap target=\(section) retry=button")
+                    row.tap()
+                }
             }
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
