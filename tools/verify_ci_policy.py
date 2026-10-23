@@ -1125,6 +1125,25 @@ def discover_native_condition_errors(lines: list[str]) -> list[str]:
     return result
 
 
+def discover_ios_test_compile_errors(lines: list[str]) -> list[str]:
+    """Discover integration compiles shared test sources for iOS, not only its framework."""
+    spans=list(job_spans(lines))
+    if not any(name in {'discover-wishlist-iphone','discover-wishlist-ipad'} for name,_,_ in spans):
+        return []
+    for name,start,end in spans:
+        if name!='apple-conformance-core':continue
+        for step in job_steps(lines,start,end):
+            if step.get('if') or step.get('continue-on-error','false')!='false':continue
+            for words in evidence_commands(str(step.get('run',''))):
+                command=next((i for i,word in enumerate(words) if not re.match(r'^\w+=',word)),0)
+                if (words[command] in {'./gradlew','tools/run-gradle-exclusive'}
+                    and ':core:compileTestKotlinIosSimulatorArm64' in words
+                    and not set(words).intersection({'-x','--exclude-task','-m','--dry-run'})):
+                    return []
+        return ['Discover integration must compile :core:compileTestKotlinIosSimulatorArm64 in a blocking apple-conformance-core step']
+    return []
+
+
 def discover_native_fixture_errors(lines: list[str]) -> list[str]:
     """Each dedicated native job drives its full mode inside the finite fixture."""
     errors = []
@@ -1196,6 +1215,7 @@ for workflow in workflows:
     # aggregators, so a new aggregator cannot reintroduce it.
     errors.extend(discover_native_condition_errors(lines))
     errors.extend(discover_native_fixture_errors(lines))
+    errors.extend(discover_ios_test_compile_errors(lines))
     errors.extend(partial_rerun_errors(workflow, lines))
     # core-ci's stale-evidence argument rests on its result check running before any download.
     # That was enforced only for apple-ci, and twelve edits to the real core-ci.yml that defeat it

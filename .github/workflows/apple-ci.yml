@@ -923,6 +923,9 @@ jobs:
           :core:linkDebugFrameworkTvosArm64
           :core:linkDebugFrameworkTvosSimulatorArm64
           :core:macosArm64Test
+      - name: Compile shared core tests for the iOS simulator
+        timeout-minutes: 5
+        run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :core:compileTestKotlinIosSimulatorArm64
       # The composite below runs the iPhone, iPadOS and tvOS app-host and UI proofs with
       # `test-without-building`, against products the platform legs built when this was one job.
       # Jobs share no files, so the same three schemes are built here, into the same derived-data
