@@ -33,6 +33,25 @@ internal class DiscoverWireFixture : LibraryEndpointTransport {
 }
 
 class RestDiscoverTransportTest {
+    @Test fun artworkBytesAcrossIdentityRejectionAreTypedAndNeverDelivered() = readerTest { env ->
+        var authorization: Long? = 0L
+        val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
+        val ordinary=DiscoverWireFixture()
+        val wire=object:LibraryEndpointTransport by ordinary {
+            override suspend fun requestBinary(endpoint:String,parameters:Map<String,String>,maxBodyBytes:Int):AuthenticatedEndpointResponse {
+                entered.complete(Unit);release.await()
+                return binaryDiscoverResponse(ordinary.image)
+            }
+        }
+        val reader=env.reader(transport=wire,identityAuthorization={authorization})
+        val request=async {RestDiscoverTransport(reader).artwork("held")}
+        entered.await();authorization=null;reader.rejectServerIdentity();release.complete(Unit)
+        val failure=assertIs<DiscoverResult.Failed>(request.await()).error
+        assertEquals("identity-changed",failure.code)
+        assertFalse(failure.retryable)
+        assertTrue(env.uncaught.isEmpty())
+        assertIs<ReaderSendRefused>(runCatching {reader.sendBinary("getDulcetDiscoverCoverArt",emptyMap(),5242880)}.exceptionOrNull())
+    }
     @Test fun binaryRateLimitUsesStatusEvenWithFailureEnvelope() = readerTest { env ->
         val wire = DiscoverWireFixture().apply {
             imageStatus = 429; retryAfter = "120"

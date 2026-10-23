@@ -90,7 +90,7 @@ internal class DiscoverRestWire(private val reader: LibraryReader, private val w
     suspend fun <T> result(block: suspend () -> T): DiscoverResult<T> = try { DiscoverResult.Value(block()) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: DiscoverWireFailure) { DiscoverResult.Failed(failure.failure) }
-        catch (failure: LibraryRequestFailure) { DiscoverResult.Failed(if (failure is ReaderSendRefused) DiscoverFailure("offline",null,true) else discoverFailure(failure.error)) }
+        catch (failure: LibraryRequestFailure) { DiscoverResult.Failed(if (failure is ReaderSendRefused && reader.identityIsRejected) DiscoverFailure("identity-changed",null,false) else discoverFailure(failure.error)) }
         catch (_: Exception) { DiscoverResult.Failed(DiscoverFailure("invalid-response", null, true)) }
 
     suspend fun read(endpoint: String, parameters: Map<String, String>): JsonObject {

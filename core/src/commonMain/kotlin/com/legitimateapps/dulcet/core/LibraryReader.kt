@@ -122,6 +122,7 @@ internal class LibraryReader(
 
     // Reachability says nothing about who is behind the saved origin. Rejection survives network
     // and foreground reports until this reader authenticates its accepted identity again.
+    internal val identityIsRejected: Boolean get() = identityRejected || identityAuthorization() == null
     private var identityRejected = false
     private var identityGeneration = 0L
 
@@ -847,13 +848,14 @@ internal class LibraryReader(
         parameters: Map<String, String>,
         maxBodyBytes: Int,
     ): AuthenticatedEndpointResponse = permits.withPermit {
-        lateinit var binary: AuthenticatedEndpointResponse
+        var binary: AuthenticatedEndpointResponse? = null
         issue(whileOffline = false) {
-            binary = transport.requestBinary(endpoint, parameters, maxBodyBytes)
+            val response = transport.requestBinary(endpoint, parameters, maxBodyBytes)
+            binary = response
             // issue owns admission and sequence, not parsing. Never decode image bytes as text.
-            LibraryEndpointResponse(binary.statusCode, "", binary.redactedUrl, retryAfter = binary.headers.retryAfter)
+            LibraryEndpointResponse(response.statusCode, "", response.redactedUrl, retryAfter = response.headers.retryAfter)
         }
-        binary
+        binary ?: throw ReaderSendRefused()
     }
 
     /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
