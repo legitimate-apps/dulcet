@@ -64,12 +64,12 @@ private fun pageParameters(cursor: String?, limit: Int): Map<String, String> {
     return mapOf("size" to limit.toString()) + discoverOptional("cursor", cursor)
 }
 internal class DiscoverWireFailure(val failure: DiscoverFailure) : Exception(failure.code)
-internal fun invalidDiscover(): Nothing = throw DiscoverWireFailure(DiscoverFailure("invalid-response", null, false))
+internal fun invalidDiscover(): Nothing = throw DiscoverWireFailure(DiscoverFailure("invalid-response", null, true))
 internal fun discoverCode(code: Int): DiscoverFailure = when (code) {
     40 -> DiscoverFailure("unauthorized", null, false)
     50 -> DiscoverFailure("forbidden", null, false)
     70 -> DiscoverFailure("unsupported", null, false)
-    else -> DiscoverFailure("invalid-response", null, false)
+    else -> DiscoverFailure("invalid-response", null, true)
 }
 internal fun discoverFailure(error: DomainError): DiscoverFailure = when (error) {
     DomainError.Transport.Cancelled -> DiscoverFailure("cancelled", null, false)
@@ -82,16 +82,16 @@ internal fun discoverFailure(error: DomainError): DiscoverFailure = when (error)
         401 -> DiscoverFailure("unauthorized", null, false)
         403 -> DiscoverFailure("forbidden", null, false)
         in 500..599 -> DiscoverFailure("upstream-unavailable", null, true)
-        else -> DiscoverFailure("invalid-response", null, false)
+        else -> DiscoverFailure("invalid-response", null, true)
     }
-    else -> DiscoverFailure("invalid-response", null, false)
+    else -> DiscoverFailure("invalid-response", null, true)
 }
 internal class DiscoverRestWire(private val reader: LibraryReader, private val wall: () -> Long) {
     suspend fun <T> result(block: suspend () -> T): DiscoverResult<T> = try { DiscoverResult.Value(block()) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: DiscoverWireFailure) { DiscoverResult.Failed(failure.failure) }
         catch (failure: LibraryRequestFailure) { DiscoverResult.Failed(if (failure is ReaderSendRefused) DiscoverFailure("offline",null,true) else discoverFailure(failure.error)) }
-        catch (_: Exception) { DiscoverResult.Failed(DiscoverFailure("invalid-response", null, false)) }
+        catch (_: Exception) { DiscoverResult.Failed(DiscoverFailure("invalid-response", null, true)) }
 
     suspend fun read(endpoint: String, parameters: Map<String, String>): JsonObject {
         val sent = reader.send(endpoint, parameters)
@@ -104,6 +104,7 @@ internal class DiscoverRestWire(private val reader: LibraryReader, private val w
                 "cursor-expired" -> DiscoverFailure("cursor-expired", null, true)
                 "upstream-unavailable" -> DiscoverFailure("upstream-unavailable", discoverRetryAt(error.discoverText("retryAfterSeconds"), wall()), true)
                 "operation-conflict" -> DiscoverFailure("conflict", null, false)
+                "invalid-request" -> DiscoverFailure("invalid-response", null, false)
                 else -> discoverCode(error.discoverInteger("code") ?: 0)
             })
         }

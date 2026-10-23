@@ -36,5 +36,6 @@ CREATE TABLE wish_receipt (
   operation_id TEXT NOT NULL,
   wish_id TEXT,
   payload TEXT NOT NULL,
+  issue_seq INTEGER NOT NULL,
   PRIMARY KEY (server_id, operation_id)
 );

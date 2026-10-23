@@ -275,8 +275,8 @@ def seed_v13(connection):
          json.dumps({"type": "com.legitimateapps.dulcet.core.WishMutation.Add", "operationId": "11111111-1111-4111-8111-111111111111", "actionTimeMillis": 1000,
             "target": {"kind": "Song", "mbid": "22222222-2222-4222-8222-222222222222"},
             "snapshot": {"title": "Fixture", "artist": None, "year": None, "artworkId": None}, "source": {"type": "search", "id": None}}), "pending", None, 51))
-    connection.execute("INSERT INTO wish_receipt VALUES (?, ?, ?, ?)",
-        ("server:fixture-alpha", "fixture-receipt", None, '{"applied":false,"wish":null,"removed":true}'))
+    connection.execute("INSERT INTO wish_receipt VALUES (?, ?, ?, ?, ?)",
+        ("server:fixture-alpha", "fixture-receipt", None, '{"applied":false,"wish":null,"removed":true}', 51))
 
 
 SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11, 12: seed_v12, 13: seed_v13}

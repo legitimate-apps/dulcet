@@ -99,7 +99,7 @@ REQUIRED_IMPLEMENTED_TABLES = {
 PROTECTED_COLUMNS = {
     "wish_clock": ("server_id", "last_action_time", "last_sequence"),
     "wish_intent": ("server_id", "operation_id", "row_key", "target_key", "payload", "status", "error", "ordinal"),
-    "wish_receipt": ("server_id", "operation_id", "wish_id", "payload"),
+    "wish_receipt": ("server_id", "operation_id", "wish_id", "payload", "issue_seq"),
     "scrobble_outbox": (
         "server_id",
         "raw_id",

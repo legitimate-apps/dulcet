@@ -26,6 +26,7 @@ CREATE TABLE wish_receipt (
   operation_id TEXT NOT NULL,
   wish_id TEXT,
   payload TEXT NOT NULL,
+  issue_seq INTEGER NOT NULL,
   PRIMARY KEY (server_id, operation_id)
 );
 
@@ -50,7 +51,7 @@ UPDATE wish_intent SET status = ?, error = ? WHERE server_id = ? AND operation_i
 countPending:
 SELECT count(*) FROM wish_intent WHERE server_id = ? AND status = 'pending';
 upsertReceipt:
-INSERT OR REPLACE INTO wish_receipt VALUES (?, ?, ?, ?);
+INSERT OR REPLACE INTO wish_receipt VALUES (?, ?, ?, ?, ?);
 selectReceipt:
 SELECT * FROM wish_receipt WHERE server_id = ? AND operation_id = ?;
 selectReceiptsForWish:
@@ -60,3 +61,6 @@ deleteProtectedForServer {
   DELETE FROM wish_receipt WHERE server_id = :server_id;
   DELETE FROM wish_clock WHERE server_id = :server_id;
 }
+
+selectSnapshots:
+SELECT payload FROM wishlist_snapshot WHERE server_id = ? ORDER BY issue_seq DESC;

@@ -72,7 +72,7 @@ internal class DiscoverStore(
                 val payload=Json.encodeToString(mutation)
                 val old=wishes.selectIntent(serverId,mutation.operationId).executeAsOneOrNull()
                 if (old != null) {
-                    if (old.payload != payload) return@transactionWithResult DiscoverResult.Failed(DiscoverFailure("conflict",null,false))
+                    if (Json.decodeFromString<WishMutation>(old.payload) != mutation) return@transactionWithResult DiscoverResult.Failed(DiscoverFailure("conflict",null,false))
                     return@transactionWithResult DiscoverResult.Value(WishEnqueued(mutation.operationId,old.row_key))
                 }
                 val ordinal=nextIssue()
@@ -87,14 +87,20 @@ internal class DiscoverStore(
     }
     fun acknowledge(operationId: String, receipt: WishReceipt) = database.transaction {
         // Retain immutable history so a late generation cannot hide an intentional re-add.
-        wishes.upsertReceipt(serverId,operationId,receipt.wish?.id,Json.encodeToString(receipt))
+        wishes.upsertReceipt(serverId,operationId,receipt.wish?.id,Json.encodeToString(receipt),nextIssue())
         wishes.updateIntent("acknowledged",null,serverId,operationId)
     }
     fun refuse(operationId: String, failure: DiscoverFailure) = wishes.updateIntent("failed",failure.code,serverId,operationId)
+    fun receiptIssue(operationId: String): Long = wishes.selectReceipt(serverId,operationId).executeAsOneOrNull()?.issue_seq ?: 0
+    fun snapshotIssue(filter: WishFilter): Long = wishes.selectSnapshot(serverId,Json.encodeToString(filter)).executeAsOneOrNull()?.issue_seq ?: 0
+    fun knownWish(rowKey: String): DiscoverWish? {
+        val listed=wishes.selectSnapshots(serverId).executeAsList().flatMap { Json.decodeFromString<WishListSnapshot>(it).items }
+        return listed.firstOrNull { this.rowKey(it.id)==rowKey } ?: intents().firstOrNull {it.rowKey==rowKey}?.let {receipt(it.mutation.operationId)?.wish}
+    }
     fun receipt(operationId: String): WishReceipt? = wishes.selectReceipt(serverId,operationId).executeAsOneOrNull()?.let { Json.decodeFromString(it.payload) }
     fun rowKey(wishId: String): String = wishes.selectReceiptsForWish(serverId,wishId).executeAsList()
         .mapNotNull { receipt -> wishes.selectIntent(serverId,receipt.operation_id).executeAsOneOrNull() }
-        .lastOrNull()?.row_key ?: "wish:$wishId"
+        .maxByOrNull { it.ordinal }?.row_key ?: "wish:$wishId"
     private fun defaultKey(mutation: WishMutation): String = when(mutation) {
         is WishMutation.Add -> "add:${mutation.operationId}"
         is WishMutation.Remove -> mutation.addOperationId?.let { "add:$it" } ?: rowKey(mutation.wishId ?: "")
@@ -103,7 +109,7 @@ internal class DiscoverStore(
     private fun mutationTarget(mutation: WishMutation): String = when(mutation) {
         is WishMutation.Add -> discoverTargetKey(mutation.target)
         is WishMutation.Reject -> discoverTargetKey(mutation.target)
-        is WishMutation.Remove -> intents().firstOrNull { it.mutation.operationId == mutation.addOperationId || receipt(it.mutation.operationId)?.wish?.id == mutation.wishId }?.targetKey ?: "wish:${mutation.wishId}"
+        is WishMutation.Remove -> intents().firstOrNull { it.mutation.operationId == mutation.addOperationId || (mutation.wishId != null && receipt(it.mutation.operationId)?.wish?.id == mutation.wishId) }?.targetKey ?: "wish:${mutation.wishId}"
     }
 }
 internal fun discoverTargetKey(target: DiscoverTarget): String = Json.encodeToString(target)
