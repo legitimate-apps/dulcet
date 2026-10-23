@@ -60,7 +60,7 @@ def apple_report(mode,summary,tree,acknowledgements,requests,selected=None):
         elif 'iPad' in model:idioms.add('pad')
         elif 'iPhone' in model:idioms.add('phone')
     return dict(mode=mode,idiom=next(iter(idioms)) if len(idioms)==1 else None,
-        finalized=bool(summary.get('finishTime')) and summary.get('totalTestCount')==len(cases) and bool(cases),
+        finalized=bool(summary.get('finishTime')) and summary.get('totalTestCount')==len(cases),
         cases=cases,effects=effects,baseline=baseline,replay=replay,selected=selected)
 
 def native_exit_status(code, interrupted, report):

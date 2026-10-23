@@ -59,6 +59,9 @@ class AppleExtractionTests(unittest.TestCase):
         tree['testNodes'][0]['nodeIdentifier']='UnrelatedSuite/'+expected_tests('ipad')[0]+'()'
         report=apple_report('ipad',dict(finishTime=123,totalTestCount=5),tree,[],{},expected_tests('ipad'))
         self.assertEqual('expected-test-not-executed',validate_report(report).first_cause)
+    def test_finalized_zero_test_bundle_reports_missing_execution(self):
+        report=apple_report('iphone',dict(finishTime=123,totalTestCount=0),dict(devices=[],testNodes=[]),[],{})
+        self.assertEqual('expected-test-not-executed',validate_report(report).first_cause)
     def test_unfinished_summary_cannot_use_completed_log(self):
         report=apple_report('iphone',{},dict(devices=[],testNodes=[]),[],{})
         self.assertEqual('result-not-finalized',validate_report(report).first_cause)
