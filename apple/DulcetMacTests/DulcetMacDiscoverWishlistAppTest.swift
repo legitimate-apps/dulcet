@@ -261,7 +261,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         XCTAssertTrue((app.label(age) ?? "").contains("Cached answer")); try await effect("stale-answer", revision: stale)
         let busy = try await scenario("rate-limit-120")
         try await type("Fixture new", in: app)
-        let retry = try await app.element(identifiedBy: "discover.retry", timeout: .seconds(20))
+        let retry = try await reveal("rate-limit Retry", in: app) { app.identifier($0) == "discover.retry" }
         XCTAssertFalse(app.isAccessibilityEnabled(retry)); try await effect("rate-limit-120", revision: busy)
         try await capture("Search-Busy", app); app.close(); try await scenario("normal")
         let baseline = try await control("baseline")
@@ -356,23 +356,30 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
     }
 
     private func focusAndPress(_ element: Any, key: String, code: UInt16, in app: HostedApp) async throws {
-        let object = try XCTUnwrap(element as? NSObject)
-        let selector = NSSelectorFromString("isAccessibilityFocused")
+        let identifier = try XCTUnwrap(app.identifier(element))
+        NSApp.activate()
+        app.window.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(NSApp.isFullKeyboardAccessEnabled, "The CI keyboard proof requires Full Keyboard Access")
         func focused() -> Bool {
-            object.responds(to: selector) && (object.value(forKey: "accessibilityFocused") as? Bool == true)
+            guard let current = app.firstElement(where: { app.identifier($0) == identifier }) as? NSObject else { return false }
+            let selector = NSSelectorFromString("isAccessibilityFocused")
+            return current.responds(to: selector) && (current.value(forKey: "accessibilityFocused") as? Bool == true)
         }
         func send(_ characters: String, code: UInt16) throws {
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 let event = try XCTUnwrap(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: app.window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
-                app.window.sendEvent(event)
+                NSApp.sendEvent(event)
             }
         }
-        for _ in 0..<120 {
+        for index in 0..<120 {
             if focused() { break }
             try send("\t", code: 48)
             try await Task.sleep(for: .milliseconds(30))
+            if index < 8 {
+                print("DISCOVER_MAC_TAB index=\(index) focused=\(focused()) active=\(NSApp.isActive) fullKeyboard=\(NSApp.isFullKeyboardAccessEnabled) responder=\(String(describing: app.window.firstResponder))")
+            }
         }
-        print("DISCOVER_MAC_KEYBOARD identifier=\(app.identifier(element) ?? "element") focusedGetter=\(object.responds(to: selector)) focused=\(focused()) responder=\(String(describing: app.window.firstResponder))")
+        print("DISCOVER_MAC_KEYBOARD identifier=\(identifier) focused=\(focused()) responder=\(String(describing: app.window.firstResponder))")
         XCTAssertTrue(focused(), "Native keyboard focus must reach \(app.identifier(element) ?? "element")")
         try send(key, code: code)
     }
