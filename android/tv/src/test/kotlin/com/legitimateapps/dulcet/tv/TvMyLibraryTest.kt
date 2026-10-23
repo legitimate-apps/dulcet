@@ -64,10 +64,11 @@ class TvMyLibraryTest {
     }
 
     @Test fun tvCompositionDoesNotInstantiateFeature() {
+        server.dulcetDiscoverWishlist = true
         host(FakeMyLibrarySource(available = false))
         await("positive baseline catalog response") { server.requests("getAlbumList2").isNotEmpty() }
         assertTrue(server.requests("getOpenSubsonicExtensions").isNotEmpty())
-        for (endpoint in listOf("searchDulcetDiscover", "getDulcetWishlist", "addDulcetWish")) {
+        for (endpoint in listOf("searchDulcetDiscover", "getDulcetWishlist", "addToDulcetWishlist")) {
             assertTrue(server.requests(endpoint).isEmpty(), "TV must not create Discover: $endpoint")
         }
     }
