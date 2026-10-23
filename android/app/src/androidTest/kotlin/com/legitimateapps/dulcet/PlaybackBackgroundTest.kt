@@ -12,6 +12,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.legitimateapps.dulcet.core.AndroidServerIdentity
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.playback.PlaybackIntents
@@ -52,6 +53,12 @@ class PlaybackBackgroundTest {
             }
             var observerBound = false
             try {
+                // Check before any activity or library reader can start its first lineage probe.
+                assertTrue("Playback setup must be verified before launching playback",
+                    AndroidServerIdentity.isVerified(account.id))
+                assertTrue("Playback setup must be connected before launching playback",
+                    SavedAccountConnection.isConnected(account.id))
+                println("OBSERVED playback-setup verified=true connected=true before-activity-launch=true")
                 val intent = PlaybackIntents.playTrack(context, account.id, "fixture-song", "Background fixture")
                     .setClassName(context, PLAYBACK_ENTRY_ALIAS)
                 ActivityScenario.launch<MainActivity>(intent).use { activity ->
