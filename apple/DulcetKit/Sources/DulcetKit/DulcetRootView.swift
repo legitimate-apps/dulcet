@@ -608,27 +608,33 @@ struct DulcetDestinationStack: View {
     private var destination: DulcetSidebarDestination { tab ?? store.selectedDestination }
     private var showing: Bool { tab.map { $0 == store.selectedDestination } ?? true }
 
-    var body: some View {
-        if (destination == .listenNow || destination == .library || destination == .browse), store.readerOwnsLibrary {
-            readerStack
-        } else {
-            snapshotStack
-        }
+    private var usesReader: Bool {
+        (destination == .listenNow || destination == .library || destination == .browse) && store.readerOwnsLibrary
     }
 
-    /// Library while the reader draws it: the store's reader stack over the section it chose.
-    /// Each screen holds its own window, so a hidden tab keeps its rows without a snapshot.
-    private var readerStack: some View {
-        NavigationStack(path: readerPath) {
-            Group {
-                if destination == .listenNow { DulcetListenNowView() }
-                else { DulcetReaderCollectionRoot(destination: destination) }
+    var body: some View {
+        // One concrete root and one destination registration survive reader/snapshot changes.
+        // Group distributes a registration into its changing children; a split column or a
+        // retained tab must keep the navigation owner even while those children change.
+        NavigationStack(path: usesReader ? readerPath : snapshotPath) {
+            ZStack {
+                if usesReader {
+                    if destination == .listenNow { DulcetListenNowView() }
+                    else { DulcetReaderCollectionRoot(destination: destination) }
+                } else if let displayed = displayedSnapshot {
+                    DulcetStateSurface(store: store, libraryAsStackRoot: true,
+                                       snapshotOverride: showing ? nil : displayed)
+                } else {
+                    Color.dulcetWindow.ignoresSafeArea()
+                }
             }
-                .allowsHitTesting(showing)
-                .modifier(bar(drawsNotices: showing && store.readerPath.isEmpty))
-                .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
+            .allowsHitTesting(showing)
+            .modifier(bar(drawsNotices: showing && (usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty)))
+            .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
         }
         .id(destination)
+        .onAppear(perform: retainLibrary)
+        .onChange(of: store.snapshot) { _, _ in retainLibrary() }
     }
 
     private var readerPath: Binding<[StackRoute]> {
@@ -645,35 +651,7 @@ struct DulcetDestinationStack: View {
         )
     }
 
-    private var snapshotStack: some View {
-        NavigationStack(path: snapshotPath) {
-            Group {
-                if let displayed = displayedSnapshot {
-                    // One branch whether showing or retained, so the grid keeps its identity --
-                    // and its scroll position -- across a tab switch.
-                    DulcetStateSurface(
-                        store: store,
-                        libraryAsStackRoot: true,
-                        snapshotOverride: showing ? nil : displayed
-                    )
-                    .allowsHitTesting(showing)
-                } else {
-                    Color.dulcetWindow.ignoresSafeArea()
-                }
-            }
-            .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.isEmpty))
-            .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
-        }
-        // A different destination is a different stack: switching from an open album to Search
-        // must not animate as a pop.
-        .id(destination)
-        .onAppear(perform: retainLibrary)
-        .onChange(of: store.snapshot) { _, _ in retainLibrary() }
-    }
-
-    /// Split-view columns can retain a registration while changing the stack's root. Both
-    /// registrations therefore render the complete common route type; a retained snapshot
-    /// registration must never turn a reader route into EmptyView (or vice versa).
+    /// The common route type is rendered completely by the stack's sole registration.
     @ViewBuilder private func stackPage(_ path: StackRoute) -> some View {
         switch path {
         case let .reader(route):
@@ -994,6 +972,7 @@ private struct DulcetSidebar: View {
                 case let .section(section):
                     store.selectLibrarySection(section)
                 case .wishlist:
+                    DulcetUIProofMarkers.record("discover-wishlist-sidebar")
                     store.showReaderPage(.wishlist)
                 case let .myLibrarySection(section):
                     store.selectMyLibrarySection(section)

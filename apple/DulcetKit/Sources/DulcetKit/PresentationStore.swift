@@ -218,7 +218,8 @@ public final class DulcetPresentationStore {
     public private(set) var readerPath: [DulcetReaderRoute] = []
     /// Hidden tabs keep their own path, so switching away does not pop their destination views.
     func readerPath(for destination: DulcetSidebarDestination) -> [DulcetReaderRoute] {
-        selectedDestination == destination ? readerPath : savedReaderPaths[destination] ?? []
+        guard destination == .listenNow || destination == .library || destination == .browse else { return [] }
+        return selectedDestination == destination ? readerPath : savedReaderPaths[destination] ?? []
     }
     /// The library section at the root of the reader's stack: the sidebar's and the TV bar's
     /// selection. The phone's root is always Home, with the other sections pushed from it.

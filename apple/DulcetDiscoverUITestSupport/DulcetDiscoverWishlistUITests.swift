@@ -157,7 +157,7 @@ import UIKit
         let link = app.descendants(matching: .any)["wishlist.destination"].firstMatch
         XCTAssertTrue(link.waitForExistence(timeout: 15), "Missing Library Wishlist destination: " + app.debugDescription)
         activate(link)
-        XCTAssertTrue(app.buttons["wishlist.refresh"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["wishlist.refresh"].waitForExistence(timeout: 15), "Wishlist activation must present content: " + app.debugDescription)
     }
     func capture(_ name: String) throws {
 #if os(macOS)
