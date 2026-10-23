@@ -187,6 +187,43 @@ class AppleDiscoverFacadeTest {
         pumpFor(100.milliseconds);assertEquals(1,results.size);discover.close()
     }
 
+    @Test fun coldWishlistCorrectionNeedsNoDiscoverReadAndKeepsWishlistOnlyGate()=facadeTest { h ->
+        h.onReader {
+            val session=requireNotNull(h.session.load())
+            val store=DiscoverStore(h.database.database,session.reader.cache.serverId)
+            store.putRead("capabilities", """{"dulcetWishlist":[1]}""".encodeToByteArray(),false,store.nextIssue())
+        }
+        val discover=AppleDiscoverClient(h.reader)
+        val results=mutableListOf<AppleWishEnqueueResult>()
+        discover.rejectTarget(AppleDiscoverTarget("song","cold-recording"),
+            AppleDiscoverLibraryRef(h.provider,"song","local-song"),"cold-wish") {
+            assertTrue(NSThread.isMainThread);results+=it
+        }
+        pumpUntil("cold correction"){results.size==1}
+        assertNotNull(results.single().value);assertNull(results.single().error)
+        assertEquals(1L,h.pending())
+        h.onReader {
+            val session=requireNotNull(h.session.load())
+            val mutation=DiscoverStore(h.database.database,session.reader.cache.serverId).intents().single().mutation
+            assertEquals(DiscoverTarget(DiscoverKind.Song,"cold-recording"),(mutation as WishMutation.Reject).target)
+            assertEquals("cold-wish",mutation.wishId)
+            assertTrue(h.server.log.isEmpty(),"cold correction must send no Discover read")
+        }
+        discover.close()
+    }
+
+    @Test fun coldCorrectionRejectsForeignProviderAndInvalidKindWithoutThrowing()=facadeTest { h ->
+        val discover=AppleDiscoverClient(h.reader)
+        for ((kind,provider) in listOf("song" to "other-account","future" to h.provider)) {
+            val results=mutableListOf<AppleWishEnqueueResult>()
+            discover.rejectTarget(AppleDiscoverTarget(kind,"cold-recording"),
+                AppleDiscoverLibraryRef(provider,"song","local-song"),null){results+=it}
+            pumpUntil("refused correction"){results.size==1}
+            assertEquals("invalid-response",results.single().error?.code)
+        }
+        assertEquals(0L,h.pending());discover.close()
+    }
+
     private fun facadeTest(failComposition:Boolean=false,malformed:Boolean=false,block:(Harness)->Unit){
         check(NSThread.isMainThread)
         val h=Harness(failComposition,malformed)
@@ -194,7 +231,7 @@ class AppleDiscoverFacadeTest {
     }
     private class Harness(private val failComposition:Boolean=false,private val malformed:Boolean=false) {
         private val driver=createTestDriver()
-        private val database=DulcetDatabaseStore.open(driver)
+        val database=DulcetDatabaseStore.open(driver)
         private val store=SeenCacheStore(database,ManualWallClock(now=3_000_000))
         private val dispatcher:CloseableCoroutineDispatcher=newLibraryReaderDispatcher()
         val server=SessionTestServer()

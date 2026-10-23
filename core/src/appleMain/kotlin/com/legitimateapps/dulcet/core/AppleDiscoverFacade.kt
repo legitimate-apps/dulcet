@@ -78,6 +78,17 @@ public class AppleDiscoverClient(private val reader:AppleLibraryReaderClient) {
     public fun reject(item:AppleDiscoverItem,libraryItem:AppleDiscoverLibraryRef,wishId:String?,completion:(AppleWishEnqueueResult)->Unit):AppleLibraryReaderOperation =
         operation(completion,{it.appleWishEnqueueResult()}) {target,done ->target.reject(item.common(),libraryItem.common(),wishId,done)}
 
+    /** Cold Wishlist correction needs only its copied target and scoped local reference.
+     * It uses the same Wishlist-only admission, durable command, cancellation and delivery fence
+     * as [reject]; no Discover query or exported item constructor is needed. */
+    public fun rejectTarget(target:AppleDiscoverTarget,libraryItem:AppleDiscoverLibraryRef,wishId:String?,
+        completion:(AppleWishEnqueueResult)->Unit):AppleLibraryReaderOperation =
+        operation(completion,{it.appleWishEnqueueResult()}) {client,done ->
+            val item=DiscoverItem(target.mbid,target.kind,target.common(),"",null,null,null,null,null,null,null,null,
+                emptyList(),false,DiscoverAvailability("unknown","unknown",null,null,null,null,emptyList()))
+            client.reject(item,libraryItem.common(),wishId,done)
+        }
+
     private fun <T,R> operation(completion:(R)->Unit,convert:(DiscoverResult<T>)->R,
         start:(DiscoverClient,(DiscoverResult<T>)->Unit)->DiscoverOperation):AppleLibraryReaderOperation {
         val operation=Operation(completion,convert)
