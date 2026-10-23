@@ -23,6 +23,14 @@ def wish_replay_parameters(params):
     fields=('kind','mbid','title','artist','year','artworkId','sourceType','sourceId','operationId','actionTime')
     return {key:params[key][0] for key in fields if key in params}
 
+class LoopbackFixtureServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # Both fixture listeners advertise numeric loopback URLs. Avoid HTTPServer's
+        # otherwise unnecessary reverse DNS, which can stall hosted startup.
+        from socketserver import TCPServer
+        TCPServer.server_bind(self)
+        self.server_name,self.server_port=self.server_address
+
 class FixtureProxy:
     def __init__(self,config):
         self.config=config;self.lock=threading.RLock();self.revision=0;self.name='normal';self.hits=0;self.effects=[];self.requests=[];self.remove_seen=threading.Event();self.lost=False;self.detail_release=threading.Event();self.query_release=threading.Event()
@@ -178,7 +186,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--role',choices=['upstream','proxy'],required=True);p.add_argument('--ready',type=Path,required=True);p.add_argument('--config',type=Path);args=p.parse_args()
-    server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.daemon_threads=True;server.role=args.role
+    server=LoopbackFixtureServer(('127.0.0.1',0),Handler);server.daemon_threads=True;server.role=args.role
     base='http://127.0.0.1:'+str(server.server_port)
     if args.role=='proxy':
         config=json.loads(args.config.read_text());config['proxy']=base;server.fixture=FixtureProxy(config)
