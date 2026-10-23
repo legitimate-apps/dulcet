@@ -6,6 +6,8 @@ def expected_tests(mode):
     return COMMON + ({'iphone':['testIPhoneLargestTextAndVoiceOverLabels'],
         'ipad':['testIPadSidebarSelectionSurvivesWishlistDetailAndResize'],
         'macos':['testMacKeyboardSearchSidebarAndContextRemove','testMacWindowClosureDropsPendingNavigation']}[mode])
+def expected_suite(mode):
+    return {'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetMacDiscoverWishlistAppTest'}[mode]
 @dataclass(frozen=True)
 class Verdict:
     first_cause: str | None = None
@@ -14,7 +16,7 @@ def validate_report(report):
     if not report.get('finalized'):return Verdict('result-not-finalized')
     cases=report.get('cases',[])
     expected=report.get('selected') or expected_tests(report['mode'])
-    if sorted(c.get('name','') for c in cases)!=sorted(expected):return Verdict('expected-test-not-executed')
+    if sorted(c.get('name','') for c in cases)!=sorted(expected) or any(c.get('suite',expected_suite(report['mode']))!=expected_suite(report['mode']) for c in cases):return Verdict('expected-test-not-executed')
     if any(c.get('status')!='passed' for c in cases):return Verdict('test-not-passed')
     if report.get('idiom')!={'iphone':'phone','ipad':'pad','macos':'mac'}[report['mode']]:return Verdict('wrong-device-idiom')
     # A focused navigation reproduction is not a complete feature proof.
@@ -34,7 +36,7 @@ def apple_report(mode,summary,tree,acknowledgements,requests,selected=None):
     cases=[]
     def visit(node):
         if isinstance(node,dict):
-            if node.get('nodeType')=='Test Case':cases.append(dict(name=node['name'].removesuffix('()'),status=node.get('result','').lower()))
+            if node.get('nodeType')=='Test Case':cases.append(dict(name=node['name'].removesuffix('()'),suite=node.get('nodeIdentifier','').split('/')[0],status=node.get('result','').lower()))
             for value in node.values():visit(value)
         elif isinstance(node,list):
             for value in node:visit(value)

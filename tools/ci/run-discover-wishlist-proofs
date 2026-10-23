@@ -12,8 +12,8 @@ p.add_argument('mode',nargs='?',choices=['components','sessions','iphone','ipad'
 a=p.parse_args()
 if a.self_test:
     import unittest
-    from test_discover_proof_report import ReportTests
-    result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(ReportTests))
+    import test_discover_proof_report
+    result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromModule(test_discover_proof_report))
     sys.exit(0 if result.wasSuccessful() else 1)
 if not a.mode:p.error('mode is required')
 if os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')

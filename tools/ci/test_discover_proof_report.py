@@ -1,5 +1,6 @@
 """A native report must distinguish execution and actual fixture effects from arming."""
 import copy
+from discover_proof_report import apple_report,expected_suite
 import unittest
 from discover_proof_report import validate_report, expected_tests
 
@@ -41,5 +42,17 @@ class ReportTests(unittest.TestCase):
     def test_receipt_replayed(self):
         report=self.positive();report['replay']={}
         self.assertEqual('lost-receipt-replay-not-observed',validate_report(report).first_cause)
+
+class AppleExtractionTests(unittest.TestCase):
+    def test_finalized_tree_has_exact_suite_and_observed_idiom(self):
+        tree=dict(devices=[dict(modelName='iPad Pro',platform='iOS Simulator')],testNodes=[dict(nodeType='Test Case',name=name+'()',nodeIdentifier=expected_suite('ipad')+'/'+name+'()',result='Passed') for name in expected_tests('ipad')])
+        report=apple_report('ipad',dict(finishTime=123,totalTestCount=5),tree,[],{},expected_tests('ipad'))
+        self.assertIsNone(validate_report(report).first_cause)
+        tree['testNodes'][0]['nodeIdentifier']='UnrelatedSuite/'+expected_tests('ipad')[0]+'()'
+        report=apple_report('ipad',dict(finishTime=123,totalTestCount=5),tree,[],{},expected_tests('ipad'))
+        self.assertEqual('expected-test-not-executed',validate_report(report).first_cause)
+    def test_unfinished_summary_cannot_use_completed_log(self):
+        report=apple_report('iphone',{},dict(devices=[],testNodes=[]),[],{})
+        self.assertEqual('result-not-finalized',validate_report(report).first_cause)
 
 if __name__=='__main__':unittest.main()
