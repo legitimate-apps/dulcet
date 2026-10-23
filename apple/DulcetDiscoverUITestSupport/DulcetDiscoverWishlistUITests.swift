@@ -95,7 +95,7 @@ import UIKit
 #if os(macOS)
         let row = app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
 #else
-        let row = UIDevice.current.userInterfaceIdiom == .pad ? app.staticTexts["dulcet.sidebar.\(section)"].firstMatch : app.tabBars.buttons[section == "library" ? "Library" : section == "browse" ? "Browse" : section == "settings" ? "Settings" : "Search"].firstMatch
+        let row = UIDevice.current.userInterfaceIdiom == .pad ? app.staticTexts["dulcet.sidebar.\(section)"].firstMatch : app.tabBars.buttons["dulcet.tab." + section].firstMatch
 #endif
         XCTAssertTrue(row.waitForExistence(timeout: 30)); activate(row)
     }
