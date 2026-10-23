@@ -47,7 +47,7 @@ def mapping_entry(line: str) -> tuple[int, str, str] | None:
 # aggregator then checks the leg against the plan (plan-apple-legs require-leg) instead of requiring
 # `success` outright: a planned leg must succeed and an unplanned one must be skipped. Any other
 # job condition on a leg is one the aggregator cannot reason about.
-PLAN_CONDITION = re.compile(r"^\$\{\{ needs\.([\w-]+)\.outputs\.([\w-]+) == 'true' \}\}$")
+PLAN_CONDITION = re.compile(r"^\$\{\{ (?:!cancelled\(\) && )?needs\.([\w-]+)\.outputs\.([\w-]+) == 'true' \}\}$")
 LEG_CHECK = ["python3", "tools/ci/plan-apple-legs", "require-leg"]
 
 
@@ -1111,6 +1111,20 @@ def cancels_in_progress(lines: list[str]) -> bool:
     return False
 
 
+def discover_native_condition_errors(lines: list[str]) -> list[str]:
+    """Planned native proofs collect evidence even if a preceding baseline leg fails.
+
+    The aggregate still requires every leg to succeed. Cancellation stops all remaining work.
+    """
+    result = []
+    expected = "${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}"
+    for name, start, end in job_spans(lines):
+        if name in {"discover-wishlist-iphone", "discover-wishlist-ipad", "discover-wishlist-macos"}:
+            if job_properties(lines, start, end).get("if") != expected:
+                result.append(f"job {name} must run every planned native proof unless cancelled")
+    return result
+
+
 # spec §21.1 caveat 1: runs-on for every job is a STANDARD hosted label and nothing else. A larger
 # runner is billed even on a public repository and fails as a bill, not as a red build, so this is
 # an allowlist rather than a list of forbidden suffixes: any label not matched here is refused,
@@ -1155,6 +1169,7 @@ for workflow in workflows:
     # attempt, so a "Re-run failed jobs" of one emulator leg could never go green -- the jobs it
     # left alone had uploaded under attempt 1. Checked in every workflow, not only the two known
     # aggregators, so a new aggregator cannot reintroduce it.
+    errors.extend(discover_native_condition_errors(lines))
     errors.extend(partial_rerun_errors(workflow, lines))
     # core-ci's stale-evidence argument rests on its result check running before any download.
     # That was enforced only for apple-ci, and twelve edits to the real core-ci.yml that defeat it

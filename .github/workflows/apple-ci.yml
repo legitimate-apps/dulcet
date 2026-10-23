@@ -2730,11 +2730,11 @@ jobs:
   # dispatch both must succeed. On a run that planned every leg it then resolves every apple-ci
   # evidence row against the JUnit the legs uploaded, as `core-ci` does for Android. It runs no
   # Apple tooling, so it takes no macOS runner.
-  # Finite step-2 native proof. Serial dependencies retain the four-slot hosted envelope.
+  # Each native proof follows its corresponding baseline leg. Together they retain four slots.
   discover-wishlist-macos:
     name: discover-wishlist-macos
-    needs: [apple-plan, apple-platform, apple-conformance-core, apple-conformance-ipad-iphone]
-    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    needs: [apple-plan, apple-platform]
+    if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60
     outputs:
@@ -2798,11 +2798,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Finite step-2 native proof. Serial dependencies retain the four-slot hosted envelope.
+  # Each native proof follows its corresponding baseline leg. Together they retain four slots.
   discover-wishlist-iphone:
     name: discover-wishlist-iphone
-    needs: [apple-plan, discover-wishlist-macos]
-    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    needs: [apple-plan, apple-conformance-core]
+    if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60
     outputs:
@@ -2866,11 +2866,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Finite step-2 native proof. Serial dependencies retain the four-slot hosted envelope.
+  # Each native proof follows its corresponding baseline leg. Together they retain four slots.
   discover-wishlist-ipad:
     name: discover-wishlist-ipad
-    needs: [apple-plan, discover-wishlist-iphone]
-    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    needs: [apple-plan, apple-conformance-ipad-iphone]
+    if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60
     outputs:
