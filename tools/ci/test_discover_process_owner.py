@@ -30,7 +30,9 @@ finally:
 # pressure must not kill a lease-control child before the test's deliberate TERM. Health policy
 # and real sampling are exercised separately by the health controls and native proof receipts.
 CONTROL_LAUNCHER = r'''
-import os, pathlib, runpy, sys, time
+import faulthandler, os, pathlib, runpy, sys, time
+faulthandler.dump_traceback_later(8)
+print('CONTROL launcher started', flush=True)
 sys.path.insert(0, sys.argv[1])
 import discover_simulator_health
 class ControlSampler:
@@ -41,6 +43,7 @@ class ControlSampler:
                     swapoutsPerSecond=0, load1=0, memoryFreePercent=80,
                     bootDiskFreeGiB=100), []
 discover_simulator_health.HostSampler=ControlSampler
+print('CONTROL sampler installed', flush=True)
 sys.argv=[sys.argv[2], 'iphone']
 runpy.run_path(sys.argv[0], run_name='__main__')
 '''
