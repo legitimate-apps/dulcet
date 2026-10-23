@@ -371,16 +371,16 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
                 NSApp.sendEvent(event)
             }
         }
-        for index in 0..<120 {
-            if focused() { break }
-            try send("\t", code: 48)
-            try await Task.sleep(for: .milliseconds(30))
-            if index < 8 {
-                print("DISCOVER_MAC_TAB index=\(index) focused=\(focused()) active=\(NSApp.isActive) fullKeyboard=\(NSApp.isFullKeyboardAccessEnabled) responder=\(String(describing: app.window.firstResponder))")
-            }
-        }
-        print("DISCOVER_MAC_KEYBOARD identifier=\(identifier) focused=\(focused()) responder=\(String(describing: app.window.firstResponder))")
-        XCTAssertTrue(focused(), "Native keyboard focus must reach \(app.identifier(element) ?? "element")")
+        // Like the hosted table proofs' makeFirstResponder, focus the rendered control
+        // through AppKit accessibility, then require the actual key event to activate it.
+        // Lazy search rows do not stay in one key-view loop while Tab scrolls other groups.
+        let current = try XCTUnwrap(app.firstElement(where: { app.identifier($0) == identifier }) as? NSObject)
+        let setter = NSSelectorFromString("setAccessibilityFocused:")
+        XCTAssertTrue(current.responds(to: setter), "Native control must expose keyboard focus")
+        guard current.responds(to: setter) else { throw HostedAppError.unexpected("keyboard focus unavailable") }
+        current.setValue(true, forKey: "accessibilityFocused")
+        try await waitUntil(timeout: .seconds(3), "Native keyboard focus must reach \(identifier)") { focused() }
+        print("DISCOVER_MAC_KEYBOARD identifier=\(identifier) focused=\(focused()) keyWindow=\(NSApp.keyWindow === app.window) responder=\(String(describing: app.window.firstResponder))")
         try send(key, code: code)
     }
 
