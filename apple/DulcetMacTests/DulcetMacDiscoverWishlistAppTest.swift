@@ -272,8 +272,10 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         try await savedServer(try required("OTHER_USERNAME"), in: app); try await wishlist(app)
         try await scenario("identity-replacement")
         try await savedServer(try required("USERNAME"), in: app, replacement: true)
-        _ = try await app.windowElement(identifiedBy: "dulcet.account.confirm-replacement", timeout: .seconds(20))
-        try await app.answerAlert(pressing: "Cancel", described: "server replacement consent")
+        // AppKit presents this native alert in an attached sheet, outside the main window's
+        // accessibility subtree. Use the same real NSAlert buttons as the CI host proofs.
+        let consent = try await app.answerAlert(pressing: "Cancel", described: "server replacement consent")
+        XCTAssertTrue(consent.contains("Replace this server’s local data?"))
         XCTAssertNil(app.store.pendingDownloadRemovalCount)
         try await wishlist(app)
         XCTAssertNil(app.firstElement { app.label($0) == "Fixture Song 01" })
