@@ -8028,6 +8028,25 @@ suspension and before exposing replacement bytes or persisting replacement data.
 cover or offline media file remains available through review and Cancel. These boundaries supplement
 the account-generation and media-binding checks; they do not broaden the protocol's identity guarantees.
 
+**2026-10-23 — Share rejection across clients and preserve durable identity through late probes.**
+Account authorization belongs to the provider namespace across reader, download, playback and delivery
+clients. Revocation is synchronous even when the reader or native UI still has a queued notification.
+Each client captures the accepted lifetime; explicit acceptance opens a fresh lifetime without reopening
+older clients or replies. A matching native acceptance and ordinary same-identity probes keep issued work
+valid. Native clients use the same database and provider key. Remote artwork, including cache-actor writes,
+and playback current/preload/AutoPlay callbacks check that captured lifetime before adopting a reply.
+Android audio checks headers, body reads and an already buffered prefix; queued stream-cache writes check
+their original lifetime when database work actually runs. Download resume metadata and promotion check
+again at persistence. These checks preserve existing local audio and artwork until counted consent.
+
+The legacy native library importer also authorizes each source request before and after suspension,
+then authorizes commit; its optional fallback cannot import a held replacement page. An identity probe
+rereads accepted lineage transactionally after authentication. If another negotiation accepted different
+lineage, or the account was removed while the probe waited, the old probe is cancelled without writing.
+Concurrent learning of the same identity remains successful. Explicit native lineage replacement revokes
+old callbacks before publishing SQL and opens the new lifetime only after durable acceptance succeeds.
+Saved metadata may seed only an empty lineage and cannot replace an authenticated identity.
+
 **2026-10-21 — Fence playback replies and new byte requests after identity rejection.**
 Known replacement rejection closes remote playback even when a caller has no optional connection
 gate. Recheck that boundary after asynchronous metadata, current resolution and preload resolution,

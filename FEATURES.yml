@@ -1504,6 +1504,24 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
+            },
+            {
+              "observes": "A held authenticated identity probe cannot overwrite different lineage explicitly accepted while it waited. Actual SQLite JVM test; no platform UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityGateConcurrencyTest/lateProbeCannotOverwriteAnExplicitlyAcceptedReplacement"
+            },
+            {
+              "observes": "The exported legacy library-import engine refuses a held track page after authorization is revoked; neither replacement rows nor its generation commit enter SQLite. Executed on JVM, separately from the shipping reader route.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncTest/rejectedLegacySyncCannotPersistAHeldTrackPageOrCommitItsGeneration"
+            },
+            {
+              "observes": "The native library session receives a held success after identity rejection and cannot reopen its old reader; explicit accepted negotiation creates a fresh reader lifetime. Swift package orchestration with an injected reader, not a live server-swap tour.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime"
             }
           ],
           "promotion_condition": {
@@ -1593,6 +1611,24 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
+            },
+            {
+              "observes": "A held authenticated identity probe cannot overwrite different lineage explicitly accepted while it waited. Actual SQLite JVM test; no platform UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityGateConcurrencyTest/lateProbeCannotOverwriteAnExplicitlyAcceptedReplacement"
+            },
+            {
+              "observes": "The exported legacy library-import engine refuses a held track page after authorization is revoked; neither replacement rows nor its generation commit enter SQLite. Executed on JVM, separately from the shipping reader route.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncTest/rejectedLegacySyncCannotPersistAHeldTrackPageOrCommitItsGeneration"
+            },
+            {
+              "observes": "The native library session receives a held success after identity rejection and cannot reopen its old reader; explicit accepted negotiation creates a fresh reader lifetime. Swift package orchestration with an injected reader, not a live server-swap tour.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime"
             }
           ],
           "promotion_condition": {
@@ -1682,6 +1718,24 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
+            },
+            {
+              "observes": "A held authenticated identity probe cannot overwrite different lineage explicitly accepted while it waited. Actual SQLite JVM test; no platform UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityGateConcurrencyTest/lateProbeCannotOverwriteAnExplicitlyAcceptedReplacement"
+            },
+            {
+              "observes": "The exported legacy library-import engine refuses a held track page after authorization is revoked; neither replacement rows nor its generation commit enter SQLite. Executed on JVM, separately from the shipping reader route.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncTest/rejectedLegacySyncCannotPersistAHeldTrackPageOrCommitItsGeneration"
+            },
+            {
+              "observes": "The native library session receives a held success after identity rejection and cannot reopen its old reader; explicit accepted negotiation creates a fresh reader lifetime. Swift package orchestration with an injected reader, not a live server-swap tour.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime"
             }
           ],
           "promotion_condition": {
@@ -1765,6 +1819,24 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
+            },
+            {
+              "observes": "A held authenticated identity probe cannot overwrite different lineage explicitly accepted while it waited. Actual SQLite JVM test; no platform UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityGateConcurrencyTest/lateProbeCannotOverwriteAnExplicitlyAcceptedReplacement"
+            },
+            {
+              "observes": "The exported legacy library-import engine refuses a held track page after authorization is revoked; neither replacement rows nor its generation commit enter SQLite. Executed on JVM, separately from the shipping reader route.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LibrarySyncTest/rejectedLegacySyncCannotPersistAHeldTrackPageOrCommitItsGeneration"
+            },
+            {
+              "observes": "The native library session receives a held success after identity rejection and cannot reopen its old reader; explicit accepted negotiation creates a fresh reader lifetime. Swift package orchestration with an injected reader, not a live server-swap tour.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTVOSTests/rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime"
             }
           ],
           "promotion_condition": {
@@ -1914,6 +1986,48 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
+            },
+            {
+              "observes": "A held authenticated identity probe cannot overwrite different lineage explicitly accepted while it waited. Actual SQLite JVM test; no platform UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityGateConcurrencyTest/lateProbeCannotOverwriteAnExplicitlyAcceptedReplacement"
+            },
+            {
+              "observes": "The public Android sign-out delivery path holds an actual successful scrobble response across external rejection; both durable plays remain pending and no later old-ID request is sent. Android host execution with loopback HTTP and SQLite.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidAccountDataIdentityRejectionTest/aHeldSignOutReplyAfterExternalRejectionKeepsBothPlaysAndStopsLaterRows"
+            },
+            {
+              "observes": "A held remote artwork reply cannot enter disk cache or reach its caller after reject then accept; existing cached artwork remains. Android host execution; no rendered swap-tour claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidArtworkIdentityRejectionTest/explicitAcceptanceCannotReviveAnArtworkReplyFromTheRetiredAuthorization"
+            },
+            {
+              "observes": "A held HTTP body released after rejection delivers zero audio bytes; the accepted-server branch delivers its exact body. Android host execution through the actual playback data source.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/bodyReleasedAfterIdentityRejectionCannotDeliverRemoteAudio"
+            },
+            {
+              "observes": "Rejection while the seed response is held prevents all later similar/top/random AutoPlay requests. Android host execution with actual loopback request recording.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringAutoplaySeedPreventsEveryFollowupHttpRequest"
+            },
+            {
+              "observes": "Held download headers released after rejection cannot write replacement resume metadata. Android host execution with real download policy, SQLite and HTTP.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/headersReleasedAfterIdentityRejectionCannotChangeDownloadResumeMetadata"
+            },
+            {
+              "observes": "Already queued stream-cache finish work retains its original authorization while the actual database dispatcher is held; reject then accept prevents promotion, while accepted and transient-probe controls preserve normal work. Android host execution.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/queuedStreamCacheFinishCannotCrossRejectionAndAcceptance"
             }
           ],
           "promotion_condition": {
@@ -2063,6 +2177,48 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "SavedServerIdentityTest/externalRejectAndAcceptCannotAcknowledgeAnOlderSubmittedPlay"
+            },
+            {
+              "observes": "A held authenticated identity probe cannot overwrite different lineage explicitly accepted while it waited. Actual SQLite JVM test; no platform UI claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "ServerIdentityGateConcurrencyTest/lateProbeCannotOverwriteAnExplicitlyAcceptedReplacement"
+            },
+            {
+              "observes": "The public Android sign-out delivery path holds an actual successful scrobble response across external rejection; both durable plays remain pending and no later old-ID request is sent. Android host execution with loopback HTTP and SQLite.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidAccountDataIdentityRejectionTest/aHeldSignOutReplyAfterExternalRejectionKeepsBothPlaysAndStopsLaterRows"
+            },
+            {
+              "observes": "A held remote artwork reply cannot enter disk cache or reach its caller after reject then accept; existing cached artwork remains. Android host execution; no rendered swap-tour claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidArtworkIdentityRejectionTest/explicitAcceptanceCannotReviveAnArtworkReplyFromTheRetiredAuthorization"
+            },
+            {
+              "observes": "A held HTTP body released after rejection delivers zero audio bytes; the accepted-server branch delivers its exact body. Android host execution through the actual playback data source.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/bodyReleasedAfterIdentityRejectionCannotDeliverRemoteAudio"
+            },
+            {
+              "observes": "Rejection while the seed response is held prevents all later similar/top/random AutoPlay requests. Android host execution with actual loopback request recording.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidPlaybackControllerTest/identityRejectionDuringAutoplaySeedPreventsEveryFollowupHttpRequest"
+            },
+            {
+              "observes": "Held download headers released after rejection cannot write replacement resume metadata. Android host execution with real download policy, SQLite and HTTP.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/headersReleasedAfterIdentityRejectionCannotChangeDownloadResumeMetadata"
+            },
+            {
+              "observes": "Already queued stream-cache finish work retains its original authorization while the actual database dispatcher is held; reject then accept prevents promotion, while accepted and transient-probe controls preserve normal work. Android host execution.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidDownloadControllerTest/queuedStreamCacheFinishCannotCrossRejectionAndAcceptance"
             }
           ],
           "promotion_condition": {

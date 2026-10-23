@@ -1,4 +1,4 @@
-# Server identity and saved accounts — 2026-10-22
+# Server identity and saved accounts — 2026-10-23
 
 The implementation distinguishes a saved provider namespace from server lineage: the former is a
 local random account ID, the latter is authenticated product type and, for an advertised Dulcet
@@ -33,6 +33,55 @@ These are real SQLite, production reader/outbox and held transport observations.
 request and persistence boundaries, not a rendered native server-swap tour. The earlier statement
 that rejection was fenced was incomplete for these suspended replies; the new tests exercise those
 missing paths explicitly.
+
+## Replies outside the reader (2026-10-23)
+
+The sweep follows the actual await-to-write boundaries. Shared reader sends, including held-slot and
+repeated playlist requests, converge on `issue`; this also fences playlist capability discovery and
+reader-backed metadata. Scrobble extension discovery and the final acknowledgement check the captured
+account lifetime. Platform clients that detect a replacement revoke that lifetime before asynchronous
+reader or UI publication. Reaccepting the account does not authorize replies from its prior lifetime.
+
+OBSERVED: `LibrarySyncTest/rejectedLegacySyncCannotPersistAHeldTrackPageOrCommitItsGeneration`
+fails before its new authorization wrapper because the held track page enters SQLite even though
+its generation is not committed. The unchanged test passes with the wrapper. The legacy engine checks
+all nine source operations before and after suspension and checks admission, stage transitions and
+commit. This is an exported fallback boundary; the shipping live-library route uses the reader.
+
+OBSERVED: `ServerIdentityGateConcurrencyTest/lateProbeCannotOverwriteAnExplicitlyAcceptedReplacement`
+and `lateProbeCannotRecreateRemovedAcceptedLineage` fail before the transactional post-authentication
+comparison: the old probe respectively replaces newly accepted lineage and recreates removed lineage.
+`matchingConcurrentLearningDoesNotReportASwap` passes before and after. All three pass with the guard.
+These additional cases were established against the corresponding pre-fix seam during this round;
+they are not represented as the three review regressions executed on unchanged `4a946a68`.
+
+The full common-code XML after these changes contains **1,211 JVM tests in 94 suites** and
+**1,300 macOS native tests in 96 suites**, each with zero failures, errors and skips. Mac, iOS Simulator
+and tvOS Simulator debug frameworks link, and iOS Simulator common tests compile. Subsequent native
+account-acceptance controls and platform integration counts are reported separately below.
+
+### Android platform sweep
+
+OBSERVED incrementally before the corresponding platform fixes: sixteen new cases produce twelve
+regression failures and four passing controls, with zero errors or skips in each group. They were
+not all executed simultaneously on unchanged `4a946a68`. Held artwork enters disk/caller output;
+held HTTP headers, body and already buffered prefix each expose 64 audio bytes; a held AutoPlay seed
+causes five further fallback requests; late download headers write resume metadata; the public
+sign-out delivery path deletes both pending plays; reject/accept revives held replacement metadata;
+and queued cache append/finish writes cross into the newly accepted lifetime. Each failure exercises
+the actual production path with loopback HTTP, SQLite, files or the held database dispatcher.
+
+The fixes capture a stable account epoch before work begins and check that same epoch after awaits
+and when queued persistence actually runs. Actual public sign-out senders and playback senders use
+that authorization. A rejected account cannot fetch an artwork cache miss; existing cached artwork
+and audio remain available. Ordinary transient probes do not retire accepted work. The sixteen new
+regression/control cases retain their original assertions.
+
+OBSERVED after the final Android identity-seeding transaction: the complete Android host XML has
+**1,475 tests in 101 suites, zero failures, errors and skips**. The affected twelve-class subset has
+261 tests. Phone DEV, phone PROD and TV Kotlin compilation also pass. This is host execution and
+compilation evidence; fresh Linux repetition and real app flows have separate receipts and do not
+follow merely from these counts.
 
 ## Android removal and queued retirement
 
