@@ -8,8 +8,11 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('mode',choices=['components','sessions','iphone','ipad','mac','android'])
 a=p.parse_args()
 if os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
-if a.mode in {'iphone','ipad','mac','android'}:p.error('native proof mode awaits its shell task; no UI result is synthesized')
+if a.mode in {'iphone','ipad','mac'}:p.error('native proof mode awaits its shell task; no UI result is synthesized')
 repo=Path(__file__).resolve().parents[2]
+if a.mode=='android':
+    helper=str(repo/'tools/ci/run-discover-wishlist-android')
+    os.execv(helper,[helper])
 runner=os.environ.get('DULCET_DISCOVER_GRADLE_RUNNER',str(repo/'tools/run-gradle-exclusive'))
 cls='DiscoverWishlistTransportComponentsTest' if a.mode=='components' else 'DiscoverWishlistConformanceTest'
 os.execv(runner,[runner,':core-conformance:jvmTest','--rerun','--tests','*'+cls])

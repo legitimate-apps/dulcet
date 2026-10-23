@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Finite DEV-phone instrumentation on the caller's leased emulator and disposable fixture."""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
+sys.dont_write_bytecode=True
+REPO=Path(__file__).resolve().parents[2]
+PACKAGE='com.legitimateapps.dulcet.dev'
+CLASS='com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest'
+METHODS=('everywherePagesAndHeldRoute','offlineWishRelaunchRemoveRaceAndArrival','busyStaleAndNavidromeControl','accountSwitchIdentityFence','largestFontAndTalkBackLabels')
+
+def default_output(env=None,stamp=None):
+    supplied=(os.environ if env is None else env).get('DULCET_DISCOVER_ANDROID_OUTPUT')
+    return Path(supplied) if supplied else REPO/'build/discover-wishlist-android'/str(time.monotonic_ns() if stamp is None else stamp)
+
+def parse_status(output,method):
+    """Executed AndroidJUnitRunner terminal records, never the process exit alone."""
+    current={};finished=[]
+    for line in output.splitlines():
+        if line.startswith('INSTRUMENTATION_STATUS: '):
+            key,separator,value=line[len('INSTRUMENTATION_STATUS: '):].partition('=')
+            if separator:current[key]=value
+        elif line.startswith('INSTRUMENTATION_STATUS_CODE: '):
+            code=int(line.rsplit(':',1)[1])
+            if code in (0,-1,-2,-3,-4):finished.append((code,current))
+            current={}
+    matching=[row for row in finished if row[1].get('class')==CLASS and row[1].get('test')==method]
+    if len(matching)!=1:return 'error','expected-test-not-executed: expected exactly one terminal record for '+method
+    if len(finished)!=1:return 'error','unexpected-test-executed: explicit method filter did not isolate one test'
+    code,row=matching[0]
+    if code in (-3,-4):return 'skipped',row.get('stack','instrumentation skipped or assumed the test')
+    if code in (-1,-2):return 'failure',row.get('stack',row.get('stream','instrumentation test failed'))
+    if 'INSTRUMENTATION_CODE: -1' not in output:return 'error','instrumentation-did-not-finish: missing successful runner termination'
+    return 'passed',''
+
+def junit(path,method,phase,result,detail,seconds):
+    suite=ET.Element('testsuite',name=CLASS,tests='1',failures=str(int(result=='failure')),errors=str(int(result=='error')),skipped=str(int(result=='skipped')),time=f'{seconds:.3f}')
+    props=ET.SubElement(suite,'properties')
+    ET.SubElement(props,'property',name='fixture.phase',value=phase)
+    case=ET.SubElement(suite,'testcase',classname=CLASS,name=method,time=f'{seconds:.3f}')
+    if result!='passed':ET.SubElement(case,{'failure':'failure','error':'error','skipped':'skipped'}[result]).text=detail
+    ET.ElementTree(suite).write(path,encoding='utf-8',xml_declaration=True)
+
+def phases(method,red):
+    if method==METHODS[1]:return [('before-death','light','1.0')] if red else [('before-death','light','1.0'),('after-death','light','1.0')]
+    if method==METHODS[2]:return [('busy','light','1.0')] if red else [('busy','light','1.0'),('stale','light','1.0'),('navidrome','light','1.0')]
+    if method==METHODS[4]:return [('light','light','1.0')] if red else [('light','light','1.0'),('dark','dark','1.0'),('largest','dark','2.0')]
+    return [('normal','light','1.0')]
+
+def self_test():
+    def sample(code=0,name=METHODS[0]):return f'INSTRUMENTATION_STATUS: class={CLASS}\nINSTRUMENTATION_STATUS: test={name}\nINSTRUMENTATION_STATUS_CODE: {code}\nINSTRUMENTATION_CODE: -1\n'
+    assert parse_status(sample(),METHODS[0])[0]=='passed'
+    assert parse_status(sample(-2),METHODS[0])[0]=='failure'
+    assert parse_status(sample(-3),METHODS[0])[0]=='skipped'
+    assert parse_status('OK (0 tests)',METHODS[0])[0]=='error'
+    assert parse_status(sample(name=METHODS[1]),METHODS[0])[0]=='error'
+    assert parse_status(sample()+sample(),METHODS[0])[0]=='error'
+    assert parse_status(sample().replace('INSTRUMENTATION_CODE: -1',''),METHODS[0])[0]=='error'
+    assert sum(len(phases(method,False)) for method in METHODS)==10
+    assert sum(len(phases(method,True)) for method in METHODS)==5
+    assert default_output({},1)!=default_output({},2)
+    assert default_output({'DULCET_DISCOVER_ANDROID_OUTPUT':'/tmp/owned-discover-output'},1)==Path('/tmp/owned-discover-output')
+    print('Discover Android runner self-test: seven parser controls, exact phase inventory and unique/environment output controls passed')
+
+class Runner:
+    def __init__(self,args):
+        self.args=args;self.serial=os.environ.get('ANDROID_SERIAL','')
+        if not self.serial.startswith('emulator-'):raise RuntimeError('ANDROID_SERIAL must explicitly name the caller-owned leased emulator')
+        if os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':raise RuntimeError('run inside with-discover-wishlist-fixture; no existing server is accepted')
+        self.server=os.environ['DULCET_DISCOVER_SERVER_URL'].rstrip('/')
+        self.control=os.environ['DULCET_DISCOVER_CONTROL_URL'].rstrip('/')
+        self.nav=os.environ['DULCET_DISCOVER_NAVIDROME_URL'].rstrip('/')
+        origin=urllib.parse.urlsplit(self.control)
+        if origin.scheme!='http' or origin.hostname!='127.0.0.1' or not origin.port or self.server!=self.control or self.nav!=self.control+'/navidrome':raise RuntimeError('only wrapper-owned loopback fixture URLs are accepted')
+        self.port=origin.port;self.out=args.output.resolve()
+        self.out.mkdir(parents=True,exist_ok=False)
+        self.adb=os.environ.get('ADB','adb');self.reports=[];self.reversed=False
+    def run(self,argv,**kwargs):return subprocess.run(argv,cwd=REPO,check=True,**kwargs)
+    def adb_run(self,*argv,check=True,**kwargs):return subprocess.run([self.adb,'-s',self.serial,*argv],cwd=REPO,check=check,**kwargs)
+    def shell(self,*argv,check=True):return self.adb_run('shell',shlex.join(argv),check=check,capture_output=True,text=True).stdout.strip()
+    def control_json(self,path,body=None):
+        request=urllib.request.Request(self.control+path,data=None if body is None else json.dumps(body).encode(),headers={'Content-Type':'application/json'})
+        with urllib.request.urlopen(request,timeout=45) as response:return json.load(response)
+    def stop_owned_app(self):
+        """Only PIDs belonging to this DEV application, started by this finite test installation."""
+        raw=self.shell('pidof',PACKAGE,check=False)
+        for pid in raw.split():
+            if not pid.isdigit():raise RuntimeError('pidof returned a non-PID')
+            name=self.shell('cat','/proc/'+pid+'/cmdline',check=False).replace('\x00',' ').strip().split(' ')[0]
+            if name!=PACKAGE:raise RuntimeError('refusing to stop PID whose process name differs from the owned application')
+            self.shell('run-as',PACKAGE,'kill','-9',pid)
+            deadline=time.monotonic()+10
+            while self.shell('cat','/proc/'+pid+'/cmdline',check=False).replace('\x00',' ').strip().startswith(PACKAGE):
+                if time.monotonic()>deadline:raise RuntimeError('owned app PID did not stop')
+                time.sleep(.1)
+    def prepare(self):
+        if self.adb_run('get-state',capture_output=True,text=True).stdout.strip()!='device':raise RuntimeError('leased emulator is not online')
+        if self.shell('getprop','ro.kernel.qemu')!='1':raise RuntimeError('physical devices are outside this proof')
+        if not self.control_json('/control/state').get('healthy'):raise RuntimeError('fixture proxy is not healthy')
+        if not self.args.no_build:
+            executable=os.environ.get('DULCET_DISCOVER_GRADLE_RUNNER',str(REPO/'tools/run-gradle-exclusive'))
+            self.run([executable,':android:app:assembleDevDebug',':android:app:assembleDevDebugAndroidTest'])
+        apk=REPO/'android/app/build/outputs/apk/dev/debug/app-dev-debug.apk'
+        tests=REPO/'android/app/build/outputs/apk/androidTest/dev/debug/app-dev-debug-androidTest.apk'
+        if not apk.is_file() or not tests.is_file():raise RuntimeError('build both explicit DEV APKs before --no-build')
+        self.adb_run('install','-r',str(apk),capture_output=True,text=True)
+        self.adb_run('install','-r',str(tests),capture_output=True,text=True)
+        listing=self.shell('pm','list','instrumentation')
+        matches=re.findall(r'instrumentation:([^ ]+) \(target='+re.escape(PACKAGE)+r'\)',listing)
+        if len(matches)!=1:raise RuntimeError('expected exactly one instrumentation component for the DEV app')
+        self.component=matches[0]
+        self.adb_run('reverse',f'tcp:{self.port}',f'tcp:{self.port}',capture_output=True,text=True);self.reversed=True
+        self.old_scale=self.shell('settings','get','system','font_scale')
+        self.old_night=self.shell('settings','get','secure','ui_night_mode')
+        metadata={'serial':self.serial,'api':self.shell('getprop','ro.build.version.sdk'),'model':self.shell('getprop','ro.product.model'),'head':self.run(['git','rev-parse','HEAD'],capture_output=True,text=True).stdout.strip(),'class':CLASS,'redBaseline':self.args.red_baseline}
+        (self.out/'device.json').write_text(json.dumps(metadata,indent=2))
+    def invoke(self,method,phase,theme,scale):
+        label=method+'-'+phase
+        report=self.out/label;report.mkdir()
+        self.stop_owned_app()
+        if phase!='after-death':
+            if self.shell('pm','clear',PACKAGE)!='Success':raise RuntimeError('DEV application data was not cleared')
+            reset=self.control_json('/control/reset',{})
+            if not reset.get('reset') or not reset.get('identity'):raise RuntimeError('fixture reset lacks identity acknowledgement')
+            (report/'reset.json').write_text(json.dumps(reset,indent=2))
+        self.shell('settings','put','system','font_scale',scale)
+        self.shell('cmd','uimode','night','yes' if theme=='dark' else 'no')
+        app_args={'class':CLASS+'#'+method,'dulcetDiscoverPhase':phase,'dulcetDiscoverServerUrl':self.server,'dulcetDiscoverControlUrl':self.control,'dulcetDiscoverNavidromeUrl':self.nav,
+                  'dulcetDiscoverUsername':os.environ['DULCET_DISCOVER_USERNAME'],'dulcetDiscoverOtherUsername':os.environ['DULCET_DISCOVER_OTHER_USERNAME'],
+                  'dulcetDiscoverPassword':os.environ['DULCET_DISCOVER_PASSWORD'],'dulcetDiscoverDisposable':'true','dulcetDiscoverTheme':theme,'dulcetDiscoverFontScale':scale,'dulcetDiscoverCaptureLabel':label}
+        argv=['am','instrument','-w','-r']
+        for key,value in app_args.items():argv+=['-e',key,value]
+        argv+=[self.component]
+        started=time.monotonic()
+        try:
+            process=self.adb_run('shell',shlex.join(argv),check=False,capture_output=True,text=True,timeout=300)
+            output=process.stdout+process.stderr
+            result,detail=parse_status(output,method)
+        except subprocess.TimeoutExpired:
+            output='instrumentation timed out after 300 seconds';result,detail='error',output
+        (report/'instrumentation.log').write_text(output)
+        junit(report/'TEST-DiscoverWishlist.xml',method,phase,result,detail,time.monotonic()-started)
+        root=ET.parse(report/'TEST-DiscoverWishlist.xml').getroot()
+        counts={key:int(root.get(key,'0')) for key in ('tests','failures','errors','skipped')}
+        self.reports.append({'method':method,'phase':phase,'result':result,**counts})
+        print(f'DISCOVER ANDROID {method} phase={phase}: {result} XML={counts}',flush=True)
+        if phase=='before-death' and result=='passed':
+            raw=self.shell('run-as',PACKAGE,'cat',f'/sdcard/Android/data/{PACKAGE}/files/discover-wishlist-proof/process-before.json')
+            marker=json.loads(raw)
+            if not marker.get('pending') or not isinstance(marker.get('pid'),int):raise RuntimeError('process-death preparation lacks positive durable/PID marker')
+            pid=marker['pid'];was_alive=str(pid) in self.shell('pidof',PACKAGE,check=False).split()
+            self.stop_owned_app()
+            if str(pid) in self.shell('pidof',PACKAGE,check=False).split():raise RuntimeError('old app PID survived process death')
+            (self.out/'process-death.json').write_text(json.dumps({'beforePid':pid,'aliveBeforeExplicitStop':was_alive,'oldPidAbsentAfterStop':True,'durablePendingWitnessed':True},indent=2))
+        self.adb_run('pull',f'/sdcard/Android/data/{PACKAGE}/files/discover-wishlist-proof',str(report/'captures'),check=False,capture_output=True,text=True)
+        return result=='passed'
+    def finish(self):
+        # Read totals from the emitted per-invocation JUnit XML rather than assume five methods ran.
+        counts={key:0 for key in ('tests','failures','errors','skipped')}
+        for path in self.out.rglob('TEST-DiscoverWishlist.xml'):
+            root=ET.parse(path).getroot()
+            for key in counts:counts[key]+=int(root.get(key,'0'))
+        (self.out/'summary.json').write_text(json.dumps({'counts':counts,'invocations':self.reports},indent=2))
+        print('DISCOVER ANDROID JUNIT '+json.dumps(counts),flush=True)
+        return counts['tests']>0 and all(counts[key]==0 for key in ('failures','errors','skipped'))
+    def close(self):
+        self.stop_owned_app()
+        if hasattr(self,'old_scale') and self.old_scale!='null':self.shell('settings','put','system','font_scale',self.old_scale)
+        if hasattr(self,'old_night'):self.shell('cmd','uimode','night',{'0':'auto','1':'no','2':'yes'}.get(self.old_night,'auto'))
+        if self.reversed:self.adb_run('reverse','--remove',f'tcp:{self.port}',check=False,capture_output=True,text=True)
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output',type=Path,default=default_output(),help='new evidence directory; default DULCET_DISCOVER_ANDROID_OUTPUT or unique build/discover-wishlist-android/<monotonic-ns>')
+    parser.add_argument('--no-build',action='store_true')
+    parser.add_argument('--red-baseline',action='store_true',help='one missing-feature phase for each selected method; reds remain failing')
+    parser.add_argument('--method',action='append',choices=METHODS,help='explicit subset; default executes all five identities')
+    parser.add_argument('--self-test',action='store_true')
+    args=parser.parse_args()
+    if args.self_test:self_test();return 0
+    runner=Runner(args)
+    try:
+        runner.prepare()
+        for method in args.method or METHODS:
+            for phase,theme,scale in phases(method,args.red_baseline):
+                # Every failure remains in XML; continue to observe all expected identities.
+                try:runner.invoke(method,phase,theme,scale)
+                except Exception as error:
+                    print(f'DISCOVER ANDROID infrastructure failure {method} phase={phase}: {type(error).__name__}: {error}',file=sys.stderr,flush=True)
+                    report=runner.out/(method+'-'+phase);report.mkdir(exist_ok=True)
+                    junit(report/'TEST-DiscoverWishlist.xml',method,phase,'error',str(error),0)
+        return 0 if runner.finish() else 1
+    finally:runner.close()
+
+if __name__=='__main__':sys.exit(main())
