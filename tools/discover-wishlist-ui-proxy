@@ -18,6 +18,11 @@ from urllib.parse import parse_qs,urlsplit
 sys.path.insert(0,str(Path(__file__).resolve().parent/'discover-wishlist-fixtures'))
 from fixture import IDS,request,rest,png,upstream
 
+def wish_replay_parameters(params):
+    # Preserve the exact idempotency fingerprint, excluding transport credentials.
+    fields=('kind','mbid','title','artist','year','artworkId','sourceType','sourceId','operationId','actionTime')
+    return {key:params[key][0] for key in fields if key in params}
+
 class FixtureProxy:
     def __init__(self,config):
         self.config=config;self.lock=threading.RLock();self.revision=0;self.name='normal';self.hits=0;self.effects=[];self.requests=[];self.remove_seen=threading.Event();self.lost=False;self.detail_release=threading.Event();self.query_release=threading.Event()
@@ -148,7 +153,7 @@ class Handler(BaseHTTPRequestHandler):
                         lose=not state.lost;state.lost=True
                     if lose:
                         if json.loads(data)['subsonic-response']['status']!='ok':raise ValueError('lost-response add was not delivered')
-                        state.effect(endpoint,revision,name,delivered=True);return self.disconnect()
+                        state.effect(endpoint,revision,name,delivered=True,replay=wish_replay_parameters(params));return self.disconnect()
                 if not nav and endpoint=='searchDulcetDiscover' and name=='delayed-old-query':
                     decoded=json.loads(data);page=decoded['subsonic-response']['dulcetDiscover']
                     old='old' in params.get('query',[''])[0].lower()

@@ -137,18 +137,30 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     File(proofDirectory,"process-after.json").writeText(JSONObject()
                         .put("beforePid",persisted.getInt("beforeDeathPid",-1)).put("afterPid",Process.myPid())
                         .put("pendingRestored",true).toString())
-                    fixture.arm("normal");reconnect(activity)
-                    fixture.awaitWish(mbid(1))
-                    await("Waiting to sync removed after acknowledgement") { !rowText("Fixture Song 01").contains("Waiting to sync") }
-                    // A second song is sent successfully but its receipt is lost; removal cancels that generation.
-                    everywhere("lost receipt")
+                    // Retain the actual cached Search card while the account is offline.
+                    // Returning to that card later must not replace it with fabricated metadata.
+                    everywhere("arrival");openWishlist()
+                    // Replay the durable A intent, lose its real response, then remove A while
+                    // offline. A scan races that durable removal before reconnect sends it.
                     val lost=fixture.arm("lost-add-receipt")
-                    click("discover.wish.song.1")
-                    fixture.effect(lost,"addToDulcetWishlist",delivered=true)
-                    openWishlist();row("Fixture Song 02")
-                    remove("Fixture Song 02")
-                    fixture.arm("normal");reconnect(activity)
-                    fixture.awaitNoWish(mbid(2))
+                    reconnect(activity)
+                    val addA=fixture.effect(lost,"addToDulcetWishlist",delivered=true).getJSONObject("replay")
+                    val generationA=fixture.awaitWish(mbid(1)).getString("id")
+                    fixture.arm("offline")
+                    openWishlist();row("Fixture Song 01");remove("Fixture Song 01")
+                    await("durable removal hides generation A") { !allVisibleText().contains("Fixture Song 01") }
+                    val racedScan=fixture.arm("scan-arrival")
+                    check(racedScan.getJSONObject("scan").getBoolean("completed"))
+                    fixture.effect(racedScan,"startScan")
+                    reconnect(activity);fixture.awaitNoWish(mbid(1))
+                    fixture.replayRemovedAdd(addA)
+                    fixture.awaitNoWish(mbid(1))
+                    // Re-add from the retained Search card, as a person can after removing A.
+                    // This does not issue a new query for an already-held item after the scan.
+                    click("search.open");click("discover.scope.everywhere")
+                    click("discover.wish.song.0")
+                    val generationB=fixture.awaitWish(mbid(1)).getString("id")
+                    check(generationA!=generationB) {"Re-add reused removed generation A"}
                     // Independent server scan is acknowledged before claiming an Arrived row or local route.
                     val scan=fixture.arm("scan-arrival")
                     check(scan.getJSONObject("scan").getBoolean("completed")) {"Real fixture scan did not finish"}
@@ -156,13 +168,16 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     val wish=fixture.awaitWish(mbid(1),"fulfilled")
                     val expected=wish.getJSONObject("libraryItem").getString("id")
                     check(fixture.libraryContains(expected)) {"Fulfilment did not add the actual server My Library member"}
-                    click("wishlist.refresh");row("Fixture Song 01")
+                    openWishlist();click("wishlist.refresh");row("Fixture Song 01")
                     await("server fulfilment reaches Arrived UI") { rowText("Fixture Song 01").contains("Arrived") }
                     capture("arrived")
                     PlaybackObserver(context,removeAccountDataOnClose=false).use { observer ->
                         observer.bind();val arrivalRow=openWishlistRowActions(row("Fixture Song 01"));click("wishlist.arrival.$arrivalRow")
                         observer.awaitCurrent(expected) {compose.mainClock.advanceTimeByFrame()}
                     }
+                    fixture.replayRemovedAdd(addA, survivingGeneration=generationB)
+                    val survivors=fixture.wishes().filter {recording(it)==mbid(1)}
+                    check(survivors.size==1 && survivors.single().getString("id")==generationB) {"Late generation A replaced or duplicated B"}
                     openWishlist();remove("Fixture Song 01")
                     fixture.awaitNoWish(mbid(1))
                     check(fixture.libraryContains(expected)) {"Removing the wish deleted My Library membership"}
@@ -179,7 +194,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     fixture.effect(held,"addToDulcetWishlist",delivered=true)
                     fixture.effect(held,"removeFromDulcetWishlist",delivered=true)
                     fixture.arm("normal");fixture.awaitNoWish(mbid(2))
-                    println("DISCOVER PHONE process-death=true scan-fulfilled=true exact-library-route=true removal-retained-library=true")
+                    println("DISCOVER PHONE process-death=true removed-A-replayed=true B-survived-late-A=true scan-fulfilled=true exact-library-route=true removal-retained-library=true")
                 }
             }
             else -> error("Use the finite runner's before-death and after-death phases")
@@ -484,7 +499,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(effects.any {it.optBoolean("held")} && effects.none {it.optBoolean("holdReleased")}) {"Add hold ended before durable UI removal overlapped it"}
             record(JSONObject().put("type","holdStillActive").put("revision",ack.getLong("revision")))
         }
-        fun effect(ack:JSONObject,endpoint:String,delivered:Boolean=false,held:Boolean=false,responsePayload:String?=null) {
+        fun effect(ack:JSONObject,endpoint:String,delivered:Boolean=false,held:Boolean=false,responsePayload:String?=null):JSONObject {
             var witnessed: JSONObject?=null
             await("acknowledged ${ack.getString("scenario")} effect on $endpoint") {
                 witnessed=control("/control/state").getJSONArray("effects").objects().firstOrNull {effect ->
@@ -495,6 +510,14 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 witnessed!=null
             }
             record(JSONObject().put("type","effect").put("observed",checkNotNull(witnessed)))
+            return checkNotNull(witnessed)
+        }
+        fun replayRemovedAdd(parameters:JSONObject,survivingGeneration:String?=null) {
+            val replay=rest("addToDulcetWishlist",parameters.keys().asSequence().associateWith(parameters::getString))
+                .getJSONObject("dulcetWishMutation")
+            check(replay.getBoolean("removed") && !replay.getBoolean("applied")) {"Old add replay was not an unapplied removed generation"}
+            record(JSONObject().put("type","removedAddReplay").put("operationId",parameters.getString("operationId"))
+                .put("replay",replay).put("survivingGeneration",survivingGeneration))
         }
         fun rest(endpoint:String,parameters:Map<String,String> =emptyMap(),user:String=owner):JSONObject {
             val salt="android-discover-proof"

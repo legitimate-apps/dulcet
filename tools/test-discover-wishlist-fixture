@@ -33,6 +33,18 @@ def call(url,path,body=None):
     with urllib.request.urlopen(req,timeout=40) as r:return json.load(r)
 
 class ModuleLoadingTests(unittest.TestCase):
+    def test_lostReceiptReplayWitnessContainsOnlyExactMutationFields(self):
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        mutation=dict(kind='song',mbid='recording',title='Recorded title',artist='Recorded artist',
+                      year='2026',artworkId='art',sourceType='search',sourceId='opaque source',
+                      operationId='operation A',actionTime='2026-10-23T00:00:00Z')
+        params={key:[value] for key,value in mutation.items()}
+        params.update(u=['private-user'],t=['private-token'],s=['private-salt'],p=['private-password'],
+                      jwt=['private-jwt'],unknown=['not part of the mutation'])
+        self.assertEqual(mutation,proxy.wish_replay_parameters(params))
+
     def test_fixtureModuleLoadsDoNotWriteBytecode(self):
         # Copy only our fixture sources: an existing cache cannot hide a write or force
         # cleanup of somebody else's checkout. run_path itself does not cache its input.
@@ -146,6 +158,9 @@ class FixtureTests(unittest.TestCase):
         f.scenario('lost-add-receipt')
         with self.assertRaises((OSError,urllib.error.URLError)):
             f.rest('addToDulcetWishlist',kind='song',mbid=target,title='Arrival',sourceType='search',operationId=op)
+        effects=call(f.urls['controlUrl'],'/control/state')['effects']
+        replay_parameters=next(e['replay'] for e in effects if e.get('delivered'))
+        self.assertEqual(dict(kind='song',mbid=target,title='Arrival',sourceType='search',operationId=op),replay_parameters)
         f.scenario('normal');wishes=f.rest('getDulcetWishlist',size='100')['dulcetWishlist']['wish']
         wish=next(w for w in wishes if w['externalIds'].get('musicbrainzRecordingId')==target)
         ack=f.scenario('scan-arrival');self.assertTrue(ack['scan']['completed'])
@@ -153,7 +168,7 @@ class FixtureTests(unittest.TestCase):
         members=f.rest('getDulcetLibrary',type='song',size='100')['dulcetLibrary']['song']
         self.assertIn(arrived['libraryItem']['id'],[r['id'] for r in members])
         f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
-        replay=f.rest('addToDulcetWishlist',kind='song',mbid=target,title='Arrival',sourceType='search',operationId=op)['dulcetWishMutation']
+        replay=f.rest('addToDulcetWishlist',**replay_parameters)['dulcetWishMutation']
         self.assertTrue(replay['removed']);self.assertNotIn('wish',replay)
         self.assertIn(arrived['libraryItem']['id'],[r['id'] for r in f.rest('getDulcetLibrary',type='song',size='100')['dulcetLibrary']['song']])
         from concurrent.futures import ThreadPoolExecutor
