@@ -95,6 +95,59 @@ class AndroidPlaybackControllerTest {
         } finally { AndroidServerIdentity.requireValidation(owner) }
     }
 
+    @Test fun aNewRemoteSelectionClearsTheNoticeBeforeTheReopenedHeldWaiterResumes() {
+        val owner = "provider:superseded-reconnect:${java.util.UUID.randomUUID()}"
+        val releaseOldWaiter = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var waiterEntered = false
+        var reopenedWaiterParked = false
+        var waiterReturned = false
+        var replacementReachedBeforeReturn = false
+        kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+        val contact = object : AndroidServerContact {
+            override fun isChosen() = true
+            override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+            override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+            override suspend fun awaitOpen() {
+                waiterEntered = true
+                AndroidServerIdentity.verified.first { owner in it }
+                reopenedWaiterParked = true
+                releaseOldWaiter.await()
+                waiterReturned = true
+            }
+        }
+        try {
+            Fixture(accountOwner = owner, serverContact = contact, localPlans = { null }, loadSong = {
+                assertEquals("replacement", it, "The held selection cannot read metadata before its waiter returns")
+                assertTrue(reopenedWaiterParked && !waiterReturned,
+                    "Control: the replacement reaches its read while the old reopened waiter has not returned")
+                replacementReachedBeforeReturn = true
+                song(it)
+            }).use { f ->
+                kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                AndroidPlaybackController.notifyServerAvailable(owner, false)
+                fun select(id: String) = f.controller.playQueue(listOf(AndroidTrack(owner, id, id)),
+                    0, AndroidQueueSource.Album, "Album", "album")
+                select("held")
+                assertTrue(waiterEntered && !reopenedWaiterParked,
+                    "Control: the selected queue is actually waiting for closed contact")
+                assertTrue(f.controller.state.value.needsReconnect)
+                assertTrue(f.prepared.isEmpty())
+                kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+                assertTrue(contact.isOpen() && reopenedWaiterParked && !waiterReturned,
+                    "Control: contact reopened, but the held selection's waiter is parked before returning")
+                AndroidPlaybackController.notifyServerAvailable(owner, true)
+                select("replacement")
+                ready(f)
+                assertTrue(replacementReachedBeforeReturn && !waiterReturned,
+                    "Control: the new selection superseded the held one before its waiter resumed")
+                assertEquals(listOf("replacement"), f.prepared.map { it.itemId.rawId })
+                assertTrue(f.probe.requested, "The replacement has received Play")
+                assertFalse(f.controller.state.value.needsReconnect,
+                    "An authorized replacement playing after contact reopens must clear the held selection's reconnect notice")
+            }
+        } finally { releaseOldWaiter.complete(Unit); AndroidServerIdentity.requireValidation(owner) }
+    }
+
     @Test fun aLocalOfflineSelectionStillFiltersRemoteEntriesAfterAChosenConnectionProbeFails() {
         for (supersedesHeld in listOf(false, true)) {
             val owner = "provider:offline-local:${java.util.UUID.randomUUID()}"
