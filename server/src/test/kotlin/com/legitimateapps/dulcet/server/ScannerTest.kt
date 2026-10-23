@@ -150,6 +150,7 @@ class ScannerTest {
             execute("UPDATE track_genre SET track_id = 'legacy-id'")
             execute("INSERT INTO annotation VALUES (?,'song','legacy-id',1,4,3,1)", user.id)
             execute("DROP TABLE track_identity")
+            execute("ALTER TABLE track DROP COLUMN mbz_release_group_id")
             execute("PRAGMA user_version = 1")
         }
         com.legitimateapps.dulcet.server.db.Schema.migrate(ctx.db)

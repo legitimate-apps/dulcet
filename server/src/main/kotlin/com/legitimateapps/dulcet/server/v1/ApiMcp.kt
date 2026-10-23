@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet.server.v1
 
 import com.legitimateapps.dulcet.server.ServerContext
 import com.legitimateapps.dulcet.server.fold
+import com.legitimateapps.dulcet.server.discover.*
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
@@ -24,8 +25,14 @@ class ApiMcp(private val ctx: ServerContext, private val clock: () -> Long = Sys
     }
     private val protocols = setOf("2025-03-26", "2025-06-18", "2025-11-25")
 
-    fun tools(p: Principal): List<JsonObject> = definitions.filter { it["x-dulcet-scope"]!!.jsonPrimitive.content in p.scopes }.map { definition ->
-        JsonObject(definition.filterKeys { it != "x-dulcet-scope" } + j("_meta" to j("dulcet/scopes" to listOf(definition["x-dulcet-scope"]!!))))
+    private fun enabled(d:JsonObject):Boolean=when(d["x-dulcet-capability"]?.jsonPrimitive?.content) {
+        "dulcet.discover"->ctx.config.discover.enabled
+        "dulcet.wishlist"->ctx.config.discover.wishlistEnabled
+        null->true
+        else->false
+    }
+    fun tools(p: Principal): List<JsonObject> = definitions.filter { it["x-dulcet-scope"]!!.jsonPrimitive.content in p.scopes && enabled(it) }.map { definition ->
+        JsonObject(definition.filterKeys { it !in setOf("x-dulcet-scope","x-dulcet-capability") } + j("_meta" to JsonObject(j("dulcet/scopes" to listOf(definition["x-dulcet-scope"]!!)) + (definition["x-dulcet-capability"]?.let {j("dulcet/capability" to it)} ?: j()))))
     }
 
     fun validateOrigin(call: ApplicationCall) {
@@ -109,7 +116,7 @@ class ApiMcp(private val ctx: ServerContext, private val clock: () -> Long = Sys
                 "tools/call" -> {
                     val name = params["name"]?.jsonPrimitive?.contentOrNull
                     val definition = definitions.firstOrNull { it["name"]!!.jsonPrimitive.content == name }
-                    if (definition == null) { call.send(rpcError(id, -32602, "Unknown tool")); return@post }
+                    if (definition == null || !enabled(definition)) { call.send(rpcError(id, -32602, "Unknown tool")); return@post }
                     requireScopes(p, definition["x-dulcet-scope"]!!.jsonPrimitive.content)
                     val args = params["arguments"] as? JsonObject ?: if ("arguments" !in params) j() else null
                     if (args == null || !valid(args, definition["inputSchema"]!!.jsonObject)) { call.send(rpcError(id, -32602, "Arguments do not match the tool schema")); return@post }
@@ -137,7 +144,12 @@ class ApiMcp(private val ctx: ServerContext, private val clock: () -> Long = Sys
     private fun track(value: JsonObject): JsonObject = JsonObject(value + j("artist" to value["artistDisplay"], "album" to ((value["album"] as? JsonObject)?.get("title") ?: value["album"])))
     private fun catalog(p: Principal, type: String, id: String): JsonObject = ctx.apiCatalog.resource(type, id, p) ?: throw ApiProblem(404, "not-found")
 
-    private fun execute(p: Principal, name: String, args: JsonObject): JsonObject = when (name) {
+    private suspend fun execute(p: Principal, name: String, args: JsonObject): JsonObject = when (name) {
+        "search_discover" -> try {pageJson(ctx.discover.search(p.user.id,DiscoverKind.parse(args["kind"]!!.jsonPrimitive.content),args["query"]!!.jsonPrimitive.content,PageRequest(args["limit"]?.jsonPrimitive?.int ?: 20,args["cursor"]?.jsonPrimitive?.content)),::itemJson)}
+            catch(e:UpstreamUnavailable){throw ApiProblem(503,"upstream-unavailable",extra=j("retryAfterSeconds" to ((e.retryAfterMillis ?: 60_000)+999)/1000))}
+            catch(e:UpstreamNotFound){throw ApiProblem(404,"not-found")}
+        "list_wishes" -> ctx.apiWishlist.page(p,false,args.mapValues {it.value.jsonPrimitive.content})
+        "add_wish" -> ctx.wishlist.add(p.user.id,addWishInput(args,wishActionTime(args["actionTime"]?.jsonPrimitive?.content))).let {mutationJson(it.copy(wish=it.wish?.let(ctx.wishlist::present)))}
         "search_catalog" -> search(p, args)
         "get_artist" -> catalog(p, "artist", args["id"]!!.jsonPrimitive.content)
         "get_track" -> track(catalog(p, "track", args["id"]!!.jsonPrimitive.content))
@@ -233,7 +245,7 @@ class ApiMcp(private val ctx: ServerContext, private val clock: () -> Long = Sys
         }
         if (value is JsonPrimitive && value.isString) {
             val text = value.content
-            if (text.length < (schema["minLength"]?.jsonPrimitive?.int ?: 0) || text.length > (schema["maxLength"]?.jsonPrimitive?.int ?: Int.MAX_VALUE)) return false
+            if (text.codePointCount(0,text.length) < (schema["minLength"]?.jsonPrimitive?.int ?: 0) || text.codePointCount(0,text.length) > (schema["maxLength"]?.jsonPrimitive?.int ?: Int.MAX_VALUE)) return false
             when (schema["format"]?.jsonPrimitive?.content) {
                 "date-time" -> if (runCatching { Instant.parse(text) }.isFailure) return false
                 "uuid" -> if (runCatching { UUID.fromString(text).toString().equals(text, true) }.getOrDefault(false).not()) return false

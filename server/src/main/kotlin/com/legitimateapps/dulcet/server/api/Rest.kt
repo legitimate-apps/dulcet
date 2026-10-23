@@ -20,7 +20,7 @@ import io.ktor.http.HttpMethod
 import org.slf4j.LoggerFactory
 
 /** A Subsonic error: answered as a `status="failed"` envelope with this code. */
-class SubsonicError(val code: Int, override val message: String) : Exception(message) {
+class SubsonicError(val code: Int, override val message: String, val reason:String?=null, val retryAfterSeconds:Long?=null) : Exception(message) {
     companion object {
         fun missing(name: String) = SubsonicError(10, "Required parameter is missing: $name")
         fun notFound(what: String = "Data") = SubsonicError(70, "$what not found")
@@ -75,10 +75,12 @@ object Envelope {
         this["openSubsonic"] = true
     }
 
-    fun error(code: Int, message: String): Node = root("failed").apply {
+    fun error(code: Int, message: String, reason:String?=null, retryAfterSeconds:Long?=null): Node = root("failed").apply {
         child("error") {
             this["code"] = code
             this["message"] = message
+            this["reason"] = reason
+            this["retryAfterSeconds"] = retryAfterSeconds
         }
     }
 
@@ -168,7 +170,7 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
             call.respondText("Transcode capacity reached", ContentType.Text.Plain, HttpStatusCode.TooManyRequests)
             return
         } catch (error: SubsonicError) {
-            Envelope.error(error.code, error.message)
+            Envelope.error(error.code, error.message, error.reason, error.retryAfterSeconds)
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {

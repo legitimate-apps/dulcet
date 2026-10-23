@@ -1852,7 +1852,7 @@ class MockServer(
                     "capabilities" to mapOf("tools" to mapOf("listChanged" to false)),
                     "serverInfo" to mapOf("name" to "Dulcet conformance mock", "version" to "0"))), mapOf("Mcp-Session-Id" to s.id))
             }
-            "tools/list" -> rpc(id, mapOf("tools" to McpTools.all.filter { McpTools.scopeOf(it) in p.scopes }.map { t ->
+            "tools/list" -> rpc(id, mapOf("tools" to McpTools.forScopes(p.scopes).map { t ->
                 (t.deepCopy() as ObjectNode).apply {
                     remove("x-dulcet-scope")
                     if (Fault.MCP_TOOLS_WITHOUT_META !in faults) putObject("_meta").putArray("dulcet/scopes").add(McpTools.scopeOf(t))
