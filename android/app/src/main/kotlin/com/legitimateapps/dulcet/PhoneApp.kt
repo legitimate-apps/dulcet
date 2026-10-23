@@ -134,6 +134,13 @@ internal fun PhoneApp(
     if (!split && tab == PhoneTab.Browse) tab = PhoneTab.Library
     // The split says the server advertises the extension; bring the device's library up to its.
     LaunchedEffect(split) { if (split) myLibrarySession.refresh() }
+    val arrivals = discoverPublication?.wishes.orEmpty().mapNotNull { row ->
+        row.wish?.takeIf { it.state == "fulfilled" && it.libraryItem != null }?.let { "${it.id}:${it.revision}" }
+    }.toSet()
+    val seenArrivals = remember(account) { mutableSetOf<String>() }
+    LaunchedEffect(arrivals, split) {
+        if (split && seenArrivals.addAll(arrivals)) myLibrarySession.refresh()
+    }
     val pending by requests.pending.collectAsState()
     LaunchedEffect(playback, pending) {
         val request = pending ?: return@LaunchedEffect
@@ -251,6 +258,7 @@ internal fun PhoneApp(
         // over it, so Back from a playlist returns to the playlists, not to the home rows.
         val saved = rememberSaveableStateHolder()
         when {
+            route == "wishlist" -> PhoneWishlist(discoverSession, openDiscoverLibrary, actions.back)
             route?.startsWith("discoverArtist:") == true -> PhoneDiscoverArtist(discoverSession,
                 route.removePrefix("discoverArtist:"), openDiscoverLibrary, openDiscoverAlbum, actions.back)
             route?.startsWith("discoverAlbum:") == true -> PhoneDiscoverAlbum(discoverSession,
@@ -269,9 +277,11 @@ internal fun PhoneApp(
             tab == PhoneTab.ListenNow -> saved.SaveableStateProvider("listenNow") { PhoneListenNow(account, library, actions, playbackState, playback) }
             tab == PhoneTab.Library && split -> saved.SaveableStateProvider("mylibrary") {
                 MyLibraryHome(account, library, myLibrarySession, actions,
-                    openBrowse = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) })
+                    openBrowse = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
+                    wishlist = { PhoneWishlistEntry(discoverSession) { routes += "wishlist" } })
             }
-            tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId) }
+            tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId,
+                wishlist = { PhoneWishlistEntry(discoverSession) { routes += "wishlist" } }) }
             tab == PhoneTab.Browse -> saved.SaveableStateProvider("browse") {
                 LibraryHome(account, library, actions, playingRawId,
                     title = SharedR.string.library_browse, myLibrary = myLibrarySession)

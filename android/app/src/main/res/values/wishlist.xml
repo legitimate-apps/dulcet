@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wishlist_title">Wishlist</string>
+    <string name="wishlist_back">Back</string>
+    <string name="wishlist_refresh">Refresh Wishlist</string>
+    <string name="wishlist_filter_kind">Kind</string>
+    <string name="wishlist_all_kinds">All music</string>
+    <string name="wishlist_filter_state">State</string>
+    <string name="wishlist_all_states">All states</string>
+    <string name="wishlist_history">Include earlier arrivals</string>
+    <string name="wishlist_recent_arrivals">Arrivals from the last 30 days are included. Earlier arrivals remain in history.</string>
+    <string name="wishlist_offline">Offline · Cached Wishlist</string>
+    <string name="wishlist_empty">No wishes in this list</string>
+    <string name="wishlist_wanted">Wanted</string>
+    <string name="wishlist_requested">Requested</string>
+    <string name="wishlist_searching">Searching</string>
+    <string name="wishlist_unavailable">Not found</string>
+    <string name="wishlist_fulfilled">Arrived</string>
+    <string name="wishlist_waiting">Waiting to sync</string>
+    <string name="wishlist_not_saved">Not saved</string>
+    <string name="wishlist_added">Added %1$s</string>
+    <string name="wishlist_updated">Updated %1$s</string>
+    <string name="wishlist_arrived_at">Arrived %1$s</string>
+    <string name="wishlist_note_at">Note updated %1$s</string>
+    <string name="wishlist_open_arrival">Open in your library</string>
+    <string name="wishlist_reject">This isn\'t it</string>
+    <string name="wishlist_remove">Remove wish</string>
+    <string name="wishlist_remove_named">Remove wish for %1$s</string>
+    <string name="wishlist_open_named">Open %1$s in your library</string>
+    <string name="wishlist_reject_named">Correct the library match for %1$s</string>
+</resources>

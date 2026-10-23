@@ -57,6 +57,7 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
     openArtist: (String) -> Unit, openAlbum: (String) -> Unit, embedded: Boolean = false) {
     val publication by session.publication.collectAsState()
     val state = publication ?: return
+    LaunchedEffect(session) { session.refreshWishlist(WishFilter()) }
     var query by rememberSaveable(session) { mutableStateOf(state.query) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).testTag("discover.search.surface")) {
         if (!embedded) Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)

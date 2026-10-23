@@ -21,6 +21,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import com.legitimateapps.dulcet.core.WishFilter
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +61,7 @@ internal fun PhoneDiscoverArtist(
     openAlbum: (String) -> Unit,
     back: () -> Unit,
 ) {
+    LaunchedEffect(session) { session.refreshWishlist(WishFilter()) }
     var artist by remember(session, mbid) { mutableStateOf<DiscoverArtist?>(null) }
     var error by remember(session, mbid) { mutableStateOf<DiscoverFailure?>(null) }
     var loading by remember(session, mbid) { mutableStateOf(true) }
@@ -122,6 +125,7 @@ internal fun PhoneDiscoverAlbum(
     openArtist: (String) -> Unit,
     back: () -> Unit,
 ) {
+    LaunchedEffect(session) { session.refreshWishlist(WishFilter()) }
     var album by remember(session, mbid) { mutableStateOf<DiscoverAlbum?>(null) }
     var requestedRelease by remember(session, mbid) { mutableStateOf<String?>(null) }
     var error by remember(session, mbid) { mutableStateOf<DiscoverFailure?>(null) }

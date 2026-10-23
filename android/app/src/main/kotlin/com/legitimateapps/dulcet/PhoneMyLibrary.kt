@@ -88,6 +88,7 @@ internal fun MyLibraryHome(
     myLibrary: MyLibrarySession,
     actions: PhoneActions,
     openBrowse: () -> Unit,
+    wishlist: (@Composable () -> Unit)? = null,
 ) {
     var view by rememberSaveable { mutableStateOf(MyLibraryView.Recent) }
     val publication by myLibrary.state.collectAsState()
@@ -105,6 +106,7 @@ internal fun MyLibraryHome(
                 }
             },
         )
+        wishlist?.invoke()
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (option in MyLibraryView.entries) FilterChip(
