@@ -687,6 +687,7 @@ public class AndroidPlaybackController internal constructor(
                 if (!downloaded) {
                     android.util.Log.d("DulcetPlayQueue", "validation-await generation=$generation")
                     serverContact?.awaitValidation()
+                    android.util.Log.d("DulcetPlayQueue", "validation-finished contact=${contactOpen()} current=${generation == requestGeneration} generation=$generation")
                 }
                 if (generation != requestGeneration || closed) return@launch
                 if (!downloaded && !authorizesRemoteReply(authorization) && holdSelectionForContact()) return@launch

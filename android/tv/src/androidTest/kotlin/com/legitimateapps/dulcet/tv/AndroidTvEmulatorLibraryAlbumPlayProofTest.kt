@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.tv
 
 import android.content.Intent
+import android.os.ParcelFileDescriptor
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -44,7 +45,7 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
     @Test fun anAlbumOpenedFromTheLibraryWithTheRemotePlaysAsAMultiTrackQueue() =
         proveAlbumPlay(DisposableServerProbe.fromInstrumentation())
 
-    @Test fun anAlbumPlayBetweenFailedAndSuccessfulReaderProbesRecoversWithoutAnotherPress() {
+    @Test fun anAlbumPlayDuringAReaderProbeRecoversAfterItsFailureWithoutAnotherPress() {
         val probe = DisposableServerProbe.fromInstrumentation()
         com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay -> proveAlbumPlay(probe, relay) }
     }
@@ -108,14 +109,38 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                     check(observer.state().queue.isEmpty()) { "Control requires no earlier queue before Play" }
                     val reader = checkNotNull(com.legitimateapps.dulcet.core.AndroidLibraryReader.currentFor(owner))
                     val answered = java.util.concurrent.atomic.AtomicBoolean(false)
-                    relay.makeUnreachable()
+                    // Hold the real identity probe while Play still exists. A completed failure
+                    // would first publish the album as unavailable and remove its Play button.
+                    val marker = System.nanoTime()
+                    relay.hold()
                     reader.reconnect { answered.set(true) }
-                    await("control: a completed failed reader probe closes the chosen connection") {
-                        answered.get() && !contact.isOpen() && relay.refusedConnections.get() > 0
+                    await("control: the reader request is held while its connection stays verified") {
+                        relay.heldConnections.get() > 0 && contact.isOpen() && !answered.get()
+                    }
+                    check(focused("album.play")) { "The held probe must leave the remote on Play" }
+                    val previousWaits = playReceiptCount("validation-await")
+                    val previousFinishes = playReceiptCount("validation-finished")
+                    remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                    await("control: this Play reached the controller's in-flight validation wait") {
+                        playReceiptCount("validation-await") > previousWaits
+                    }
+                    check(playReceiptCount("validation-finished") == previousFinishes) {
+                        "Play must still be suspended in validation, not merely pass the wait receipt"
+                    }
+                    val cutMicros = (System.nanoTime() - marker) / 1_000
+                    relay.cut()
+                    relay.release()
+                    await("control: the held identity ping was refused, and its failed probe closed contact") {
+                        answered.get() && !contact.isOpen() && relay.connectionDiagnostics(marker).lineSequence().any { line ->
+                            val accepted = Regex("accept=(\\d+)us").find(line)?.groupValues?.get(1)?.toLongOrNull()
+                            accepted != null && accepted <= cutMicros &&
+                                line.contains("refused GET /rest/ping")
+                        }
                     }
                     check(contact.isChosen()) { "A failed probe must not withdraw the person's connection choice" }
-                }
-                remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                    println("ANDROID TV ALBUM CONTROL held-validation=true play-received=true contact-open=false " +
+                        "chosen=true refused-ping=true")
+                } else remote(KeyEvent.KEYCODE_DPAD_CENTER)
 
                 if (relay == null) observer.bind()
                 await("the album queued before any AutoPlay continuation") {
@@ -140,6 +165,15 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 println("ANDROID TV EMULATOR LIBRARY OBSERVED leanback=true album=$ALBUM queue=${state.queue.size} " +
                     "current=${state.currentIndex} media-ms=$position front=${resumed()} recovered=${relay != null}")
             }
+        }
+    }
+
+    /** Read only our process's redacted controller receipts, never HTTP or arbitrary logcat. */
+    private fun playReceiptCount(receipt: String): Int {
+        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(
+            "logcat -d --pid=${android.os.Process.myPid()} -s DulcetPlayQueue:D *:S")
+        return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { reader ->
+            reader.lineSequence().count { it.contains(receipt) }
         }
     }
 
