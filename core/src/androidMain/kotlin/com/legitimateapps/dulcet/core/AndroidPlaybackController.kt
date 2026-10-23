@@ -228,13 +228,17 @@ public class AndroidPlaybackController internal constructor(
     private val resumes = PersistentResumePositionStore(store.database)
     @Volatile private var serverAvailable = AndroidLibraryReader.currentFor(account.providerInstanceId)?.serverAvailableForPlayback ?: true
     private var remoteRetryAttempt: AttemptId? = null
+    // Only the explicit remote selection being held for contact may admit unavailable entries.
+    // Ordinary offline queues that can start locally still filter out remote-only tracks.
+    private var heldQueueAuthorization: Long? = null
     private var networkAvailable = true
     private val queue = PlaybackQueueController(PersistentQueueStore(store.database), resumes,
         PlaybackIdentitySource { "$it:${UUID.randomUUID()}" }, canPlayItem = { item ->
             // An explicit selection may be retained while this chosen connection revalidates.
             // This admits queue identity only; start() still gates every remote request.
             val reconnecting = !contactOpen() && serverContact?.isChosen() == true &&
-                AndroidServerIdentity.authorizationEpoch(account.providerInstanceId) != null
+                heldQueueAuthorization != null &&
+                heldQueueAuthorization == AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
             val remote = networkAvailable && (serverAvailable || localPlans == null || reconnecting)
             val local = !remote && localPlans?.isLocallyPlayable(item.rawId) == true
             remote || local
@@ -626,6 +630,7 @@ public class AndroidPlaybackController internal constructor(
             failure = DomainError.Auth.Forbidden; publish(); return
         }
         requestGeneration++
+        heldQueueAuthorization = null
         val previousWantsPlay = wantsPlay
         wantsPlay = true
         val generation = requestGeneration
@@ -669,7 +674,8 @@ public class AndroidPlaybackController internal constructor(
             // chosen connection may retain Play across a transient loss of verification.
             if (contactOpen() || !contact.isChosen() || authorization == null ||
                 authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return false
-            val directive = replaceSelection(null) ?: return false
+            heldQueueAuthorization = authorization
+            val directive = replaceSelection(null) ?: run { heldQueueAuthorization = null; return false }
             needsReconnect = true
             publish()
             if (queue.snapshot().currentSession?.playbackSessionId == directive.playbackSessionId)
@@ -826,7 +832,7 @@ public class AndroidPlaybackController internal constructor(
     public fun stop() {
         if (!live()) return
         requestGeneration++; resolution?.cancel(); startJob?.cancel(); wantsPlay = false
-        heldStart = null; needsReconnect = false
+        heldStart = null; heldQueueAuthorization = null; needsReconnect = false
         queueConfirmation = null
         dropHeldAdditions()
         command(PlaybackCommand.Stop(id()))
@@ -1358,7 +1364,15 @@ public class AndroidPlaybackController internal constructor(
         startJob?.cancel()
         startJob = scope.launch {
             suspend fun authorized(): Boolean {
-                if (authorizesRemoteReply(authorization)) return true
+                if (authorizesRemoteReply(authorization)) {
+                    // Contact may have reopened during asynchronous local-file acquisition.
+                    if (heldQueueAuthorization != null && heldQueueAuthorization == authorization) {
+                        heldQueueAuthorization = null
+                        needsReconnect = false
+                        remoteRetryAttempt = directive.attemptId
+                    }
+                    return true
+                }
                 val contact = serverContact
                 if (contact != null && contact.isChosen() && authorization != null &&
                     authorization == AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) {
@@ -1381,6 +1395,7 @@ public class AndroidPlaybackController internal constructor(
                         }
                     } while (!contactOpen())
                     needsReconnect = false
+                    heldQueueAuthorization = null
                     // Identity opens before the reader publishes its later availability hint.
                     // The held selection may prepare once against that observed outage, like
                     // Try Again, but never OS-offline. Pause still prepares without sound.
@@ -1412,6 +1427,7 @@ public class AndroidPlaybackController internal constructor(
                     }
                     command(PlaybackCommand.Stop(id()))
                     needsReconnect = false
+                    heldQueueAuthorization = null
                     val plan = AndroidLocalPlaybackPlan(session, directive.attemptId, directive.itemId, local)
                     activePlan = plan
                     localLeases.put(directive.attemptId, checkNotNull(pendingLease))?.close()
