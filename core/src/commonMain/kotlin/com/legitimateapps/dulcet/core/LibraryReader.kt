@@ -147,6 +147,17 @@ internal class LibraryReader(
         return {authorization!=null && !refusesIdentity(generation,authorization)}
     }
 
+    /** Also deliver a sanitized terminal rejection, while dropping anything from an older epoch. */
+    internal fun capturePublicationAuthorization(allowRejected:Boolean):()->Boolean {
+        val generation=identityGeneration
+        val authorization=identityAuthorization()
+        val rejected=identityRejected
+        return {
+            identityGeneration==generation && identityAuthorization()==authorization && identityRejected==rejected &&
+                (allowRejected || (!rejected && authorization!=null))
+        }
+    }
+
     internal var extensionRevision=0L;private set
     private var extensionAnswer:Map<String,Set<Int>>?=null
     private val extensionLock=Mutex()

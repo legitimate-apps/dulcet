@@ -154,6 +154,14 @@ public class AndroidLibraryReader internal constructor(
     private var reportedConstrained = false
 
     internal val myLibraries = mutableSetOf<AndroidMyLibrary>()
+    private val discoverClients = java.util.concurrent.ConcurrentHashMap.newKeySet<AndroidDiscoverClient>()
+    internal fun registerDiscover(client:AndroidDiscoverClient):Boolean {
+        if(isClosed)return false
+        discoverClients+=client
+        if(isClosed){discoverClients-=client;return false}
+        return true
+    }
+    internal fun unregisterDiscover(client:AndroidDiscoverClient){discoverClients-=client}
     private val windows = mutableListOf<AndroidLibraryWindow>()
     private val searches = mutableListOf<AndroidLibrarySearch>()
     private val outcomeListeners = mutableListOf<AndroidLibraryOutcomeRegistration>()
@@ -670,6 +678,8 @@ public class AndroidLibraryReader internal constructor(
      */
     public fun close(completion: () -> Unit = {}) {
         if (closed.compareAndSet(false, true)) {
+            val closingDiscover=discoverClients.toList()
+            closingDiscover.forEach {it.close()}
             forget(this)
             closeRequested.complete(Unit)
             try {
@@ -677,6 +687,7 @@ public class AndroidLibraryReader internal constructor(
                     val closing = composition
                     composition = null
                     try {
+                        closingDiscover.forEach {it.closeFromReader()}
                         windows.toList().forEach(AndroidLibraryWindow::closeFromReader)
                         searches.toList().forEach(AndroidLibrarySearch::closeFromReader)
                         outcomeListeners.clear()
