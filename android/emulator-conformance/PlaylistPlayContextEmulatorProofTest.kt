@@ -7,7 +7,6 @@ import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -22,7 +21,7 @@ import java.net.URLDecoder
 /** Real playlist activation -> Media3 media time -> submitted outbox -> server -> rendered Home. */
 @RunWith(AndroidJUnit4::class)
 class PlaylistPlayContextEmulatorProofTest {
-    @get:Rule val compose = createEmptyComposeRule()
+    @get:Rule val compose = createHomeProofComposeRule()
 
     @Test fun playlistThresholdSubmissionPopulatesRecentlyPlayedPlaylists() {
         val extensions = DisposableServerProbe.fromInstrumentation()
