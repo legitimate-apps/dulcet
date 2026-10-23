@@ -349,7 +349,9 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     the read must still be pending under that prompt, and the terminal receipt must prove every
     held read was explicitly released with zero timeouts. The AX stall's internal cause remains
     UNKNOWN. The same run's iPad My Library failure was a snapshot timeout after a 60 s launch
-    idle wait; its recording remained Connecting, with no stack identifying why. The fixture
+    idle wait; its recording remained Connecting. Native diagnostics confirmed a main-loop work
+    request went unanswered for 30 s while animation-idle replied immediately, but contained no
+    stack identifying the blocking work. The fixture
     proxy now records credential-free endpoint/phase timings (`tools/test-my-library-ui-proxy`)
     so a future failure can distinguish arrival, upstream completion and delivery.
 49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
