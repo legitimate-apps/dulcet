@@ -94,6 +94,64 @@ class AndroidPlaybackControllerTest {
         } finally { AndroidServerIdentity.requireValidation(owner) }
     }
 
+    @Test fun aHeldAlbumHonorsPauseStopNewSelectionAndTheIdentityAuthorizationFence() {
+        for (action in listOf("pause", "stop", "new-selection", "next", "jump", "replace-server")) {
+            val owner = "provider:held-album-$action:${java.util.UUID.randomUUID()}"
+            kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+            val contact = object : AndroidServerContact {
+                override fun isChosen() = true
+                override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+                override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+                override suspend fun awaitOpen() { AndroidServerIdentity.verified.first { owner in it } }
+            }
+            val reads = mutableListOf<String>()
+            try {
+                Fixture(accountOwner = owner, serverContact = contact, loadSong = { reads += it; song(it) }).use { f ->
+                    kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                    assertFalse(contact.isOpen(), "Control: $action starts with chosen contact closed")
+                    fun select(rawId: String) = f.controller.playQueue(
+                        (if (rawId == "first") listOf("first", "second") else listOf(rawId)).map {
+                            AndroidTrack(owner, it, it, null, "Album", 40_000)
+                        },
+                        0, AndroidQueueSource.Album, "Album", "album")
+                    select("first")
+                    assertTrue(f.controller.state.value.needsReconnect, "Control: $action acts on a held selection")
+                    assertEquals(listOf("first", "second"), f.controller.state.value.queue.map { it.track.rawId })
+                    assertTrue(reads.isEmpty() && f.prepared.isEmpty())
+                    when (action) {
+                        "pause" -> f.controller.pause()
+                        "stop" -> f.controller.stop()
+                        "new-selection" -> select("later")
+                        "next" -> f.controller.next()
+                        "jump" -> f.controller.jumpTo(f.controller.state.value.queue[1].queueEntryId)
+                        "replace-server" -> AndroidServerIdentity.accept(RuntimeEnvironment.getApplication(), owner,
+                            ServerIdentityPolicy.identity("fixture", "replacement-instance"))
+                    }
+                    if (action != "replace-server") kotlinx.coroutines.runBlocking {
+                        assertNull(AndroidServerIdentity.validate(owner) { null })
+                    }
+                    settle(5)
+                    when (action) {
+                        "pause" -> {
+                            assertEquals(listOf("first"), f.prepared.map { it.itemId.rawId })
+                            assertFalse(f.probe.requested, "Pause must remain paused when contact returns")
+                        }
+                        "new-selection", "next", "jump" -> {
+                            assertEquals(listOf(if (action == "new-selection") "later" else "second"), f.prepared.map { it.itemId.rawId })
+                            assertTrue(f.probe.requested)
+                        }
+                        else -> {
+                            assertTrue(f.prepared.isEmpty() && reads.isEmpty(), "$action cannot revive old Play")
+                            assertFalse(f.probe.requested)
+                        }
+                    }
+                    if (action == "replace-server") assertEquals(DomainError.Protocol.ServerIdentityChanged,
+                        f.controller.state.value.error, "Explicit consent must not reauthorize the held old IDs")
+                }
+            } finally { AndroidServerIdentity.requireValidation(owner) }
+        }
+    }
+
     @Test fun identityRejectionDuringMetadataCannotRenameThePriorQueue() {
         val release = kotlinx.coroutines.CompletableDeferred<Unit>()
         val contact = ChosenContact().also { it.open.value = true }
