@@ -1,9 +1,10 @@
-#if DEBUG && (os(macOS) || os(iOS))
+#if DEBUG
 import DulcetKit
 import Foundation
 import notify
 import SwiftUI
 
+#if os(macOS) || os(iOS)
 /// DEBUG ONLY: the shells' half of the killed-process download handoff proof's instrument
 /// (`DulcetDownloadHandoffProbe`, spec §14.5, `docs/download-background-blockers.md`).
 ///
@@ -224,7 +225,9 @@ struct DulcetDebugDownloadHandoffOverlay: View {
     }
 }
 
-/// DEBUG ONLY: an account kept in a file of the probe's own, for the macOS proof, whose app is
+#endif
+
+/// DEBUG ONLY: an account kept in a file of the probe's own, for disposable shell proofs, whose app is
 /// signed ad hoc without the entitlement the data-protection Keychain needs, and whose relaunch
 /// must still find the account it connected. 🚨 Disposable canary credentials only: the proof
 /// connects the local disposable server, and the file is removed with the probe's directory.
@@ -243,8 +246,8 @@ final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialS
     private(set) var credentialGeneration: Int64 = 0
 
     static func whenProbing() -> DulcetDebugHandoffCredentialStore? {
-        // The unsigned Mac UI fixture needs durable account storage without claiming
-        // a signed Keychain proof. The UUID names only this disposable test account.
+        // Disposable UI fixtures need durable isolated account storage across relaunches
+        // without claiming a Keychain proof. The UUID names only this test's account.
         let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.firstIndex(of: "-dulcet-debug-account-fixture"),
            arguments.indices.contains(index + 1), UUID(uuidString: arguments[index + 1]) != nil {
@@ -253,9 +256,13 @@ final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialS
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             return DulcetDebugHandoffCredentialStore(fileURL: directory.appendingPathComponent("account.json"))
         }
+        #if os(macOS) || os(iOS)
         return DulcetDownloadHandoffProbe.directoryURL.map {
             DulcetDebugHandoffCredentialStore(fileURL: $0.appendingPathComponent("account.json"))
         }
+        #else
+        return nil
+        #endif
     }
 
     private init(fileURL: URL) {
@@ -317,6 +324,7 @@ final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialS
     }
 }
 
+#if os(macOS) || os(iOS)
 /// DEBUG ONLY: connects the account named by launch arguments, as the iOS shell's hook does.
 /// 🚨 Disposable canary credentials only: launch arguments are echoed into test transcripts.
 @MainActor
@@ -336,4 +344,5 @@ enum DulcetDebugLaunchAccount {
         store.submitAccountConnection()
     }
 }
+#endif
 #endif

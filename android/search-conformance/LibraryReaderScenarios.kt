@@ -137,10 +137,10 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         awaitQuiet()
 
         // A cold relaunch: the reader's thread is stopped (a new process, as far as the core can tell)
-        // and every content read the new one issues is held. The epoch reads are answered, so each
+        // and every content read the new one issues is held. Identity and epoch reads are answered, so each
         // row's own read is issued — and is still unanswered when the row paints.
         val relaunchMark = proxy.size()
-        proxy.hold { it.endpoint !in EPOCH_READS }
+        proxy.hold { it.endpoint !in RECONNECT_CHECKS }
         closeProcessReader()
         compose.activityRule.scenario.recreate()
         ui.openLibrary()
@@ -157,7 +157,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             assertEquals(liveCounts[index], first.itemCount, "$key painted what was last seen")
             assertTrue(frames(key).none { it.freshness == AndroidLibraryFreshness.Loading }, "$key published no loading state")
         }
-        assertEquals(0, proxy.since(relaunchMark).count { it.answered && it.endpoint !in EPOCH_READS },
+        assertEquals(0, proxy.since(relaunchMark).count { it.answered && it.endpoint !in RECONNECT_CHECKS },
             "the paint used no content answer from the server")
         // Painted items, wherever the row was scrolled: a relaunch may restore the row where it was left.
         assertTrue(compose.onAllNodes(SemanticsMatcher("a first-row card") {
@@ -170,7 +170,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertIs<AndroidLibraryFreshness.Cached>(album.freshness)
         assertEquals(AndroidLibraryItemsState.Present, album.itemsState)
         assertEquals(tracks, album.itemCount)
-        assertEquals(0, proxy.since(relaunchMark).count { it.answered && it.endpoint !in EPOCH_READS },
+        assertEquals(0, proxy.since(relaunchMark).count { it.answered && it.endpoint !in RECONNECT_CHECKS },
             "the album painted with no content answer either")
         ui.backFromAlbum()
 
@@ -289,10 +289,11 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         }
         val sent = readerRequests(mark)
         val names = sent.map { it.endpoint }
-        assertEquals("star", names.firstOrNull(), "the outbox flush goes first: $names")
+        assertEquals("ping", names.firstOrNull(), "the authenticated identity check precedes stored-ID writes: $names")
+        assertEquals("star", names.getOrNull(1), "the outbox flush follows identity validation: $names")
         assertEquals(1, names.count { it == "star" }, "one change, one send: $names")
-        assertEquals(listOf("getMusicFolders", "getScanStatus"), names.subList(1, 3).sorted(), "then the epoch read: $names")
-        assertEquals(VISIBLE_HOME_READS, names.drop(3).sorted(), "then the visible screen, and nothing else: $names")
+        assertEquals(listOf("getMusicFolders", "getScanStatus"), names.subList(2, 4).sorted(), "then the epoch read: $names")
+        assertEquals(VISIBLE_HOME_READS, names.drop(4).sorted(), "then the visible screen, and nothing else: $names")
         assertEquals(setOf("newest", "recent", "frequent"),
             sent.filter { it.endpoint == "getAlbumList2" }.mapNotNull { it.parameters["type"] }.toSet())
         assertTrue(server.albumStarred(album),
@@ -340,7 +341,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("trying again to reconnect") { observed().connections.last() is LibraryConnectionState.Online }
         assertTrue(compose.onAllNodesWithTag("library.connection").fetchSemanticsNodes().isEmpty(), "the line goes once connected")
         assertNoCredentialLeak()
-        println("CONF-77 OBSERVED $platform reconnect requests=${names.size} flush=1 epoch=2 revalidated=4 " +
+        println("CONF-77 OBSERVED $platform reconnect requests=${names.size} identity=1 flush=1 epoch=2 revalidated=4 " +
             "downloaded-recheck=0 (no downloads in this phase) other=0 order=$names cover-art=${coverArt(mark)}")
     }
 
@@ -362,11 +363,12 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         }
         awaitQuiet()
         val names = readerRequests(mark).map { it.endpoint }
-        assertEquals((listOf("getMusicFolders", "getScanStatus") + VISIBLE_HOME_READS).sorted(), names.sorted(),
-            "the epoch read and the visible screen, nothing else: $names")
+        assertEquals((listOf("ping", "getMusicFolders", "getScanStatus") + VISIBLE_HOME_READS).sorted(), names.sorted(),
+            "the identity check, epoch read and visible screen, nothing else: $names")
+        assertEquals("ping", names.firstOrNull(), "identity is validated before trusting stored server IDs")
         assertNoCredentialLeak()
         println("CONF-77 OBSERVED $platform foreground-return background-requests=0 after-16min requests=${names.size} " +
-            "epoch=2 revalidated=4 order=$names cover-art=${coverArt(mark)}")
+            "identity=1 epoch=2 revalidated=4 order=$names cover-art=${coverArt(mark)}")
     }
 
     /**
@@ -465,9 +467,9 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
     /**
      * A reconnect that finds the server unreachable while the platform reports a network takes the
-     * reader offline, and every screen says offline. The reader was online, so the session takes it
-     * offline with an unreachable report and then tells it the platform's view again — reachable — so
-     * the reader goes on retrying by itself. A return to the foreground and trying again each tell
+     * reader offline, and every screen says offline. The identity check takes the reader offline
+     * before trusting stored IDs. The session reports the platform's reachable view on foreground
+     * return, without inventing a network loss, and the reader retries by itself. Trying again tells
      * the reader the platform's view before reconnecting, and a reconnect that fails while the reader
      * is already offline tells it nothing.
      */
@@ -483,6 +485,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         proxy.drop { true }
         val mark = proxy.log().size
         val reconnectsBefore = observed().reconnects
+        val reportsBeforeReconnect = observed().reachabilityReports.size
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         await("the foreground reconnect to find the server unreachable") {
@@ -490,10 +493,12 @@ class LibraryReaderScenarios<A : ComponentActivity>(
                 observed().connections.last() == LibraryConnectionState.Offline(DomainError.Transport.Unreachable)
         }
         await("the album to say offline") { last("album:$album").freshness.isOfflineCached() }
-        assertTrue(proxy.since(mark).any { it.endpoint in EPOCH_READS && it.answered && it.status == 0 },
-            "control: the reconnect's epoch read reached the proxy and was dropped: ${proxy.since(mark)}")
-        assertEquals(listOf(false, true), observed().reachabilityReports.takeLast(2),
-            "the online reader was taken offline, then told the platform's view again")
+        assertTrue(proxy.since(mark).any { it.endpoint == "ping" && it.answered && it.status == 0 },
+            "control: the reconnect's identity check reached the proxy and was dropped: ${proxy.since(mark)}")
+        assertTrue(proxy.since(mark).none { it.endpoint in EPOCH_READS },
+            "an unanswered identity check must prevent the epoch reads")
+        assertEquals(listOf(true), observed().reachabilityReports.drop(reportsBeforeReconnect),
+            "the identity check already took the reader offline; the platform reported a network, not a network loss")
 
         // Back to the foreground while the server still cannot be reached. The platform reports a
         // network, so the reader is told so before the reconnect; the reconnect found the reader
@@ -1379,13 +1384,18 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertEquals(AndroidLibraryFreshness.Loading, last("home.2").freshness, "row 2 still says it is loading")
         compose.onNodeWithTag("library.home.0.item.0").assertExists()
         proxy.release()
-        await("row 2 live") { last("home.2").freshness == AndroidLibraryFreshness.Live }
+        // The initial reconnect can revalidate the other rows after row 2's first answer. Wait
+        // for that sequence as well as their final publications before checking the settled home.
+        // The assertions above already proved rows 0 and 1 published while row 2 was held.
+        await("the initial reconnect to finish with rows 0, 1 and 2 live") {
+            observed().connections.last() is LibraryConnectionState.Online &&
+                (0..2).all { last("home.$it").freshness == AndroidLibraryFreshness.Live }
+        }
         assertEquals(AndroidLibraryFreshness.Live, last("home.0").freshness)
         assertEquals(AndroidLibraryFreshness.Live, last("home.1").freshness)
         assertTrue(last("home.3").freshness.isFailed(), "the failed row stays failed on its own")
-        // On TV this is also the initial reconnect: while row 2 was held, the home had one
-        // connecting notice. Once it settles, the independent row failure must be visible.
-        await("the initial reconnect to finish") { observed().connections.last() is LibraryConnectionState.Online }
+        // While row 2 was held the home could have one connecting notice. Once it settles,
+        // the independent row failure must be visible on both phone and TV.
         compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("library.home.0")))
             .performScrollToNode(hasTestTag("library.home.3.unavailable"))
         compose.onNodeWithTag("library.home.3.unavailable").assertTextContains("Couldn't load this — ", substring = true)
@@ -2086,6 +2096,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         val HOME = listOf("home.0", "home.1", "home.2", "home.3")
         val VISIBLE_HOME_READS = listOf("getAlbumList2", "getAlbumList2", "getAlbumList2", "getStarred2")
         val EPOCH_READS = setOf("getScanStatus", "getMusicFolders")
+        val RECONNECT_CHECKS = EPOCH_READS + "ping"
         /** Each home row's own read: the endpoint and, for an album list, its type. */
         val ROW_READS = listOf("getAlbumList2" to "newest", "getAlbumList2" to "recent", "getAlbumList2" to "frequent",
             "getStarred2" to null)

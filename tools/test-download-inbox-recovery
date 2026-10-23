@@ -15,7 +15,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--source-ref')
 parser.add_argument('--control', choices=['membership-cancellation-before-enumeration',
     'restored-orphan-cleanup-retains-explicit-and-unrelated',
-    'transient-target-error-keeps-payload-for-retry', 'untrusted-metadata-cannot-delete-outside-inbox'])
+    'transient-target-error-keeps-payload-for-retry', 'untrusted-metadata-cannot-delete-outside-inbox',
+    'identity-validation-holds-promotion-and-retains-payload'])
 args = parser.parse_args()
 path = 'apple/DulcetAppleShared/DulcetCoreDownloads.swift'
 source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{path}'], cwd=ROOT, text=True)
@@ -23,7 +24,8 @@ source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{path}'], 
 
 
 def method(name):
-    start = source.index(f'    private func {name}(')
+    prefix = '    private func ' if f'    private func {name}(' in source else '    func '
+    start = source.index(f'{prefix}{name}(')
     end = source.index('\n    }', start) + len('\n    }')
     return source[start:end].replace('    private func ', '    func ', 1)
 
@@ -32,6 +34,8 @@ names = ['applyOfflineChange', 'handleCompletedDownload', 'processSecuredDownloa
          'processSecuredDownloads', 'removeSecuredMetadata']
 if 'private func removeSecuredDownload(' in source:
     names.append('removeSecuredDownload')
+if 'private func promoteSecuredDownload(' in source:
+    names.append('promoteSecuredDownload')
 bodies = '\n'.join(method(name) for name in names)
 harness = r'''
 import Foundation
@@ -51,6 +55,7 @@ struct Outcome { var state = "downloaded"; var retryNotBeforeWallClock: NSNumber
     var targets: [String: Target] = [:]
     var finishes: [String] = []
     init(_ root: URL) { targetRoot = root }
+    func ownsDownloadTask(downloadIdentifier: String) -> Bool { targets[downloadIdentifier] != nil }
     func fileTarget(downloadIdentifier: String) -> Target {
         targets[downloadIdentifier] ?? Target(errorKind: "unknownDownload")
     }
@@ -76,6 +81,7 @@ typealias URLSessionDownloadTask = SessionTask
 struct DulcetSecuredDownload: Codable {
     let identifier: String
     let downloadIdentifier: String?
+    var identityRejected: Bool? = nil
     var statusCode: Int? = 200
     var contentType: String? = "audio/wav"
     var deliveredFileLength: Int64 = 8
@@ -93,15 +99,28 @@ extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
     var removedTaskIdentifiers: Set<Int> = []
     var knownTaskIdentifiers: [Int: String] = [:]
     var completedTaskIdentifiers: Set<Int> = []
+    var authorizedTaskGenerations: [Int: Int] = [:]
+    var completedDownloadDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
     var reconciliationGeneration = 1
     var stateRefreshHandler: (() -> Void)?
     var securedAttempts = 0
+    var identityRejected = false
+    var remoteEligible = true
+    var validatingDeliveries: Set<String> = []
+    var securedDownloadValidationDelivery: (@MainActor (String, @escaping @MainActor () -> Void) -> Void)?
+    var identityValidationSucceeds = true
+    var identityValidations = 0
     init(_ root: URL) { downloadInboxURL = root.appendingPathComponent(".incoming"); client = Client(root) }
     func scheduleNextDownload() {}
+    func resumePendingDownloads() { scheduleNextDownload() }
     func refreshArtworkBudget() {}
     func scheduleRetry(at: Int64?) {}
     func publish(_ state: DulcetDownloadState, for id: DulcetProviderItemID) {}
     func probe(_ message: @autoclosure () -> String) {}
+    func validateRemoteAccess(_ completion: @escaping @MainActor (Bool) -> Void) {
+        identityValidations += 1
+        completion(identityValidationSucceeds)
+    }
     func secureDownloadedFile(task: SessionTask, location: URL) -> DulcetSecuredDownload? {
         securedAttempts += 1; return nil
     }
@@ -164,6 +183,26 @@ struct Failure: Error, CustomStringConvertible { let description: String }
                 controller.client!.targets["retained-explicit"] = Target(errorKind: "persistence")
                 controller.processSecuredDownloads()
                 try require(exists(secured.payloadURL(in: controller.downloadInboxURL)) && exists(secured.metadataURL(in: controller.downloadInboxURL)), "transient persistence failure must retain secured bytes")
+            }
+            try run("identity-validation-holds-promotion-and-retains-payload") { controller, root in
+                let secured = try seed(controller, download: "retained-explicit")
+                let target = root.appendingPathComponent("explicit.part")
+                controller.client!.targets["retained-explicit"] = Target(temporaryFilePath: target.path, rawId: "explicit")
+                controller.identityValidationSucceeds = false
+                controller.processSecuredDownloads()
+                try require(controller.identityValidations == 1 && controller.client!.finishes.isEmpty,
+                            "failed identity validation must hold the actual promotion body")
+                try require(exists(secured.payloadURL(in: controller.downloadInboxURL)) && exists(secured.metadataURL(in: controller.downloadInboxURL)),
+                            "held identity must retain secured payload and metadata")
+                controller.identityValidationSucceeds = true
+                controller.identityRejected = true
+                controller.processSecuredDownloads()
+                try require(controller.identityValidations == 1 && controller.client!.finishes.isEmpty,
+                            "known rejection must never implicitly reopen on a later successful probe")
+                controller.identityRejected = false // An explicit newly accepted client can retry the held response.
+                controller.processSecuredDownloads()
+                try require(controller.client!.finishes == ["retained-explicit"] && exists(target),
+                            "a validated accepted client must promote the retained response")
             }
             try run("untrusted-metadata-cannot-delete-outside-inbox") { controller, root in
                 let outside = root.appendingPathComponent("outside.download")

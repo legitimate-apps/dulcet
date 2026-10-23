@@ -83,6 +83,8 @@ struct Outcome { var errorKind: String? = nil }
     var cacheWrites: [String: CacheWrite] = [:]
     var protectedPlayback: [String: String] = [:]
     var pendingTracks: [Int] = []
+    var deferredPreparations: [Int] = []
+    var authorizedTaskGenerations: [Int: Int] = [:]
     var pendingAutomaticDownloadsEnabled: Bool?
     var prepareOperations: [Int: Operation] = [:]
     var queuePrepareOperation: Operation?

@@ -4,6 +4,8 @@ import android.content.Context
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -41,7 +43,7 @@ public class AndroidArtworkRepository internal constructor(
         if (name in unavailable) return null
         val file = File(root, name)
         readCached(file)?.let { return it }
-        if (cachedOnly) return null
+        if (cachedOnly || AndroidServerIdentity.isRejected(account.providerInstanceId)) return null
         val mine = CompletableDeferred<ByteArray?>()
         val existing = inFlight.putIfAbsent(name, mine)
         if (existing != null) return existing.await()
@@ -59,8 +61,12 @@ public class AndroidArtworkRepository internal constructor(
 
     private suspend fun fetch(key: String, bucket: ArtworkSizeBucket, file: File, name: String): ByteArray? =
         withContext(Dispatchers.IO) {
+            val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
+                ?: return@withContext null
             val result = fetcher.fetch(ArtworkFetchRequest(account.providerInstanceId, key, bucket,
                 account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp))
+            currentCoroutineContext().ensureActive()
+            if (authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return@withContext null
             when (result) {
                 is ArtworkFetchResult.Loaded -> result.bytes.also { store(file, it) }
                 ArtworkFetchResult.Unavailable -> { unavailable += name; null }
@@ -77,7 +83,7 @@ public class AndroidArtworkRepository internal constructor(
 
     private fun store(file: File, bytes: ByteArray) {
         // A load that finishes after its account was signed out must not recreate the account's
-        // directory (spec §14.7). The bytes are still returned; they are only not kept.
+        // directory (spec §14.7), including removal racing the post-fetch check.
         if (AndroidAccountData.isRemoved(account.providerInstanceId)) return
         try {
             root.mkdirs()

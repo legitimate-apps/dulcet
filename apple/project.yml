@@ -493,6 +493,9 @@ targets:
       - DulcetAppleShared/DulcetCorePlayback.swift
       - DulcetAppleShared/DulcetCorePlaybackController.swift
       - DulcetAppleShared/SQLiteLoadExtensionUnsupported.c
+      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3
+        group: DulcetKitTests/Fixtures
+        buildPhase: resources
     dependencies:
       - package: DulcetKit
       - sdk: libsqlite3.tbd

@@ -102,6 +102,9 @@ FROM download AS d
 JOIN download_policy_state AS p USING (server_id, raw_id, transcode_profile)
 WHERE d.download_id = ?;
 
+selectDownloadItemsForServer:
+SELECT raw_id, transcode_profile FROM download WHERE server_id = ?;
+
 selectDownloadsForServer:
 SELECT
   d.server_id,

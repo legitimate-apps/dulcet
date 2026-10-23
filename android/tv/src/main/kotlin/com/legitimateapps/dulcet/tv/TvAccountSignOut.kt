@@ -36,6 +36,7 @@ import com.legitimateapps.dulcet.CoreAccountDataGateway
 import com.legitimateapps.dulcet.ServicePlaybackRelease
 import com.legitimateapps.dulcet.SignOutState
 import com.legitimateapps.dulcet.shared.R as SharedR
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,11 +52,17 @@ internal class TvAccountModel(application: Application) : AndroidViewModel(appli
     /** Counts finished sign-outs; the activity reads the saved account again on each. */
     val signedOut: StateFlow<Int> = finished.asStateFlow()
 
+    private val credentials = AndroidAccountCredentialStore(application)
+    private val playback = ServicePlaybackRelease(application)
+    fun savedAccounts() = runCatching { credentials.savedAccounts() }.getOrDefault(emptyList())
+    fun switchServer(id: String) { viewModelScope.launch {
+        if (com.legitimateapps.dulcet.selectSavedServer(id, credentials, playback)) finished.value += 1
+    } }
     val signOut = AccountSignOut(
         scope = viewModelScope,
-        credentials = AndroidAccountCredentialStore(application),
+        credentials = credentials,
         accountData = CoreAccountDataGateway(application),
-        playback = ServicePlaybackRelease(application),
+        playback = playback,
         journal = AccountRemovalJournal(application),
         onSignedOut = { finished.value += 1 },
     )
@@ -76,7 +83,10 @@ internal class TvAccountModel(application: Application) : AndroidViewModel(appli
  * saved account is looked up again, so connecting shows the entry without waiting for a restart.
  */
 @Composable
-internal fun TvAccountHost(signOut: AccountSignOut, account: Any?, content: @Composable () -> Unit) {
+internal fun TvAccountHost(signOut: AccountSignOut, account: Any?,
+    savedServers: List<com.legitimateapps.dulcet.StoredAccount> = emptyList(),
+    selectServer: (String) -> Unit = {}, addServer: (() -> Unit)? = null,
+    content: @Composable () -> Unit) {
     val state by signOut.state.collectAsStateWithLifecycle()
     TvSignOutDialogs(state, signOut)
     if (state.hidesAccount) {
@@ -84,11 +94,13 @@ internal fun TvAccountHost(signOut: AccountSignOut, account: Any?, content: @Com
         return
     }
     val saved = remember(account, state) { signOut.savedAccountId() != null }
-    CompositionLocalProvider(LocalTvAccountActions provides TvAccountActions(saved, signOut::request)) { content() }
+    CompositionLocalProvider(LocalTvAccountActions provides TvAccountActions(saved, signOut::request, savedServers, selectServer, addServer)) { content() }
 }
 
 /** What the shell's account places show: whether an account is saved, and the way to begin §14.7. */
-internal class TvAccountActions(val saved: Boolean, val requestSignOut: () -> Unit)
+internal class TvAccountActions(val saved: Boolean, val requestSignOut: () -> Unit,
+    val savedServers: List<com.legitimateapps.dulcet.StoredAccount> = emptyList(),
+    val selectServer: (String) -> Unit = {}, val addServer: (() -> Unit)? = null)
 
 /** Provided by [TvAccountHost] around the app; null where Sign out cannot be offered at all. */
 internal val LocalTvAccountActions = staticCompositionLocalOf<TvAccountActions?> { null }
@@ -102,8 +114,16 @@ internal val LocalTvAccountActions = staticCompositionLocalOf<TvAccountActions?>
 internal fun TvSignOutEntry(modifier: Modifier = Modifier, enabled: Boolean = true) {
     val actions = LocalTvAccountActions.current ?: return
     if (!actions.saved) return
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    actions.savedServers.forEach { server ->
+        Button(onClick = { actions.selectServer(server.id) }, enabled = enabled,
+            modifier = Modifier.tvFocus("tv.account.server.${server.id}")) { Text("${server.serverName} · ${server.username}\n${server.serverUrl}") }
+    }
+    actions.addServer?.let { add -> Button(onClick = add, enabled = enabled,
+        modifier = Modifier.tvFocus("tv.account.add-server")) { Text(stringResource(SharedR.string.account_add_server)) } }
     Button(onClick = actions.requestSignOut, enabled = enabled, modifier = modifier.tvFocus("tv.account.signout")) {
         Text(stringResource(SharedR.string.account_signout_action))
+    }
     }
 }
 

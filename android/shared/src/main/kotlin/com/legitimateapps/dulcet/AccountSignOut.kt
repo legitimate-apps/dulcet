@@ -59,6 +59,7 @@ public interface AccountDataGateway {
 
     /** Deletes what every account but the one saved now owns; returns the ids whose rows it deleted. */
     public suspend fun sweep(activeAccountId: () -> String?): Set<String>
+    public suspend fun sweepSaved(savedAccountIds: () -> Set<String>, activeAccountId: () -> String?): Set<String> = sweep(activeAccountId)
 }
 
 /**
@@ -101,6 +102,13 @@ public class CoreAccountDataGateway(context: Context) : AccountDataGateway {
         swept.forEach { AndroidDownloads.releaseForSignOut(context, it) }
         // Every launch comes through here: the saved account's download controller is created now,
         // so its relaunch reconciliation (spec §14.5) runs whether or not a screen shows downloads.
+        withContext(Dispatchers.IO) { AndroidDownloads.controller(context) }
+        return swept
+    }
+
+    override suspend fun sweepSaved(savedAccountIds: () -> Set<String>, activeAccountId: () -> String?): Set<String> {
+        val swept = AndroidAccountData.sweepAccountsExcept(context, savedAccountIds)
+        swept.forEach { AndroidDownloads.releaseForSignOut(context, it) }
         withContext(Dispatchers.IO) { AndroidDownloads.controller(context) }
         return swept
     }
@@ -368,7 +376,7 @@ public class AccountSignOut(
     public fun resumeInterrupted() {
         val active = try { credentials.activeAccountId() } catch (_: CredentialStoreException) { return }
         for (id in journal.keysLeft()) {
-            if (id == active) continue
+            if (id in credentials.savedAccountIds()) continue
             try {
                 credentials.deleteKey(id)
                 journal.keyDeleted(id)
@@ -382,7 +390,7 @@ public class AccountSignOut(
         scope.launch {
             if (foreground != null) removeData(foreground)
             try {
-                accountData.sweep { credentials.activeAccountId() }
+                accountData.sweepSaved({ credentials.savedAccountIds() }, { credentials.activeAccountId() })
                 earlier.forEach(journal::end)
             } catch (cancelled: CancellationException) {
                 throw cancelled

@@ -92,6 +92,9 @@ public enum DulcetAccountErrorPresenter {
                 "The redirect could not be followed safely.",
                 "Enter the server’s final HTTPS address directly and try again."
             )
+        case .serverIdentityChanged:
+            ("The server at this address has changed", "Reconnect to review this server before using saved data.",
+             "Open Account and connect again. Dulcet asks before removing any downloads.")
         case .malformedEnvelope:
             (
                 "The server response was malformed",
@@ -521,14 +524,47 @@ public protocol DulcetServerSearching: AnyObject {
 }
 
 /// Live presentation source for account setup. Network and persistence adapters stay replaceable.
+public struct DulcetSavedServer: Identifiable, Sendable, Hashable {
+    public let id: String
+    public let serverURL: String
+    public let username: String
+    public let isActive: Bool
+}
+
+/// Decisions are supplied by the shared Kotlin core in production.
 @MainActor
-public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlaybackPreparing {
+public struct DulcetAccountIdentityPolicy {
+    public let samePrincipal: (String, String, String, String) -> Bool
+    public let isReplacement: (String, String) -> Bool
+    public init(samePrincipal: @escaping (String, String, String, String) -> Bool,
+                isReplacement: @escaping (String, String) -> Bool) {
+        self.samePrincipal = samePrincipal
+        self.isReplacement = isReplacement
+    }
+    public static let exact = Self(samePrincipal: { $0 == $2 && $1 == $3 },
+                                  isReplacement: { !$0.isEmpty && !$1.isEmpty && $0 != $1 })
+}
+
+@MainActor
+public protocol DulcetSavedServerManaging: AnyObject {
+    var savedServers: [DulcetSavedServer] { get }
+    var pendingDownloadRemovalCount: Int? { get }
+    func addServer()
+    func selectSavedServer(_ id: String)
+    func confirmServerReplacement()
+    func cancelServerReplacement()
+}
+
+@MainActor
+public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlaybackPreparing, DulcetSavedServerManaging {
     private let connector: any DulcetAccountConnecting
     private let credentialStore: (any DulcetCredentialStoring)?
     private let libraryBrowser: (any DulcetLibraryBrowsing)?
     private let artworkFetcher: (any DulcetArtworkFetching)?
     private let artworkMemoryCache = DulcetArtworkMemoryCache()
     private var artworkGeneration = 0
+    private var rejectedArtworkServerIDs: Set<String> = []
+    private var handlingIdentityRejection = false
     private let serverSearch: (any DulcetServerSearching)?
     private let playbackController: (any DulcetPlaybackControlling)?
     private let downloadController: (any DulcetDownloadControlling)?
@@ -536,6 +572,17 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     private let searchDebounce: Duration
     private let libraryRefreshCadence: Duration
     private let libraryRefreshScheduler: any DulcetLibraryRefreshScheduling
+    private let acceptServerIdentity: @MainActor (String, String) -> Bool
+    private let readServerIdentity: @MainActor (String) -> String?
+    private let seedServerIdentity: @MainActor (String, String) -> Bool
+    private let identityPolicy: DulcetAccountIdentityPolicy
+    private let countAccountDownloads: (@MainActor (String) -> Int?)?
+    private let removeSavedAccountData: (@MainActor (String) async -> Bool)?
+    private var addingServer = false
+    private var switchingToServerID: String?
+    private var pendingConnection: (@MainActor () -> Void)?
+    private var preSubmissionSnapshot: DulcetSnapshot?
+    public private(set) var pendingDownloadRemovalCount: Int?
     private let providerInstanceIDFactory: @MainActor () -> String
     /// The library reader for the account, when this app reads its library through one (§16.18).
     /// While it holds an account, Library and Search are drawn from it and nothing here reads
@@ -649,8 +696,20 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         playbackStartNavigation: DulcetPlaybackStartNavigation = .platformDefault,
         localNetworkAccess: (any DulcetLocalNetworkAccessProbing)? = nil,
         librarySession: DulcetLibrarySession? = nil,
-        reconnectDelays: any DulcetDelayScheduling = DulcetTaskDelayScheduler()
+        reconnectDelays: any DulcetDelayScheduling = DulcetTaskDelayScheduler(),
+        acceptServerIdentity: @escaping @MainActor (String, String) -> Bool = { _, _ in true },
+        readServerIdentity: @escaping @MainActor (String) -> String? = { _ in "" },
+        seedServerIdentity: @escaping @MainActor (String, String) -> Bool = { _, _ in true },
+        identityPolicy: DulcetAccountIdentityPolicy = .exact,
+        countAccountDownloads: (@MainActor (String) -> Int?)? = nil,
+        removeSavedAccountData: (@MainActor (String) async -> Bool)? = nil
     ) {
+        self.acceptServerIdentity = acceptServerIdentity
+        self.readServerIdentity = readServerIdentity
+        self.seedServerIdentity = seedServerIdentity
+        self.identityPolicy = identityPolicy
+        self.countAccountDownloads = countAccountDownloads
+        self.removeSavedAccountData = removeSavedAccountData
         self.reconnectDelays = reconnectDelays
         self.connector = connector
         self.librarySession = librarySession
@@ -717,6 +776,8 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         playbackController?.setPresentationHandler { [weak self] presentation in
             self?.receivePlaybackPresentation(presentation)
         }
+        if let providerInstanceID, let savedIdentity = (credentialStore as? any DulcetSavedServerCredentialStoring)?.serverIdentity,
+           !savedIdentity.isEmpty { _ = seedServerIdentity(providerInstanceID, savedIdentity) }
         if let providerInstanceID, let restored = restoredForReader {
             playbackController?.configureOffline(account: DulcetPlaybackAccount(
                 providerInstanceID: providerInstanceID,
@@ -757,6 +818,8 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 self.playbackController?.setNetworkAvailable(reachable)
             }
         }
+        librarySession?.onServerIdentityChanged = { [weak self] in self?.handleServerIdentityChanged() }
+        downloadController?.setServerIdentityChangedHandler { [weak self] in self?.handleServerIdentityChanged() }
         librarySession?.onServerConnectionChanged = { [weak self] available in
             self?.playbackController?.setServerAvailable(available)
         }
@@ -813,7 +876,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
 
     private func requestSavedReconnect() {
         guard savedReconnectEnabled, reconnectForeground, reconnectReachable,
-              accountRemovalStatus == .idle,
+              pendingConnection == nil, accountRemovalStatus == .idle,
               !currentSnapshot.accountConnection.isConnected,
               currentSnapshot.accountConnection != .connecting else { return }
         cancelReconnectRetry()
@@ -966,6 +1029,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         case let .editAccountForm(form):
             accountFormEdited(form)
         case let .submitAccountConnection(request):
+            guard pendingConnection == nil else { return }
             if currentSnapshot.accountConnection == .connecting, request == currentSnapshot.accountForm {
                 return // A manual reconnect joins the negotiation already running.
             }
@@ -1009,9 +1073,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     private enum SavedAuthenticationFailure: Error { case superseded }
 
     private func savedAuthentication(for request: DulcetAccountConnectRequest) -> SavedAuthentication? {
-        guard let providerInstanceID, let saved = try? credentialStore?.load(),
-            saved.username == request.username, saved.password == request.password
-        else { return nil }
+        guard let providerInstanceID, let saved = try? credentialStore?.load() else { return nil }
         return SavedAuthentication(request: saved, submittedRequest: request, providerInstanceID: providerInstanceID)
     }
 
@@ -1040,6 +1102,9 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             normalizedServerURL: proof.submittedRequest.serverURL, username: proof.submittedRequest.username,
             password: proof.submittedRequest.password, allowLocalHTTP: proof.submittedRequest.allowLocalHTTP,
             credentialGeneration: credentialStore.credentialGeneration)
+        if proof.request.username == request.username { return true }
+        guard proof.request.username == proof.submittedRequest.username,
+              proof.request.password == proof.submittedRequest.password else { return false }
         // The core commits aliases before Keychain replacement. Both spellings remain valid
         // in this epoch if saving credentials is interrupted; a real rebind drops the aliases.
         if let downloadController {
@@ -1080,6 +1145,197 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         }
     }
 
+    public var savedServers: [DulcetSavedServer] {
+        guard let store = credentialStore as? any DulcetSavedServerCredentialStoring else { return [] }
+        return store.savedProviderInstanceIDs.compactMap { id in
+            guard let request = try? store.load(providerInstanceID: id) else { return nil }
+            return DulcetSavedServer(id: id, serverURL: request.serverURL,
+                                     username: request.username, isActive: id == providerInstanceID)
+        }
+    }
+
+    public func addServer() {
+        guard accountRemovalStatus == .idle, pendingConnection == nil else { return }
+        cancelActiveSubmission()
+        addingServer = true
+        switchingToServerID = nil
+        publish(state: .accountConnectIdle, form: .empty, status: .idle)
+    }
+
+    public func selectSavedServer(_ id: String) {
+        guard accountRemovalStatus == .idle, pendingConnection == nil,
+              let store = credentialStore as? any DulcetSavedServerCredentialStoring,
+              let request = try? store.load(providerInstanceID: id) else { return }
+        if id == providerInstanceID, currentSnapshot.accountConnection.isConnected { return }
+        addingServer = false
+        switchingToServerID = id
+        submit(request)
+    }
+
+    private func activateSavedServerOffline(after failure: DulcetAccountFailurePresentation) -> Bool {
+        guard let id = switchingToServerID,
+              let multi = credentialStore as? any DulcetSavedServerCredentialStoring,
+              let saved = try? multi.load(providerInstanceID: id) else { return false }
+        do {
+            try multi.activate(providerInstanceID: id)
+            playbackController?.disconnect()
+            providerInstanceID = id
+            switchingToServerID = nil
+            addingServer = false
+            savedReconnectEnabled = true
+            savedServerName = Self.savedServerName(for: saved.serverURL)
+            restorationTrackIDs = []
+            downloadStateCache = [:]
+            libraryAlbums = []
+            let account = DulcetPlaybackAccount(providerInstanceID: id, normalizedServerURL: saved.serverURL,
+                username: saved.username, password: saved.password, allowLocalHTTP: saved.allowLocalHTTP,
+                credentialGeneration: multi.credentialGeneration)
+            playbackController?.configureOffline(account: account)
+            downloadController?.configure(account: account)
+            downloadController?.setAutomaticDownloadContactPermitted(false)
+            librarySession?.open(account: Self.readerAccount(request: saved,
+                normalizedServerURL: saved.serverURL, providerInstanceID: id), mode: .deviceOnly)
+            publish(state: .libraryBrowse, destination: .listenNow, form: saved, status: .failed(failure))
+            restoreQueueFromCommittedLibrary(providerInstanceID: id)
+            retrySavedReconnect(after: failure)
+            return true
+        } catch { return false }
+    }
+
+    public func confirmServerReplacement() {
+        let continuation = pendingConnection
+        pendingConnection = nil
+        pendingDownloadRemovalCount = nil
+        continuation?()
+    }
+
+    public func cancelServerReplacement() {
+        guard pendingConnection != nil else { return }
+        pendingConnection = nil
+        pendingDownloadRemovalCount = nil
+        switchingToServerID = nil
+        addingServer = false
+        generation += 1
+        if let previous = preSubmissionSnapshot {
+            currentSnapshot = previous
+            snapshotHandler?(previous)
+        } else { publishSavedAccountOrIdle(form: currentSnapshot.accountForm) }
+    }
+
+    /// Authentication completes before choosing an owner. Typed spelling cannot override a
+    /// server-confirmed canonical principal, and a different saved server never reuses its UUID.
+    private func acceptConnectedAccount(_ account: DulcetConnectedAccountSummary,
+        request: DulcetAccountConnectRequest, proof: SavedAuthentication?,
+        completion: @escaping @MainActor (DulcetAccountConnectRequest) -> Void) {
+        let saved = request.savingConnectedAccount(account)
+        let multi = credentialStore as? any DulcetSavedServerCredentialStoring
+        let originalID = providerInstanceID
+        let originalRequest = try? credentialStore?.load()
+        var targetID = switchingToServerID
+        if targetID == nil, let multi {
+            targetID = multi.savedProviderInstanceIDs.first { id in
+                guard let old = try? multi.load(providerInstanceID: id) else { return false }
+                return identityPolicy.samePrincipal(old.serverURL, old.username, saved.serverURL, saved.username)
+            }
+        }
+        // Exact saved-credential proof may establish a server-confirmed canonical alias.
+        let aliasProof = proof.map {
+            $0.request.username == request.username && $0.request.password == request.password &&
+            identityPolicy.samePrincipal($0.request.serverURL, saved.username, saved.serverURL, saved.username)
+        } ?? false
+        if targetID == nil, !addingServer, aliasProof { targetID = originalID }
+        if targetID == nil, !addingServer { targetID = originalID }
+        let old = targetID.flatMap { id in (try? multi?.load(providerInstanceID: id)) ?? (id == originalID ? originalRequest : nil) }
+        let oldIdentity: String
+        if let targetID {
+            guard let persisted = readServerIdentity(targetID) else {
+                publishInPlace(status: .failed(DulcetAccountErrorPresenter.presentation(for:
+                    DulcetAccountErrorContext(kind: .credentialPersistenceFailed, serverName: account.serverName))), form: request)
+                return
+            }
+            oldIdentity = persisted.isEmpty ? ((try? multi?.serverIdentity(providerInstanceID: targetID)) ?? "") : persisted
+        } else { oldIdentity = "" }
+        let replacement = identityPolicy.isReplacement(oldIdentity, account.serverIdentity)
+        if replacement { quarantineServerIdentity() }
+        let samePrincipal = old.map { identityPolicy.samePrincipal($0.serverURL, $0.username, saved.serverURL, saved.username) } ?? true
+        let destructive = old != nil && (replacement || (!samePrincipal && !aliasProof))
+        let instanceID = destructive || targetID == nil ? providerInstanceIDFactory() : targetID!
+        let retiringID = destructive ? targetID : nil
+        let acceptedGeneration = generation
+        let commit: @MainActor () -> Void = { [weak self] in
+            guard let self, self.generation == acceptedGeneration else { return }
+            let saveAndConfigure: @MainActor () -> Void = { [weak self] in
+                guard let self else { return }
+                do {
+                    if !destructive, instanceID == originalID {
+                        try self.prepareMediaOwnership(proof, account: account, request: saved, instanceID: instanceID)
+                    }
+                    if let multi {
+                        try multi.save(saved, providerInstanceID: instanceID, serverIdentity: account.serverIdentity)
+                        if let retiringID, retiringID != instanceID { try multi.delete(providerInstanceID: retiringID) }
+                    } else if let scoped = self.credentialStore as? any DulcetProviderInstanceCredentialStoring {
+                        try scoped.save(saved, providerInstanceID: instanceID)
+                    } else { try self.credentialStore?.save(saved) }
+                    if originalID != instanceID { self.playbackController?.disconnect() }
+                    self.providerInstanceID = instanceID
+                    self.addingServer = false
+                    self.switchingToServerID = nil
+                    self.restorationTrackIDs = []
+                    self.downloadStateCache = [:]
+                    self.libraryAlbums = []
+                    if self.credentialStore != nil { self.savedServerName = account.serverName }
+                    guard self.acceptServerIdentity(instanceID, account.serverIdentity) else { throw SavedAuthenticationFailure.superseded }
+                    self.configurePlayback(account: account, request: saved)
+                    self.openConnectedReader(account: account, request: saved)
+                    completion(saved)
+                } catch {
+                    self.publishInPlace(status: .failed(DulcetAccountErrorPresenter.presentation(for:
+                        DulcetAccountErrorContext(kind: .credentialPersistenceFailed, serverName: account.serverName))), form: request)
+                }
+            }
+            guard let retiringID else { saveAndConfigure(); return }
+            // Retire every AVPlayer item and close the reader before the first deletion.
+            self.playbackController?.disconnect()
+            self.accountRemovalStatus = .removing
+            self.publishInPlace(status: .connecting, form: request)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let librarySession = self.librarySession {
+                    await withCheckedContinuation { done in librarySession.close { done.resume() } }
+                }
+                let removed: Bool
+                if let remove = self.removeSavedAccountData { removed = await remove(retiringID) }
+                else { removed = await self.downloadController?.removeAccountData() ?? true }
+                self.accountRemovalStatus = .idle
+                guard removed else {
+                    self.publishInPlace(status: .failed(DulcetAccountErrorPresenter.presentation(for:
+                        DulcetAccountErrorContext(kind: .credentialPersistenceFailed, serverName: account.serverName))), form: request)
+                    return
+                }
+                self.artworkMemoryCache.remove(serverID: retiringID)
+                if let remover = self.artworkFetcher as? any DulcetArtworkCacheRemoving {
+                    await remover.removeCachedArtwork(serverID: retiringID)
+                }
+                saveAndConfigure()
+            }
+        }
+        if destructive, let retiringID {
+            let count: Int?
+            if let countAccountDownloads { count = countAccountDownloads(retiringID) }
+            else if let downloadController { count = downloadController.downloadCountToRemove }
+            else { count = 0 }
+            guard let count else {
+                publishInPlace(status: .failed(DulcetAccountErrorPresenter.presentation(for:
+                    DulcetAccountErrorContext(kind: .credentialPersistenceFailed, serverName: account.serverName))), form: request)
+                return
+            }
+            pendingDownloadRemovalCount = count
+            pendingConnection = commit
+            // The question is global chrome, including an automatic reconnect from Library.
+            publishInPlace(status: .saved(serverName: savedServerName ?? account.serverName), form: request)
+        } else { commit() }
+    }
+
     /// Connects with `request`. `inPlace` is a saved-account launch, a lifecycle retry, or a
     /// local-network grant: it
     /// never moves them, wherever they go before it lands: the account status says it is
@@ -1093,6 +1349,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     ) {
         // Capture before publishing the submitted form or invoking a synchronous connector.
         // Only these exact saved credentials can establish continuity with their media owner.
+        preSubmissionSnapshot = currentSnapshot
         let savedAuthentication = savedAuthentication(for: request)
         cancelLibraryBrowse()
         cancelLibraryRefresh()
@@ -1128,52 +1385,20 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             }
             switch outcome {
             case let .connected(account):
-                do {
-                    let instanceID = self.providerInstanceID ?? self.providerInstanceIDFactory()
-                    let saved = request.savingConnectedAccount(account)
-                    try self.prepareMediaOwnership(savedAuthentication,
-                        account: account, request: saved, instanceID: instanceID)
-                    if let credentialStore = self.credentialStore
-                        as? any DulcetProviderInstanceCredentialStoring {
-                        try credentialStore.save(saved, providerInstanceID: instanceID)
-                    } else {
-                        try self.credentialStore?.save(saved)
-                    }
-                    if self.credentialStore != nil {
-                        self.savedServerName = account.serverName
-                    }
-                    self.providerInstanceID = instanceID
-                    self.configurePlayback(account: account, request: saved)
-                    self.openConnectedReader(account: account, request: saved)
-                    self.publish(
-                        state: .accountConnected,
-                        destination: .settings,
-                        form: saved,
-                        status: .connected(account)
-                    )
-                    // A connection the person asked for lands on their library, from Connection as
-                    // from the library's own Reconnect: staying on a page that only says
-                    // "Connected" read as an app that had not moved. Android's phone and TV apps
-                    // replace their connect screen with the library the same way. A connection was
-                    // just established, so anything held is another session's.
+                self.acceptConnectedAccount(account, request: request, proof: savedAuthentication) { [weak self] saved in
+                    guard let self else { return }
+                    self.publish(state: .accountConnected, destination: .settings, form: saved, status: .connected(account))
                     if origin == .library || origin == .listenNow || origin == .settings {
                         if self.readerOwnsLibrary {
-                            self.publish(state: .libraryBrowse, destination: origin == .settings ? .listenNow : origin, form: saved, status: .connected(account))
+                            self.publish(state: .libraryBrowse, destination: origin == .settings ? .listenNow : origin,
+                                         form: saved, status: .connected(account))
                         } else { self.openLibrary(reason: .connected) }
                     }
-                } catch {
-                    let failure = DulcetAccountErrorPresenter.presentation(
-                        for: DulcetAccountErrorContext(
-                            kind: .credentialPersistenceFailed,
-                            serverName: account.serverName
-                        )
-                    )
-                    self.publish(
-                        state: .accountErrorPersistence,
-                        destination: .settings,
-                        form: request,
-                        status: .failed(failure)
-                    )
+                }
+            case let .failed(failure) where self.switchingToServerID != nil &&
+                (failure.kind == .transportUnreachable || failure.kind == .transportTimeout):
+                if !self.activateSavedServerOffline(after: failure) {
+                    self.publish(state: failure.kind.family.presentationState, form: request, status: .failed(failure))
                 }
             case let .failed(failure) where failure.kind == .transportCancelled:
                 self.publishSavedAccountOrIdle(form: request)
@@ -1215,45 +1440,16 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     ) {
         switch outcome {
         case let .connected(account):
-            do {
-                let instanceID = providerInstanceID ?? providerInstanceIDFactory()
-                let saved = request.savingConnectedAccount(account)
-                try prepareMediaOwnership(savedAuthentication,
-                    account: account, request: saved, instanceID: instanceID)
-                if let credentialStore = credentialStore as? any DulcetProviderInstanceCredentialStoring {
-                    try credentialStore.save(saved, providerInstanceID: instanceID)
-                } else {
-                    try credentialStore?.save(saved)
+            acceptConnectedAccount(account, request: request, proof: savedAuthentication) { [weak self] saved in
+                guard let self else { return }
+                self.reconnectRetryDelay = .seconds(2)
+                self.cancelReconnectRetry()
+                self.publishInPlace(status: .connected(account), form: saved)
+                switch self.currentSnapshot.selectedDestination {
+                case .library, .browse: self.openLibrary(reason: .connected)
+                case .search: self.openSearch()
+                case .listenNow, .nowPlaying, .settings: break
                 }
-                if credentialStore != nil {
-                    savedServerName = account.serverName
-                }
-                providerInstanceID = instanceID
-                reconnectRetryDelay = .seconds(2)
-                cancelReconnectRetry()
-                configurePlayback(account: account, request: saved)
-                openConnectedReader(account: account, request: saved)
-                publishInPlace(status: .connected(account), form: saved)
-                switch currentSnapshot.selectedDestination {
-                case .listenNow:
-                    break
-                case .library, .browse:
-                    openLibrary(reason: .connected)
-                case .search:
-                    openSearch()
-                case .nowPlaying, .settings:
-                    break
-                }
-            } catch {
-                publishInPlace(
-                    status: .failed(DulcetAccountErrorPresenter.presentation(
-                        for: DulcetAccountErrorContext(
-                            kind: .credentialPersistenceFailed,
-                            serverName: account.serverName
-                        )
-                    )),
-                    form: request
-                )
             }
         case let .failed(failure) where failure.kind == .transportCancelled:
             publishInPlace(status: .saved(serverName: savedServerName ?? ""), form: request)
@@ -2439,11 +2635,34 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         )
     }
 
+    private func quarantineServerIdentity() {
+        guard !handlingIdentityRejection else { return }
+        handlingIdentityRejection = true
+        defer { handlingIdentityRejection = false }
+        librarySession?.rejectServerIdentity()
+        if let providerInstanceID {
+            if rejectedArtworkServerIDs.insert(providerInstanceID).inserted { artworkGeneration += 1 }
+            (artworkFetcher as? any DulcetArtworkRemoteAccessControlling)?.rejectServerIdentity(serverID: providerInstanceID)
+        }
+        playbackController?.rejectServerIdentity()
+        downloadController?.rejectServerIdentity()
+    }
+
+    private func handleServerIdentityChanged() {
+        guard !handlingIdentityRejection else { return }
+        quarantineServerIdentity()
+        guard pendingConnection == nil, currentSnapshot.accountConnection != .connecting,
+              let saved = try? credentialStore?.load() else { return }
+        submit(saved, inPlace: true)
+    }
+
     private func configurePlayback(
         account: DulcetConnectedAccountSummary,
         request: DulcetAccountConnectRequest
     ) {
         guard let providerInstanceID else { return }
+        rejectedArtworkServerIDs.remove(providerInstanceID)
+        (artworkFetcher as? any DulcetArtworkRemoteAccessControlling)?.acceptServerIdentity(serverID: providerInstanceID)
         playbackController?.configure(account: DulcetPlaybackAccount(
             providerInstanceID: providerInstanceID,
             normalizedServerURL: account.normalizedServerURL,
@@ -2673,7 +2892,7 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
         let cachedOnly: Bool
         if case let .connected(account) = currentSnapshot.accountConnection {
             normalizedURL = account.normalizedServerURL
-            cachedOnly = false
+            cachedOnly = rejectedArtworkServerIDs.contains(reference.serverID)
         } else {
             normalizedURL = form.serverURL
             cachedOnly = true
@@ -2873,7 +3092,8 @@ extension DulcetAccountDataSource: DulcetLibrarySessionProviding {
     /// reader mode -- a screen shows a window, not the library -- so it is always `.partial`,
     /// which cannot clear a saved queue for want of a track nobody has looked at.
     func restoreQueue(from tracks: [DulcetTrack]) {
-        guard currentSnapshot.accountConnection.isConnected, let providerInstanceID else { return }
+        guard currentSnapshot.accountConnection.isConnected || savedServerName != nil,
+              let providerInstanceID else { return }
         let fresh = tracks.filter {
             $0.id.providerInstanceID == providerInstanceID && restorationTrackIDs.insert($0.id).inserted
         }

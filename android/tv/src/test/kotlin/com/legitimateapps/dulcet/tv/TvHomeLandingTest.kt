@@ -84,7 +84,8 @@ class TvHomeLandingTest {
 
     /**
      * Should-fixes 4 and 5: along the bar to Account, which opens on Back and not on Sign out; DOWN
-     * reaches Sign out, whose dialog opens on Stay signed in; and Back from Account returns to the
+     * traverses saved servers and Add Server before Sign out, whose dialog opens on Stay signed in;
+     * and Back from Account returns to the
      * library with the remote where it was.
      */
     @Test fun theBarReachesAccountWhichOpensOnBackThenSignOutAndBackReturnsToTheLibrary() {
@@ -97,6 +98,10 @@ class TvHomeLandingTest {
         await("the account screen's focus on Back") { focused("account.back") }
         assertFalse(focused("tv.account.signout"), "The account screen must not open on Sign out")
 
+        key(Key.DirectionDown)
+        assertTrue(focusedTags().single().startsWith("tv.account.server."), "Down reaches a saved server before account settings")
+        key(Key.DirectionDown)
+        assertFocused("tv.account.add-server")
         key(Key.DirectionDown)
         assertFocused("tv.account.signout")
         key(Key.DirectionCenter)

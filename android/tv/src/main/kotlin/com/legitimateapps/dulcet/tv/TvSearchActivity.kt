@@ -104,19 +104,25 @@ class TvSearchActivity : ComponentActivity() {
                 var account by remember { mutableStateOf(loadAccount()) }
                 val signedOut by accountModel.signedOut.collectAsStateWithLifecycle()
                 LaunchedEffect(signedOut) { if (signedOut > 0) account = loadAccount() }
-                TvAccountHost(accountModel.signOut, account) {
+                var adding by remember { mutableStateOf(false) }
+                TvAccountHost(accountModel.signOut, account, accountModel.savedAccounts(),
+                    selectServer = { adding = false; accountModel.switchServer(it) }, addServer = { adding = true }) {
                     val current = account
-                    if (current == null) {
+                    if (current == null || adding) {
                         val context = LocalContext.current
                         val connector = remember { AccountConnector() }
-                        TvConnectScreen(connector::connect, remember { AndroidAccountCredentialStore(context) }) {
+                        TvConnectScreen(connector::connect, remember { AndroidAccountCredentialStore(context) },
+                            onCancelAdding = if (adding) ({ adding = false }) else null) {
+                            adding = false
                             account = loadAccount()
                         }
                     } else {
+                        androidx.compose.runtime.key(current.providerInstanceId) {
                         val presenter = rememberSearchPresenter(current, searchDependencies)
                         TvLibraryEntry(current, restoredAccount = true) { navigator, playback ->
                             TvSearchScreen(presenter, account = current, onActivate = rememberSearchActivation(navigator),
                                 playback = playback)
+                        }
                         }
                     }
                 }

@@ -3,6 +3,13 @@ package com.legitimateapps.dulcet.core
 import android.os.Handler
 import app.cash.sqldelight.db.SqlDriver
 import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -23,6 +30,7 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.test.*
 import kotlin.time.Duration.Companion.milliseconds
@@ -329,6 +337,91 @@ class AndroidAccountDataTest {
         assertEquals(counted, listed)
     }
 
+    @Test fun replacementDownloadCountIncludesLegacyAndPendingItemsButExcludesCacheAndDuplicateProfiles() = runBlocking {
+        val account = "count-${UUID.randomUUID()}"
+        val store = DulcetDriverFactory(context).openDulcetDatabase()
+        try {
+            val queries = store.database.downloadsQueries
+            // No policy-state rows: legacy downloads are still real items in the removal offer.
+            queries.insertDownload(account, "legacy", "original", "count-legacy-original", "legacy.mp3", null)
+            queries.insertDownload(account, "legacy", "converted", "count-legacy-converted", "legacy.aac", null)
+            queries.insertDownload(account, "pending", "original", "count-pending", "pending.mp3", null)
+            queries.insertDownload(account, "stream-cache", "cache", "count-stream-cache", "cache.mp3", null)
+            store.database.offlineLibraryQueries.upsertRetention(account, "stream-cache", "cache", 0, 0, 0, NOW)
+            queries.insertDownload("different-account", "other", "original", "count-other", "other.mp3", null)
+            assertEquals(0, queries.selectDownloadsForServer(account).executeAsList().size,
+                "The old policy join cannot see any of these durable legacy records")
+            assertEquals(2, AndroidAccountData.downloadedTrackCount(context, account),
+                "One legacy track plus one queued track; cache, other server and duplicate profile excluded")
+        } finally {
+            store.close()
+            context.deleteDatabase("dulcet.db")
+        }
+    }
+
+    @Test fun removalWaitsForQueuedDownloadDatabaseWorkBeforeRevokingItsBinding() = runBlocking {
+        deletionWaitsForDownloadDatabaseWork(sweepAccounts = false)
+    }
+
+    @Test fun sweepWaitsForQueuedDownloadDatabaseWorkBeforeRevokingItsBinding() = runBlocking {
+        deletionWaitsForDownloadDatabaseWork(sweepAccounts = true)
+    }
+
+    /**
+     * Account deletion shares the executor used by download callbacks and retirement. Starting
+     * undispatched from a real IO thread proves the removal has reached its dispatcher boundary:
+     * a separate IO-only deletion runs inline and destroys the control while that executor is held.
+     */
+    private suspend fun deletionWaitsForDownloadDatabaseWork(sweepAccounts: Boolean) {
+        withStore { store ->
+            DownloadPolicyEngine(store.database, DownloadFileStore(downloads.path, okio.FileSystem.SYSTEM)).bindMedia(
+                DownloadMediaBinding(SERVER, "https://music.example.invalid", "fixture-user"))
+        }
+        seed(SERVER, plays = 1, edits = 1, everything = true)
+        val media = download(SERVER)
+        val beforeRows = rowsFor(SERVER)
+        val accountData = data(SERVER)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val reachedDeletion = AtomicBoolean(false)
+        val worker = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val blocker = worker.launch(AndroidDownloadController.databaseDispatcher) {
+            entered.countDown()
+            check(release.await(10, TimeUnit.SECONDS)) { "test did not release the download executor" }
+        }
+        var deletion: kotlinx.coroutines.Deferred<Unit>? = null
+        try {
+            assertTrue(entered.await(10, TimeUnit.SECONDS), "real download executor is held")
+            deletion = withContext(Dispatchers.IO) {
+                worker.async(start = CoroutineStart.UNDISPATCHED) {
+                    reachedDeletion.set(true)
+                    if (sweepAccounts) sweep { null } else accountData.removeAccountData()
+                    Unit
+                }
+            }
+            assertTrue(reachedDeletion.get(), "the real deletion API was entered, not merely scheduled")
+            assertTrue(blocker.isActive, "the real download executor remains held at the deletion boundary")
+            assertTrue(media.isFile, "queued download work must finish before account deletion removes its real bytes")
+            assertEquals(beforeRows, rowsFor(SERVER), "queued download work still owns every account row")
+            assertNotNull(mediaBinding(), "queued download work still owns its binding")
+            assertFalse(deletion.isCompleted, "deletion must suspend behind the held download executor")
+            release.countDown()
+            deletion.await()
+            assertFalse(media.exists(), "after the executor drains the account's bytes are removed")
+            assertEquals(0L, rowsFor(SERVER))
+            assertNull(mediaBinding(), "the account's binding is removed after queued work finishes")
+        } finally {
+            release.countDown()
+            deletion?.await()
+            blocker.join()
+            worker.cancel()
+        }
+    }
+
+    private fun mediaBinding(): String? = withStore {
+        it.database.libraryDepthQueries.selectEntry(SERVER, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull()
+    }
+
     private suspend fun sweep(active: () -> String?): Set<String> =
         AndroidAccountData.sweep(::open, File(context.cacheDir, "artwork"), downloads, active)
 
@@ -336,6 +429,11 @@ class AndroidAccountDataTest {
         AndroidAccountData.artworkRootFor(context, serverId), downloads,
         { ScrobbleEndpointSender(ScrobbleEndpointTransport { parameters -> requests += parameters; answer() }) },
         OutboxWallClock { NOW }, OutboxMonotonicClock { 0.seconds }) { closes += "reader.closed" }
+
+    private inline fun <T> withStore(block: (DulcetDatabaseStore) -> T): T {
+        val store = open()
+        return try { block(store) } finally { store.close() }
+    }
 
     private fun open(): DulcetDatabaseStore = DulcetDatabaseStore.open(DulcetDriverFactory(context, databaseName).createDriver())
 

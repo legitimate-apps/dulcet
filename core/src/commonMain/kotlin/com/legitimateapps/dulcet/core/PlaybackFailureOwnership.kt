@@ -41,6 +41,7 @@ public fun playbackFailureOwner(error: DomainError): PlaybackFailureOwner = when
     DomainError.Protocol.UnexpectedBinary -> PlaybackFailureOwner.Track
     is DomainError.Protocol.Incompatible -> PlaybackFailureOwner.Connection
     DomainError.Protocol.NotASubsonicServer -> PlaybackFailureOwner.Connection
+    DomainError.Protocol.ServerIdentityChanged -> PlaybackFailureOwner.Connection
     // An answer larger than the client accepts for THIS request, refused whole: item-scoped by
     // definition, and never charged to the endpoint (§10.4). Only a lyrics read's size limit raises
     // it today, and playback never does; were a playback request ever given a limit, it would be

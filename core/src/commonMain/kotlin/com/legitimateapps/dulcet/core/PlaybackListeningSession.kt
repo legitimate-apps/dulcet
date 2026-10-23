@@ -118,12 +118,13 @@ public class SleepTimerCountdown(
 internal class AutoplayCandidateSource(
     private val providerInstanceId: String,
     private val transport: LibraryEndpointTransport,
+    private val authorizeRequest: () -> Unit = {},
 ) {
     suspend fun candidates(seedRawId: String, excludedRawIds: Set<String>, count: Int): List<LibraryTrack> {
         require(count > 0)
         val seen = excludedRawIds.toMutableSet().apply { add(seedRawId) }
         val found = mutableListOf<LibraryTrack>()
-        val seed = attempt { transport.checkedRequest("getSong", mapOf("id" to seedRawId)) }
+        val seed = authorizedRequest("getSong", mapOf("id" to seedRawId))
             ?.let { body -> parseLibraryEnvelope(body)?.payload?.get("song") as? JsonObject }
         val artistId = seed?.optionalSourceId("artistId")
         val artistName = seed?.sourceString("artist")
@@ -137,7 +138,7 @@ internal class AutoplayCandidateSource(
         }
         for (source in sources) {
             if (found.size >= count) break
-            val body = attempt { transport.checkedRequest(source.endpoint, source.parameters) } ?: continue
+            val body = authorizedRequest(source.endpoint, source.parameters) ?: continue
             val songs = (parseLibraryEnvelope(body)?.payload?.get(source.container) as? JsonObject)
                 ?.get("song") as? JsonArray ?: continue
             for (element in songs) {
@@ -148,6 +149,14 @@ internal class AutoplayCandidateSource(
             }
         }
         return found
+    }
+
+    private suspend fun authorizedRequest(endpoint: String, parameters: Map<String, String>): String? {
+        authorizeRequest()
+        val response = attempt { transport.checkedRequest(endpoint, parameters) }
+        // A failed/unsupported source is still a reply boundary before the next fallback sends IDs.
+        authorizeRequest()
+        return response
     }
 
     /** One request; null when it failed for any reason but refused credentials or cancellation. */

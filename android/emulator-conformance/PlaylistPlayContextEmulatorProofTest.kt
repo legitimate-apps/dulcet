@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.junit4.ComposeTestRule
@@ -73,8 +74,12 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         awaitTag("listenNow.surface")
                         observer.bind()
                         activate("browse.open")
+                        awaitTag("library.surface")
                         activate("library.view.playlists")
                         awaitTag("library.playlists")
+                        // The grid exists before its live playlist response. Wait for content
+                        // before asking the scroll action to find the exact created playlist.
+                        awaitTag("library.playlists.item.0")
                         compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(name))
                         val row = compose.onNode(hasText(name) and hasAnyAncestor(hasTestTag("library.playlists")))
                         activate(row)
@@ -105,20 +110,26 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         // searches can dispose an initially empty shelf before its live read arrives.
                         if (!isTelevision()) compose.onNodeWithTag("listenNow.surface")
                             .performScrollToIndex(if (observer.state().hasSession) 3 else 2)
-                        var moves = 0
+                        var direction = KeyEvent.KEYCODE_DPAD_DOWN
                         var lastMove = 0L
                         try {
                             compose.waitUntil("recent playlists shelf renders", 30_000) {
                                 val found = compose.onAllNodes(hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists")))
                                     .fetchSemanticsNodes().isNotEmpty()
-                                // A TV must reveal lazy shelves by moving its focused control;
-                                // forcing a scroll while Refresh keeps focus can scroll back.
+                                // Revisit upper shelves if their live answer arrived after the
+                                // remote passed them. A one-way sweep can finish at Random while
+                                // the wanted lazy row is no longer composed.
                                 val now = android.os.SystemClock.elapsedRealtime()
-                                if (!found && isTelevision() && moves < 12 && now - lastMove >= 500) {
-                                    InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-                                    compose.waitForIdle()
-                                    moves++
-                                    lastMove = now
+                                if (!found && isTelevision() && now - lastMove >= 500) {
+                                    val before = focusedTag()
+                                    if (direction == KeyEvent.KEYCODE_DPAD_UP && before == "listenNow.refresh") {
+                                        direction = KeyEvent.KEYCODE_DPAD_DOWN
+                                    }
+                                    remote(direction)
+                                    val after = focusedTag()
+                                    if (before == after) direction = if (direction == KeyEvent.KEYCODE_DPAD_DOWN)
+                                        KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN
+                                    lastMove = android.os.SystemClock.elapsedRealtime()
                                 }
                                 found
                             }
@@ -152,8 +163,35 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
         }.toList()
     }
 
-    private fun awaitTag(tag: String) = compose.waitUntil("$tag exists", 30_000) {
-        compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+    private fun awaitTag(tag: String) {
+        var lastMove = 0L
+        try {
+            compose.waitUntil("$tag exists", 30_000) {
+                val found = compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+                // Browse gives its first live card default focus. Its category header can
+                // therefore leave composition before the test asks for Playlists; reveal it
+                // with the same Up presses a person uses, rather than waiting without moving.
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (!found && isTelevision() && tag.startsWith("library.view.") && now - lastMove >= 500) {
+                    remote(KeyEvent.KEYCODE_DPAD_UP)
+                    lastMove = android.os.SystemClock.elapsedRealtime()
+                }
+                found
+            }
+        } catch (failure: Throwable) {
+            println(compose.onRoot(useUnmergedTree = true).printToString())
+            throw failure
+        }
+    }
+
+    private fun focusedTag(): String = compose.onAllNodes(
+        SemanticsMatcher.expectValue(SemanticsProperties.Focused, true), useUnmergedTree = true,
+    ).fetchSemanticsNodes().mapNotNull { it.config.getOrElse(SemanticsProperties.TestTag) { "" }.takeIf(String::isNotEmpty) }
+        .joinToString(",")
+
+    private fun remote(key: Int) {
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(key)
+        compose.waitForIdle()
     }
     private fun activate(tag: String) { awaitTag(tag); activate(compose.onNodeWithTag(tag)) }
     private fun activate(node: SemanticsNodeInteraction) {
