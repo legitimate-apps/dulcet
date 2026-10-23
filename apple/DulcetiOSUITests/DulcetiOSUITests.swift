@@ -2639,11 +2639,14 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("Library must show \(album): " + app.debugDescription)
             return
         }
-        guard requireContextMenu(on: tile(), marker: "Add to Playlist\u{2026}", in: app) else { return }
-
         guard let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: compact) else { return }
+        // The menu is proved in the process that drags, after the helper's relaunch, as the
+        // playlist row proof does. Proved only before the relaunch, the drag was that process's
+        // first long press, and on iPad it opened the menu without lifting the tile (run
+        // 39991469062, both attempts: drags=2 menu-left-open-after=1).
         guard openAlphabeticalAlbumGrid(in: app, compact: compact),
               tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
+              requireContextMenu(on: tile(), marker: "Add to Playlist\u{2026}", in: app),
               let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: compact) else { return }
         var nativeMenuReady = 0
         let prepareSource: ((Int) -> XCUIElement?)? = compact ? { attempt in
