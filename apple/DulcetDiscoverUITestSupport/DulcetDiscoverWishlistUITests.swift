@@ -107,6 +107,11 @@ import UIKit
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 30), .completed)
         activate(button)
+        // Connecting a saved account returns the real app to Listen Now. Reopen Connection
+        // before checking its current-account label; the departing button cannot stay visible.
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false OR (label CONTAINS %@ AND enabled == true)", "Current server"), object: button)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 45), .completed)
+        if !button.exists { select("settings") }
         let committed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@ AND enabled == true", "Current server"), object: button)
         XCTAssertEqual(XCTWaiter.wait(for: [committed], timeout: 45), .completed, "Saved account must commit before navigating: " + app.debugDescription)
     }
