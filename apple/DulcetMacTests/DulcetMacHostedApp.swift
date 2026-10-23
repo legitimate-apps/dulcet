@@ -483,7 +483,7 @@ final class HostedApp {
             try await Task.sleep(for: .milliseconds(100))
         } while ContinuousClock.now < deadline
         let tree = descendants(of: root).compactMap { element -> String? in
-            guard let id = identifier(element), id.hasPrefix("dulcet.") else { return nil }
+            guard let id = identifier(element), ["dulcet.", "discover.", "wishlist."].contains(where: id.hasPrefix) else { return nil }
             return "\(id)=\(label(element) ?? "nil")"
         }
         XCTFail("\(description) never appeared; dulcet elements: \(tree.joined(separator: "; "))")
@@ -506,6 +506,10 @@ final class HostedApp {
     func firstElement(where matches: (Any) -> Bool) -> Any? {
         hostingView.layoutSubtreeIfNeeded()
         return descendants(of: hostingView).first(where: matches)
+    }
+
+    func containsLabel(_ title: String, in element: Any) -> Bool {
+        descendants(of: element).contains { label($0) == title }
     }
 
     func press(_ element: Any, named name: String) throws {

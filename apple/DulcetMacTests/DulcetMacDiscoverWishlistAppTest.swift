@@ -128,7 +128,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
     }
     private func row(_ title: String, in app: HostedApp) async throws -> Any {
         try await app.element(timeout: .seconds(20), described: "Wishlist row \(title)") {
-            (app.identifier($0) ?? "").hasPrefix("wishlist.row.") && (app.label($0) ?? "").contains(title)
+            (app.identifier($0) ?? "").hasPrefix("wishlist.row.") && app.containsLabel(title, in: $0)
         }
     }
     private func capture(_ name: String, _ app: HostedApp) async throws {
