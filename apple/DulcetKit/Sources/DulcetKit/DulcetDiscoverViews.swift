@@ -180,9 +180,6 @@ struct DulcetDiscoverDetailView: View {
             .padding(DulcetSpacing.md).frame(maxWidth: .infinity, alignment: .leading)
         }
         .dulcetForeground(.primaryTextOnWindow)
-        .navigationDestination(for: DulcetDiscoverDestination.self) { destination in
-            DulcetDiscoverDetailView(reader: model.reader, destination: destination, openLibrary: openLibrary)
-        }
         .onAppear { model.open(); detail.load(destination) }
         .onDisappear { model.close(); detail.close() }
     }

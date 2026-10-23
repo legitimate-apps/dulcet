@@ -92,8 +92,8 @@ public struct DulcetWishlistView: View {
                 Button(DulcetStrings.wishlistArrived, systemImage: "play.circle") { openLibrary(ref) }
                     .accessibilityIdentifier("wishlist.arrival")
             }
-            if model.publication?.access.canRejectMatch == true, let wish = row.wish, let target = wish.target,
-               let item = (model.reader as? any DulcetDiscoverLibraryMetadataProviding)?.item(for: target),
+            if model.publication?.access.canRejectMatch == true, let wish = row.wish, wish.target != nil,
+               let item = wish.matchCorrectionItem,
                let ref = wish.libraryItem ?? wish.availability.libraryItems.first {
                 Button(DulcetStrings.discoverReject) { model.reject(item, ref: ref, wishId: wish.id) }
                     .accessibilityIdentifier("wishlist.reject")

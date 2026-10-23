@@ -12,7 +12,14 @@ import Testing
 // MARK: - Fakes
 
 @MainActor
-private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading, DulcetLibraryDepthReading {
+private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading, DulcetLibraryDepthReading, DulcetLibrarySongLookingUp {
+    var songLookups: [DulcetDiscoverLibraryRef] = []
+    var songLookupCompletions: [@MainActor (DulcetReaderItem?) -> Void] = []
+    var songLookupCancelled = false
+    func lookupLibrarySong(_ reference: DulcetDiscoverLibraryRef, completion: @escaping @MainActor (DulcetReaderItem?) -> Void) -> any DulcetLibraryReaderCancellable {
+        songLookups.append(reference); songLookupCompletions.append(completion)
+        return RecordingCancellable { self.songLookupCancelled = true }
+    }
     var depthHandlers: [@MainActor (DulcetLibraryDepthState) -> Void] = []
     var depthCategories: [(String, String, String)] = []
     var depthPins: [(DulcetReaderItem, Bool)] = []
@@ -2496,5 +2503,67 @@ func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
     #expect(store.canGoBackInLibrary)
     store.goBackInLibrary()
     #expect(store.readerPath.isEmpty)
+}
+#endif
+
+
+@Test @MainActor func aNewDetailStackCannotEraseAnUnpresentedReaderRoute() {
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    store.selectDestination(.search)
+    let album = DulcetReaderRoute.album(.init(providerInstanceID: "fixture", rawID: "held-album"))
+    // Native iPad NAV 12–17: Search -> Library -> [album], then a new stack writes [].
+    store.showReaderPage(album)
+    store.popReaderFromStack(to: [], presentedRoutes: [])
+    #expect(store.selectedDestination == .library)
+    #expect(store.readerPath == [album], "A new stack's initial write is not a person's Back")
+    // Once the destination has appeared, the same empty prefix is a real Back.
+    store.popReaderFromStack(to: [], presentedRoutes: [album])
+    #expect(store.readerPath.isEmpty)
+}
+
+@Test @MainActor func wishlistAlwaysOpensInLibraryFromBrowseOrListenNow() throws {
+    let factory = RecordingReaderFactory()
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
+    let reader = try #require(factory.made.first)
+    reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
+    for origin in [DulcetSidebarDestination.browse, .listenNow] {
+        store.navigate(to: origin)
+        store.showReaderPage(.wishlist)
+        #expect(store.selectedDestination == .library, "Design §6: Library › Wishlist, including a sidebar choice from Browse")
+        #expect(store.readerPath.first == .wishlist)
+    }
+}
+
+
+#if os(iOS) || os(macOS)
+@Test @MainActor func discoverSongPlaybackUsesAnExactScopedLookupWithoutATitleSearch() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let source = SystemActionTestSource(session)
+    let store = DulcetPresentationStore(source: source)
+    let reader = try #require(factory.made.first)
+    let ref = DulcetDiscoverLibraryRef(providerInstanceId: readerAccount.providerInstanceID, type: "song", id: "opaque-exact")
+    store.openDiscoverLibrary(ref)
+    #expect(reader.songLookups == [ref])
+    #expect(reader.searches.isEmpty, "No title or minimum query length is involved")
+    reader.songLookupCompletions[0](item("track", "wrong-id", title: "A"))
+    #expect(source.queues.isEmpty, "A different local ID must never play")
+    store.openDiscoverLibrary(ref)
+    store.openDiscoverLibrary(ref)
+    reader.songLookupCompletions[1](item("track", "opaque-exact", title: "Obsolete"))
+    #expect(source.queues.isEmpty, "A cancelled previous lookup cannot activate the player")
+    reader.songLookupCompletions[2](item("track", "opaque-exact", title: "A"))
+    #expect(source.queues.first?.tracks.first?.title == "A")
+    #expect(source.queues.first?.tracks.first?.id.rawID == "opaque-exact")
+    store.openDiscoverLibrary(ref)
+    let late = reader.songLookupCompletions[3]
+    session.close()
+    store.resetReaderNavigation()
+    #expect(reader.songLookupCancelled)
+    late(item("track", "opaque-exact", title: "A"))
+    #expect(source.queues.count == 1, "An account close revokes a late exact lookup too")
 }
 #endif

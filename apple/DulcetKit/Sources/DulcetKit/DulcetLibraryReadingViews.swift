@@ -2306,7 +2306,8 @@ extension DulcetPresentationStore {
         guard let session = librarySession, let account = session.account,
               reference.providerInstanceId == account.providerInstanceID else { return }
         let id = DulcetProviderItemID(providerInstanceID: reference.providerInstanceId, rawID: reference.id)
-        discoverLibrarySearch?.close(); discoverLibrarySearch = nil
+        discoverLibraryLookupID = nil
+        discoverLibraryLookup?.cancel(); discoverLibraryLookup = nil
         switch reference.type {
         case "album":
             DulcetUIProofMarkers.record("discover-library:\(id.providerInstanceID):album:\(id.rawID)")
@@ -2321,27 +2322,23 @@ extension DulcetPresentationStore {
                 playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
                 return
             }
-            // A bounded title search supplies real local track metadata. Only the exact server
-            // reference can play, even if other editions have the same title.
-            let title = (session.discover as? any DulcetDiscoverLibraryMetadataProviding)?.title(for: reference)
-                ?? session.discoverPublication?.wishes.first(where: { $0.wish?.libraryItem == reference })?.wish?.snapshot.title
-            guard let title, !title.isEmpty else { session.post(DulcetStrings.discoverLookupUnavailable); return }
-            let generation = session.readerGeneration
-            var finished = false
-            discoverLibrarySearch = session.subscribeSearch { [weak self, weak session] publication in
-                guard let self, let session, session === self.librarySession, generation == session.readerGeneration,
-                      publication.query == title, !finished else { return }
-                if let row = publication.rows.first(where: { $0.id == id }), !row.isUnavailableOffline,
-                   let track = row.result.playableTrack {
-                    finished = true; self.discoverLibrarySearch?.close(); self.discoverLibrarySearch = nil
-                    DulcetUIProofMarkers.record("discover-play:\(track.id.providerInstanceID):\(track.id.rawID)")
-                    self.playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
-                } else if publication.scope != .deviceWhileServerPending {
-                    finished = true; self.discoverLibrarySearch?.close(); self.discoverLibrarySearch = nil
-                    session.post(DulcetStrings.discoverLookupUnavailable)
-                }
+            guard let lookup = session.reader as? any DulcetLibrarySongLookingUp else {
+                session.post(DulcetStrings.discoverLookupUnavailable); return
             }
-            discoverLibrarySearch?.updateQuery(title)
+            let generation = session.readerGeneration
+            let requestID = UUID()
+            discoverLibraryLookupID = requestID
+            discoverLibraryLookup = lookup.lookupLibrarySong(reference) { [weak self, weak session] item in
+                guard let self, let session, session === self.librarySession,
+                      generation == session.readerGeneration, self.discoverLibraryLookupID == requestID else { return }
+                self.discoverLibraryLookupID = nil
+                self.discoverLibraryLookup = nil
+                guard let item, item.id == id, !item.isUnavailableOffline, let track = item.playableTrack else {
+                    session.post(DulcetStrings.discoverLookupUnavailable); return
+                }
+                DulcetUIProofMarkers.record("discover-play:\(track.id.providerInstanceID):\(track.id.rawID)")
+                self.playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
+            }
         default: session.post(DulcetStrings.discoverLookupUnavailable)
         }
     }

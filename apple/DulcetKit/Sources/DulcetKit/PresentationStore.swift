@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Observation
 
 public enum DulcetPresentationAction: Sendable, Hashable {
@@ -191,7 +192,8 @@ public final class DulcetPresentationStore {
     /// left -- deriving the stack from the snapshot reset it to the grid on every return.
     public private(set) var libraryPath: [DulcetLibraryRoute] = []
     /// The reader's Library stack, outermost first, while the reader draws the library.
-    @ObservationIgnored var discoverLibrarySearch: (any DulcetLibrarySearchSubscribing)?
+    @ObservationIgnored var discoverLibraryLookup: (any DulcetLibraryReaderCancellable)?
+    @ObservationIgnored var discoverLibraryLookupID: UUID?
     public private(set) var myLibrarySection: DulcetMyLibrarySection = .recent
     public func selectMyLibrarySection(_ section: DulcetMyLibrarySection) {
         let previousWriter = navigationWriter
@@ -211,6 +213,8 @@ public final class DulcetPresentationStore {
         let previousWriter = navigationWriter
         navigationWriter = "resetReaderNavigation"
         defer { navigationWriter = previousWriter }
+        discoverLibraryLookupID = nil
+        discoverLibraryLookup?.cancel(); discoverLibraryLookup = nil
         myLibrarySection = .recent
         librarySection = .home
         readerPath = []
@@ -629,6 +633,11 @@ public final class DulcetPresentationStore {
         defer { navigationWriter = previousWriter }
         readerReturn = nil
         readerArrival = route
+        if route == .wishlist {
+            if selectedDestination != .library { selectDestination(.library) }
+            readerPath = [.wishlist]
+            return
+        }
         if isReaderDestination {
             if readerPath.last != route { readerPath.append(route) }
         } else {
@@ -649,6 +658,17 @@ public final class DulcetPresentationStore {
         readerReturn = nil
         readerArrival = route
         readerPath.append(route)
+    }
+
+    /// A stack can report its initial empty path before it has displayed a pushed page.
+    /// The binding supplies the routes that this particular stack has actually presented.
+    func popReaderFromStack(to path: [DulcetReaderRoute], presentedRoutes: Set<DulcetReaderRoute>) {
+        guard readerPath.last.map(presentedRoutes.contains) ?? true else {
+            navigationBindingReceipt("popReaderFromStack", oldPath: String(describing: readerPath),
+                                     newPath: String(describing: path), outcome: "guard-dropped:unpresented-route")
+            return
+        }
+        popReader(to: path)
     }
 
     /// The back button or the edge swipe left the stack at `path`, a prefix of the one it held.

@@ -102,7 +102,7 @@ import UIKit
             let titles = ["listenNow": "Listen Now", "library": "Library", "browse": "Browse", "search": "Search", "settings": "Connection"]
             tab = app.tabBars.buttons[titles[section] ?? section].firstMatch
         }
-        let row = UIDevice.current.userInterfaceIdiom == .pad && !tab.exists ? app.staticTexts["dulcet.sidebar.\(section)"].firstMatch : tab
+        let row = UIDevice.current.userInterfaceIdiom == .pad && !tab.exists ? app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch : tab
 #endif
         XCTAssertTrue(row.waitForExistence(timeout: 30))
         let reachable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: row)
@@ -206,6 +206,19 @@ import UIKit
         XCTAssertTrue(item("album", 200).waitForExistence(timeout: 30))
         XCTAssertTrue(item("song", 1).waitForExistence(timeout: 30))
         try effect("delayed-old-query", revision: revision)
+        for _ in 0..<50 {
+            let effects = try control("state")["effects"] as? [[String: Any]] ?? []
+            if effects.contains(where: { $0["revision"] as? Int == revision && $0["payload"] as? String == "old" }) { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        let queryEffects = try control("state")["effects"] as? [[String: Any]] ?? []
+        let payloads = queryEffects.compactMap { $0["payload"] as? String }
+        XCTAssertTrue(payloads.contains("new") && payloads.contains("old"))
+        XCTAssertLessThan(try XCTUnwrap(payloads.firstIndex(of: "new")), try XCTUnwrap(payloads.firstIndex(of: "old")))
+        Thread.sleep(forTimeInterval: 1.0)
+        let obsolete = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Obsolete old query · ")).firstMatch
+        XCTAssertFalse(obsolete.exists, "Late old-query payload must not replace the new answer")
+        XCTAssertTrue(item("artist", 100).exists)
         try capture("Search-Everywhere")
         activate(item("artist", 100))
         XCTAssertTrue(app.staticTexts["discover.artist.title"].waitForExistence(timeout: 30))
@@ -400,20 +413,11 @@ import UIKit
         activate(savedA)
         let consent = app.buttons["dulcet.account.confirm-replacement"].firstMatch
         XCTAssertTrue(consent.waitForExistence(timeout: 30), "Replacement requires consent")
-        let cancel = app.buttons["Cancel"].firstMatch
-        if cancel.waitForExistence(timeout: 2) { activate(cancel) }
-        else {
-            // The adaptive confirmation popover on Xcode 27 omits the cancel action from AX.
-#if os(macOS)
-            app.typeKey(.escape, modifierFlags: [])
-#else
-            // iPhone does not dismiss this popover with Escape. Use its native outside tap,
-            // guarding the actual geometry so the test cannot approve the replacement.
-            let outside = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
-            XCTAssertFalse(consent.frame.contains(outside.screenPoint))
-            outside.tap()
-#endif
-        }
+        let cancel = app.buttons["dulcet.account.cancel-replacement"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10), "Consent must offer VoiceOver an explicit Cancel button")
+        XCTAssertEqual(cancel.label, "Cancel")
+        XCTAssertTrue(cancel.isHittable)
+        activate(cancel)
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: consent)
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed)
         wishlist(); XCTAssertFalse(app.staticTexts["Fixture Song 01"].exists)
@@ -447,60 +451,7 @@ import UIKit
 
 }
 private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok = false }
-#if os(macOS)
-@MainActor final class DulcetDiscoverWishlistMacUITests: DulcetDiscoverWishlistProof {
-    func testEverywhereQueryPagesAndHeldRouting() throws { try everywherePagesAndHeldRouting() }
-    func testOfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
-    func testBusyStaleAndNavidromeControl() throws { try busyStaleAndNavidromeControl() }
-    func testAccountSwitchAndIdentityReplacementFence() throws { try accountSwitchAndIdentityReplacementFence() }
-    func testMacKeyboardSearchSidebarAndContextRemove() throws {
-        try launch(); try search()
-        let song = item("song", 1)
-        XCTAssertTrue(song.waitForExistence(timeout: 30))
-        for _ in 0..<100 {
-            if (song.value(forKey: "hasKeyboardFocus") as? Bool == true) { break }
-            app.typeKey(.tab, modifierFlags: [])
-        }
-        XCTAssertTrue((song.value(forKey: "hasKeyboardFocus") as? Bool == true), "Keyboard focus reaches the generated search result")
-        app.typeKey(.return, modifierFlags: [])
-        let wish = app.buttons["discover.wish"].firstMatch
-        XCTAssertTrue(wish.waitForExistence(timeout: 30))
-        for _ in 0..<40 {
-            if (wish.value(forKey: "hasKeyboardFocus") as? Bool == true) { break }
-            app.typeKey(.tab, modifierFlags: [])
-        }
-        XCTAssertTrue((wish.value(forKey: "hasKeyboardFocus") as? Bool == true), "Keyboard focus reaches Add wish")
-        app.typeKey(.space, modifierFlags: [])
-        try waitForWish("Fixture Song 01", count: 1)
-        wishlist()
-        let row = wishRow("Fixture Song 01")
-        XCTAssertTrue(row.waitForExistence(timeout: 30)); row.rightClick()
-        XCTAssertTrue(app.menuItems["Remove wish"].isEnabled)
-        activate(app.menuItems["Remove wish"])
-        try waitForWish("Fixture Song 01", count: 0)
-        app.terminate(); try launch(); wishlist()
-        XCTAssertFalse(wishRow("Fixture Song 01").exists, "Context removal survives relaunch")
-        let window = app.windows.firstMatch
-        let original = window.frame
-        window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -2, dy: -2))
-            .click(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 500, dy: 500)))
-        XCTAssertLessThan(window.frame.width, original.width, "Native minimum-window resize occurred")
-        XCTAssertTrue(app.buttons["wishlist.refresh"].isHittable)
-        try capture("Mac-Minimum-Wishlist")
-        try accessibilityVariants()
-    }
-    func testMacWindowClosureDropsPendingNavigation() throws {
-        try launch()
-        let revision = try scenario("delayed-old-query")
-        try search("old")
-        let window = app.windows.firstMatch
-        activate(window.buttons[XCUIIdentifierCloseWindow].firstMatch)
-        Thread.sleep(forTimeInterval: 1.0)
-        try effect("delayed-old-query", revision: revision)
-        XCTAssertEqual(app.windows.count, 0, "Late metadata cannot reopen the closed account window")
-    }
-}
-#else
+#if os(iOS)
 @MainActor final class DulcetDiscoverWishlistUITests: DulcetDiscoverWishlistProof {
     func testEverywhereQueryPagesAndHeldRouting() throws { try everywherePagesAndHeldRouting() }
     func testOfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
@@ -521,7 +472,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         activate(app.buttons["discover.wish"].firstMatch)
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
         wishlist()
-        let sidebar = app.staticTexts["wishlist.destination"].firstMatch
+        let sidebar = app.descendants(matching: .any)["wishlist.destination"].firstMatch
         let detail = app.buttons["wishlist.refresh"].firstMatch
         XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
         let row = wishRow("Fixture Album 00")

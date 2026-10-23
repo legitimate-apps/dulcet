@@ -120,13 +120,14 @@ private struct DulcetLibrarySessionChrome: ViewModifier {
             .dulcetLibraryNotices(store: store)
             .dulcetSignOutOffer(store: store)
             .dulcetPlaylistSheets(store: store)
-            .confirmationDialog(DulcetStrings.serverReplacementTitle, isPresented: Binding(
+            .alert(DulcetStrings.serverReplacementTitle, isPresented: Binding(
                 get: { store.pendingDownloadRemovalCount != nil },
                 set: { if !$0 { store.cancelServerReplacement() } }
-            ), titleVisibility: .visible) {
+            )) {
                 Button(DulcetStrings.serverReplacementAction, role: .destructive) { store.confirmServerReplacement() }
                     .accessibilityIdentifier("dulcet.account.confirm-replacement")
                 Button(DulcetStrings.cancel, role: .cancel) { store.cancelServerReplacement() }
+                    .accessibilityIdentifier("dulcet.account.cancel-replacement")
             } message: {
                 Text(DulcetStrings.serverReplacementBody(downloadCount: store.pendingDownloadRemovalCount ?? 0))
             }
@@ -604,6 +605,7 @@ struct DulcetDestinationStack: View {
     /// describes one destination at a time, so without it the Library tab would draw nothing
     /// while hidden and rebuild its grid -- scrolled back to the top -- on every return.
     @State private var retainedLibrary: DulcetSnapshot?
+    @State private var presentedReaderRoutes: Set<DulcetReaderRoute> = []
 
     private var destination: DulcetSidebarDestination { tab ?? store.selectedDestination }
     private var showing: Bool { tab.map { $0 == store.selectedDestination } ?? true }
@@ -632,7 +634,8 @@ struct DulcetDestinationStack: View {
             .modifier(bar(drawsNotices: showing && (usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty)))
             .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
         }
-        .id(destination)
+        // The split detail keeps its navigation owner when a destination changes. Recreating
+        // it with an already-pushed path causes SwiftUI to write its initial [] over that push.
         .onAppear(perform: retainLibrary)
         .onChange(of: store.snapshot) { _, _ in retainLibrary() }
     }
@@ -650,7 +653,7 @@ struct DulcetDestinationStack: View {
                     store.navigationBindingReceipt("DulcetDestinationStack.readerPath", oldPath: String(describing: store.readerPath), newPath: String(describing: path), outcome: "guard-dropped:route-type")
                     return
                 }
-                store.popReader(to: routes)
+                store.popReaderFromStack(to: routes, presentedRoutes: presentedReaderRoutes)
             }
         )
     }
@@ -660,6 +663,7 @@ struct DulcetDestinationStack: View {
         switch path {
         case let .reader(route):
             DulcetReaderRouteView(route: route)
+                .onAppear { presentedReaderRoutes.insert(route) }
                 .environment(\.dulcetReaderPage, route)
                 .modifier(bar(drawsNotices: showing && store.readerPath.last == route))
         case let .library(route):
@@ -694,11 +698,12 @@ struct DulcetDestinationStack: View {
     }
 
     private var snapshotPath: Binding<[StackRoute]> {
+        let stackDestination = destination
         let path = libraryPath
         return Binding(
             get: { path.wrappedValue.map(StackRoute.library) },
             set: { updated in
-                store.navigationBindingReceipt("DulcetDestinationStack.snapshotPath[\(destination)]", oldPath: String(describing: path.wrappedValue), newPath: String(describing: updated), outcome: "received")
+                store.navigationBindingReceipt("DulcetDestinationStack.snapshotPath[\(stackDestination)]", oldPath: String(describing: path.wrappedValue), newPath: String(describing: updated), outcome: "received")
                 let routes: [DulcetLibraryRoute] = updated.compactMap { if case let .library(route) = $0 { route } else { nil } }
                 guard routes.count == updated.count else {
                     store.navigationBindingReceipt("DulcetDestinationStack.snapshotPath", oldPath: String(describing: path.wrappedValue), newPath: String(describing: updated), outcome: "guard-dropped:route-type")
@@ -865,7 +870,7 @@ private struct DulcetSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            List(selection: selection) {
+            List(selection: listSelection) {
                 Section {
                     if destinations.contains(.listenNow) {
                         sidebarRow(DulcetStrings.listenNow, symbol: "play.circle", destination: .listenNow)
@@ -874,8 +879,7 @@ private struct DulcetSidebar: View {
                         sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
                     }
                     if destinations.contains(.library), store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
-                        Label(DulcetStrings.wishlist, systemImage: "bookmark")
-                            .tag(DulcetSidebarSelection.wishlist)
+                        sidebarChoice(.wishlist) { Label(DulcetStrings.wishlist, systemImage: "bookmark") }
                             .accessibilityLabel(DulcetStrings.wishlist)
                             .accessibilityIdentifier("wishlist.destination")
                     }
@@ -896,8 +900,7 @@ private struct DulcetSidebar: View {
                 if store.myLibraryAvailable, destinations.contains(.library) {
                     Section {
                         ForEach(DulcetMyLibrarySection.allCases) { section in
-                            Label(section.title, systemImage: section.symbolName)
-                                .tag(DulcetSidebarSelection.myLibrarySection(section))
+                            sidebarChoice(.myLibrarySection(section)) { Label(section.title, systemImage: section.symbolName) }
                                 .accessibilityIdentifier("dulcet.sidebar.myLibrary.\(section.rawValue)")
                         }
                     } header: {
@@ -908,8 +911,7 @@ private struct DulcetSidebar: View {
                     // The library's own places, as a music app's sidebar lists them.
                     Section {
                         ForEach(DulcetLibrarySection.allCases.filter { $0 != .home }) { section in
-                            Label(section.title, systemImage: section.symbolName)
-                                .tag(DulcetSidebarSelection.section(section))
+                            sidebarChoice(.section(section)) { Label(section.title, systemImage: section.symbolName) }
                                 .accessibilityLabel(section.title)
                                 .accessibilityIdentifier("dulcet.sidebar.section.\(section.rawValue)")
                         }
@@ -948,10 +950,37 @@ private struct DulcetSidebar: View {
         symbol: String,
         destination: DulcetSidebarDestination
     ) -> some View {
-        Label(title, systemImage: symbol)
-            .tag(DulcetSidebarSelection.destination(destination))
+        sidebarChoice(.destination(destination)) { Label(title, systemImage: symbol) }
             .accessibilityLabel(title)
             .accessibilityIdentifier("dulcet.sidebar.\(destination.rawValue)")
+    }
+
+    // On iPad, List(selection:) also tells NavigationSplitView to reset its detail's
+    // navigation path after the selection setter returns. That erased a route the setter
+    // had just opened (the opt-in NAV receipt records the subsequent [] binding write).
+    // The store owns navigation; these rows are explicit actions with the same selected
+    // appearance and accessibility state. AppKit's native source-list selection remains.
+    private var listSelection: Binding<DulcetSidebarSelection?>? {
+#if os(iOS)
+        nil
+#else
+        selection
+#endif
+    }
+
+    @ViewBuilder private func sidebarChoice<Content: View>(
+        _ choice: DulcetSidebarSelection, @ViewBuilder label: () -> Content
+    ) -> some View {
+#if os(iOS)
+        Button { selection.wrappedValue = choice } label: {
+            label().frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(selection.wrappedValue == choice ? Color.dulcetControl : Color.clear)
+        .accessibilityAddTraits(selection.wrappedValue == choice ? .isSelected : [])
+#else
+        label().tag(choice)
+#endif
     }
 
     private var selection: Binding<DulcetSidebarSelection?> {

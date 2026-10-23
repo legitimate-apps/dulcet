@@ -403,3 +403,23 @@ public extension DulcetLibrarySession {
     func title(for reference: DulcetDiscoverLibraryRef) -> String?
     func item(for target: DulcetDiscoverTarget) -> DulcetDiscoverItem?
 }
+
+
+extension DulcetDiscoverWish {
+    /// Wishlist already carries the correction's target and display snapshot, even on a cold
+    /// launch with Discover disabled. No metadata fetch is needed to reject its library match.
+    var matchCorrectionItem: DulcetDiscoverItem? {
+        guard let target else { return nil }
+        return .init(id: id, kind: kind, target: target, title: snapshot.title,
+                     artist: snapshot.artist, year: snapshot.year, artworkId: snapshot.artworkId,
+                     availability: availability)
+    }
+}
+
+
+/// Exact local metadata over the owning reader. A library reference is scoped to its account;
+/// a title or a Discover identifier is never used to choose a playable song.
+@MainActor public protocol DulcetLibrarySongLookingUp: AnyObject {
+    func lookupLibrarySong(_ reference: DulcetDiscoverLibraryRef,
+                           completion: @escaping @MainActor (DulcetReaderItem?) -> Void) -> any DulcetLibraryReaderCancellable
+}

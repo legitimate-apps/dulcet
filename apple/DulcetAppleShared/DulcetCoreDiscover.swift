@@ -389,8 +389,8 @@ extension DulcetCoreLibraryReader: DulcetDiscoverProviding {
     func reject(item: DulcetDiscoverItem, libraryItem: DulcetDiscoverLibraryRef, wishId: String?, completion: @escaping @MainActor (Result<DulcetWishEnqueued, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
         let deliver = lifetime.delivery(completion)
         guard !closed else { return DulcetDiscoverCancellation {} }
-        guard let coreItem = items[item] else { deliver(.failure(.init(code: "invalid-response"))); return DulcetDiscoverCancellation {} }
-        let operation = client.reject(item: coreItem, libraryItem: AppleDiscoverLibraryRef(providerInstanceId: libraryItem.providerInstanceId, type: libraryItem.type, id: libraryItem.id), wishId: wishId) { [weak self] response in
+        guard let target = item.target else { deliver(.failure(.init(code: "invalid-response"))); return DulcetDiscoverCancellation {} }
+        let operation = client.rejectTarget(target: AppleDiscoverTarget(kind: target.kind, mbid: target.mbid), libraryItem: AppleDiscoverLibraryRef(providerInstanceId: libraryItem.providerInstanceId, type: libraryItem.type, id: libraryItem.id), wishId: wishId) { [weak self] response in
             MainActor.assumeIsolated {
                 guard let self, !self.closed else { return }
                 deliver(self.result(response.value.map { DulcetWishEnqueued(copy: $0) }, response.error))
@@ -416,3 +416,18 @@ private final class DulcetCoreDiscoverListener: NSObject, AppleDiscoverListener,
 }
 
 private struct DulcetCoreDiscoverDelivery: @unchecked Sendable { let value: AppleDiscoverPublication }
+
+
+extension DulcetCoreLibraryReader: DulcetLibrarySongLookingUp {
+    func lookupLibrarySong(_ reference: DulcetDiscoverLibraryRef,
+                           completion: @escaping @MainActor (DulcetReaderItem?) -> Void) -> any DulcetLibraryReaderCancellable {
+        let operation = client.lookupLibrarySong(reference: AppleDiscoverLibraryRef(
+            providerInstanceId: reference.providerInstanceId, type: reference.type, id: reference.id)) { result in
+            MainActor.assumeIsolated {
+                // No Kotlin result or item is retained by a view or completion.
+                completion(result.item.flatMap(Self.copy))
+            }
+        }
+        return DulcetDiscoverCancellation { operation.cancel() }
+    }
+}
