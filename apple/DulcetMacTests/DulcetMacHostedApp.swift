@@ -519,12 +519,12 @@ final class HostedApp {
     /// Deliver the same wheel event the detail's native scroll view receives from a person.
     /// Lazy SwiftUI groups do not enter the accessibility tree until they approach the viewport.
     func scrollDetail(by pixels: Int32) throws {
-        let scrolls = descendants(of: hostingView).compactMap { $0 as? NSScrollView }.filter {
-            $0.window === window && !$0.isHiddenOrHasHiddenAncestor && $0.bounds.height > 0
-        }
-        let scroll = try XCTUnwrap(scrolls.max {
-            $0.convert($0.bounds, to: hostingView).minX < $1.convert($1.bounds, to: hostingView).minX
-        }, "The rendered detail must contain a native scroll view")
+        let content = try XCTUnwrap(window.contentView)
+        let point = NSPoint(x: content.bounds.minX + content.bounds.width * 0.75, y: content.bounds.midY)
+        let hit = content.hitTest(point)
+        let scroll = try XCTUnwrap(sequence(first: hit, next: { $0?.superview })
+            .lazy.compactMap { $0 as? NSScrollView }.first,
+            "The visible detail must hit a scroll view; hit \(hit.map { String(describing: type(of: $0)) } ?? "nil")")
         let before = scroll.contentView.bounds.origin
         let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
                                       wheel1: pixels, wheel2: 0, wheel3: 0))
