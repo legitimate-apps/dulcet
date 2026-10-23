@@ -111,7 +111,9 @@ class Handler(BaseHTTPRequestHandler):
                     state.effect(endpoint,revision,name);return self.reply(429,{'error':'fixture rate limit'},{'Retry-After':'120','Content-Type':'application/json'})
                 if name=='remove-before-add':
                     if endpoint=='removeFromDulcetWishlist':state.remove_seen.set();state.effect(endpoint,revision,name)
-                    if endpoint=='addToDulcetWishlist':state.remove_seen.wait(2)
+                    if endpoint=='addToDulcetWishlist':
+                        state.effect(endpoint,revision,name,held=True)
+                        state.remove_seen.wait(2)
             upstream_base=state.config['navidrome' if nav else 'server'];url=urlsplit(upstream_base)
             connection=http.client.HTTPConnection(url.hostname,url.port,timeout=30)
             try:

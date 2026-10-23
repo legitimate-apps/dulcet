@@ -110,7 +110,7 @@ the app connection is offline. JSON requests/responses only:
 | `offline` | Close app sockets; independent server/control operations continue |
 | `lost-add-receipt` | Forward one successful add, record `delivered=true`, then close its response |
 | `scan-arrival` | Install the staged tagged file, call real `startScan`, await scanning/fulfilment |
-| `remove-before-add` | Hold an add for the observed cancellation, at most two seconds |
+| `remove-before-add` | Emit a revision-bound `held=true` effect, then hold the in-flight add for the observed cancellation, at most two seconds |
 | `identity-replacement` | Restore through the real Testing hook and return changed instanceId |
 | `future-metadata` | Return neutral future kind/status and unwishable missing-MBID rows |
 

@@ -92,10 +92,19 @@ class FixtureTests(unittest.TestCase):
         replay=f.rest('addToDulcetWishlist',kind='song',mbid=target,title='Arrival',sourceType='search',operationId=op)['dulcetWishMutation']
         self.assertTrue(replay['removed']);self.assertNotIn('wish',replay)
         self.assertIn(arrived['libraryItem']['id'],[r['id'] for r in f.rest('getDulcetLibrary',type='song',size='100')['dulcetLibrary']['song']])
-        op=str(uuid.uuid4());f.scenario('remove-before-add')
-        f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
-        replay=f.rest('addToDulcetWishlist',kind='song',mbid=f.ids['cancel'],title='Cancelled',sourceType='search',operationId=op)['dulcetWishMutation']
-        self.assertTrue(replay['removed'])
+        from concurrent.futures import ThreadPoolExecutor
+        op=str(uuid.uuid4());ack=f.scenario('remove-before-add')
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending=pool.submit(f.rest,'addToDulcetWishlist',kind='song',mbid=f.ids['cancel'],title='Cancelled',sourceType='search',operationId=op)
+            deadline=time.monotonic()+1.5
+            while time.monotonic()<deadline:
+                effects=call(f.urls['controlUrl'],'/control/state')['effects']
+                if any(e['revision']==ack['revision'] and e.get('held') for e in effects):break
+                time.sleep(.02)
+            else:self.fail('in-flight add hold was not acknowledged')
+            self.assertFalse(pending.done(),'add was not held while removal was sent')
+            f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
+            self.assertTrue(pending.result(timeout=5)['dulcetWishMutation']['removed'])
     def test_identityReplacementAndResetAreAcknowledged(self):
         f=self.fixture;before=f.discovery()['instanceId'];ack=f.scenario('identity-replacement')
         self.assertNotEqual(before,ack['identity']['instanceId']);self.assertEqual(ack['identity']['instanceId'],f.discovery()['instanceId'])
