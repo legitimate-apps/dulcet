@@ -10,6 +10,35 @@ a=p.parse_args()
 if os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
 if a.mode=='android':p.error('native proof mode awaits its shell task; no UI result is synthesized')
 repo=Path(__file__).resolve().parents[2]
+def completed_native_report(bundle, suite, selected, output):
+    """Convert only a complete XCTest transcript; never infer execution from a build exit."""
+    import re
+    import xml.etree.ElementTree as ET
+    expected=['testEverywhereQueryPagesAndHeldRouting','testOfflineWishRelaunchRemoveAndScanArrival','testBusyStaleAndNavidromeControl','testAccountSwitchAndIdentityReplacementFence']
+    if suite.endswith('MacUITests'):expected+=['testMacKeyboardSearchSidebarAndContextRemove','testMacWindowClosureDropsPendingNavigation']
+    elif suite.endswith('IPadUITests'):expected+=['testIPadSidebarSelectionSurvivesWishlistDetailAndResize']
+    else:expected+=['testIPhoneLargestTextAndVoiceOverLabels']
+    if '/' in selected:expected=[selected.rsplit('/',1)[-1]]
+    for path in bundle.rglob('StandardOutputAndStandardError*.txt'):
+        transcript=path.read_text(errors='replace')
+        if not re.search(r"Test Suite 'Selected tests' (?:passed|failed) at",transcript):continue
+        results=re.findall(r"Test Case '-\[([^ ]+) (test\w+)\]' (passed|failed) \(([\d.]+) seconds\)\.",transcript)
+        results=[r for r in results if r[0].endswith('.'+suite)]
+        if sorted(r[1] for r in results)!=sorted(expected):continue
+        counts=re.findall(r'Executed (\d+) tests?, with (\d+) failures? \((\d+) unexpected\)',transcript)
+        failures=sum(r[2]=='failed' for r in results)
+        if not any(int(n)==len(results) and int(f)==failures for n,f,_ in counts):continue
+        root=ET.Element('testsuite',name=suite,tests=str(len(results)),failures=str(failures),errors='0',skipped='0')
+        for cls,name,status,seconds in results:
+            case=ET.SubElement(root,'testcase',classname=cls,name=name,time=seconds)
+            if status=='failed':
+                errors=[line for line in transcript.splitlines() if 'error:' in line and name in line]
+                ET.SubElement(case,'failure',message='\n'.join(errors) or 'XCTest reported failure').text='\n'.join(errors)
+        ET.ElementTree(root).write(output/'junit.xml',encoding='utf-8',xml_declaration=True)
+        (output/'completed-tests.txt').write_text(transcript)
+        return dict(total=len(results),passed=len(results)-failures,failed=failures,skipped=0)
+    return None
+
 def apple_proof(mode):
     import json
     import subprocess
@@ -21,10 +50,34 @@ def apple_proof(mode):
     output.mkdir(parents=True,exist_ok=False)
     captures=output/'captures';captures.mkdir()
     session='dulcet-discover-'+mode+'-'+str(os.getpid())
+    # The simulator's test runner cannot write the host's external volume reliably. Receive
+    # genuine native JPEGs over loopback, independently of xcresult finalization.
+    import base64, re, threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    class CaptureReceiver(BaseHTTPRequestHandler):
+        def log_message(self,*args): pass
+        def do_POST(self):
+            try:
+                length=int(self.headers.get('Content-Length','0'))
+                if not 0 < length < 16_000_000: raise ValueError('capture size')
+                body=json.loads(self.rfile.read(length))
+                if 'ack' in body:
+                    with (output/'acknowledgements.jsonl').open('a') as record: record.write(json.dumps(body['ack'],sort_keys=True)+'\n')
+                    self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(b'{"stored":true}'); return
+                name=body['name']
+                if not re.fullmatch(r'[A-Za-z0-9_-]+',name): raise ValueError('capture name')
+                data=base64.b64decode(body['jpeg'],validate=True)
+                if not data.startswith(bytes.fromhex('ffd8')): raise ValueError('JPEG required')
+                (captures/(name+'.jpg')).write_bytes(data)
+                self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(b'{"stored":true}')
+            except Exception:
+                self.send_response(400); self.end_headers()
+    capture_server=ThreadingHTTPServer(('127.0.0.1',0),CaptureReceiver)
+    threading.Thread(target=capture_server.serve_forever,daemon=True).start()
     lease=None;udid=None
     def run(argv,**kw):return subprocess.run(argv,check=True,text=True,**kw)
     try:
-        lease=run(['leg-lease','create','--kind','build' if mode=='macos' else 'build,sim','--session',session,'--project','dulcet','--pid',str(os.getpid()),'--wait','1800'],capture_output=True).stdout.strip()
+        lease=run(['leg-lease','create','--kind','build' if mode=='macos' else 'build,sim','--session',session,'--project','dulcet','--pid',str(os.getpid()),'--wait','7200'],capture_output=True).stdout.strip()
         if mode!='macos':
             device=os.environ.get('DULCET_DISCOVER_PROOF_DEVICE','iPad Pro 13-inch (M5)' if mode=='ipad' else 'iPhone 18 Pro')
             udid=run(['sim-lease','create','--project','dulcet','--device',device,'--owner-pid',str(os.getpid()),'--ephemeral','--purpose',session],capture_output=True).stdout.strip()
@@ -40,31 +93,60 @@ def apple_proof(mode):
         for key,value in os.environ.items():
             if key.startswith('DULCET_DISCOVER_'):env['TEST_RUNNER_'+key]=value
         env['TEST_RUNNER_DULCET_DISCOVER_CAPTURES']=str(captures)
+        env['TEST_RUNNER_DULCET_DISCOVER_CAPTURE_UPLOAD_URL']='http://127.0.0.1:'+str(capture_server.server_address[1])
         env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
         selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
         command=['xcodebuild','test','-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
         (output/'invocation.json').write_text(json.dumps(dict(mode=mode,suite=suite,udid=udid,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()),indent=2))
+        import time
+        import signal
+        completed=None;completed_at=None;interrupted=False
         with (output/'xcodebuild.log').open('w') as log:
-            result=subprocess.run(command,cwd=repo,env=env,stdout=log,stderr=subprocess.STDOUT)
-        summary=run(['xcrun','xcresulttool','get','test-results','summary','--path',str(output/'proof.xcresult')],capture_output=True).stdout
+            process=subprocess.Popen(command,cwd=repo,env=env,stdout=log,stderr=subprocess.STDOUT)
+            while process.poll() is None:
+                if completed is None:
+                    completed=completed_native_report(output/'proof.xcresult',suite,selected,output)
+                    if completed:completed_at=time.monotonic()
+                # Xcode 27 can idle for many minutes after the final suite record. The actual
+                # named XCTest outcomes above form JUnit; screenshots are separate artifacts.
+                # Interrupt only this completed invocation. An incomplete/zero suite never qualifies.
+                if completed_at is not None and time.monotonic()-completed_at>30:
+                    process.send_signal(signal.SIGINT);interrupted=True;break
+                time.sleep(1)
+            try:code=process.wait(timeout=15 if interrupted else None)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:code=process.wait(timeout=10)
+                except subprocess.TimeoutExpired:process.kill();code=process.wait()
+        if completed is None:completed=completed_native_report(output/'proof.xcresult',suite,selected,output)
+        if completed:
+            completed['finalizationInterrupted']=interrupted
+            (output/'counts.json').write_text(json.dumps(completed,indent=2))
+        summary_result=subprocess.run(['xcrun','xcresulttool','get','test-results','summary','--path',str(output/'proof.xcresult')],capture_output=True,text=True)
+        summary=summary_result.stdout if summary_result.returncode==0 else '{}'
         (output/'summary.json').write_text(summary)
-        tests=run(['xcrun','xcresulttool','get','test-results','tests','--path',str(output/'proof.xcresult')],capture_output=True).stdout
+        tests_result=subprocess.run(['xcrun','xcresulttool','get','test-results','tests','--path',str(output/'proof.xcresult')],capture_output=True,text=True)
+        tests=tests_result.stdout if tests_result.returncode==0 else '{}'
         (output/'tests.json').write_text(tests)
         for endpoint in ['requests?since=0','state']:
             with urllib.request.urlopen(os.environ['DULCET_DISCOVER_CONTROL_URL']+'/control/'+endpoint) as response:
                 (output/('fixture-'+endpoint.split('?')[0]+'.json')).write_bytes(response.read())
-        for capture in captures.glob('*.png'):
+        for capture in list(captures.glob('*.png'))+list(captures.glob('*.jpg')):
             run(['sips','-Z','800','-s','format','jpeg','-s','formatOptions','50',str(capture),'--out',str(capture.with_suffix('.jpg'))],stdout=subprocess.DEVNULL)
-            capture.unlink()
+            if capture.suffix=='.png':capture.unlink()
+        if completed:
+            print(json.dumps(dict(output=str(output),suite=suite,**completed)))
+            return 1 if completed['failed'] or completed['skipped'] else 0
         counts=json.loads(summary)
         print(json.dumps(dict(output=str(output),suite=suite,total=counts.get('totalTestCount'),passed=counts.get('passedTests'),failed=counts.get('failedTests'),skipped=counts.get('skippedTests'))))
         if not counts.get('totalTestCount') or suite not in tests:raise RuntimeError('expected-test-not-executed')
         if not os.environ.get('DULCET_DISCOVER_ONLY_TEST'):
             expected=6 if mode=='macos' else 5
             if counts.get('totalTestCount')!=expected:raise RuntimeError('unexpected-test-count')
-        return result.returncode or (1 if counts.get('failedTests') or counts.get('skippedTests') else 0)
+        return code or (1 if counts.get('failedTests') or counts.get('skippedTests') else 0)
     finally:
-        if udid:subprocess.run(['sim-lease','release',udid],check=False)
+        capture_server.shutdown();capture_server.server_close()
+        if udid:subprocess.run(['sim-lease','release','--force',udid],check=False)
         if lease:subprocess.run(['leg-lease','release','--session',session],check=False)
 
 if a.mode in {'iphone','ipad','mac','macos'}:sys.exit(apple_proof(a.mode))

@@ -38,12 +38,14 @@ import UIKit
         let state = try control("state")
         let effects = try XCTUnwrap(state["effects"] as? [[String: Any]])
         XCTAssertTrue(effects.contains { $0["scenario"] as? String == name && $0["revision"] as? Int == revision && (flag == nil || $0[flag!] as? Bool == true) }, "Arming a fault alone is not evidence it ran")
+        _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": state])
         print("DISCOVER_ACK scenario=\(name) revision=\(revision) flag=\(flag ?? "served")")
     }
     func launch(server: String? = nil, other: Bool = false, connect: Bool = true, variant: String = "light") throws {
         if !prepared { try prepare(); prepared = true }
-        var args = ["-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
+        var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if variant == "largest" { args.append("-dulcet-debug-largest-text") }
+        if other { args += ["-dulcet-debug-add-account"] }
         if connect { args += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", try server ?? required("SERVER_URL"), "-dulcet-debug-account-username", try required(other ? "OTHER_USERNAME" : "USERNAME"), "-dulcet-debug-account-password", try required(other ? "OTHER_PASSWORD" : "PASSWORD")] }
         app.launchArguments = args
 #if os(macOS)
@@ -93,7 +95,7 @@ import UIKit
 #if os(macOS)
         let row = app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
 #else
-        let row = UIDevice.current.userInterfaceIdiom == .pad ? app.staticTexts["dulcet.sidebar.\(section)"].firstMatch : app.tabBars.buttons[section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"].firstMatch
+        let row = UIDevice.current.userInterfaceIdiom == .pad ? app.staticTexts["dulcet.sidebar.\(section)"].firstMatch : app.tabBars.buttons[section == "library" ? "Library" : section == "browse" ? "Browse" : section == "settings" ? "Settings" : "Search"].firstMatch
 #endif
         XCTAssertTrue(row.waitForExistence(timeout: 30)); activate(row)
     }
@@ -103,11 +105,29 @@ import UIKit
         XCTAssertTrue(everywhere.waitForExistence(timeout: 15), "Missing Search Everywhere scope")
         activate(everywhere)
         let field = app.textFields["discover.query"].firstMatch
+        if !field.exists {
+            // Switching scopes is the public way to return from a retained metadata stack.
+            activate(app.buttons["Your server"].firstMatch); activate(everywhere)
+        }
         XCTAssertTrue(field.waitForExistence(timeout: 10)); activate(field)
-        field.typeText(query)
+        let current = (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + query)
 #if os(iOS)
         field.typeText("\n")
 #endif
+    }
+    func reveal(_ element: XCUIElement) {
+        if element.waitForExistence(timeout: 2) && element.isHittable { return }
+        for direction in [true, false] {
+            for _ in 0..<10 {
+                if element.exists && element.isHittable { return }
+#if os(macOS)
+                app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: direction ? -500 : 500)
+#else
+                if direction { app.scrollViews.firstMatch.swipeUp() } else { app.scrollViews.firstMatch.swipeDown() }
+#endif
+            }
+        }
     }
     func item(_ kind: String, _ number: Int) -> XCUIElement {
         let title: String
@@ -116,19 +136,39 @@ import UIKit
         case "album": title = String(format: "Fixture Album %02d", number - 200)
         default: title = String(format: "Fixture Song %02d", number)
         }
-        return app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "discover.item.", title)).firstMatch
+        let result = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "discover.item.", title)).firstMatch
+        reveal(result)
+        return result
     }
     func wishlist() {
         select("library")
+        if app.buttons["wishlist.refresh"].exists { return }
         let link = app.descendants(matching: .any)["wishlist.destination"].firstMatch
         XCTAssertTrue(link.waitForExistence(timeout: 15), "Missing Library Wishlist destination")
         activate(link)
         XCTAssertTrue(app.buttons["wishlist.refresh"].waitForExistence(timeout: 15))
     }
     func capture(_ name: String) throws {
-        let root = try required("CAPTURES")
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: root).appendingPathComponent(name + ".png"))
+#if os(macOS)
+        let bitmap = try XCTUnwrap(app.windows.firstMatch.screenshot().image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let data = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.65]))
+#else
+        let data = try XCTUnwrap(app.screenshot().image.jpegData(compressionQuality: 0.65))
+#endif
+        let ack = try json(required("CAPTURE_UPLOAD_URL"), body: ["name": name, "jpeg": data.base64EncodedString()])
+        XCTAssertEqual(ack["stored"] as? Bool, true)
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.jpeg")
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    func assertPlaybackReference(_ localId: String) {
+        let log = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        XCTAssertTrue(log.waitForExistence(timeout: 10))
+        let entry = log.label.split(separator: " ").last { $0.hasPrefix("discover-play:") }
+        let parts = entry?.split(separator: ":").map(String.init) ?? []
+        XCTAssertEqual(parts.count, 3)
+        XCTAssertNotNil(parts.count > 1 ? UUID(uuidString: parts[1]) : nil, "Actual local account namespace")
+        XCTAssertEqual(parts.last, localId, "Actual track supplied to the existing player")
     }
     func everywherePagesAndHeldRouting() throws {
         try launch()
@@ -151,14 +191,67 @@ import UIKit
         activate(item("album", 200))
         XCTAssertTrue(app.staticTexts["discover.album.title"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["8 of 12 here"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["discover.edition"].exists)
+        let edition = app.descendants(matching: .any)["discover.edition"].firstMatch
+        XCTAssertTrue(edition.exists); activate(edition)
+#if os(macOS)
+        let later = app.menuItems.matching(NSPredicate(format: "label BEGINSWITH %@", "2026-02-01")).firstMatch
+#else
+        let later = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "2026-02-01")).firstMatch
+#endif
+        XCTAssertTrue(later.waitForExistence(timeout: 10)); activate(later)
+        for _ in 0..<30 {
+            if edition.value as? String == "00000190-1111-4111-8111-111111111111" { break }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        XCTAssertEqual(edition.value as? String, "00000190-1111-4111-8111-111111111111")
         try capture("Album")
         let open = app.buttons["discover.openLibrary"].firstMatch
-        XCTAssertTrue(open.exists); activate(open)
+        reveal(open); XCTAssertTrue(open.exists); activate(open)
         XCTAssertTrue(app.staticTexts["dulcet.album.title"].waitForExistence(timeout: 30))
-        print("DISCOVER_ROUTE scopedLibrary=true")
+        let albums = try XCTUnwrap(rest("getAlbumList2", params: ["type": "alphabeticalByName", "size": "100"])["albumList2"] as? [String: Any])
+        let localAlbum = try XCTUnwrap((albums["album"] as? [[String: Any]])?.first { $0["name"] as? String == "Fixture Album 00" })
+        let albumId = try XCTUnwrap(localAlbum["id"] as? String)
+        XCTAssertTrue(app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label.contains(":album:" + albumId))
+        let album = try XCTUnwrap(rest("getAlbum", params: ["id": albumId])["album"] as? [String: Any])
+        let track = try XCTUnwrap((album["song"] as? [[String: Any]])?.first { $0["title"] as? String == "Fixture Song 10" })
+        let trackId = try XCTUnwrap(track["id"] as? String)
+        try search(); activate(item("song", 10))
+        let play = app.buttons["discover.openLibrary"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 15)); activate(play)
+        XCTAssertTrue(app.buttons["dulcet.mini-player.play-pause"].waitForExistence(timeout: 30))
+        assertPlaybackReference(trackId)
+        print("DISCOVER_ROUTE scopedAlbumId=\(albumId) scopedPlaybackId=\(trackId)")
+    }
+
+    func rest(_ endpoint: String, params: [String: String] = [:], other: Bool = false) throws -> [String: Any] {
+        let salt = "discover-native"
+        let password = try required(other ? "OTHER_PASSWORD" : "PASSWORD")
+        let token = Insecure.MD5.hash(data: Data((password + salt).utf8)).map { String(format: "%02x", $0) }.joined()
+        var url = try XCTUnwrap(URLComponents(string: required("SERVER_URL") + "/rest/" + endpoint))
+        var args = params; args.merge(["u": try required(other ? "OTHER_USERNAME" : "USERNAME"), "s": salt, "t": token, "c": "dulcet-native-proof", "v": "1.16.1", "f": "json"]) { _, new in new }
+        url.queryItems = args.map { URLQueryItem(name: $0.key, value: $0.value) }
+        let response = try XCTUnwrap(json(try XCTUnwrap(url.url).absoluteString)["subsonic-response"] as? [String: Any])
+        XCTAssertEqual(response["status"] as? String, "ok", "Positive fixture REST control")
+        return response
+    }
+    func wishes(other: Bool = false) throws -> [[String: Any]] {
+        let list = try XCTUnwrap(rest("getDulcetWishlist", params: ["size": "100"], other: other)["dulcetWishlist"] as? [String: Any])
+        return list["wish"] as? [[String: Any]] ?? []
+    }
+    func waitForWish(_ title: String, count: Int) throws {
+        for _ in 0..<40 {
+            if try wishes().filter({ ($0["snapshot"] as? [String: Any])?["title"] as? String == title }).count == count { return }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        XCTFail("Server wish count did not settle to \(count) for generated fixture title")
+    }
+    func wishRow(_ title: String) -> XCUIElement {
+        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "wishlist.row.")).containing(.staticText, identifier: title).firstMatch
+        reveal(row)
+        return row
     }
     func offlineWishRelaunchRemoveAndScanArrival() throws {
+        let title = "Fixture Song 01"
         try launch(); try search()
         let song = item("song", 1)
         XCTAssertTrue(song.waitForExistence(timeout: 30)); activate(song)
@@ -166,37 +259,60 @@ import UIKit
         activate(app.buttons["discover.wish"].firstMatch)
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
         try capture("Pending")
-        app.terminate()
-        try launch(connect: false)
-        wishlist()
+        app.terminate(); try launch(connect: false); wishlist()
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
-        app.terminate(); _ = try scenario("normal"); try launch()
-        wishlist()
-        let title = app.staticTexts["Fixture Song 01"].firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 30))
-        // A real scan must finish and fulfil the tagged recording before the native refresh.
-        let scanRevision = try scenario("scan-arrival")
-        try effect("scan-arrival", revision: scanRevision, flag: "completed")
-        activate(app.buttons["wishlist.refresh"])
-        XCTAssertTrue(app.staticTexts["Arrived"].waitForExistence(timeout: 30))
-        try capture("Arrived")
-        let arrival = app.buttons["wishlist.arrival"].firstMatch
-        XCTAssertTrue(arrival.exists); activate(arrival)
-        XCTAssertTrue(app.buttons["dulcet.mini-player.play-pause"].waitForExistence(timeout: 30))
-        wishlist()
-        activate(app.buttons["wishlist.remove"].firstMatch)
-        // A new generation intentionally added after removal must survive a lost receipt.
-        try search(); activate(item("song", 1))
+        app.terminate(); _ = try scenario("normal"); try launch(); wishlist()
+        try waitForWish(title, count: 1)
+        activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
+        try waitForWish(title, count: 0)
+        // A new add reaches the server but loses its receipt. Its stable native row key carries
+        // the real operation id, so the final replay is independent of the app overlay.
+        try search(); let sourceId = item("song", 1).identifier.replacingOccurrences(of: "discover.item.", with: "")
+        activate(item("song", 1))
         let lostRevision = try scenario("lost-add-receipt")
         activate(app.buttons["discover.wish"].firstMatch)
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 20))
         try effect("lost-add-receipt", revision: lostRevision, flag: "delivered")
-        wishlist(); activate(app.buttons["wishlist.remove"].firstMatch)
-        _ = try scenario("normal")
+        let deliveredWish = try XCTUnwrap(wishes().first { ($0["snapshot"] as? [String: Any])?["title"] as? String == title })
+        _ = try scenario("offline"); wishlist()
+        let lostRow = wishRow(title)
+        let operationId = lostRow.identifier.replacingOccurrences(of: "wishlist.row.add:", with: "")
+        XCTAssertNotNil(UUID(uuidString: operationId), "Observed native pending add identity")
+        activate(lostRow.buttons["wishlist.remove"].firstMatch)
+        XCTAssertFalse(app.staticTexts[title].exists, "Durable remove hides A before reconnect")
+        let scanRevision = try scenario("scan-arrival")
+        try effect("scan-arrival", revision: scanRevision, flag: "completed")
         app.terminate(); try launch(); wishlist()
-        XCTAssertFalse(app.staticTexts["Fixture Song 01"].exists)
+        try waitForWish(title, count: 0)
+        var replayParams = ["kind": "song", "mbid": "00000001-1111-4111-8111-111111111111", "title": title, "sourceType": "search", "sourceId": sourceId, "operationId": operationId, "actionTime": try XCTUnwrap(deliveredWish["addedAt"] as? String)]
+        let snapshot = try XCTUnwrap(deliveredWish["snapshot"] as? [String: Any])
+        for key in ["artist", "artworkId"] { if let value = snapshot[key] as? String { replayParams[key] = value } }
+        if let year = snapshot["year"] as? Int { replayParams["year"] = String(year) }
+        let replay = try XCTUnwrap(rest("addToDulcetWishlist", params: replayParams)["dulcetWishMutation"] as? [String: Any])
+        XCTAssertEqual(replay["removed"] as? Bool, true)
+        try waitForWish(title, count: 0)
+        let library = try XCTUnwrap(rest("getDulcetLibrary", params: ["type": "song", "size": "100"])["dulcetLibrary"] as? [String: Any])
+        let member = try XCTUnwrap((library["song"] as? [[String: Any]])?.first { $0["title"] as? String == title })
+        let localId = try XCTUnwrap(member["id"] as? String)
+        _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": ["scenario": "lost-add-receipt-replay", "replay": replay, "myLibraryItem": member]])
+        print("DISCOVER_ACK lostReceiptReplayed=true removed=true myLibraryRetained=true localId=\(localId)")
         try capture("Wishlist")
+        // Deliberate generation B remains independent of A's tombstone.
+        try search(); activate(item("song", 1)); activate(app.buttons["discover.wish"].firstMatch)
+        try waitForWish(title, count: 1)
+        let secondScan = try scenario("scan-arrival"); try effect("scan-arrival", revision: secondScan, flag: "completed")
+        wishlist(); activate(app.buttons["wishlist.refresh"])
+        let arrivedRow = wishRow(title)
+        XCTAssertTrue(arrivedRow.staticTexts["Arrived"].waitForExistence(timeout: 30))
+        try capture("Arrived")
+        activate(arrivedRow.buttons["wishlist.arrival"].firstMatch)
+        XCTAssertTrue(app.buttons["dulcet.mini-player.play-pause"].waitForExistence(timeout: 30))
+        assertPlaybackReference(localId)
+        let current = try wishes().first { ($0["snapshot"] as? [String: Any])?["title"] as? String == title }
+        XCTAssertEqual((current?["libraryItem"] as? [String: Any])?["id"] as? String, localId)
+        print("DISCOVER_ROUTE arrivalServerId=\(localId) playbackVisible=true")
     }
+
     func busyStaleAndNavidromeControl() throws {
         try launch()
         let stale = try scenario("stale-answer"); try search()
@@ -204,16 +320,17 @@ import UIKit
         XCTAssertTrue(app.staticTexts["discover.age"].firstMatch.label.contains("Cached answer"))
         try effect("stale-answer", revision: stale)
         let busy = try scenario("rate-limit-120")
-        let field = app.textFields["discover.query"].firstMatch; activate(field); field.typeText(" new")
-#if os(iOS)
-        field.typeText("\n")
-#endif
+        app.terminate(); try launch(); try search()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Server is busy")).firstMatch.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["discover.retry"].firstMatch.isEnabled)
+        XCTAssertTrue(item("album", 200).exists, "Cached last-good rows survive the 429")
+        try capture("Search-Busy")
         try effect("rate-limit-120", revision: busy)
         _ = try scenario("normal")
         let baseline = try control("baseline")
         XCTAssertEqual(baseline["login"] as? Bool, true)
         XCTAssertGreaterThan(baseline["albums"] as? Int ?? 0, 0)
+        _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": ["scenario": "navidrome-baseline", "baseline": baseline]])
         app.terminate(); namespace = UUID().uuidString
         try launch(server: required("NAVIDROME_URL"))
         select("search")
@@ -227,32 +344,62 @@ import UIKit
         print("DISCOVER_NAVIDROME positiveBrowse=true featureCalls=0")
     }
     func accountSwitchAndIdentityReplacementFence() throws {
-        try launch(); try search()
-        XCTAssertTrue(item("song", 1).waitForExistence(timeout: 30))
-        activate(item("song", 1)); _ = try scenario("offline")
+        try launch(); try search(); activate(item("song", 1)); _ = try scenario("offline")
         activate(app.buttons["discover.wish"].firstMatch)
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
         app.terminate(); _ = try scenario("normal")
-        namespace = UUID().uuidString; try launch(other: true)
-        wishlist()
+        // The same durable account fixture retains A while B is added through real composition.
+        try launch(other: true); wishlist()
         XCTAssertTrue(app.staticTexts["Other owner only"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.staticTexts["Fixture Song 01"].exists)
+        XCTAssertFalse(try wishes(other: true).contains { ($0["snapshot"] as? [String: Any])?["title"] as? String == "Fixture Song 01" })
+        select("settings")
+        let savedA = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "dulcet.account.server.", try required("USERNAME"))).firstMatch
+        XCTAssertTrue(savedA.waitForExistence(timeout: 15))
+        activate(savedA)
+        wishlist()
+        XCTAssertTrue(app.staticTexts["Fixture Song 01"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.staticTexts["Other owner only"].exists)
+        select("settings")
+        let savedB = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "dulcet.account.server.", try required("OTHER_USERNAME"))).firstMatch
+        activate(savedB); wishlist()
+        XCTAssertTrue(app.staticTexts["Other owner only"].waitForExistence(timeout: 30))
+        select("settings")
         _ = try scenario("identity-replacement")
-        activate(app.buttons["wishlist.refresh"])
-        XCTAssertFalse(app.staticTexts["Fixture Song 01"].exists)
-        print("DISCOVER_ACCOUNT otherOwnerSentinel=true oldWishAbsent=true")
+        activate(savedA)
+        let consent = app.buttons["dulcet.account.confirm-replacement"].firstMatch
+        XCTAssertTrue(consent.waitForExistence(timeout: 30), "Replacement requires consent")
+        activate(app.buttons["Cancel"].firstMatch)
+        XCTAssertFalse(consent.exists)
+        wishlist(); XCTAssertFalse(app.staticTexts["Fixture Song 01"].exists)
+        print("DISCOVER_ACCOUNT savedAccountSwitch=true otherOwnerSentinel=true replacementConsentCancelled=true oldWishAbsent=true")
     }
+
     func accessibilityVariants() throws {
         for variant in ["light", "dark", "largest"] {
-            app.terminate(); try launch(variant: variant); try search()
-            XCTAssertTrue(item("album", 200).waitForExistence(timeout: 30))
+            app.terminate(); _ = try control("reset", [:]); namespace = UUID().uuidString
+            try launch(variant: variant); try search()
+            XCTAssertTrue(item("artist", 100).waitForExistence(timeout: 30))
+            try capture("Search-" + variant)
+            activate(item("artist", 100))
+            XCTAssertTrue(app.staticTexts["discover.artist.title"].waitForExistence(timeout: 30))
+            try capture("Artist-" + variant)
             activate(item("album", 200))
             let wish = app.buttons["discover.wish"].firstMatch
+            reveal(wish)
             XCTAssertTrue(wish.waitForExistence(timeout: 30)); XCTAssertTrue(wish.isHittable)
             XCTAssertFalse(wish.label.isEmpty)
             try capture("Album-" + variant)
+            _ = try scenario("offline"); activate(wish)
+            XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+            try capture("Pending-" + variant)
+            wishlist()
+            XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+            try capture("Wishlist-" + variant)
+            _ = try scenario("normal")
         }
     }
+
 }
 private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok = false }
 #if os(macOS)
@@ -262,18 +409,50 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     func testBusyStaleAndNavidromeControl() throws { try busyStaleAndNavidromeControl() }
     func testAccountSwitchAndIdentityReplacementFence() throws { try accountSwitchAndIdentityReplacementFence() }
     func testMacKeyboardSearchSidebarAndContextRemove() throws {
-        try launch(); wishlist()
-        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "wishlist.row.")).firstMatch
+        try launch(); try search()
+        let song = item("song", 1)
+        XCTAssertTrue(song.waitForExistence(timeout: 30))
+        for _ in 0..<100 {
+            if (song.value(forKey: "hasKeyboardFocus") as? Bool == true) { break }
+            app.typeKey(.tab, modifierFlags: [])
+        }
+        XCTAssertTrue((song.value(forKey: "hasKeyboardFocus") as? Bool == true), "Keyboard focus reaches the generated search result")
+        app.typeKey(.return, modifierFlags: [])
+        let wish = app.buttons["discover.wish"].firstMatch
+        XCTAssertTrue(wish.waitForExistence(timeout: 30))
+        for _ in 0..<40 {
+            if (wish.value(forKey: "hasKeyboardFocus") as? Bool == true) { break }
+            app.typeKey(.tab, modifierFlags: [])
+        }
+        XCTAssertTrue((wish.value(forKey: "hasKeyboardFocus") as? Bool == true), "Keyboard focus reaches Add wish")
+        app.typeKey(.space, modifierFlags: [])
+        try waitForWish("Fixture Song 01", count: 1)
+        wishlist()
+        let row = wishRow("Fixture Song 01")
         XCTAssertTrue(row.waitForExistence(timeout: 30)); row.rightClick()
         XCTAssertTrue(app.menuItems["Remove wish"].isEnabled)
         activate(app.menuItems["Remove wish"])
+        try waitForWish("Fixture Song 01", count: 0)
+        app.terminate(); try launch(); wishlist()
+        XCTAssertFalse(wishRow("Fixture Song 01").exists, "Context removal survives relaunch")
+        let window = app.windows.firstMatch
+        let original = window.frame
+        window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -2, dy: -2))
+            .click(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 500, dy: 500)))
+        XCTAssertLessThan(window.frame.width, original.width, "Native minimum-window resize occurred")
+        XCTAssertTrue(app.buttons["wishlist.refresh"].isHittable)
+        try capture("Mac-Minimum-Wishlist")
         try accessibilityVariants()
     }
     func testMacWindowClosureDropsPendingNavigation() throws {
-        try launch(); try search(); _ = try scenario("delayed-old-query")
+        try launch()
+        let revision = try scenario("delayed-old-query")
+        try search("old")
         let window = app.windows.firstMatch
         activate(window.buttons[XCUIIdentifierCloseWindow].firstMatch)
-        XCTAssertFalse(window.exists)
+        Thread.sleep(forTimeInterval: 1.0)
+        try effect("delayed-old-query", revision: revision)
+        XCTAssertEqual(app.windows.count, 0, "Late metadata cannot reopen the closed account window")
     }
 }
 #else
@@ -291,14 +470,38 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     func testAccountSwitchAndIdentityReplacementFence() throws { try accountSwitchAndIdentityReplacementFence() }
     func testIPadSidebarSelectionSurvivesWishlistDetailAndResize() throws {
         XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .pad)
-        try launch(); wishlist()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        try launch(); try search(); activate(item("album", 200))
+        _ = try scenario("offline")
+        activate(app.buttons["discover.wish"].firstMatch)
+        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        wishlist()
         let sidebar = app.staticTexts["wishlist.destination"].firstMatch
         let detail = app.buttons["wishlist.refresh"].firstMatch
         XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
+        let row = wishRow("Fixture Album 00")
+        XCTAssertTrue(row.staticTexts["Waiting to sync"].exists)
         try capture("iPad-Regular-Wishlist")
+        activate(row.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Fixture Album 00")).firstMatch)
+        let album = app.staticTexts["discover.album.title"].firstMatch
+        XCTAssertTrue(album.waitForExistence(timeout: 30))
+        let accountMarker = app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label
+        let window = app.windows.firstMatch
+        let original = window.frame
+        // Drag the native iPad window corner; a width assertion prevents rotation alone
+        // from masquerading as a compact-window proof.
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -4, dy: -4))
+        corner.press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 590, dy: original.height - 20)))
+        XCTAssertLessThanOrEqual(window.frame.width, 600, "Native compact-window resize must occur")
+        XCTAssertTrue(album.exists)
+        XCTAssertEqual(app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label, accountMarker)
+        try capture("iPad-Compact-Album")
+        let back = app.navigationBars.buttons.firstMatch
+        XCTAssertTrue(back.isHittable); activate(back)
+        XCTAssertTrue(wishRow("Fixture Album 00").staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        try capture("iPad-Compact-Wishlist")
+        _ = try scenario("normal")
         XCUIDevice.shared.orientation = .portrait
-        XCTAssertTrue(detail.waitForExistence(timeout: 10))
-        try capture("iPad-Portrait-Wishlist")
         try accessibilityVariants()
     }
 }
