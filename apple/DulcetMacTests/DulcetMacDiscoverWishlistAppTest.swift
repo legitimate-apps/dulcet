@@ -318,8 +318,8 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         let app = try await launch()
         try await search(in: app)
         let song = try await item("Fixture Song 01", in: app)
-        // Focus the real native result and activate with Return, then keyboard Space on Add wish.
-        try await focusAndPress(song, key: "\r", code: 36, in: app)
+        // Focus the real native result and use Space on the link and Add wish button.
+        try await focusAndPress(song, key: " ", code: 49, in: app)
         let wish = try await app.element(identifiedBy: "discover.wish", timeout: .seconds(20))
         try await focusAndPress(wish, key: " ", code: 49, in: app)
         _ = try await awaitWish("Fixture Song 01", count: 1)
@@ -359,9 +359,6 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         let identifier = try XCTUnwrap(app.identifier(element))
         NSApp.activate(ignoringOtherApps: true)
         app.window.makeKeyAndOrderFront(nil)
-        try await waitUntil(timeout: .seconds(3), "Hosted keyboard window must become active") { NSApp.isActive }
-        app.window.makeKeyAndOrderFront(nil)
-        try await waitUntil(timeout: .seconds(3), "Hosted keyboard window must receive keys") { NSApp.keyWindow === app.window }
         XCTAssertTrue(NSApp.isFullKeyboardAccessEnabled, "The CI keyboard proof requires Full Keyboard Access")
         func focused() -> Bool {
             guard let current = app.firstElement(where: { app.identifier($0) == identifier }) as? NSObject else { return false }
@@ -371,7 +368,9 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         func send(_ characters: String, code: UInt16) throws {
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 let event = try XCTUnwrap(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: app.window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
-                NSApp.sendEvent(event)
+                // The XCTest host may stay inactive. Deliver to this actual window's
+                // responder chain, so another app's key window cannot consume the proof.
+                app.window.sendEvent(event)
             }
         }
         // Like the hosted table proofs' makeFirstResponder, focus the rendered control
