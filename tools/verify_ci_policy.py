@@ -1101,7 +1101,7 @@ def cancels_in_progress(lines: list[str]) -> bool:
 # an allowlist rather than a list of forbidden suffixes: any label not matched here is refused,
 # including larger-runner spellings nobody thought to forbid. Self-hosted labels are judged by the
 # workflow_dispatch-only rule below instead (spec §21.3.1).
-STANDARD_RUNNER = re.compile(r"ubuntu-latest|macos-latest|macos-[0-9]+")
+STANDARD_RUNNER = re.compile(r"ubuntu-latest|ubuntu-[0-9]+\.04|macos-latest|macos-[0-9]+")
 
 for workflow in workflows:
     text = workflow.read_text()
@@ -1127,7 +1127,7 @@ for workflow in workflows:
         elif not STANDARD_RUNNER.fullmatch(runner_value.strip().strip("'\"")):
             errors.append(
                 f"{workflow}: job {job} runs on {runner_value.strip()!r}; only the standard hosted "
-                "labels ubuntu-latest, macos-latest and macos-<version> are allowed",
+                "labels ubuntu-latest, ubuntu-<LTS version>, macos-latest and macos-<version> are allowed",
             )
     for action, ref in re.findall(r"uses:\s+([^@\s]+)@([^\s#]+)", text):
         if not re.fullmatch(r"[0-9a-f]{40}", ref):

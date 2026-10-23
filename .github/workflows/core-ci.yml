@@ -25,7 +25,11 @@ concurrency:
 jobs:
   core-build:
     name: core-build
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the server tests install Ubuntu Noble's exact FFmpeg below, and the
+    # ubuntu-latest label moves to Ubuntu 26 from 2026-10-19
+    # (https://github.com/actions/runner-images/issues/14748). On that image the release check
+    # fails before any test runs. ubuntu-24.04 is a standard hosted label, free on this public repo.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     # The required job downloads this job's evidence by the attempt that PRODUCED it. See there.
     outputs:
