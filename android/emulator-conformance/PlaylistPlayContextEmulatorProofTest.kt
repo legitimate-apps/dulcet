@@ -164,19 +164,9 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
     }
 
     private fun awaitTag(tag: String) {
-        var lastMove = 0L
         try {
             compose.waitUntil("$tag exists", 30_000) {
-                val found = compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
-                // Browse gives its first live card default focus. Its category header can
-                // therefore leave composition before the test asks for Playlists; reveal it
-                // with the same Up presses a person uses, rather than waiting without moving.
-                val now = android.os.SystemClock.elapsedRealtime()
-                if (!found && isTelevision() && tag.startsWith("library.view.") && now - lastMove >= 500) {
-                    remote(KeyEvent.KEYCODE_DPAD_UP)
-                    lastMove = android.os.SystemClock.elapsedRealtime()
-                }
-                found
+                compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
             }
         } catch (failure: Throwable) {
             println(compose.onRoot(useUnmergedTree = true).printToString())
@@ -193,7 +183,15 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(key)
         compose.waitForIdle()
     }
-    private fun activate(tag: String) { awaitTag(tag); activate(compose.onNodeWithTag(tag)) }
+    private fun activate(tag: String) {
+        if (isTelevision() && tag.startsWith("library.view.")) {
+            compose.focusTvBrowseCategory(tag)
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        } else {
+            awaitTag(tag)
+            activate(compose.onNodeWithTag(tag))
+        }
+    }
     private fun activate(node: SemanticsNodeInteraction) {
         if (isTelevision()) {
             // Names are children of the focusable TV card; focus its merged semantics node.

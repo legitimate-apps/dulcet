@@ -70,7 +70,7 @@ class Journal(private val db: Db, dataFolder: Path) {
     fun visibilityEpoch(): Long = db.read { string("SELECT value FROM meta WHERE key='api_visibility_epoch'")?.toLongOrNull() ?: 0L }
     fun floor(): Long = db.read { string("SELECT value FROM meta WHERE key='api_journal_floor'")?.toLongOrNull() ?: 0L }
     fun revision(type: String, id: String, userId: String? = null): String = db.read {
-        "r_${instanceId}_${long("SELECT COALESCE(MAX(seq),0) FROM api_revision WHERE type=? AND id=? AND (user_id=? OR type='playlist')", type, id, userId ?: "")}"
+        "r_${instanceId}_${long("SELECT COALESCE(MAX(seq),0) FROM api_revision WHERE type=? AND id=? AND (user_id=? OR type='playlist')", type, id, userId ?: "")}" + if(type=="wish") "_v${visibilityEpoch()}" else ""
     }
 
     fun cursor(userId: String, types: String, position: Long = head()): String {
@@ -95,6 +95,15 @@ class Journal(private val db: Db, dataFolder: Path) {
         val position = fields[3].toLongOrNull() ?: throw CursorException(false, "Invalid sync cursor")
         if (position < floor() || position > head()) throw CursorException(true, "Sync cursor is outside retained history")
         return position
+    }
+
+    /** Return a filter only after the complete cursor has passed MAC, owner and timeline checks. */
+    fun boundTypes(userId:String,cursor:String):String {
+        val fields=runCatching { String(Base64.getUrlDecoder().decode(cursor.removePrefix("sc_").substringBefore('.'))).split('\n') }.getOrNull()
+            ?: throw CursorException(false,"Invalid sync cursor")
+        if(fields.size!=5)throw CursorException(false,"Invalid sync cursor")
+        decodeCursor(userId,fields[2],cursor)
+        return canonicalTypes(fields[2])
     }
 
     fun prune(now: Long = System.currentTimeMillis()) = db.write { prune(this, now) }

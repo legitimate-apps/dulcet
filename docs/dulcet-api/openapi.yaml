@@ -53,6 +53,10 @@ security:
   - personalToken: []
 
 tags:
+  - name: Wishlist
+    description: Optional per-user wishes for outside music, with scan fulfilment.
+  - name: Discover
+    description: Optional public metadata discovery through Dulcet Server.
   - name: Discovery
     description: Finding a server's API versions, capabilities and authorization server.
   - name: Auth
@@ -205,6 +209,8 @@ paths:
                   instanceId: srv_9f2c41d0
                 capabilities:
                   dulcet.home: {versions: [1]}
+                  dulcet.discover: {versions: [1]}
+                  dulcet.wishlist: {versions: [1]}
                   dulcet.sync: {versions: [1]}
                   dulcet.events: {versions: [1]}
                   dulcet.webhooks: {versions: [1]}
@@ -3371,7 +3377,7 @@ paths:
           Discard derived state (keep unsent writes) and start again.
 
         Scopes: catalog types (`artist`, `album`, `track`, `genre`, `source`) need `catalog:read`;
-        user types (`itemState`, `playlist`, `play`, `queue`) need `user:read`. Asking for a type the
+        user types (`itemState`, `playlist`, `play`, `queue`, `wish`) need `user:read`. Asking for a type the
         token cannot read answers `403`; the default `types` is every type the token can read.
       security:
         - oauth2: [catalog:read]
@@ -3390,8 +3396,8 @@ paths:
           in: query
           description: |
             Comma-separated entity types to include; default all the token may read. Must equal the
-            value the cursor was created with. Known values: `artist`, `album`, `track`, `genre`,
-            `source`, `itemState`, `playlist`, `play`, `queue`.
+            value the cursor was created with. Omitted types on continuation retain the original verified filter, including cursors issued before wish support. Known values: `artist`, `album`, `track`, `genre`,
+            `source`, `itemState`, `playlist`, `play`, `queue`, `wish`.
           schema: {type: string}
           example: itemState,playlist
         - name: limit
@@ -4286,6 +4292,1165 @@ paths:
         default:
           $ref: '#/components/responses/Default'
 
+  /discover/search:
+    get:
+      tags:
+      - Discover
+      operationId: searchDiscover
+      summary: Search outside this server
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: kind
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - artist
+          - album
+          - song
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 500
+        description: Public metadata query. Never include credentials or private account details.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverItemPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/shelves/{shelfId}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverShelf
+      summary: Read a Discover shelf
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: shelfId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: trendingArtists, trendingAlbums, trendingSongs, newReleases, similarArtists or publicPlaylists.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverShelfPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/artists/{mbid}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverArtist
+      summary: Read an outside artist and first discography page
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverArtist'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/artists/{mbid}/albums:
+    get:
+      tags:
+      - Discover
+      operationId: listDiscoverArtistAlbums
+      summary: Page the full artist discography newest first
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverItemPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/albums/{mbid}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverAlbum
+      summary: Read a release group with selectable editions
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - name: releaseId
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+        description: Edition to select. Default is earliest dated edition, with release UUID breaking ties and
+          undated editions last.
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverAlbum'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/albums/{mbid}/tracks:
+    get:
+      tags:
+      - Discover
+      operationId: listDiscoverAlbumTracks
+      summary: Page every track slot of one edition
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - name: releaseId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverItemPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/playlists:
+    get:
+      tags:
+      - Discover
+      operationId: searchDiscoverPlaylists
+      summary: Search public ListenBrainz playlists
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 0
+          maxLength: 500
+        description: Public metadata query. Never include credentials or private account details.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverPlaylistSummaryPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/playlists/{mbid}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverPlaylist
+      summary: Read a public playlist without losing repeated slots
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. All lists default to 20 and allow 1..100. Cursors bind caller, collection and immutable
+        cached answers; cache refresh or eviction expires a cursor. Source failures use stale last-good data
+        for at most 90 days, otherwise 503 upstream-unavailable. Public playlist search pages a bounded top-100
+        upstream result window. Trending shelves are labelled Trending on ListenBrainz.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: mbid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: MusicBrainz artist, release-group or playlist UUID as specified by this path.
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverPlaylistPage'
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+  /discover/artwork/{artworkId}:
+    get:
+      tags:
+      - Discover
+      operationId: getDiscoverArtwork
+      summary: Read server-proxied cover thumbnail bytes
+      description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
+        Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
+        or acquisition. Returns image bytes, never a redirect to an upstream host. Static SVG is used only for
+        a missing-art placeholder.
+      security:
+      - oauth2:
+        - catalog:read
+      - personalToken:
+        - catalog:read
+      parameters:
+      - name: artworkId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Opaque artworkId returned by Discover. Never an upstream URL.
+      - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Discover result.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+            Cache-Control:
+              schema:
+                type: string
+                const: private
+            Vary:
+              schema:
+                type: string
+                const: Authorization
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/svg+xml:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Representation unchanged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '503':
+          description: No usable cached answer and the upstream is unavailable.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+
+  /me/wishes:
+    get:
+      tags:
+      - Wishlist
+      operationId: listWishes
+      summary: listWishes
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404. Ordered addedAt descending then id. Default excludes
+        fulfilled older than 30 days; state=fulfilled includes all history. History aging is not deletion.
+      security:
+      - oauth2:
+        - user:read
+      - personalToken:
+        - user:read
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '304':
+          description: Unchanged private representation.
+      parameters:
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: kind
+        in: query
+        schema:
+          type: string
+          description: 'Known values: artist, album, song. Open output set.'
+      - name: state
+        in: query
+        schema:
+          type: string
+      - name: includeFulfilledHistory
+        in: query
+        schema:
+          type: boolean
+          default: false
+      - $ref: '#/components/parameters/IfNoneMatch'
+    post:
+      tags:
+      - Wishlist
+      operationId: addWish
+      summary: addWish
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:write
+      - personalToken:
+        - user:write
+      responses:
+        '201':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+      parameters:
+      - $ref: '#/components/parameters/ActionTime'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishAdd'
+  /me/wishes/{wishId}:
+    get:
+      tags:
+      - Wishlist
+      operationId: getWish
+      summary: getWish
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:read
+      - personalToken:
+        - user:read
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '304':
+          description: Unchanged private representation.
+      parameters:
+      - name: wishId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfNoneMatch'
+    delete:
+      tags:
+      - Wishlist
+      operationId: removeWish
+      summary: removeWish
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:delete
+      - personalToken:
+        - user:delete
+      responses:
+        '204':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+      parameters:
+      - name: wishId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: operationId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/ActionTime'
+  /me/wishes/cancellations:
+    post:
+      tags:
+      - Wishlist
+      operationId: cancelWishAdd
+      summary: cancelWishAdd
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:delete
+      - personalToken:
+        - user:delete
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+      parameters:
+      - $ref: '#/components/parameters/ActionTime'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishRemove'
+  /me/wishes/{wishId}/reject-match:
+    post:
+      tags:
+      - Wishlist
+      operationId: rejectWishMatch
+      summary: rejectWishMatch
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - user:write
+      - personalToken:
+        - user:write
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+      parameters:
+      - name: wishId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishRejectMatch'
+  /discover/rejected-matches:
+    post:
+      tags:
+      - Wishlist
+      operationId: rejectDiscoverMatch
+      summary: rejectDiscoverMatch
+      description: Requires Discover OR Wishlist enabled, user:write. target is required here. Persist a per-user
+        external-target/local-item rejection without creating a wish. A linked fulfilled wish reopens wanted only
+        when Wishlist is enabled. My Library membership stays.
+      security:
+      - oauth2:
+        - user:write
+      - personalToken:
+        - user:write
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishMutation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishRejectMatch'
+  /admin/wishes:
+    get:
+      tags:
+      - Wishlist
+      operationId: listAllWishes
+      summary: listAllWishes
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - admin
+      - personalToken:
+        - admin
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '304':
+          description: Unchanged private representation.
+      parameters:
+      - $ref: '#/components/parameters/DiscoverLimit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: kind
+        in: query
+        schema:
+          type: string
+          description: 'Known values: artist, album, song. Open output set.'
+      - name: state
+        in: query
+        schema:
+          type: string
+      - name: includeFulfilledHistory
+        in: query
+        schema:
+          type: boolean
+          default: false
+      - name: userId
+        in: query
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfNoneMatch'
+  /admin/wishes/{wishId}:
+    patch:
+      tags:
+      - Wishlist
+      operationId: setWishState
+      summary: setWishState
+      description: Optional dulcet.wishlist version 1. Owner resources are private. Durable operationId receipts survive
+        retry-cache expiry and removal. Action time is clamped to server time; latest action wins, removal wins ties.
+        No upstream lookup on writes. Disabled resources return 404.
+      security:
+      - oauth2:
+        - admin
+      - personalToken:
+        - admin
+      responses:
+        '200':
+          description: Result.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Own removed wish or expired cursor.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        default:
+          $ref: '#/components/responses/Default'
+        '412':
+          description: If-Match revision changed.
+        '409':
+          description: Fulfilled wish cannot leave fulfilled through admin.
+      parameters:
+      - name: wishId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishStateUpdate'
+
 webhooks:
   delivery:
     post:
@@ -4350,6 +5515,11 @@ components:
         operation apply to personal tokens too.
 
   parameters:
+    DiscoverLimit:
+      name: limit
+      in: query
+      description: Discover page size; default 20, maximum 100.
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
     Cursor:
       name: cursor
       in: query
@@ -5071,6 +6241,9 @@ components:
         syncRetentionSeconds: {type: integer, minimum: 1}
         mediaUrlTtlSeconds: {type: integer, minimum: 1}
         artworkUrlTtlSeconds: {type: integer, minimum: 1}
+        discoverArtworkAllowLoopback:
+          type: boolean
+          description: Test-mode only. Permit loopback artwork fixtures; other private and metadata addresses remain refused. Resets on restart.
         rateLimit:
           type: object
           required: [requestsPerWindow, windowSeconds]
@@ -6137,7 +7310,7 @@ components:
       required: [op, type, id, revision, at]
       properties:
         op: {type: string, description: '`upsert` (the entity now looks like `resource`) or `delete` (a tombstone). Open set; skip an op you do not know.'}
-        type: {type: string, description: 'Known values: `artist`, `album`, `track`, `genre`, `source`, `itemState`, `playlist`, `play`, `queue`. Open set; skip a type you do not know.'}
+        type: {type: string, description: 'Known values: `artist`, `album`, `track`, `genre`, `source`, `itemState`, `playlist`, `play`, `queue`, `wish`. Open set; skip a type you do not know.'}
         id: {type: string, description: 'The entity''s id. For `itemState`, the item''s id; for `queue`, the literal `queue`.'}
         revision: {type: string, description: The entity's `revision` after this change.}
         at: {type: string, format: date-time}
@@ -6148,7 +7321,7 @@ components:
             catalog entities without `userState`, a `playlist` without entries, the `queue` without
             entries. A `playlist` or `queue` upsert with a new revision means its entries changed or
             may have: re-read `/playlists/{id}/items` or `/me/queue/entries`. A server may coalesce
-            several changes to one entity into its latest state.
+            several changes to one entity into its latest state. A `wish` upsert carries Wish, including all fulfilled history. Wish deletions retain owner-only tombstones even when the capability is disabled. Hidden library references are redacted without reopening fulfilled wishes.
         reason:
           type: string
           description: 'On `delete`. Known values: `deleted` (gone for good), `merged` (see `replacedBy`), `hidden` (no longer visible to this user; it may come back as an `upsert`). Open set; treat an unknown reason as `deleted`.'
@@ -6252,12 +7425,27 @@ components:
       description: '`heartbeat`: sent at least every 30 seconds so dead connections are noticed.'
 
     WebhookEvent:
+      allOf:
+        - if:
+            properties:
+              type: {const: wishlist.changed}
+            required: [type]
+          then:
+            properties:
+              data: {$ref: '#/components/schemas/WishlistChangedEvent'}
+        - if:
+            properties:
+              type: {const: wishlist.requested}
+            required: [type]
+          then:
+            properties:
+              data: {$ref: '#/components/schemas/WishlistRequestedEvent'}
       type: object
       description: The body of every webhook delivery. Unknown `type` values are skipped by receivers.
       required: [id, type, timestamp, data]
       properties:
         id: {type: string, description: Equal to the `webhook-id` header; a receiver dedupes on it.}
-        type: {type: string, description: 'Known values: `play.recorded`, `nowPlaying.changed`, `itemState.changed`, `playlist.changed`, `queue.changed`, `catalog.changed`, `scan.completed`, `ping`.'}
+        type: {type: string, description: 'Known values: `wishlist.changed` (user:read, owner only), `wishlist.requested` (admin, all owners), `play.recorded`, `nowPlaying.changed`, `itemState.changed`, `playlist.changed`, `queue.changed`, `catalog.changed`, `scan.completed`, `ping`.'}
         timestamp: {type: string, format: date-time}
         userId: {type: string}
         data:
@@ -6266,6 +7454,8 @@ components:
             `play.recorded`: a `Play`. `nowPlaying.changed`: a `NowPlayingEvent`. `itemState.changed`:
             an `ItemState`. `playlist.changed`: a `Playlist`. `queue.changed`: a `QueueEvent`.
             `catalog.changed`: a `ChangesEvent`. `scan.completed`: a `Scan`. `ping`: empty.
+            `wishlist.changed`: a `WishlistChangedEvent` (user:read, owner only).
+            `wishlist.requested`: a `WishlistRequestedEvent` (admin, all owners).
 
     Webhook:
       type: object
@@ -6275,7 +7465,7 @@ components:
         url: {type: string, format: uri}
         events:
           type: array
-          description: 'Known values: `play.recorded`, `nowPlaying.changed`, `itemState.changed`, `playlist.changed`, `queue.changed`, `catalog.changed`, `scan.completed`, `ping`. `*` for all the creating token may read.'
+          description: 'Known values: `wishlist.changed` (user:read, owner only), `wishlist.requested` (admin, all owners), `play.recorded`, `nowPlaying.changed`, `itemState.changed`, `playlist.changed`, `queue.changed`, `catalog.changed`, `scan.completed`, `ping`. `*` for all the creating token may read.'
           items: {type: string}
         description: {type: string}
         active: {type: boolean}
@@ -6360,3 +7550,510 @@ components:
           properties:
             code: {type: integer}
             message: {type: string}
+
+    DiscoverLink:
+      type: object
+      required:
+      - relation
+      - url
+      properties:
+        relation:
+          type: string
+        url:
+          type: string
+          format: uri
+          description: Explicit HTTP(S) link to open outside the app, never an artwork source URL.
+    DiscoverAvailability:
+      type: object
+      required:
+      - status
+      - libraryItems
+      - completeness
+      properties:
+        status:
+          type: string
+          description: 'Open set: held, partlyHeld, notHeld.'
+        libraryItems:
+          type: array
+          items:
+            type: object
+            required:
+            - id
+            - type
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+                description: artist, album or track; only visible local resources.
+        completeness:
+          type: string
+          description: 'Open set: known or unknown. Unknown totals are omitted.'
+        matchedBy:
+          type: string
+          description: 'Open set: mbid or name.'
+        matchedTrackCount:
+          type: integer
+          minimum: 0
+        totalTrackCount:
+          type: integer
+          minimum: 1
+        editionReleaseId:
+          type: string
+          format: uuid
+      description: Album completeness requires every slot of one edition within one local album, one file per slot.
+        Extra tracks are allowed. Never pool editions or infer completeness from equal counts. Name fallback applies
+        only to local candidates without the relevant MBID and preserves live, remix, demo, acoustic and instrumental
+        words.
+    DiscoverCacheAge:
+      type: object
+      required:
+      - fetchedAt
+      - ageSeconds
+      - stale
+      properties:
+        fetchedAt:
+          type: string
+          format: date-time
+        ageSeconds:
+          type: integer
+          minimum: 0
+        stale:
+          type: boolean
+    DiscoverItem:
+      type: object
+      required:
+      - id
+      - kind
+      - title
+      - externalIds
+      - links
+      - wishable
+      - availability
+      properties:
+        id:
+          type: string
+          description: Persisted opaque server id, not a MusicBrainz id.
+        kind:
+          type: string
+          description: 'Open set: artist, album, song.'
+        title:
+          type: string
+        artist:
+          type: string
+        year:
+          type: integer
+        releaseDate:
+          type: string
+          description: 'Source precision preserved: YYYY, YYYY-MM or YYYY-MM-DD.'
+        externalIds:
+          $ref: '#/components/schemas/ExternalIds'
+        artworkId:
+          type: string
+          description: Opaque id for GET /discover/artwork/{artworkId}; never an outside image URL.
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoverLink'
+        wishable:
+          type: boolean
+          description: False for playlist/edition slots with no canonical MBID.
+        availability:
+          $ref: '#/components/schemas/DiscoverAvailability'
+        disc:
+          type: integer
+          minimum: 1
+        position:
+          type: integer
+          minimum: 1
+        listenCount:
+          type: integer
+          minimum: 0
+        artistMbids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        primaryType:
+          type: string
+          description: Open MusicBrainz release-group primary type.
+    DiscoverPlaylistSummary:
+      type: object
+      required:
+      - id
+      - title
+      - creator
+      - trackCount
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ListenBrainz playlist UUID.
+        title:
+          type: string
+        creator:
+          type:
+          - string
+          - 'null'
+        trackCount:
+          type:
+          - integer
+          - 'null'
+    DiscoverPlaylistEntry:
+      type: object
+      required:
+      - position
+      - item
+      properties:
+        position:
+          type: integer
+          minimum: 1
+        item:
+          $ref: '#/components/schemas/DiscoverItem'
+    DiscoverEdition:
+      type: object
+      required:
+      - releaseId
+      - releaseDate
+      - trackCount
+      - links
+      properties:
+        releaseId:
+          type: string
+          format: uuid
+        releaseDate:
+          type:
+          - string
+          - 'null'
+        trackCount:
+          type: integer
+          minimum: 0
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoverLink'
+    DiscoverItemPage:
+      allOf:
+      - $ref: '#/components/schemas/PageInfo'
+      - $ref: '#/components/schemas/DiscoverCacheAge'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/DiscoverItem'
+    DiscoverPlaylistSummaryPage:
+      allOf:
+      - $ref: '#/components/schemas/PageInfo'
+      - $ref: '#/components/schemas/DiscoverCacheAge'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/DiscoverPlaylistSummary'
+    DiscoverPlaylistEntryPage:
+      allOf:
+      - $ref: '#/components/schemas/PageInfo'
+      - $ref: '#/components/schemas/DiscoverCacheAge'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/DiscoverPlaylistEntry'
+    DiscoverShelfPage:
+      oneOf:
+      - $ref: '#/components/schemas/DiscoverItemPage'
+      - $ref: '#/components/schemas/DiscoverPlaylistSummaryPage'
+    DiscoverArtist:
+      type: object
+      required:
+      - item
+      - albums
+      properties:
+        item:
+          $ref: '#/components/schemas/DiscoverItem'
+        albums:
+          $ref: '#/components/schemas/DiscoverItemPage'
+    DiscoverAlbum:
+      type: object
+      required:
+      - item
+      - editions
+      - selectedReleaseId
+      - tracks
+      properties:
+        item:
+          $ref: '#/components/schemas/DiscoverItem'
+        editions:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoverEdition'
+        selectedReleaseId:
+          type:
+          - string
+          - 'null'
+        tracks:
+          $ref: '#/components/schemas/DiscoverItemPage'
+    DiscoverPlaylistPage:
+      $ref: '#/components/schemas/DiscoverPlaylist'
+
+    DiscoverPlaylist:
+      type: object
+      required:
+      - summary
+      - entries
+      properties:
+        summary:
+          $ref: '#/components/schemas/DiscoverPlaylistSummary'
+        entries:
+          $ref: '#/components/schemas/DiscoverPlaylistEntryPage'
+
+    WishSnapshot:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        artist:
+          type: string
+          maxLength: 500
+        year:
+          type: integer
+        artworkId:
+          type: string
+          description: Opaque server artwork id, never a URL.
+      required:
+      - title
+    WishSource:
+      type: object
+      properties:
+        type:
+          type: string
+          description: 'Known values: search, shelf, artist, album, playlist, api. No
+            private upstream account.'
+        id:
+          type: string
+          maxLength: 500
+      required:
+      - type
+    Wish:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        kind:
+          type: string
+          description: 'Known values: artist, album, song. Open output set.'
+        externalIds:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Canonical MusicBrainz UUID for the kind: musicbrainzArtistId, musicbrainzReleaseGroupId or musicbrainzRecordingId.'
+        snapshot:
+          $ref: '#/components/schemas/WishSnapshot'
+        source:
+          $ref: '#/components/schemas/WishSource'
+        addedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        state:
+          type: string
+          description: 'Open set: wanted, requested, searching, unavailable, fulfilled. Only complete local matches
+            can fulfil; admins may set the first four.'
+        note:
+          type:
+          - string
+          - 'null'
+        noteAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        fulfilledAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        libraryItem:
+          oneOf:
+          - type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+            required:
+            - id
+            - type
+          - type: 'null'
+        availability:
+          $ref: '#/components/schemas/DiscoverAvailability'
+        revision:
+          type: string
+      required:
+      - id
+      - userId
+      - kind
+      - externalIds
+      - snapshot
+      - source
+      - addedAt
+      - updatedAt
+      - state
+      - note
+      - noteAt
+      - fulfilledAt
+      - libraryItem
+      - availability
+      - revision
+    WishPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Wish'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+      required:
+      - items
+      - nextCursor
+    WishAdd:
+      type: object
+      properties:
+        kind:
+          type: string
+          description: 'Known values: artist, album, song. Open output set.'
+        externalIds:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Canonical MusicBrainz UUID for the kind: musicbrainzArtistId, musicbrainzReleaseGroupId or musicbrainzRecordingId.'
+        snapshot:
+          $ref: '#/components/schemas/WishSnapshot'
+        source:
+          $ref: '#/components/schemas/WishSource'
+        operationId:
+          type: string
+          format: uuid
+      required:
+      - kind
+      - externalIds
+      - snapshot
+      - source
+      - operationId
+    WishRemove:
+      type: object
+      properties:
+        addOperationId:
+          type: string
+          format: uuid
+        operationId:
+          type: string
+          format: uuid
+      required:
+      - addOperationId
+      - operationId
+    WishMutation:
+      type: object
+      properties:
+        applied:
+          type: boolean
+        wish:
+          oneOf:
+          - $ref: '#/components/schemas/Wish'
+          - type: 'null'
+        removed:
+          type: boolean
+      required:
+      - applied
+      - wish
+      - removed
+    WishStateUpdate:
+      type: object
+      properties:
+        state:
+          type: string
+          enum:
+          - wanted
+          - requested
+          - searching
+          - unavailable
+        note:
+          type:
+          - string
+          - 'null'
+          maxLength: 1000
+          description: Omit to preserve note and noteAt. Explicit null clears both. A string sets note and refreshes noteAt, even when unchanged.
+      required:
+      - state
+    WishRejectMatch:
+      type: object
+      properties:
+        target:
+          type: object
+          properties:
+            kind:
+              type: string
+              description: 'Known values: artist, album, song. Open output set.'
+            externalIds:
+              type: object
+              additionalProperties:
+                type: string
+              description: 'Canonical MusicBrainz UUID for the kind: musicbrainzArtistId, musicbrainzReleaseGroupId
+                or musicbrainzRecordingId.'
+          required:
+          - kind
+          - externalIds
+        libraryItem:
+          type: object
+          properties:
+            id:
+              type: string
+            type:
+              type: string
+              enum:
+              - artist
+              - album
+              - track
+          required:
+          - id
+          - type
+        operationId:
+          type: string
+          format: uuid
+      required:
+      - libraryItem
+      - operationId
+
+    WishlistChangedEvent:
+      type: object
+      required: [op, id, revision]
+      description: Owner-only wishlist.changed webhook data. Actual mutations only; delete omits wish. Signed through the durable outbox.
+      properties:
+        op: {type: string, description: 'Known values: upsert, delete.'}
+        id: {type: string}
+        revision: {type: string}
+        wish: {$ref: '#/components/schemas/Wish'}
+    WishlistRequestedEvent:
+      type: object
+      required: [wish]
+      description: Admin-only wishlist.requested webhook data. One per actual new wish, including an intentional re-add with a new id. The owner is wish.userId; the outer webhook userId remains the subscriber.
+      properties:
+        wish: {$ref: '#/components/schemas/Wish'}

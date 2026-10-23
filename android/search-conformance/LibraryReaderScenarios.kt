@@ -1373,27 +1373,43 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     fun conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive() {
         proxy.fail { it.endpoint == "getStarred2" }
         proxy.hold { it.endpoint == "getAlbumList2" && it.parameters["type"] == "frequent" }
+        proxy.unpark()
         ui.openLibrary()
+        var independent = LibraryObservationState()
         await("rows 0 and 1 live and row 3 failed, while row 2 is held") {
-            last("home.0").freshness == AndroidLibraryFreshness.Live && last("home.1").freshness == AndroidLibraryFreshness.Live &&
-                last("home.3").freshness.isFailed()
+            val snapshot = observed()
+            val ready = snapshot.surfaces["home.0"]?.lastOrNull()?.freshness == AndroidLibraryFreshness.Live &&
+                snapshot.surfaces["home.1"]?.lastOrNull()?.freshness == AndroidLibraryFreshness.Live &&
+                snapshot.surfaces["home.3"]?.lastOrNull()?.freshness?.isFailed() == true &&
+                snapshot.surfaces["home.2"]?.lastOrNull()?.freshness == AndroidLibraryFreshness.Loading
+            if (ready) independent = snapshot
+            ready
         }
         assertEquals(0, proxy.log().count { it.endpoint == "getAlbumList2" && it.parameters["type"] == "frequent" && it.answered },
             "row 2's answer had not arrived")
         assertTrue(proxy.log().any { it.endpoint == "getAlbumList2" && it.parameters["type"] == "frequent" }, "control: row 2 did ask")
-        assertEquals(AndroidLibraryFreshness.Loading, last("home.2").freshness, "row 2 still says it is loading")
+        assertEquals(AndroidLibraryFreshness.Loading, independent.surfaces.getValue("home.2").last().freshness,
+            "row 2 still says it is loading")
         compose.onNodeWithTag("library.home.0.item.0").assertExists()
         proxy.release()
         // The initial reconnect can revalidate the other rows after row 2's first answer. Wait
         // for that sequence as well as their final publications before checking the settled home.
         // The assertions above already proved rows 0 and 1 published while row 2 was held.
-        await("the initial reconnect to finish with rows 0, 1 and 2 live") {
-            observed().connections.last() is LibraryConnectionState.Online &&
-                (0..2).all { last("home.$it").freshness == AndroidLibraryFreshness.Live }
+        var settled = LibraryObservationState()
+        await("the initial reconnect to finish with rows 0, 1 and 2 live and row 3 failed") {
+            // A finder idles the main looper. Four separate finders can straddle a legitimate
+            // reconnect and mix Live with Cached(Revalidating) from different publications.
+            // Assert the conjunction on one rendered observation and retain that exact witness.
+            val snapshot = observed()
+            val ready = snapshot.connections.lastOrNull() is LibraryConnectionState.Online &&
+                (0..2).all { snapshot.surfaces["home.$it"]?.lastOrNull()?.freshness == AndroidLibraryFreshness.Live } &&
+                snapshot.surfaces["home.3"]?.lastOrNull()?.freshness?.isFailed() == true
+            if (ready) settled = snapshot
+            ready
         }
-        assertEquals(AndroidLibraryFreshness.Live, last("home.0").freshness)
-        assertEquals(AndroidLibraryFreshness.Live, last("home.1").freshness)
-        assertTrue(last("home.3").freshness.isFailed(), "the failed row stays failed on its own")
+        assertEquals(AndroidLibraryFreshness.Live, settled.surfaces.getValue("home.0").last().freshness)
+        assertEquals(AndroidLibraryFreshness.Live, settled.surfaces.getValue("home.1").last().freshness)
+        assertTrue(settled.surfaces.getValue("home.3").last().freshness.isFailed(), "the failed row stays failed on its own")
         // While row 2 was held the home could have one connecting notice. Once it settles,
         // the independent row failure must be visible on both phone and TV.
         compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("library.home.0")))

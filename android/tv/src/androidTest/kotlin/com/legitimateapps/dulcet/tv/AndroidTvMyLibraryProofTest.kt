@@ -15,6 +15,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.PlaybackObserver
+import com.legitimateapps.dulcet.emulator.focusTvBrowseCategory
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
 import java.util.concurrent.TimeUnit
 import org.junit.Rule
@@ -135,19 +136,10 @@ class AndroidTvMyLibraryProofTest {
 
     /** Focus, then the centre key, as a remote selects. */
     private fun select(tag: String): Boolean {
-        // Home's first card takes default focus and can scroll its sections out of composition.
-        // Reveal them with the remote before selecting one, as the catalog host proof does.
         if (tag.startsWith("library.view.")) {
-            var steps = 0
-            repeat(3) {
-                if (compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
-                    println("MYLIBRARY TV remote-reveal before-UP focused=${focusedTags()}")
-                    remote(KeyEvent.KEYCODE_DPAD_UP)
-                    steps += 1
-                    println("MYLIBRARY TV remote-reveal after-UP focused=${focusedTags()}")
-                }
-            }
-            println("MYLIBRARY TV remote-reveal tag=$tag up-steps=$steps composed=${!noTag(tag, 1)}")
+            compose.focusTvBrowseCategory(tag)
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            return true
         }
         if (!awaitTag(tag)) return false
         compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
@@ -155,10 +147,6 @@ class AndroidTvMyLibraryProofTest {
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
         return true
     }
-
-    private fun focusedTags(): List<String> = compose.onAllNodes(SemanticsMatcher("focused") {
-        it.config.getOrElse(SemanticsProperties.Focused) { false }
-    }, useUnmergedTree = true).fetchSemanticsNodes().map { it.config.getOrElse(SemanticsProperties.TestTag) { "?" } }
 
     private fun focused(tag: String): Boolean =
         compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, tag), useUnmergedTree = true)

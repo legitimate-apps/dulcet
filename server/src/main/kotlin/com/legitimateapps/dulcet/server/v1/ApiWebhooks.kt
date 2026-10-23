@@ -116,7 +116,7 @@ class ApiWebhooks(
     private val deliveryLock = Any()
     private data class Hook(val id:String,val user:String,val grant:String,val url:String,val scopes:Set<String>,val events:Set<String>,val description:String?,val active:Boolean,val created:Long,val last:Long?,val failures:Int,val reason:String?,val secret:ByteArray)
     private data class Delivery(val id:String,val hook:String,val event:String,val body:String,val created:Long,val attempts:Int)
-    private val eventScopes = mapOf("play.recorded" to "user:read","nowPlaying.changed" to "user:read","itemState.changed" to "user:read","playlist.changed" to "user:read","queue.changed" to "user:read","catalog.changed" to "catalog:read","scan.completed" to "admin","ping" to "account")
+    private val eventScopes = mapOf("wishlist.changed" to "user:read","wishlist.requested" to "admin","play.recorded" to "user:read","nowPlaying.changed" to "user:read","itemState.changed" to "user:read","playlist.changed" to "user:read","queue.changed" to "user:read","catalog.changed" to "catalog:read","scan.completed" to "admin","ping" to "account")
     init {
         db.write {
             execute("""CREATE TABLE IF NOT EXISTS api_webhook(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,grant_id TEXT NOT NULL REFERENCES api_grant(id) ON DELETE CASCADE,url TEXT NOT NULL,scopes TEXT NOT NULL,events TEXT NOT NULL,description TEXT,active INTEGER NOT NULL,created INTEGER NOT NULL,last_delivery INTEGER,failures INTEGER NOT NULL DEFAULT 0,disabled_reason TEXT,secret BLOB NOT NULL)""")

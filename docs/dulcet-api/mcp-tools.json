@@ -1,5 +1,5 @@
 {
-  "$comment": "Dulcet API v1 MCP tools. tools/list on a conforming server returns exactly these definitions for the scopes the token holds, and no others (README section 13), each with x-dulcet-scope replaced by _meta: {\"dulcet/scopes\": [that scope]}. Additive only, like the rest of v1.",
+  "$comment": "Dulcet API v1 MCP tools. Filter by x-dulcet-scope AND advertised x-dulcet-capability version 1 when present. tools/list replaces x-dulcet-scope with _meta[dulcet/scopes] and optional x-dulcet-capability with _meta[dulcet/capability]. Existing tools have no extra capability gate. Additive only.",
   "version": "1.0.0",
   "pageLimit": 100,
   "tools": [
@@ -1761,6 +1761,837 @@
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "search_discover",
+      "title": "Search outside music metadata",
+      "description": "Search outside music metadata. Requires dulcet.discover version 1 and catalog:read.",
+      "x-dulcet-scope": "catalog:read",
+      "x-dulcet-capability": "dulcet.discover",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "artist",
+              "album",
+              "song"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque continuation; retain original filters."
+          }
+        },
+        "required": [
+          "query",
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "nextCursor"
+            ],
+            "properties": {
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Null on the last page. Opaque; never parse or build one."
+              },
+              "total": {
+                "type": "integer",
+                "description": "The collection's size when this page was read, when the server can count cheaply. May be absent."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "fetchedAt",
+              "ageSeconds",
+              "stale"
+            ],
+            "properties": {
+              "fetchedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "ageSeconds": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "stale": {
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "kind",
+                    "title",
+                    "externalIds",
+                    "links",
+                    "wishable",
+                    "availability"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Persisted opaque server id, not a MusicBrainz id."
+                    },
+                    "kind": {
+                      "type": "string",
+                      "description": "Open set: artist, album, song."
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "artist": {
+                      "type": "string"
+                    },
+                    "year": {
+                      "type": "integer"
+                    },
+                    "releaseDate": {
+                      "type": "string",
+                      "description": "Source precision preserved: YYYY, YYYY-MM or YYYY-MM-DD."
+                    },
+                    "externalIds": {
+                      "type": "object",
+                      "description": "Identifiers in public registries, so items can be matched across servers and services.",
+                      "properties": {
+                        "musicbrainzArtistId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "musicbrainzReleaseId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "musicbrainzReleaseGroupId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "musicbrainzRecordingId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "musicbrainzTrackId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "isrc": {
+                          "type": "string"
+                        },
+                        "barcode": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "artworkId": {
+                      "type": "string",
+                      "description": "Opaque id for GET /discover/artwork/{artworkId}; never an outside image URL."
+                    },
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "relation",
+                          "url"
+                        ],
+                        "properties": {
+                          "relation": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Explicit HTTP(S) link to open outside the app, never an artwork source URL."
+                          }
+                        }
+                      }
+                    },
+                    "wishable": {
+                      "type": "boolean",
+                      "description": "False for playlist/edition slots with no canonical MBID."
+                    },
+                    "availability": {
+                      "type": "object",
+                      "required": [
+                        "status",
+                        "libraryItems",
+                        "completeness"
+                      ],
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "description": "Open set: held, partlyHeld, notHeld."
+                        },
+                        "libraryItems": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "type"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "type": {
+                                "type": "string",
+                                "description": "artist, album or track; only visible local resources."
+                              }
+                            }
+                          }
+                        },
+                        "completeness": {
+                          "type": "string",
+                          "description": "Open set: known or unknown. Unknown totals are omitted."
+                        },
+                        "matchedBy": {
+                          "type": "string",
+                          "description": "Open set: mbid or name."
+                        },
+                        "matchedTrackCount": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "totalTrackCount": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "editionReleaseId": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      },
+                      "description": "Album completeness requires every slot of one edition within one local album, one file per slot. Extra tracks are allowed. Never pool editions or infer completeness from equal counts. Name fallback applies only to local candidates without the relevant MBID and preserves live, remix, demo, acoustic and instrumental words."
+                    },
+                    "disc": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "position": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "listenCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "artistMbids": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    },
+                    "primaryType": {
+                      "type": "string",
+                      "description": "Open MusicBrainz release-group primary type."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_wishes",
+      "title": "List your wishes",
+      "description": "List your wishes. Requires dulcet.wishlist version 1 and user:read.",
+      "x-dulcet-scope": "user:read",
+      "x-dulcet-capability": "dulcet.wishlist",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "artist",
+              "album",
+              "song"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "includeFulfilledHistory": {
+            "type": "boolean",
+            "default": false
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque continuation; retain original filters."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "userId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "Known values: artist, album, song. Open output set."
+                },
+                "externalIds": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Canonical MusicBrainz UUID for the kind: musicbrainzArtistId, musicbrainzReleaseGroupId or musicbrainzRecordingId."
+                },
+                "snapshot": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "artist": {
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    "year": {
+                      "type": "integer"
+                    },
+                    "artworkId": {
+                      "type": "string",
+                      "description": "Opaque server artwork id, never a URL."
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ]
+                },
+                "source": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "Known values: search, shelf, artist, album, playlist, api. No private upstream account."
+                    },
+                    "id": {
+                      "type": "string",
+                      "maxLength": 500
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                },
+                "addedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "state": {
+                  "type": "string",
+                  "description": "Open set: wanted, requested, searching, unavailable, fulfilled. Only complete local matches can fulfil; admins may set the first four."
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "noteAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "fulfilledAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "libraryItem": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "type"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "availability": {
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "libraryItems",
+                    "completeness"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "description": "Open set: held, partlyHeld, notHeld."
+                    },
+                    "libraryItems": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "type"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string",
+                            "description": "artist, album or track; only visible local resources."
+                          }
+                        }
+                      }
+                    },
+                    "completeness": {
+                      "type": "string",
+                      "description": "Open set: known or unknown. Unknown totals are omitted."
+                    },
+                    "matchedBy": {
+                      "type": "string",
+                      "description": "Open set: mbid or name."
+                    },
+                    "matchedTrackCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "totalTrackCount": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "editionReleaseId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "description": "Album completeness requires every slot of one edition within one local album, one file per slot. Extra tracks are allowed. Never pool editions or infer completeness from equal counts. Name fallback applies only to local candidates without the relevant MBID and preserves live, remix, demo, acoustic and instrumental words."
+                },
+                "revision": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "userId",
+                "kind",
+                "externalIds",
+                "snapshot",
+                "source",
+                "addedAt",
+                "updatedAt",
+                "state",
+                "note",
+                "noteAt",
+                "fulfilledAt",
+                "libraryItem",
+                "availability",
+                "revision"
+              ]
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "add_wish",
+      "title": "Add a wish with a durable operation UUID",
+      "description": "Add a wish with a durable operation UUID. Requires dulcet.wishlist version 1 and user:write.",
+      "x-dulcet-scope": "user:write",
+      "x-dulcet-capability": "dulcet.wishlist",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "artist",
+              "album",
+              "song"
+            ]
+          },
+          "externalIds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Canonical MusicBrainz UUID for the kind: musicbrainzArtistId, musicbrainzReleaseGroupId or musicbrainzRecordingId."
+          },
+          "snapshot": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "artist": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "year": {
+                "type": "integer"
+              },
+              "artworkId": {
+                "type": "string",
+                "description": "Opaque server artwork id, never a URL."
+              }
+            },
+            "required": [
+              "title"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Known values: search, shelf, artist, album, playlist, api. No private upstream account."
+              },
+              "id": {
+                "type": "string",
+                "maxLength": 500
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actionTime": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "kind",
+          "externalIds",
+          "snapshot",
+          "source",
+          "operationId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "wish": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "userId": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "description": "Known values: artist, album, song. Open output set."
+                  },
+                  "externalIds": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "Canonical MusicBrainz UUID for the kind: musicbrainzArtistId, musicbrainzReleaseGroupId or musicbrainzRecordingId."
+                  },
+                  "snapshot": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "artist": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "year": {
+                        "type": "integer"
+                      },
+                      "artworkId": {
+                        "type": "string",
+                        "description": "Opaque server artwork id, never a URL."
+                      }
+                    },
+                    "required": [
+                      "title"
+                    ]
+                  },
+                  "source": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "description": "Known values: search, shelf, artist, album, playlist, api. No private upstream account."
+                      },
+                      "id": {
+                        "type": "string",
+                        "maxLength": 500
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "addedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "updatedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "state": {
+                    "type": "string",
+                    "description": "Open set: wanted, requested, searching, unavailable, fulfilled. Only complete local matches can fulfil; admins may set the first four."
+                  },
+                  "note": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "noteAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "fulfilledAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "libraryItem": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "type"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "availability": {
+                    "type": "object",
+                    "required": [
+                      "status",
+                      "libraryItems",
+                      "completeness"
+                    ],
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "description": "Open set: held, partlyHeld, notHeld."
+                      },
+                      "libraryItems": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "type"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "type": "string",
+                              "description": "artist, album or track; only visible local resources."
+                            }
+                          }
+                        }
+                      },
+                      "completeness": {
+                        "type": "string",
+                        "description": "Open set: known or unknown. Unknown totals are omitted."
+                      },
+                      "matchedBy": {
+                        "type": "string",
+                        "description": "Open set: mbid or name."
+                      },
+                      "matchedTrackCount": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "totalTrackCount": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "editionReleaseId": {
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    },
+                    "description": "Album completeness requires every slot of one edition within one local album, one file per slot. Extra tracks are allowed. Never pool editions or infer completeness from equal counts. Name fallback applies only to local candidates without the relevant MBID and preserves live, remix, demo, acoustic and instrumental words."
+                  },
+                  "revision": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "userId",
+                  "kind",
+                  "externalIds",
+                  "snapshot",
+                  "source",
+                  "addedAt",
+                  "updatedAt",
+                  "state",
+                  "note",
+                  "noteAt",
+                  "fulfilledAt",
+                  "libraryItem",
+                  "availability",
+                  "revision"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "removed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "applied",
+          "wish",
+          "removed"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false
       }

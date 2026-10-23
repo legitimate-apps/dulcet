@@ -130,4 +130,25 @@ class ApiTestingTest {
         }
     }
 
+    @Test fun `artwork loopback override requires test mode validates boolean and resets`() {
+        val ctx=context(true);ctx.db.use {
+            assertFalse(ctx.testing.discoverArtworkAllowLoopback)
+            ctx.testing.replace(j("discoverArtworkAllowLoopback" to true))
+            assertTrue(ctx.testing.discoverArtworkAllowLoopback)
+            for(value in listOf(JsonPrimitive("true"),JsonNull,JsonPrimitive(1))) {
+                assertEquals(400,assertFailsWith<ApiProblem> { ctx.testing.replace(j("discoverArtworkAllowLoopback" to value)) }.status)
+                assertTrue(ctx.testing.discoverArtworkAllowLoopback)
+            }
+            ctx.testing.replace(j());assertFalse(ctx.testing.discoverArtworkAllowLoopback)
+            ctx.testing.replace(j("discoverArtworkAllowLoopback" to true))
+        }
+        ServerContext(ctx.config,Db.open(ctx.config.dataFolder.resolve("dulcet.db"))).let {
+            assertFalse(it.testing.discoverArtworkAllowLoopback);it.db.close()
+        }
+        val normal=context(false);normal.db.use {
+            assertEquals(404,assertFailsWith<ApiProblem> { normal.testing.replace(j("discoverArtworkAllowLoopback" to true)) }.status)
+            assertFalse(normal.testing.discoverArtworkAllowLoopback)
+        }
+    }
+
 }

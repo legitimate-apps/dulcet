@@ -7927,6 +7927,14 @@ standard `ubuntu-24.04` label, and the CI lint allows `ubuntu-<LTS version>` bes
 labels. Every other Linux job stays on `ubuntu-latest`. Moving the server tests to a newer FFmpeg is a
 separate change that has to re-establish the media fixtures on that version.
 
+**2026-10-22: Discover and Wishlist server contracts.**
+The approved [Discover and Wishlist design](2026-10-22-discover-and-wishlist-design.md) step 1
+adds optional independent server capabilities, outside clients with a polite queue and disk cache,
+local matching, durable per-user wishes and scan fulfilment, API/feed/webhook/MCP resources and
+REST extension contracts. See §29.10, §30.5 and the server evidence. Core/native/app implementation
+remains in later lanes; server tests promote none of their feature cells. The design §10 PROD
+terms, rate-header and thumbnail-cache conditions remain open.
+
 **2026-10-22 — Serialize Android media removal with download retirement.**
 Account removal and the launch sweep use the download controllers' shared database executor for
 file deletion and binding revocation. They cannot revoke a binding between a queued download
@@ -14487,6 +14495,44 @@ counts in the server's totals but is never listed, so step 2 always falls back t
 that user. A scan that changes the catalog during a full read can shift offsets without moving
 `changed`; the totals check then does not detect it.
 
+### 29.10 Discover and Wishlist
+
+Dulcet Server implements design step 1 in
+[the approved Discover and Wishlist design](2026-10-22-discover-and-wishlist-design.md).
+The independent `discover=on|off` and `wishlist=on|off` switches default on. All four upstream
+bases are settings. MusicBrainz, ListenBrainz and its labs, and Cover Art Archive requests stay
+server-side, use the Dulcet Server/repository User-Agent, serialize per origin and obey
+Retry-After/rate headers. No token, user credentials or account identity reaches an upstream.
+
+Metadata raw caches are shared across users; visibility, matches and rejected pairs are projected
+locally afterward. Valid stale data survives source failure for at most 90 days, with age/stale
+reported. The cache is bounded at 256 MiB including a bounded 16 MiB cursor snapshot working set.
+Thumbnail bytes pass through without parsing/resizing, with positive JPEG/PNG/GIF/WebP signature,
+5 MiB limit, up to five checked/pinned redirects and no HTTPS downgrade. Artwork stays behind
+an opaque server id. [REST Discover](../../dulcet-server/dulcet-discover-extension.md) gives all
+methods, fields, paging, errors, attribution, TTLs and settings.
+
+The scanner additionally stores MUSICBRAINZ_RELEASEGROUPID. Untagged release-group resolution
+runs only for candidate albums of open wishes; no catalog-wide lookup. Song matches prefer recording
+MBID then normalized untagged artist/title with version markers retained. A complete edition must
+fit inside one local album with one file per track slot. Partial and unknown completeness remain
+open. Artist fulfilment requires an album. Access restrictions and rejected target/item pairs
+are applied per user.
+
+Wishes have durable operation receipts, per-target latest-action clocks and cancellation intent
+until user deletion. Removal wins ties and a late add cannot resurrect a removed generation.
+Intentional re-add creates a new id and request event. Action time clamps affect ordering, while
+the original timestamp is fingerprinted so retries remain stable. Every actual change advances a
+separate monotonic receipt clock and writes the owner journal/event in the same commit. After a
+successful catalog transaction, a bounded durable candidate queue drives fulfilment outside scan
+and SQLite locks; membership, arrival, journal and outbox commit atomically. CLI scan drains the
+same queue. Disabled Wishlist retains rows/work; disabled Discover allows local/cache-only fulfilment.
+
+[REST Wishlist](../../dulcet-server/dulcet-wishlist-extension.md) specifies client methods, complete
+payloads, states/notes, 30-day default-list aging and offline add/remove/cancel/re-add sequences.
+[Server evidence](../../evidence/discover-wishlist-server.md) separates fixture observations from
+later core/app/conformance controls and pre-PROD conditions.
+
 ## 30. Dulcet API
 
 Dulcet API v1 is a public, open standard for music servers and clients, defined in
@@ -14585,3 +14631,26 @@ apps use `start=now`, not a snapshot. The OpenSubsonic path keeps every rule it 
 - Offer test mode as a start setting only, refuse it on data ever served without it, and pass the
   Core, Sync and Testing profiles of the conformance suite.
 
+
+### 30.5 Optional Discover and Wishlist API
+
+`dulcet.discover` v1 and `dulcet.wishlist` v1 are advertised independently. The authoritative
+[OpenAPI](../../dulcet-api/openapi.yaml) includes Discover catalog:read paths; own wish
+user:read/user:write/user:delete paths; explicit admin list/state paths; and shared pair rejection
+when either capability is enabled. Writes do no upstream work inside transactions. See
+[the API guide](../../dulcet-api/README.md#optional-discover-and-wishlist-version-1) for the full
+path/scope/event/feed/tool matrix. Existing v1 resources and scopes retain their meaning.
+
+Owner-only `wish` snapshots retain all fulfilled history and removal tombstones, even when the
+capability is disabled. Omitted types on continuation use the verified original filter, so old
+cursors keep working without silently adding wish. Current visibility redacts hidden local links
+and invalidates wish revisions/ETags. List cursors bind caller, filters and list generation.
+`wishlist.changed` is owner-only user:read; `wishlist.requested` broadcasts new wishes only to
+current admin subscribers. Both use Standard Webhooks and the existing transactional durable
+outbox, with stable retry bytes and current authority checks. The outer webhook userId remains
+the subscription owner; the request owner's identity is in data.wish.userId.
+
+MCP tools search_discover, list_wishes and add_wish require both scope and the advertised optional
+capability version. Existing tools retain scope-only gating. There is no admin Wishlist tool.
+The registry and existing MCP conformance check understand optional tools. Planned profiles
+DA-DISCOVER-1 and DA-WISHLIST-1 are documented, but are not runnable profile claims in this lane.

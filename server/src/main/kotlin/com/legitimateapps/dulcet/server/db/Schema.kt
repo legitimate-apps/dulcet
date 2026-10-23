@@ -190,6 +190,7 @@ object Schema {
         INSERT INTO track_identity(path, track_id) SELECT path, id FROM track;
         CREATE INDEX track_identity_fingerprint ON track_identity(fingerprint);
         """.trimIndent(),
+        "ALTER TABLE track ADD COLUMN mbz_release_group_id TEXT;",
     )
 
     private fun installJournal(s: Db.Session) = with(s) {
