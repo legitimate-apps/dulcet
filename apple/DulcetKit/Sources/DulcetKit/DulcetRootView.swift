@@ -881,13 +881,12 @@ private struct DulcetSidebar: View {
                         sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
                     }
                     if destinations.contains(.library), store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
-                    Section {
                         Label(DulcetStrings.wishlist, systemImage: "bookmark")
                             .tag(DulcetSidebarSelection.wishlist)
+                            .accessibilityLabel(DulcetStrings.wishlist)
                             .accessibilityIdentifier("wishlist.destination")
                     }
-                }
-                if store.myLibraryAvailable, destinations.contains(.library) {
+                    if store.myLibraryAvailable, destinations.contains(.library) {
                         sidebarRow(DulcetStrings.browseSection, symbol: "globe", destination: .browse)
                     }
                     if destinations.contains(.search) {
