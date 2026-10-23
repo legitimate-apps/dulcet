@@ -7925,7 +7925,7 @@ On Android phone and TV, an explicit queue selection for a connection already ch
 foreground host is retained when a completed transient identity probe has temporarily closed
 contact. The selected queue and a connection explanation appear immediately. Playback observes
 the foreground reader's existing reconnect, without initiating network retries or changing its
-backoff or request limits, and starts once the same server is verified again. Pause withdraws
+backoff or request limits, and starts once the same server is verified again while the OS network remains available. Pause withdraws
 sound, Stop cancels the wait, and another selection or queue position supersedes the old one.
 An identity rejection or explicit replacement consent cannot authorize the old selection.
 A saved account with no connection choice still sends nothing and follows §13.1.

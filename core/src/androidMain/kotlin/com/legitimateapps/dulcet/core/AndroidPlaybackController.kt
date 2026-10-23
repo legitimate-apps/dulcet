@@ -66,8 +66,8 @@ public data class AndroidPlaybackState(
      */
     val droppedAdditions: AndroidDroppedAdditions? = null,
     /**
-     * The person asked to play a song that needs the server while the account is saved and not
-     * connected (spec §13.1): nothing was sent, and the surface offers Reconnect. Cleared once the
+     * The selected song needs server contact that is not open (spec §13.1). The surface explains
+     * the wait and offers Reconnect; a chosen connection's held selection follows automatic recovery. Cleared once the
      * person connects, stops, or a downloaded song plays.
      */
     val needsReconnect: Boolean = false,
@@ -129,7 +129,7 @@ public interface AndroidLocalPlaybackLease : AutoCloseable {
  * open it drains the outbox, names the queue and prepares the restored entry, still paused.
  */
 public interface AndroidServerContact {
-    /** True once the person has chosen to contact the server in this process. */
+    /** True when the connection is chosen and the saved server identity is verified. */
     public fun isOpen(): Boolean
 
     /** A foreground host chose this connection, even if verification is temporarily unavailable. */
@@ -1447,6 +1447,7 @@ public class AndroidPlaybackController internal constructor(
                         command(PlaybackCommand.Stop(id()))
                         activePlan = result.plan
                         pendingResume = directive.resumePosition?.inWholeMilliseconds
+                        android.util.Log.d("DulcetPlayQueue", "prepared remote generation=$generation")
                         command(PlaybackCommand.Prepare(id(), result.plan.attemptId, result.plan))
                         command(if (wantsPlay) PlaybackCommand.Play(id()) else PlaybackCommand.Pause(id()))
                         loadArtwork(result.plan)
