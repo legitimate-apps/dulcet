@@ -29,7 +29,7 @@ Final emulator XML: 10 tests, 0 failures, 0 errors and 0 skips. The final fixtur
 12.424 seconds. Its cleanup record confirms all five owned child PIDs reaped and its disposable
 root deleted. The owned emulator was stopped by its recorded PID after the proof.
 
-Local artifact root: `/Volumes/Crucial X8/dulcet-scratch/legs/discover-android/evidence/`.
+Local proof artifacts are retained by the shell proof author. Hosted integration artifacts are linked in `discover-wishlist-clients.md`.
 
 - `full-final2-xml/`: final ordinary JUnit XML and per-task counts.
 - `task18-integration2-xml/`: 3 DEV and 3 PROD production-reader integration cases.

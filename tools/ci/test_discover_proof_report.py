@@ -1,0 +1,45 @@
+"""A native report must distinguish execution and actual fixture effects from arming."""
+import copy
+import unittest
+from discover_proof_report import validate_report, expected_tests
+
+class ReportTests(unittest.TestCase):
+    def positive(self):
+        return dict(mode='iphone',idiom='phone',finalized=True,
+            cases=[dict(name=n,status='passed') for n in expected_tests('iphone')],
+            effects=[dict(scenario=n,revision=i+1,**{flag:True}) for i,(n,flag) in enumerate([
+                ('rate-limit','served'),('scan-arrival','completed'),('lost-add-receipt','delivered')])],
+            baseline=dict(login=True,albums=1,featureCalls=0),replay=dict(removed=True,applied=False))
+    def test_positive(self):self.assertIsNone(validate_report(self.positive()).first_cause)
+    def test_missing_expected_identity(self):
+        report=self.positive();report['cases'].pop()
+        self.assertEqual('expected-test-not-executed',validate_report(report).first_cause)
+    def test_zero_tests(self):
+        report=self.positive();report['cases']=[]
+        self.assertEqual('expected-test-not-executed',validate_report(report).first_cause)
+    def test_skip_failure_and_error(self):
+        for status in ['skipped','failed','error']:
+            report=self.positive();report['cases'][0]['status']=status
+            self.assertEqual('test-not-passed',validate_report(report).first_cause)
+    def test_wrong_idiom(self):
+        report=self.positive();report['idiom']='pad'
+        self.assertEqual('wrong-device-idiom',validate_report(report).first_cause)
+    def test_unfinalized(self):
+        report=self.positive();report['finalized']=False
+        self.assertEqual('result-not-finalized',validate_report(report).first_cause)
+    def test_armed_is_not_served(self):
+        report=self.positive();report['effects'][0]=dict(scenario='rate-limit',revision=1,armed=True)
+        self.assertEqual('fixture-effect-not-observed',validate_report(report).first_cause)
+    def test_no_scan_or_lost_receipt(self):
+        for index in [1,2]:
+            report=self.positive();report['effects'].pop(index)
+            self.assertEqual('fixture-effect-not-observed',validate_report(report).first_cause)
+    def test_no_positive_navidrome(self):
+        for baseline in [{},dict(login=True,albums=0,featureCalls=0),dict(login=True,albums=1,featureCalls=1)]:
+            report=self.positive();report['baseline']=baseline
+            self.assertEqual('navidrome-positive-control-missing',validate_report(report).first_cause)
+    def test_receipt_replayed(self):
+        report=self.positive();report['replay']={}
+        self.assertEqual('lost-receipt-replay-not-observed',validate_report(report).first_cause)
+
+if __name__=='__main__':unittest.main()

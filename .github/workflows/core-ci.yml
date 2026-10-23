@@ -70,6 +70,17 @@ jobs:
           :core:testAndroidHostTest
           :core:bundleAndroidMainAar
           :core:licensee
+      - name: Build and self-test the Discover fixture
+        timeout-minutes: 10
+        run: |
+          tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg lsof
+          python3 tools/ci/prepare-discover-fixture
+          export DULCET_DISCOVER_NAVIDROME_BIN="$RUNNER_TEMP/discover-bin/navidrome"
+          python3 tools/test-discover-wishlist-fixture --junit build/discover-fixture-junit.xml
+          tools/ci/run-discover-wishlist-proofs --self-test
+          tools/ci/run-discover-wishlist-android --self-test
       - name: Upload core test results
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -411,13 +422,70 @@ jobs:
   # and a skipped required check does not block a merge, and it fails unless every job it needs
   # reports `success`. Only then does it read evidence, so evidence from a job that did not succeed
   # is never read at all.
+  discover-wishlist-android:
+    name: discover-wishlist-android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TZ: UTC
+      DULCET_DISCOVER_ANDROID_OUTPUT: ${{ runner.temp }}/discover-android/native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: platform-tools platforms;android-${{ steps.pins.outputs.compile_sdk }}
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle --timeout=30
+          test -w /dev/kvm
+      - name: Provision the pinned disposable fixture
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg lsof
+          python3 tools/ci/prepare-discover-fixture
+      - name: Build the real app and fixture
+        timeout-minutes: 15
+        run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest
+      - name: Drive Discover and Wishlist through the native phone app
+        timeout-minutes: 25
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-android/fixture" -- tools/ci/run-discover-wishlist-proofs android
+      - name: Upload native proof and captures
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: discover-wishlist-android-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/discover-android
+          if-no-files-found: error
+          retention-days: 14
+
   core-ci:
     name: core-ci
     if: ${{ always() }}
-    needs: [core-build, conformance-env-linux, android-emulator]
+    needs: [core-build, conformance-env-linux, android-emulator, discover-wishlist-android]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
+      DISCOVER_ANDROID_RESULT: ${{ needs.discover-wishlist-android.result }}
       CORE_BUILD_RESULT: ${{ needs.core-build.result }}
       CONFORMANCE_ENV_LINUX_RESULT: ${{ needs.conformance-env-linux.result }}
       ANDROID_EMULATOR_RESULT: ${{ needs.android-emulator.result }}
@@ -428,6 +496,7 @@ jobs:
           echo "core-build=$CORE_BUILD_RESULT"
           echo "conformance-env-linux=$CONFORMANCE_ENV_LINUX_RESULT"
           echo "android-emulator=$ANDROID_EMULATOR_RESULT"
+          test "$DISCOVER_ANDROID_RESULT" = success
           test "$CORE_BUILD_RESULT" = success
           test "$CONFORMANCE_ENV_LINUX_RESULT" = success
           test "$ANDROID_EMULATOR_RESULT" = success

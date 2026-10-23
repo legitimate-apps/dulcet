@@ -7,8 +7,15 @@ import sys
 sys.dont_write_bytecode = True
 from discover_process_owner import ProcessOwner
 p=argparse.ArgumentParser(description=__doc__)
-p.add_argument('mode',choices=['components','sessions','iphone','ipad','mac','macos','android'])
+p.add_argument('--self-test',action='store_true')
+p.add_argument('mode',nargs='?',choices=['components','sessions','iphone','ipad','mac','macos','android'])
 a=p.parse_args()
+if a.self_test:
+    import unittest
+    from test_discover_proof_report import ReportTests
+    result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(ReportTests))
+    sys.exit(0 if result.wasSuccessful() else 1)
+if not a.mode:p.error('mode is required')
 if os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
 if a.mode=='android':
     helper=str(Path(__file__).resolve().parent/'run-discover-wishlist-android')
@@ -80,6 +87,7 @@ def apple_proof(mode):
     threading.Thread(target=capture_server.serve_forever,daemon=True).start()
     owner=ProcessOwner().install()
     lease=None;udid=None;owned_device=False;navigation_log=None;navigation_stream=None
+    hosted=os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('RUNNER_ENVIRONMENT')=='github-hosted'
     monitor_done=threading.Event()
     navigation_ready=threading.Event()
     boot_settled=threading.Event()
@@ -96,7 +104,7 @@ def apple_proof(mode):
             raise
     try:
         host_gate()
-        lease=run(['leg-lease','create','--kind','build' if mode=='macos' else 'build,sim','--session',session,'--project','dulcet','--pid',str(os.getpid()),'--wait','7200'],capture_output=True).stdout.strip()
+        if not hosted:lease=run(['leg-lease','create','--kind','build' if mode=='macos' else 'build,sim','--session',session,'--project','dulcet','--pid',str(os.getpid()),'--wait','7200'],capture_output=True).stdout.strip()
         if mode!='macos':
             udid=os.environ.get('DULCET_DISCOVER_PROOF_UDID')
             if not udid:
@@ -104,6 +112,12 @@ def apple_proof(mode):
                 command=['sim-lease','create','--project','dulcet','--device',device,'--owner-pid',str(os.getpid()),'--purpose',session]
                 if os.environ.get('DULCET_DISCOVER_PROOF_RUNTIME'):command+=['--runtime',os.environ['DULCET_DISCOVER_PROOF_RUNTIME']]
                 owned_device=True
+                if hosted:
+                    inventory=json.loads(run(['xcrun','simctl','list','devices','available','--json'],capture_output=True).stdout)
+                    candidates=[(runtime,d) for runtime,devices in inventory['devices'].items() if '.iOS-' in runtime for d in devices if d['name'].startswith('iPad' if mode=='ipad' else 'iPhone')]
+                    if not candidates:raise RuntimeError('no installed iOS runtime with the requested idiom')
+                    runtime,template=sorted(candidates,key=lambda row:row[0])[-1]
+                    command=['xcrun','simctl','create',session,template['deviceTypeIdentifier'],runtime]
                 udid=run(command,capture_output=True).stdout.strip()
             if not udid:raise RuntimeError('sim-lease returned no device')
             inventory=json.loads(run(['xcrun','simctl','list','devices','--json'],capture_output=True).stdout)
@@ -142,7 +156,8 @@ def apple_proof(mode):
                             os.kill(os.getpid(),signal.SIGTERM)
                             return
                     if monitor_done.wait(15):return
-            threading.Thread(target=monitor,daemon=True).start()
+            if not hosted:threading.Thread(target=monitor,daemon=True).start()
+            else:navigation_ready.set();boot_settled.set()
             # First-boot migration settles before compilation rather than competing with it.
             run(['xcrun','simctl','boot',udid],timeout=60)
             with (output/'bootstatus.log').open('w') as log:
@@ -216,16 +231,25 @@ def apple_proof(mode):
         for capture in list(captures.glob('*.png'))+list(captures.glob('*.jpg')):
             run(['sips','-Z','800','-s','format','jpeg','-s','formatOptions','50',str(capture),'--out',str(capture.with_suffix('.jpg'))],stdout=subprocess.DEVNULL)
             if capture.suffix=='.png':capture.unlink()
-        if completed:
-            print(json.dumps(dict(output=str(output),suite=suite,**completed)))
-            return 1 if completed['failed'] or completed['skipped'] else 0
+        from discover_proof_report import apple_report, validate_report
+        acknowledgements=[json.loads(line) for line in (output/'acknowledgements.jsonl').read_text().splitlines()] if (output/'acknowledgements.jsonl').exists() else []
+        report=apple_report(mode,json.loads(summary),json.loads(tests),acknowledgements,
+            json.loads((output/'fixture-requests.json').read_text()),
+            [selected.rsplit('/',1)[-1]] if '/' in selected else None)
+        verdict=validate_report(report)
+        if report['finalized']:
+            import xml.etree.ElementTree as ET
+            root=ET.Element('testsuite',name=suite,tests=str(len(report['cases'])),failures=str(sum(c['status']=='failed' for c in report['cases'])),errors=str(sum(c['status']=='error' for c in report['cases'])),skipped=str(sum(c['status']=='skipped' for c in report['cases'])))
+            for case in report['cases']:
+                node=ET.SubElement(root,'testcase',classname=suite,name=case['name'])
+                if case['status']!='passed':ET.SubElement(node,'skipped' if case['status']=='skipped' else 'failure').text=case['status']
+            ET.ElementTree(root).write(output/'junit.xml',encoding='utf-8',xml_declaration=True)
+        (output/'validated-report.json').write_text(json.dumps(dict(**report,first_cause=verdict.first_cause),indent=2))
+        if verdict.first_cause:raise RuntimeError(verdict.first_cause)
         counts=json.loads(summary)
-        print(json.dumps(dict(output=str(output),suite=suite,total=counts.get('totalTestCount'),passed=counts.get('passedTests'),failed=counts.get('failedTests'),skipped=counts.get('skippedTests'))))
-        if not counts.get('totalTestCount') or suite not in tests:raise RuntimeError('expected-test-not-executed')
-        if not os.environ.get('DULCET_DISCOVER_ONLY_TEST'):
-            expected=6 if mode=='macos' else 5
-            if counts.get('totalTestCount')!=expected:raise RuntimeError('unexpected-test-count')
-        return code or (1 if counts.get('failedTests') or counts.get('skippedTests') else 0)
+        (output/'counts.json').write_text(json.dumps(dict(total=counts['totalTestCount'],passed=counts['passedTests'],failed=counts['failedTests'],skipped=counts['skippedTests'],finalized=True),indent=2))
+        print(json.dumps(dict(output=str(output),suite=suite,**counts)))
+        return code
     finally:
         monitor_done.set()
         owner.stop_children()
@@ -237,17 +261,17 @@ def apple_proof(mode):
         if navigation_log:navigation_log.close()
         try:
             # TERM can land after create wrote the registry but before stdout was consumed.
-            if owned_device and not udid:
+            if owned_device and not udid and not hosted:
                 leases=subprocess.run(['sim-lease','list','--json'],capture_output=True,text=True,timeout=30)
                 if leases.returncode==0:
                     udid=next((row['udid'] for row in json.loads(leases.stdout) if row.get('purpose')==session and row.get('owner_pid')==os.getpid()),None)
             if udid:
                 try:subprocess.run(['xcrun','simctl','shutdown',udid],check=False,timeout=60)
                 finally:
-                    if owned_device:subprocess.run(['sim-lease','release','--force',udid],check=False,timeout=60)
+                    if owned_device:subprocess.run(['xcrun','simctl','delete',udid] if hosted else ['sim-lease','release','--force',udid],check=False,timeout=60)
         finally:
             # The unique session also covers TERM during build-lease acquisition.
-            subprocess.run(['leg-lease','release','--session',session],check=False,timeout=30)
+            if not hosted:subprocess.run(['leg-lease','release','--session',session],check=False,timeout=30)
             owner.close()
 
 if a.mode in {'iphone','ipad','mac','macos'}:sys.exit(apple_proof(a.mode))

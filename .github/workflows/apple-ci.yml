@@ -2730,13 +2730,208 @@ jobs:
   # dispatch both must succeed. On a run that planned every leg it then resolves every apple-ci
   # evidence row against the JUnit the legs uploaded, as `core-ci` does for Android. It runs no
   # Apple tooling, so it takes no macOS runner.
+  # Finite step-2 native proof. Serial dependencies retain the four-slot hosted envelope.
+  discover-wishlist-macos:
+    name: discover-wishlist-macos
+    needs: [apple-plan, apple-platform, apple-conformance-core, apple-conformance-ipad-iphone, discover-wishlist-macos, discover-wishlist-iphone, discover-wishlist-ipad]
+    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    outputs:
+      attempt: ${{ github.run_attempt }}
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      DULCET_DISCOVER_PROOF_OUTPUT: ${{ runner.temp }}/discover-macos/native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      - name: Provision the pinned disposable fixture
+        timeout-minutes: 10
+        run: |
+          tools/conformance-env/prepare-darwin --output "$RUNNER_TEMP/discover-bin"
+          command -v ffmpeg || brew install ffmpeg
+          echo "DULCET_DISCOVER_NAVIDROME_BIN=$RUNNER_TEMP/discover-bin/navidrome" >> "$GITHUB_ENV"
+      - name: Build the fixture and native test framework
+        timeout-minutes: 15
+        run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :core:linkDebugFrameworkMacosArm64
+      - name: Prove runner execution and cleanup controls
+        timeout-minutes: 2
+        run: |
+          tools/ci/run-discover-wishlist-proofs --self-test
+          python3 tools/ci/test_discover_process_owner.py
+          python3 tools/ci/test_discover_simulator_health.py
+      - name: Drive Discover and Wishlist through the native macos app
+        timeout-minutes: 30
+        run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-macos/fixture" -- tools/ci/run-discover-wishlist-proofs macos
+      - name: Stage finalized native parity results
+        run: |
+          mkdir -p "$RUNNER_TEMP/dulcet-discover-macos-junit/"
+          cp "$RUNNER_TEMP/discover-macos/native/junit.xml" "$RUNNER_TEMP/dulcet-discover-macos-junit/"
+      - name: Upload native proof and captures
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: discover-wishlist-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/discover-macos
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload native parity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-parity-evidence-discover-wishlist-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-discover-macos-junit
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Finite step-2 native proof. Serial dependencies retain the four-slot hosted envelope.
+  discover-wishlist-iphone:
+    name: discover-wishlist-iphone
+    needs: [apple-plan, discover-wishlist-macos]
+    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    outputs:
+      attempt: ${{ github.run_attempt }}
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      DULCET_DISCOVER_PROOF_OUTPUT: ${{ runner.temp }}/discover-iphone/native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      - name: Provision the pinned disposable fixture
+        timeout-minutes: 10
+        run: |
+          tools/conformance-env/prepare-darwin --output "$RUNNER_TEMP/discover-bin"
+          command -v ffmpeg || brew install ffmpeg
+          echo "DULCET_DISCOVER_NAVIDROME_BIN=$RUNNER_TEMP/discover-bin/navidrome" >> "$GITHUB_ENV"
+      - name: Build the fixture and native test framework
+        timeout-minutes: 15
+        run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :core:linkDebugFrameworkIosSimulatorArm64
+      - name: Prove runner execution and cleanup controls
+        timeout-minutes: 2
+        run: |
+          tools/ci/run-discover-wishlist-proofs --self-test
+          python3 tools/ci/test_discover_process_owner.py
+          python3 tools/ci/test_discover_simulator_health.py
+      - name: Drive Discover and Wishlist through the native iphone app
+        timeout-minutes: 30
+        run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-iphone/fixture" -- tools/ci/run-discover-wishlist-proofs iphone
+      - name: Stage finalized native parity results
+        run: |
+          mkdir -p "$RUNNER_TEMP/dulcet-discover-iphone-junit/"
+          cp "$RUNNER_TEMP/discover-iphone/native/junit.xml" "$RUNNER_TEMP/dulcet-discover-iphone-junit/"
+      - name: Upload native proof and captures
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: discover-wishlist-iphone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/discover-iphone
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload native parity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-parity-evidence-discover-wishlist-iphone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-discover-iphone-junit
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Finite step-2 native proof. Serial dependencies retain the four-slot hosted envelope.
+  discover-wishlist-ipad:
+    name: discover-wishlist-ipad
+    needs: [apple-plan, discover-wishlist-iphone]
+    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    outputs:
+      attempt: ${{ github.run_attempt }}
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      DULCET_DISCOVER_PROOF_OUTPUT: ${{ runner.temp }}/discover-ipad/native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      - name: Provision the pinned disposable fixture
+        timeout-minutes: 10
+        run: |
+          tools/conformance-env/prepare-darwin --output "$RUNNER_TEMP/discover-bin"
+          command -v ffmpeg || brew install ffmpeg
+          echo "DULCET_DISCOVER_NAVIDROME_BIN=$RUNNER_TEMP/discover-bin/navidrome" >> "$GITHUB_ENV"
+      - name: Build the fixture and native test framework
+        timeout-minutes: 15
+        run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :core:linkDebugFrameworkIosSimulatorArm64
+      - name: Prove runner execution and cleanup controls
+        timeout-minutes: 2
+        run: |
+          tools/ci/run-discover-wishlist-proofs --self-test
+          python3 tools/ci/test_discover_process_owner.py
+          python3 tools/ci/test_discover_simulator_health.py
+      - name: Drive Discover and Wishlist through the native ipad app
+        timeout-minutes: 30
+        run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-ipad/fixture" -- tools/ci/run-discover-wishlist-proofs ipad
+      - name: Stage finalized native parity results
+        run: |
+          mkdir -p "$RUNNER_TEMP/dulcet-discover-ipad-junit/"
+          cp "$RUNNER_TEMP/discover-ipad/native/junit.xml" "$RUNNER_TEMP/dulcet-discover-ipad-junit/"
+      - name: Upload native proof and captures
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: discover-wishlist-ipad-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/discover-ipad
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload native parity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-parity-evidence-discover-wishlist-ipad-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-discover-ipad-junit
+          if-no-files-found: warn
+          retention-days: 14
+
   apple-ci:
     name: apple-ci
     if: ${{ always() }}
-    needs: [apple-plan, apple-platform, apple-conformance-core, apple-conformance-ipad-iphone]
+    needs: [apple-plan, apple-platform, apple-conformance-core, apple-conformance-ipad-iphone, discover-wishlist-macos, discover-wishlist-iphone, discover-wishlist-ipad]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
+      DISCOVER_MACOS_RESULT: ${{ needs.discover-wishlist-macos.result }}
+      DISCOVER_IPHONE_RESULT: ${{ needs.discover-wishlist-iphone.result }}
+      DISCOVER_IPAD_RESULT: ${{ needs.discover-wishlist-ipad.result }}
       APPLE_PLAN_RESULT: ${{ needs.apple-plan.result }}
       RUN_APPLE_PLATFORM: ${{ needs.apple-plan.outputs.platform }}
       RUN_APPLE_CONFORMANCE: ${{ needs.apple-plan.outputs.conformance }}
@@ -2757,10 +2952,31 @@ jobs:
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_PLATFORM" "$APPLE_PLATFORM_RESULT"
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_CORE_RESULT"
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$DISCOVER_MACOS_RESULT"
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$DISCOVER_IPHONE_RESULT"
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$DISCOVER_IPAD_RESULT"
           echo "APPLE CI LEGS PASS apple-platform=$APPLE_PLATFORM_RESULT apple-conformance-core=$APPLE_CONFORMANCE_CORE_RESULT apple-conformance-ipad-iphone=$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
       # Evidence is resolved only on a run that planned every leg: push to main, a manual dispatch,
       # and so before any release (release.yml requires this run green on the commit it ships). A
       # pull request runs no conformance job, so its FEATURES.yml citations are resolved after merge.
+      - name: Download macos Discover parity evidence
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-apple-parity-evidence-discover-wishlist-macos-${{ github.run_id }}-${{ needs.discover-wishlist-macos.outputs.attempt }}
+          path: ${{ runner.temp }}
+      - name: Download iphone Discover parity evidence
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-apple-parity-evidence-discover-wishlist-iphone-${{ github.run_id }}-${{ needs.discover-wishlist-iphone.outputs.attempt }}
+          path: ${{ runner.temp }}
+      - name: Download ipad Discover parity evidence
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-apple-parity-evidence-discover-wishlist-ipad-${{ github.run_id }}-${{ needs.discover-wishlist-ipad.outputs.attempt }}
+          path: ${{ runner.temp }}
       - name: Report whether this run resolves evidence
         run: |
           if [ "$RUN_APPLE_PLATFORM" = true ] && [ "$RUN_APPLE_CONFORMANCE" = true ]; then
@@ -2935,4 +3151,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-my-library-junit" \
             "$RUNNER_TEMP/dulcet-iphone-my-library-junit" \
             "$RUNNER_TEMP/dulcet-ipad-my-library-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-download-handoff-junit"
+            "$RUNNER_TEMP/dulcet-ipados-download-handoff-junit" \
+            "$RUNNER_TEMP/dulcet-discover-ipad-junit" \
+            "$RUNNER_TEMP/dulcet-discover-iphone-junit" \
+            "$RUNNER_TEMP/dulcet-discover-macos-junit"

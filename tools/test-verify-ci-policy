@@ -1971,3 +1971,17 @@ release_case("release.yml with no cancellation policy", "release.yml",
              "  workflow_dispatch:", "", False)
 assert len(release_cases_run) == EXPECTED_RELEASE_CASES, release_cases_run
 print(f"Release cancellation exemption controls passed: {len(release_cases_run)}/{EXPECTED_RELEASE_CASES}")
+
+# A serial tail must not widen the four-slot hosted envelope. Exercise the production calculation.
+capacity_ast=next(n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='max_concurrent_macos_slots')
+capacity_namespace={}
+exec(compile(ast.Module(body=[capacity_ast],type_ignores=[]),str(VERIFIER),'exec'),capacity_namespace)
+capacity=capacity_namespace['max_concurrent_macos_slots']
+weights={'platform':1,'core':1,'devices':2,'mac':1,'phone':1,'pad':1}
+dependencies={'mac':{'platform','core','devices'},'phone':{'mac'},'pad':{'phone'}}
+assert capacity(dependencies,weights)==4
+assert capacity({},weights)==7
+assert capacity({'mac':{'platform','core','devices'},'phone':{'mac'},'pad':{'linux'},'linux':{'phone'}},weights)==4
+assert capacity({'mac':{'platform'},'phone':{'mac'},'pad':{'phone'}},weights)==4
+assert capacity({'phone':{'mac'},'pad':{'phone'}},weights)==5
+print('Hosted macOS capacity controls passed: 5/5 cases, serial tails, matrix weights and transitive paths')

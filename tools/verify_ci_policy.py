@@ -1238,6 +1238,22 @@ APPLE_AGGREGATOR = "apple-ci"
 # account (5 on the Free, Pro and Team plans): main's post-merge run takes four slots and a pull
 # request's fast check one. A fifth is a spec change that lands in §21.5 first, then here.
 MAX_APPLE_MACOS_JOBS = 4
+
+def max_concurrent_macos_slots(dependencies, weights):
+    """Maximum weighted antichain: dependency paths serialize jobs, including through Linux."""
+    from itertools import combinations
+    def ancestors(name, seen=frozenset()):
+        if name in seen:return set()
+        parents = dependencies.get(name, set())
+        return parents | set().union(*(ancestors(p, seen | {name}) for p in parents))
+    upstream = {name: ancestors(name) for name in weights}
+    return max((sum(weights[n] for n in group)
+                for size in range(len(weights) + 1)
+                for group in combinations(weights, size)
+                if all(a not in upstream[b] and b not in upstream[a]
+                       for a, b in combinations(group, 2))), default=0)
+
+
 def apple_matrix_values(job_lines: list[str]) -> dict[str, list[str]] | str | None:
     """An Apple leg's matrix as {key: [values]}, None for a leg without one, or why it is not read.
 
@@ -1277,7 +1293,9 @@ if apple_ci:
         values = apple_matrix_values(apple_lines[start + 1:end])
         return len(next(iter(values.values()))) if isinstance(values, dict) else 1
 
-    slots = sum(macos_slots(name) for name in macos_jobs)
+    dependencies = {name: set(listed(job_properties(apple_lines, *span).get("needs")))
+                    for name, span in apple_jobs.items()}
+    slots = max_concurrent_macos_slots(dependencies, {n: macos_slots(n) for n in macos_jobs})
     if slots > MAX_APPLE_MACOS_JOBS:
         errors.append(
             f"{apple_ci_path}: {slots} macOS slots across {macos_jobs}; at most "
