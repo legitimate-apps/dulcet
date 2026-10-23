@@ -35,7 +35,9 @@ public object AndroidServerIdentity {
         val store = DulcetDriverFactory(context.applicationContext).openDulcetDatabase()
         try {
             val identities = ServerIdentityStore(store.database)
-            if (identities.read(id).isEmpty()) identities.accept(id, identity)
+            store.database.transaction {
+                if (identities.read(id).isEmpty()) identities.accept(id, identity)
+            }
             seeded += id
         } finally { store.close() }
     }
