@@ -10,7 +10,9 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('mode',choices=['components','sessions','iphone','ipad','mac','macos','android'])
 a=p.parse_args()
 if os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
-if a.mode=='android':p.error('native proof mode awaits its shell task; no UI result is synthesized')
+if a.mode=='android':
+    helper=str(Path(__file__).resolve().parent/'run-discover-wishlist-android')
+    os.execv(helper,[helper])
 repo=Path(__file__).resolve().parents[2]
 def completed_native_report(bundle, suite, selected, output):
     """Convert only a complete XCTest transcript; never infer execution from a build exit."""

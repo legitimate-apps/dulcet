@@ -70,6 +70,8 @@ class LoopbackLibraryServer : AutoCloseable {
     @Volatile var dulcetLibrary = false
     /** Optional Home feed, with mutable recent playlists for offscreen refresh proofs. */
     @Volatile var dulcetHome = false
+    /** Advertise phone extensions to detect accidental eager feature composition on TV. */
+    @Volatile var dulcetDiscoverWishlist = false
     @Volatile var homePlaylists: List<Pair<String, String>> = emptyList()
 
     private val libraryAlbumIds = LinkedHashMap<String, Long>()
@@ -169,6 +171,7 @@ class LoopbackLibraryServer : AutoCloseable {
             "getStarred2" -> """"starred2":{}"""
             "getOpenSubsonicExtensions" -> listOfNotNull(
                 "dulcetLibrary".takeIf { dulcetLibrary }, "dulcetHome".takeIf { dulcetHome },
+                "dulcetDiscover".takeIf { dulcetDiscoverWishlist }, "dulcetWishlist".takeIf { dulcetDiscoverWishlist },
             ).takeIf { it.isNotEmpty() }?.joinToString(",", "\"openSubsonicExtensions\":[", "]") {
                 """{"name":${quote(it)},"versions":[1]}"""
             }
