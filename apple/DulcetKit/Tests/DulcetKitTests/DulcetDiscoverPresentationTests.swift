@@ -25,14 +25,23 @@ import Testing
         let future = DulcetDiscoverItem(id: "b", kind: "future", title: "Unknown", availability: .init(status: "future", completeness: "unknown"))
         #expect(DulcetDiscoverItemPresentation(item: future).libraryReferences.isEmpty)
         #expect(!DulcetDiscoverItemPresentation(item: future).canWish)
+        let track = DulcetDiscoverItem(id: "track", kind: "song", title: "Track", availability: .init(status: "notHeld", completeness: "unknown"))
+        let destination = DulcetDiscoverDestination(item: track, source: .init(type: "album", id: "parent-album"))
+        if case let .item(_, source) = destination { #expect(source == .init(type: "album", id: "parent-album")) }
+        else { Issue.record("A track retains its source page") }
     }
     @Test func editionSelectionCancelsOldPage() {
-        let selection = DulcetDiscoverDetailSelection()
-        let old = selection.begin()
-        let current = selection.begin()
-        #expect(!selection.accepts(old))
-        #expect(selection.accepts(current))
-        selection.close()
-        #expect(!selection.accepts(current))
+        let source = DiscoverProofReader()
+        let detail = DulcetDiscoverDetailModel(reader: source)
+        detail.loadAlbum("group", releaseId: "old")
+        detail.loadAlbum("group", releaseId: "selected")
+        #expect(source.albumCancellationCount == 1)
+        let item = DulcetDiscoverItem(id: "album", kind: "album", title: "Album", availability: .init(status: "unknown", completeness: "unknown"))
+        source.albumCompletions[1](.success(.init(item: item, selectedReleaseId: "selected", tracks: .init(items: [], age: .init(receivedAt: .now)))))
+        source.albumCompletions[0](.success(.init(item: item, selectedReleaseId: "old", tracks: .init(items: [], age: .init(receivedAt: .now)))))
+        #expect(detail.album?.selectedReleaseId == "selected")
+        detail.close()
+        source.albumCompletions[1](.success(.init(item: item, selectedReleaseId: "closed", tracks: .init(items: [], age: .init(receivedAt: .now)))))
+        #expect(detail.album?.selectedReleaseId == "selected")
     }
 }

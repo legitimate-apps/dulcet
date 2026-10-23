@@ -401,4 +401,5 @@ public extension DulcetLibrarySession {
 /// through the existing catalog reader. No external id is interpreted as a Library id.
 @MainActor public protocol DulcetDiscoverLibraryMetadataProviding: AnyObject {
     func title(for reference: DulcetDiscoverLibraryRef) -> String?
+    func item(for target: DulcetDiscoverTarget) -> DulcetDiscoverItem?
 }

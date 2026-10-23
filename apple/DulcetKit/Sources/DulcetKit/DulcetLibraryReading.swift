@@ -407,6 +407,9 @@ public final class DulcetLibrarySession {
                       self.account?.providerInstanceID == publication.providerInstanceId else { return }
                 self.discoverPublication = publication
             }
+            // The child begins unresolved. Its first refresh negotiates extensions before any
+            // feature endpoint; absent extensions stop in the core without a Wishlist request.
+            discover.refreshWishlist(.init())
         }
 #endif
         myLibrary = DulcetMyLibrarySnapshot()

@@ -2307,11 +2307,16 @@ extension DulcetPresentationStore {
         let id = DulcetProviderItemID(providerInstanceID: reference.providerInstanceId, rawID: reference.id)
         discoverLibrarySearch?.close(); discoverLibrarySearch = nil
         switch reference.type {
-        case "album": showReaderPage(.album(id))
-        case "artist": showReaderPage(.artist(id))
+        case "album":
+            DulcetUIProofMarkers.record("discover-library:\(id.providerInstanceID):album:\(id.rawID)")
+            showReaderPage(.album(id))
+        case "artist":
+            DulcetUIProofMarkers.record("discover-library:\(id.providerInstanceID):artist:\(id.rawID)")
+            showReaderPage(.artist(id))
         case "song":
             (session.reader as? any DulcetMyLibraryReading)?.refreshMyLibrary()
             if let track = session.myLibrary.songs.first(where: { $0.id == id })?.playableTrack {
+                DulcetUIProofMarkers.record("discover-play:\(track.id.providerInstanceID):\(track.id.rawID)")
                 playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
                 return
             }
@@ -2328,6 +2333,7 @@ extension DulcetPresentationStore {
                 if let row = publication.rows.first(where: { $0.id == id }), !row.isUnavailableOffline,
                    let track = row.result.playableTrack {
                     finished = true; self.discoverLibrarySearch?.close(); self.discoverLibrarySearch = nil
+                    DulcetUIProofMarkers.record("discover-play:\(track.id.providerInstanceID):\(track.id.rawID)")
                     self.playReaderTracks([track], sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
                 } else if publication.scope != .deviceWhileServerPending {
                     finished = true; self.discoverLibrarySearch?.close(); self.discoverLibrarySearch = nil

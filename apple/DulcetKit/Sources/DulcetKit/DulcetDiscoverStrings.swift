@@ -39,7 +39,7 @@ extension DulcetStrings {
         dynamicFormatted("discover.discoverPartial", fallback: "%ld of %ld here", count, total)
     }
     static func discoverBusy(_ seconds: Int) -> String {
-        dynamicFormatted("discover.discoverBusy", fallback: "MusicBrainz is busy. Try again in %ld seconds.", seconds)
+        dynamicFormatted("discover.discoverBusy", fallback: "Server is busy. Try again in %ld seconds.", seconds)
     }
     static func discoverAge(_ prefix: String, _ seconds: Int64) -> String {
         dynamicFormatted("discover.discoverAge", fallback: "%@ · %@ seconds old", prefix, String(seconds))

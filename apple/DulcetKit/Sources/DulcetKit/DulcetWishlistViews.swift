@@ -31,6 +31,7 @@ public struct DulcetWishlistView: View {
                 List {
                     ForEach(publication.wishes, id: \.key) { row in
                         wishRow(row)
+                            .accessibilityElement(children: .contain)
                             .accessibilityIdentifier("wishlist.row.\(row.key)")
                             .contextMenu { remove(row) }
 #if os(iOS)
@@ -40,6 +41,7 @@ public struct DulcetWishlistView: View {
                 }.listStyle(.plain)
             } else { ProgressView().accessibilityLabel(DulcetStrings.wishlistLoading) }
         }
+        .buttonStyle(.borderless)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.wishlist)
         .navigationDestination(for: DulcetDiscoverDestination.self) { destination in
@@ -90,6 +92,12 @@ public struct DulcetWishlistView: View {
             if let ref = presentation.arrival {
                 Button(DulcetStrings.wishlistArrived, systemImage: "play.circle") { openLibrary(ref) }
                     .accessibilityIdentifier("wishlist.arrival")
+            }
+            if model.publication?.access.canRejectMatch == true, let wish = row.wish, let target = wish.target,
+               let item = (model.reader as? any DulcetDiscoverLibraryMetadataProviding)?.item(for: target),
+               let ref = wish.libraryItem ?? wish.availability.libraryItems.first {
+                Button(DulcetStrings.discoverReject) { model.reject(item, ref: ref, wishId: wish.id) }
+                    .accessibilityIdentifier("wishlist.reject")
             }
             remove(row)
         }.padding(.vertical, DulcetSpacing.xs)

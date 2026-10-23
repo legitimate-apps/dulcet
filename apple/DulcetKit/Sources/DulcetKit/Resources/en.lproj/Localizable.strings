@@ -523,7 +523,7 @@
 "discover.wishlistAll" = "All";
 "discover.discoverLookupUnavailable" = "This item is not available in the current Library view. Open its album in Library to play it.";
 "discover.discoverPartial" = "%ld of %ld here";
-"discover.discoverBusy" = "MusicBrainz is busy. Try again in %ld seconds.";
+"discover.discoverBusy" = "Server is busy. Try again in %ld seconds.";
 "discover.discoverAge" = "%@ · %@ seconds old";
 "discover.discoverAgeUnknown" = "%@ · age unavailable";
 "discover.discoverOpenLink" = "Open %@";

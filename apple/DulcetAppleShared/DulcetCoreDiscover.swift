@@ -278,6 +278,7 @@ extension DulcetCoreLibraryReader: DulcetDiscoverProviding {
     func title(for reference: DulcetDiscoverLibraryRef) -> String? {
         items.keys.first { $0.availability.libraryItems.contains(reference) }?.title
     }
+    func item(for target: DulcetDiscoverTarget) -> DulcetDiscoverItem? { items.keys.first { $0.target == target } }
     init(reader: AppleLibraryReaderClient) { client = AppleDiscoverClient(reader: reader) }
     private func remember(_ item: AppleDiscoverItem) { items[DulcetDiscoverItem(copy: item)] = item }
     private func remember(_ page: AppleDiscoverPage) {

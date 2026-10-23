@@ -11,12 +11,12 @@ public enum DulcetDiscoverSearchScope: String, CaseIterable, Sendable {
 public enum DulcetDiscoverDestination: Hashable, Sendable {
     case artist(mbid: String)
     case album(mbid: String, releaseId: String?)
-    case item(DulcetDiscoverItem)
-    public init(item: DulcetDiscoverItem) {
+    case item(DulcetDiscoverItem, source: DulcetWishSource)
+    public init(item: DulcetDiscoverItem, source: DulcetWishSource? = nil) {
         switch item.target?.kind {
         case "artist": self = .artist(mbid: item.target!.mbid)
         case "album": self = .album(mbid: item.target!.mbid, releaseId: nil)
-        default: self = .item(item)
+        default: self = .item(item, source: source ?? .init(type: "search", id: item.id))
         }
     }
 }

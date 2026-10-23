@@ -43,7 +43,7 @@ public struct DulcetDiscoverSearchView: View {
                                     if group.loading { ProgressView().accessibilityLabel(DulcetStrings.loadingMore) }
                                 }
                             }
-                            if !query.isEmpty, publication.groups.allSatisfy({ !$0.loading && $0.error == nil && $0.page != nil && $0.page?.items.isEmpty == true }) {
+                            if !query.isEmpty, !publication.groups.isEmpty, publication.query == query.trimmingCharacters(in: .whitespacesAndNewlines), publication.groups.allSatisfy({ !$0.loading && $0.error == nil && $0.page != nil && $0.page?.items.isEmpty == true }) {
                                 Text(DulcetStrings.discoverNoResults).dulcetForeground(.secondaryTextOnWindow)
                             }
                         } else { ProgressView() }
@@ -89,16 +89,26 @@ struct DulcetDiscoverItemRow: View {
 struct DulcetDiscoverStatusView: View {
     let status: DulcetDiscoverStatus
     var retry: () -> Void
+    @State private var clock = Date.distantPast
+    private var current: DulcetDiscoverStatus {
+        .init(age: status.age, error: status.error, connection: status.connection, now: max(clock, status.now))
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-            if let age = status.ageText { Text(age).font(.caption).accessibilityIdentifier("discover.age") }
-            if let notice = status.notice { Text(notice).font(.callout).accessibilityIdentifier("discover.notice") }
+            if let age = current.ageText { Text(age).font(.caption).accessibilityIdentifier("discover.age") }
+            if let notice = current.notice { Text(notice).font(.callout).accessibilityIdentifier("discover.notice") }
             if status.error?.retryable == true {
-                Button(DulcetStrings.readerTryAgain, action: retry).disabled(!status.canRetry).accessibilityIdentifier("discover.retry")
+                Button(DulcetStrings.readerTryAgain, action: retry).disabled(!current.canRetry).accessibilityIdentifier("discover.retry")
             }
         }
         .dulcetForeground(.secondaryTextOnWindow)
         .fixedSize(horizontal: false, vertical: true)
+        .task(id: status.error?.retryAt) {
+            guard let deadline = status.error?.retryAt else { return }
+            // Wake only at the server deadline. No animation/polling keeps native input idle.
+            try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+            if !Task.isCancelled { clock = .now }
+        }
     }
 }
 
@@ -114,7 +124,7 @@ struct DulcetDiscoverDetailView: View {
         self.destination = destination; self.openLibrary = openLibrary
     }
     private var item: DulcetDiscoverItem? {
-        switch destination { case .artist: detail.artist?.item; case .album: detail.album?.item; case let .item(item): item }
+        switch destination { case .artist: detail.artist?.item; case .album: detail.album?.item; case let .item(item, _): item }
     }
     var body: some View {
         ScrollView {
@@ -126,7 +136,8 @@ struct DulcetDiscoverDetailView: View {
                     if let artist = item.artist { Text(verbatim: artist).font(.title3).dulcetForeground(.secondaryTextOnWindow) }
                     if let year = item.year { Text(year.formatted(.number.grouping(.never))).font(.subheadline).dulcetForeground(.secondaryTextOnWindow) }
                     Text(DulcetDiscoverItemPresentation(item: item).availabilityText).font(.callout)
-                    DulcetDiscoverWishActions(model: model, item: item, source: .init(type: sourceType, id: item.id), openLibrary: openLibrary)
+                    DulcetDiscoverWishActions(model: model, item: item, source: wishSource(item), openLibrary: openLibrary)
+                        .disabled(detail.loading)
                     if let error = model.mutationError, error.code != "cancelled" { Text(DulcetStrings.discoverNotSaved).accessibilityIdentifier("discover.save-error") }
                     ForEach(safeLinks(item.links), id: \.url) { link in
                         Button(DulcetStrings.discoverOpenLink(link.relation)) { if let url = URL(string: link.url) { openURL(url) } }
@@ -175,13 +186,17 @@ struct DulcetDiscoverDetailView: View {
         .onDisappear { model.close(); detail.close() }
     }
     private var sourceType: String {
-        switch destination { case .artist: "artist"; case .album: "album"; case .item: "search" }
+        switch destination { case .artist: "artist"; case .album: "album"; case let .item(_, source): source.type }
+    }
+    private func wishSource(_ item: DulcetDiscoverItem) -> DulcetWishSource {
+        if case let .item(_, source) = destination { return source }
+        return .init(type: sourceType, id: item.id)
     }
     private func safeLinks(_ links: [DulcetDiscoverLink]) -> [DulcetDiscoverLink] {
         links.filter { URL(string: $0.url).map { $0.scheme?.lowercased() == "https" && $0.host != nil && $0.user == nil && $0.password == nil } ?? false }
     }
     private func detailLink(_ item: DulcetDiscoverItem) -> some View {
-        NavigationLink(value: DulcetDiscoverDestination(item: item)) { DulcetDiscoverItemRow(item: item, reader: model.reader) }
+        NavigationLink(value: DulcetDiscoverDestination(item: item, source: .init(type: sourceType, id: self.item?.id))) { DulcetDiscoverItemRow(item: item, reader: model.reader) }
             .buttonStyle(.plain).accessibilityIdentifier("discover.item.\(item.id)")
             .accessibilityLabel(item.title + ", " + DulcetDiscoverItemPresentation(item: item).availabilityText)
     }
