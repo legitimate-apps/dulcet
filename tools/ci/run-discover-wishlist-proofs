@@ -15,7 +15,7 @@ def completed_native_report(bundle, suite, selected, output):
     import re
     import xml.etree.ElementTree as ET
     expected=['testEverywhereQueryPagesAndHeldRouting','testOfflineWishRelaunchRemoveAndScanArrival','testBusyStaleAndNavidromeControl','testAccountSwitchAndIdentityReplacementFence']
-    if suite.endswith('MacUITests'):expected+=['testMacKeyboardSearchSidebarAndContextRemove','testMacWindowClosureDropsPendingNavigation']
+    if suite.endswith('MacUITests') or suite=='DulcetMacDiscoverWishlistAppTest':expected+=['testMacKeyboardSearchSidebarAndContextRemove','testMacWindowClosureDropsPendingNavigation']
     elif suite.endswith('IPadUITests'):expected+=['testIPadSidebarSelectionSurvivesWishlistDetailAndResize']
     else:expected+=['testIPhoneLargestTextAndVoiceOverLabels']
     if '/' in selected:expected=[selected.rsplit('/',1)[-1]]
@@ -93,8 +93,8 @@ def apple_proof(mode):
         if udid:
             navigation_log=(output/'navigation-unified.log').open('w')
             navigation_stream=subprocess.Popen(['xcrun','simctl','spawn',udid,'log','stream','--style','compact','--level','debug','--predicate','subsystem == "com.dulcet.navigation" OR eventMessage CONTAINS "navigationDestination" OR eventMessage CONTAINS "NavigationLink is presenting"'],stdout=navigation_log,stderr=subprocess.STDOUT)
-        target='DulcetDiscoverMacUITests'  if mode=='macos' else 'DulcetiOSUITests'
-        suite={'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetDiscoverWishlistMacUITests'}[mode]
+        target='DulcetMacTests' if mode=='macos' else 'DulcetiOSUITests'
+        suite={'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetMacDiscoverWishlistAppTest'}[mode]
         # Test products must live on the internal volume: Xcode 27 silently executes zero
         # XCUITests from external DerivedData. Result bundles/captures stay with the report.
         derived=Path(tempfile.gettempdir())/('dulcet-discover-'+mode)
@@ -106,6 +106,11 @@ def apple_proof(mode):
         env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
         selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
         command=['xcodebuild','test','-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
+        if mode=='macos':
+            command += ['-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','180']
+            for key in ['SERVER_URL','NAVIDROME_URL','CONTROL_URL','USERNAME','PASSWORD','OTHER_USERNAME','OTHER_PASSWORD','DISPOSABLE']:
+                command.append('DULCET_TEST_DISCOVER_'+key+'='+os.environ['DULCET_DISCOVER_'+key])
+            command.append('DULCET_TEST_DISCOVER_CAPTURE_UPLOAD_URL=http://127.0.0.1:'+str(capture_server.server_address[1]))
         (output/'invocation.json').write_text(json.dumps(dict(mode=mode,suite=suite,udid=udid,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()),indent=2))
         import time
         import signal
@@ -119,7 +124,7 @@ def apple_proof(mode):
                 # Xcode 27 can idle for many minutes after the final suite record. The actual
                 # named XCTest outcomes above form JUnit; screenshots are separate artifacts.
                 # Interrupt only this completed invocation. An incomplete/zero suite never qualifies.
-                if completed_at is not None and time.monotonic()-completed_at>30:
+                if completed_at is not None and time.monotonic()-completed_at>120:
                     process.send_signal(signal.SIGINT);interrupted=True;break
                 time.sleep(1)
             try:code=process.wait(timeout=15 if interrupted else None)

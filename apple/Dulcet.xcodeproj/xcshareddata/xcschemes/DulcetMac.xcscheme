@@ -80,17 +80,6 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "F326A9BC2A6660A543E68C33"
-               BuildableName = "DulcetDiscoverMacUITests.xctest"
-               BlueprintName = "DulcetDiscoverMacUITests"
-               ReferencedContainer = "container:Dulcet.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
                BlueprintIdentifier = "BAC15431FAE29AC4A7F630CC"
                BuildableName = "DulcetPlaybackIntegrationTests.xctest"
                BlueprintName = "DulcetPlaybackIntegrationTests"
@@ -101,6 +90,51 @@
       <CommandLineArguments>
       </CommandLineArguments>
       <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "DULCET_DISCOVER_SERVER_URL"
+            value = "$(DULCET_TEST_DISCOVER_SERVER_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_DISCOVER_NAVIDROME_URL"
+            value = "$(DULCET_TEST_DISCOVER_NAVIDROME_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_DISCOVER_CONTROL_URL"
+            value = "$(DULCET_TEST_DISCOVER_CONTROL_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_DISCOVER_USERNAME"
+            value = "$(DULCET_TEST_DISCOVER_USERNAME)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_DISCOVER_PASSWORD"
+            value = "$(DULCET_TEST_DISCOVER_PASSWORD)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_DISCOVER_OTHER_USERNAME"
+            value = "$(DULCET_TEST_DISCOVER_OTHER_USERNAME)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_DISCOVER_OTHER_PASSWORD"
+            value = "$(DULCET_TEST_DISCOVER_OTHER_PASSWORD)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_DISCOVER_DISPOSABLE"
+            value = "$(DULCET_TEST_DISCOVER_DISPOSABLE)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_DISCOVER_CAPTURE_UPLOAD_URL"
+            value = "$(DULCET_TEST_DISCOVER_CAPTURE_UPLOAD_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
          <EnvironmentVariable
             key = "DULCET_CONFORMANCE_BASE_URL"
             value = "$(DULCET_TEST_CONFORMANCE_BASE_URL)"
