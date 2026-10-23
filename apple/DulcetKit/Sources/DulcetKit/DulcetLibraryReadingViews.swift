@@ -1338,7 +1338,7 @@ struct DulcetReaderHomeView: View {
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
             }
 #if !os(tvOS)
-            if store.selectedDestination == .library, store.librarySession?.discoverPublication?.access.canReadWishlist == true {
+            if store.selectedDestination == .library, store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
                 DulcetReaderHomeLink(title: DulcetStrings.wishlist, symbolName: "bookmark", identifier: "wishlist.destination") { store.pushReaderPage(.wishlist) }
             }
 #endif

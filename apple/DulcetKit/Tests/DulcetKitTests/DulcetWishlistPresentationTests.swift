@@ -55,6 +55,13 @@ import Testing
         #expect(DulcetWishlistPresentation(access: access).canRemove)
         #expect(!DulcetWishlistPresentation(access: access).canAdd)
     }
+    @Test func failedRedetectionKeepsAdvertisedWishlistVisibleWithoutAuthorizingCommands() {
+        let access = DulcetDiscoverFeatureAccess(detection: "unresolved", error: .init(code: "offline", retryable: true), wishlistAvailable: true)
+        let presentation = DulcetWishlistPresentation(access: access)
+        #expect(presentation.showsDestination)
+        #expect(!presentation.canRead && !presentation.canAdd && !presentation.canRemove)
+        #expect(!DulcetWishlistPresentation(access: .init(detection: "known")).showsDestination)
+    }
     @Test func permanentSaveFailureIsVisibleAndRollsBackIcon() {
         let source = DiscoverProofReader(); let model = DulcetDiscoverModel(reader: source); model.open()
         let item = DulcetDiscoverItem(id: "song", kind: "song", target: .init(kind: "song", mbid: "mbid"), title: "Song", wishable: true, availability: .init(status: "notHeld", completeness: "unknown"))

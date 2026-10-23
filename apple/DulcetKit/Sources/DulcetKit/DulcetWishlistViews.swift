@@ -22,7 +22,7 @@ public struct DulcetWishlistView: View {
                     .accessibilityIdentifier("wishlist.refresh")
             }.padding(.horizontal, DulcetSpacing.md)
             if let publication = model.publication {
-                DulcetDiscoverStatusView(status: .init(age: nil, error: publication.wishlistError, connection: publication.connection), retry: refresh)
+                DulcetDiscoverStatusView(status: .init(age: nil, error: publication.access.error ?? publication.wishlistError, connection: publication.connection), retry: refresh)
                     .padding(.horizontal, DulcetSpacing.md)
                 if let error = model.mutationError, error.code != "cancelled" { Text(DulcetStrings.discoverNotSaved).accessibilityIdentifier("wishlist.save-error") }
                 if publication.wishlistLoading { ProgressView().accessibilityLabel(DulcetStrings.wishlistLoading) }
@@ -112,7 +112,7 @@ public struct DulcetWishlistView: View {
 struct DulcetWishlistDestinationView: View {
     @Environment(DulcetPresentationStore.self) private var store
     var body: some View {
-        if let session = store.librarySession, let reader = session.discover, session.discoverPublication?.access.canReadWishlist == true {
+        if let session = store.librarySession, let reader = session.discover, session.discoverPublication?.access.showsWishlistDestination == true {
             DulcetWishlistView(reader: reader, openLibrary: store.openDiscoverLibrary, openMetadata: { store.pushReaderPage(.discover($0)) })
                 .id(session.readerGeneration)
         }

@@ -1,8 +1,14 @@
 import Foundation
 
+public extension DulcetDiscoverFeatureAccess {
+    /// A failed redetection disables requests, while the advertised feature keeps its cached page.
+    var showsWishlistDestination: Bool { wishlistAvailable }
+}
+
 public struct DulcetWishlistPresentation: Sendable {
     public let access: DulcetDiscoverFeatureAccess
     public init(access: DulcetDiscoverFeatureAccess) { self.access = access }
+    public var showsDestination: Bool { access.showsWishlistDestination }
     public var canRead: Bool { access.canReadWishlist }
     public var canRemove: Bool { access.canRemoveWish }
     public var canAdd: Bool { access.canAddWish }

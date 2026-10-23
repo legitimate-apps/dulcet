@@ -880,7 +880,7 @@ private struct DulcetSidebar: View {
                     if destinations.contains(.library) {
                         sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
                     }
-                    if destinations.contains(.library), store.librarySession?.discoverPublication?.access.canReadWishlist == true {
+                    if destinations.contains(.library), store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
                     Section {
                         Label(DulcetStrings.wishlist, systemImage: "bookmark")
                             .tag(DulcetSidebarSelection.wishlist)
