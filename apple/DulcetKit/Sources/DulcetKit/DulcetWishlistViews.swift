@@ -5,8 +5,9 @@ public struct DulcetWishlistView: View {
     @State private var model: DulcetDiscoverModel
     @State private var filter = DulcetWishFilter()
     private let openLibrary: (DulcetDiscoverLibraryRef) -> Void
-    public init(reader: any DulcetDiscoverReading, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void) {
-        _model = State(initialValue: DulcetDiscoverModel(reader: reader)); self.openLibrary = openLibrary
+    private let openMetadata: (DulcetDiscoverDestination) -> Void
+    public init(reader: any DulcetDiscoverReading, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void, openMetadata: @escaping (DulcetDiscoverDestination) -> Void) {
+        _model = State(initialValue: DulcetDiscoverModel(reader: reader)); self.openLibrary = openLibrary; self.openMetadata = openMetadata
     }
     public var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
@@ -44,9 +45,6 @@ public struct DulcetWishlistView: View {
         .buttonStyle(.borderless)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.wishlist)
-        .navigationDestination(for: DulcetDiscoverDestination.self) { destination in
-            DulcetDiscoverDetailView(reader: model.reader, destination: destination, openLibrary: openLibrary)
-        }
         .onAppear { model.open(); refresh() }
         .onDisappear { model.close() }
         .onChange(of: filter) { _, _ in refresh() }
@@ -76,7 +74,8 @@ public struct DulcetWishlistView: View {
                 DulcetDiscoverArtworkView(reader: model.reader, artworkId: presentation.snapshot?.artworkId)
                 VStack(alignment: .leading) {
                     if let destination = presentation.destination, model.publication?.access.discoverAvailable == true {
-                        NavigationLink(value: destination) { Text(verbatim: presentation.snapshot?.title ?? "").font(.headline) }
+                        Button { openMetadata(destination) } label: { Text(verbatim: presentation.snapshot?.title ?? "").font(.headline) }
+                            .accessibilityIdentifier("wishlist.metadata")
                     } else { Text(verbatim: presentation.snapshot?.title ?? "").font(.headline) }
                     if let artist = presentation.snapshot?.artist { Text(verbatim: artist).font(.subheadline) }
                     Text(verbatim: presentation.stateTitle).accessibilityIdentifier("wishlist.state")
@@ -114,7 +113,18 @@ struct DulcetWishlistDestinationView: View {
     @Environment(DulcetPresentationStore.self) private var store
     var body: some View {
         if let session = store.librarySession, let reader = session.discover, session.discoverPublication?.access.canReadWishlist == true {
-            DulcetWishlistView(reader: reader, openLibrary: store.openDiscoverLibrary)
+            DulcetWishlistView(reader: reader, openLibrary: store.openDiscoverLibrary, openMetadata: { store.pushReaderPage(.discover($0)) })
+                .id(session.readerGeneration)
+        }
+    }
+}
+struct DulcetDiscoverReaderDestinationView: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let destination: DulcetDiscoverDestination
+    var body: some View {
+        if let session = store.librarySession, let reader = session.discover {
+            DulcetDiscoverDetailView(reader: reader, destination: destination, openLibrary: store.openDiscoverLibrary,
+                                     openMetadata: { store.pushReaderPage(.discover($0)) })
                 .id(session.readerGeneration)
         }
     }

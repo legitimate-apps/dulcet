@@ -2475,3 +2475,24 @@ func systemSurfacePinnedReplayRevalidatesOpaqueIdentityAndRejectsAnUnpin() async
     do { try await actions.playPinned(provider: "another-account", rawID: "opaque-song", kind: "track"); Issue.record("foreign pin played") }
     catch DulcetSystemActions.Failure.changedAccount {} catch { Issue.record("wrong account error: \(error)") }
 }
+
+#if os(iOS) || os(macOS)
+@Test @MainActor
+func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    store.navigate(to: .library)
+    store.pushReaderPage(.wishlist)
+    let metadata = DulcetReaderRoute.discover(.album(mbid: "external-album", releaseId: "selected-edition"))
+    store.pushReaderPage(metadata)
+    #expect(store.readerPath == [.wishlist, metadata])
+    store.navigate(to: .search)
+    store.navigate(to: .library)
+    #expect(store.readerPath == [.wishlist, metadata], "Changing the shell's column arrangement must retain the stored item and back route")
+    store.goBackInLibrary()
+    #expect(store.readerPath == [.wishlist])
+    #expect(store.canGoBackInLibrary)
+    store.goBackInLibrary()
+    #expect(store.readerPath.isEmpty)
+}
+#endif

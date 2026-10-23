@@ -491,10 +491,10 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         let row = wishRow("Fixture Album 00")
         XCTAssertTrue(row.staticTexts["Waiting to sync"].exists)
         try capture("iPad-Regular-Wishlist")
-        activate(row.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Fixture Album 00")).firstMatch)
+        let pendingKey = row.identifier
+        activate(row.buttons["wishlist.metadata"].firstMatch)
         let album = app.staticTexts["discover.album.title"].firstMatch
         XCTAssertTrue(album.waitForExistence(timeout: 30))
-        let accountMarker = app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label
         let window = app.windows.firstMatch
         let original = window.frame
         // Drag the native iPad window corner; a width assertion prevents rotation alone
@@ -503,11 +503,13 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         corner.press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 590, dy: original.height - 20)))
         XCTAssertLessThanOrEqual(window.frame.width, 600, "Native compact-window resize must occur")
         XCTAssertTrue(album.exists)
-        XCTAssertEqual(app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label, accountMarker)
+        XCTAssertEqual(album.label, "Fixture Album 00")
         try capture("iPad-Compact-Album")
-        let back = app.navigationBars.buttons.firstMatch
+        let back = app.navigationBars.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Wishlist", "Back")).firstMatch
         XCTAssertTrue(back.isHittable); activate(back)
-        XCTAssertTrue(wishRow("Fixture Album 00").staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        let retained = wishRow("Fixture Album 00")
+        XCTAssertTrue(retained.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        XCTAssertEqual(retained.identifier, pendingKey, "The same account's durable pending intent survives resize and Back")
         try capture("iPad-Compact-Wishlist")
         _ = try scenario("normal")
         XCUIDevice.shared.orientation = .portrait

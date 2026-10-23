@@ -1701,6 +1701,7 @@ struct DulcetReaderRouteView: View {
         switch route {
 #if !os(tvOS)
         case .wishlist: DulcetWishlistDestinationView()
+        case let .discover(destination): DulcetDiscoverReaderDestinationView(destination: destination)
 #endif
         case .songs: DulcetLibrarySongsPage(downloaded: false)
         case .downloaded: DulcetLibrarySongsPage(downloaded: true)

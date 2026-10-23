@@ -132,6 +132,7 @@ public enum DulcetReaderRoute: Hashable, Sendable {
     case myLibrarySection(DulcetMyLibrarySection)
 #if !os(tvOS)
     case wishlist
+    case discover(DulcetDiscoverDestination)
 #endif
 }
 

@@ -118,10 +118,11 @@ struct DulcetDiscoverDetailView: View {
     @Environment(\.openURL) private var openURL
     let destination: DulcetDiscoverDestination
     let openLibrary: (DulcetDiscoverLibraryRef) -> Void
-    init(reader: any DulcetDiscoverReading, destination: DulcetDiscoverDestination, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void) {
+    let openMetadata: ((DulcetDiscoverDestination) -> Void)?
+    init(reader: any DulcetDiscoverReading, destination: DulcetDiscoverDestination, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void, openMetadata: ((DulcetDiscoverDestination) -> Void)? = nil) {
         _model = State(initialValue: DulcetDiscoverModel(reader: reader))
         _detail = State(initialValue: DulcetDiscoverDetailModel(reader: reader))
-        self.destination = destination; self.openLibrary = openLibrary
+        self.destination = destination; self.openLibrary = openLibrary; self.openMetadata = openMetadata
     }
     private var item: DulcetDiscoverItem? {
         switch destination { case .artist: detail.artist?.item; case .album: detail.album?.item; case let .item(item, _): item }
@@ -196,9 +197,16 @@ struct DulcetDiscoverDetailView: View {
         links.filter { URL(string: $0.url).map { $0.scheme?.lowercased() == "https" && $0.host != nil && $0.user == nil && $0.password == nil } ?? false }
     }
     private func detailLink(_ item: DulcetDiscoverItem) -> some View {
-        NavigationLink(value: DulcetDiscoverDestination(item: item, source: .init(type: sourceType, id: self.item?.id))) { DulcetDiscoverItemRow(item: item, reader: model.reader) }
-            .buttonStyle(.plain).accessibilityIdentifier("discover.item.\(item.id)")
-            .accessibilityLabel(item.title + ", " + DulcetDiscoverItemPresentation(item: item).availabilityText)
+        let destination = DulcetDiscoverDestination(item: item, source: .init(type: sourceType, id: self.item?.id))
+        return Group {
+            if let openMetadata {
+                Button { openMetadata(destination) } label: { DulcetDiscoverItemRow(item: item, reader: model.reader) }
+            } else {
+                NavigationLink(value: destination) { DulcetDiscoverItemRow(item: item, reader: model.reader) }
+            }
+        }
+        .buttonStyle(.plain).accessibilityIdentifier("discover.item.\(item.id)")
+        .accessibilityLabel(item.title + ", " + DulcetDiscoverItemPresentation(item: item).availabilityText)
     }
 }
 
