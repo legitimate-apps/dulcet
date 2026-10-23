@@ -1,5 +1,7 @@
 package com.legitimateapps.dulcet.core
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -13,6 +15,39 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 class LibrarySyncTest {
+    @Test
+    fun rejectedLegacySyncCannotPersistAHeldTrackPageOrCommitItsGeneration() = runTest {
+        val store = DulcetDatabaseStore.open(createTestDriver())
+        try {
+            val repository = LibrarySyncRepository(store)
+            var authorized = true
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val accepted = MutableSource()
+            val held = object : LibrarySyncSource by accepted {
+                override suspend fun trackPage(offset: Long, size: Int): List<LibraryTrackRow> {
+                    if (offset == 0L && !entered.isCompleted) {
+                        entered.complete(Unit)
+                        release.await()
+                    }
+                    return accepted.trackPage(offset, size)
+                }
+            }
+            val engine = LibrarySyncEngine(repository, authorizeRequest = {
+                if (!authorized) throw AuthenticatedEndpointFailure(DomainError.Protocol.ServerIdentityChanged)
+            })
+            val sync = async { engine.synchronize(SERVER, held) }
+            entered.await()
+            authorized = false
+            release.complete(Unit)
+            val result = sync.await()
+            assertTrue(store.database.libraryQueries.selectTracksAtGeneration(SERVER, 1).executeAsList().isEmpty(),
+                "the late page must not enter even the uncommitted generation")
+            assertEquals(0L, store.metadata().committedGeneration)
+            assertEquals(LibrarySyncResult.Failed(DomainError.Protocol.ServerIdentityChanged), result)
+        } finally { store.close() }
+    }
+
     @Test
     fun committedReadsRemainPinnedUntilTheGenerationCommit() {
         val driver = createTestDriver()

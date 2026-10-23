@@ -71,8 +71,13 @@ internal class ServerIdentityGate(
         val result = connect?.invoke(request) ?: AccountConnector().identify(request, previous)
         return when (result) {
             is AccountConnectionResult.Failed -> result.error
-            is AccountConnectionResult.Connected -> {
-                if (ServerIdentityPolicy.isReplacement(previous, result.account.serverIdentity)) {
+            is AccountConnectionResult.Connected -> database.transactionWithResult {
+                val current = store.read(serverId)
+                if (current != previous) {
+                    // Another negotiation accepted lineage, or account removal erased it, while
+                    // this probe was suspended. Never restore its captured identity over that write.
+                    if (current == result.account.serverIdentity) null else DomainError.Transport.Cancelled
+                } else if (ServerIdentityPolicy.isReplacement(previous, result.account.serverIdentity)) {
                     DomainError.Protocol.ServerIdentityChanged
                 } else {
                     // A legacy namespace learns identity only after authenticating the account.
