@@ -357,8 +357,11 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
 
     private func focusAndPress(_ element: Any, key: String, code: UInt16, in app: HostedApp) async throws {
         let identifier = try XCTUnwrap(app.identifier(element))
-        NSApp.activate()
+        NSApp.activate(ignoringOtherApps: true)
         app.window.makeKeyAndOrderFront(nil)
+        try await waitUntil(timeout: .seconds(3), "Hosted keyboard window must become active") { NSApp.isActive }
+        app.window.makeKeyAndOrderFront(nil)
+        try await waitUntil(timeout: .seconds(3), "Hosted keyboard window must receive keys") { NSApp.keyWindow === app.window }
         XCTAssertTrue(NSApp.isFullKeyboardAccessEnabled, "The CI keyboard proof requires Full Keyboard Access")
         func focused() -> Bool {
             guard let current = app.firstElement(where: { app.identifier($0) == identifier }) as? NSObject else { return false }
