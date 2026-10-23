@@ -60,7 +60,7 @@ class ApiDiscoverTest {
                 f.json("/ws/2/artist/$id",resource("musicbrainz/artist"));f.json("/ws/2/release-group","""{"release-group-count":1,"release-groups":[{"id":"$id","title":"Album","first-release-date":"2026-10","artist-credit":[{"name":"Artist"}]}]}""")
                 f.json("/ws/2/release-group/$id",resource("musicbrainz/release-group"));f.json("/ws/2/release","""{"release-count":1,"releases":[${resource("musicbrainz/release")}]}""")
                 f.json("/1/playlist/search",resource("listenbrainz/playlist-search"));f.json("/1/playlist/$id",resource("listenbrainz/playlist"));f.json("/1/stats/sitewide/artists",resource("listenbrainz/trending-artists"))
-                f.respond("/release-group/$id/front-250",body=byteArrayOf(137.toByte(),80,78,71,13,10,26,10,0))
+                f.respond("/release-group/$id/front-250",body=artworkFixture("png"))
                 application { dulcetModule(ctx) }
                 suspend fun get(path:String)=client.get("/dulcet/v1/discover$path") { bearerAuth(token) }
                 for(path in listOf("/shelves/trendingArtists","/shelves/publicPlaylists","/artists/$id","/artists/$id/albums","/playlists?q=","/playlists/$id"))assertEquals(200,get(path).status.value,path)
@@ -74,6 +74,34 @@ class ApiDiscoverTest {
                 val etag=response.headers["ETag"]!!
                 assertEquals(304,client.get("/dulcet/v1/discover/albums/$id") {bearerAuth(token);header("If-None-Match",etag)}.status.value)
             } finally {ctx.close();ctx.db.close()}
+        }
+    }
+    @Test fun malformedArtworkUsesTemporaryFailureAndLaterRequestRecovers() = testApplication {
+        FixtureDiscoverUpstream().use { f -> val ctx=context(f)
+            try {
+                val user=ctx.users.create("user","password",false)
+                val token=ctx.apiAuth.bootstrapPersonal(user,setOf("catalog:read"))
+                ctx.discoverHttp.configureOrigin(f.baseUrl,0)
+                val art=DiscoverIdentity(ctx.db).register(DiscoverItem(kind=DiscoverKind.Album,title="Album",
+                    externalIds=mapOf(DiscoverKind.Album.registryKey to id))).artworkId!!
+                application { dulcetModule(ctx) }
+                suspend fun get()=client.get("/dulcet/v1/discover/artwork/$art") { bearerAuth(token) }
+                f.json("/release-group/$id/front-250","unavailable",503,mapOf("Retry-After" to "0"))
+                val outage=get()
+                assertEquals(503,outage.status.value)
+                val outageType=Json.parseToJsonElement(outage.bodyAsText()).jsonObject["type"]
+                assertTrue(outageType.toString().contains("upstream-unavailable"))
+                f.respond("/release-group/$id/front-250",body="GIF89a".toByteArray())
+                val malformed=get()
+                assertEquals(503,malformed.status.value,"Truncated artwork uses the existing temporary-upstream response")
+                assertEquals(outageType,Json.parseToJsonElement(malformed.bodyAsText()).jsonObject["type"])
+                assertEquals(2,f.requests.size)
+                f.respond("/release-group/$id/front-250",body=artworkFixture("gif"))
+                val recovered=get()
+                assertEquals(200,recovered.status.value)
+                assertEquals("image/gif",recovered.headers["Content-Type"])
+                assertEquals(3,f.requests.size)
+            } finally { ctx.close();ctx.db.close() }
         }
     }
     @Test fun emptySuccessDiffersFromUncachedOutage() = testApplication {
