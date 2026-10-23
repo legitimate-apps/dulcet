@@ -47,7 +47,7 @@ public struct DulcetRootView: View {
                     NavigationSplitView {
                         DulcetSidebar(store: store)
                     } detail: {
-                        DulcetDestinationStack(store: store)
+                        DulcetSplitDestinationStacks(store: store)
                     }
                     .navigationSplitViewStyle(.balanced)
                     .dulcetForeground(.primaryTextOnWindow)
@@ -412,7 +412,7 @@ private struct DulcetIOSShell: View {
                     NavigationSplitView {
                         DulcetSidebar(store: store, destinations: store.destinations(Self.places))
                     } detail: {
-                        DulcetDestinationStack(
+                        DulcetSplitDestinationStacks(
                             store: store,
                             barPlacement: .floating,
                             onOpenPlayer: openPlayer
@@ -580,6 +580,33 @@ private struct DulcetCompactShell: View {
 #endif
 
 #if !os(tvOS)
+/// A split column keeps each reader destination's navigation owner alive, as phone tabs do.
+/// Reusing one owner for Search and Library made SwiftUI initialise Library with an empty path
+/// after the store had already pushed an album. Rejecting that write preserved the store but
+/// left the column on its root. These stacks receive pushes through an existing owner instead.
+private struct DulcetSplitDestinationStacks: View {
+    @Bindable var store: DulcetPresentationStore
+    var barPlacement: DulcetNowPlayingBarPlacement.Placement?
+    var onOpenPlayer: () -> Void = {}
+
+    var body: some View {
+        ZStack {
+            ForEach([DulcetSidebarDestination.listenNow, .library, .browse]) { destination in
+                DulcetDestinationStack(store: store, tab: destination,
+                                       barPlacement: barPlacement, onOpenPlayer: onOpenPlayer)
+                    .opacity(store.selectedDestination == destination ? 1 : 0)
+                    .allowsHitTesting(store.selectedDestination == destination)
+                    .accessibilityHidden(store.selectedDestination != destination)
+                    .zIndex(store.selectedDestination == destination ? 1 : 0)
+            }
+            if !store.isReaderDestination {
+                DulcetDestinationStack(store: store, tab: store.selectedDestination,
+                                       barPlacement: barPlacement, onOpenPlayer: onOpenPlayer)
+            }
+        }
+    }
+}
+
 /// One navigation stack showing a destination, with library pages pushed onto it.
 ///
 /// In a tab, `tab` names the destination this stack belongs to. Only the Library destination
