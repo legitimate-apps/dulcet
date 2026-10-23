@@ -7,8 +7,12 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
+# Extensionless module caches resemble controls to the recursive CI policy inventory.
+# Keep fixture/helper imports source-only, including independently launched children.
+sys.dont_write_bytecode = True
 import tempfile
 import time
 import unittest
@@ -26,6 +30,36 @@ def module():
 def call(url,path,body=None):
     req=urllib.request.Request(url+path,data=None if body is None else json.dumps(body).encode(),headers={'Content-Type':'application/json'})
     with urllib.request.urlopen(req,timeout=40) as r:return json.load(r)
+
+class ModuleLoadingTests(unittest.TestCase):
+    def test_fixtureModuleLoadsDoNotWriteBytecode(self):
+        # Copy only our fixture sources: an existing cache cannot hide a write or force
+        # cleanup of somebody else's checkout. run_path itself does not cache its input.
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for relative in ['tools/test-discover-wishlist-fixture','tools/ci/with-discover-wishlist-fixture','tools/discover-wishlist-ui-proxy','tools/discover-wishlist-fixtures/fixture.py']:
+                target=root/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(REPO/relative,target)
+            code="""
+import importlib.machinery, importlib.util, runpy, sys
+from pathlib import Path
+root=Path(sys.argv[1])
+sys.dont_write_bytecode=False
+loaded=runpy.run_path(str(root/'tools/test-discover-wishlist-fixture'))
+wrapper=loaded['module']()
+assert wrapper.DiscoverFixture
+loader=importlib.machinery.SourceFileLoader('proxy',str(root/'tools/discover-wishlist-ui-proxy'))
+spec=importlib.util.spec_from_loader(loader.name,loader)
+proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+assert proxy.FixtureProxy
+"""
+            result=subprocess.run([sys.executable,'-c',code,str(root)],capture_output=True,text=True)
+            self.assertEqual(0,result.returncode,result.stderr)
+            self.assertEqual([],list(root.rglob('*.pyc')),'fixture module/helper loading wrote bytecode')
+            for relative in ['tools/ci/with-discover-wishlist-fixture','tools/discover-wishlist-ui-proxy']:
+                env={k:v for k,v in os.environ.items() if k!='PYTHONDONTWRITEBYTECODE'}
+                child=subprocess.run([sys.executable,str(root/relative),'--help'],env=env,capture_output=True,text=True)
+                self.assertEqual(0,child.returncode,child.stderr)
+                self.assertEqual([],list(root.rglob('*.pyc')),'fixture child helper import wrote bytecode')
 
 class FixtureTests(unittest.TestCase):
     @classmethod
@@ -153,8 +187,8 @@ class XmlResult(unittest.TextTestResult):
     def __init__(self,*args,**kwargs):super().__init__(*args,**kwargs);self.xml=ET.Element('testsuite',name='DiscoverWishlistFixture')
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--junit',type=Path,required=True);args=parser.parse_args()
-    suite=unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+    parser=argparse.ArgumentParser();parser.add_argument('--junit',type=Path,required=True);parser.add_argument('--test',action='append');args=parser.parse_args()
+    suite=unittest.defaultTestLoader.loadTestsFromNames(args.test,sys.modules[__name__]) if args.test else unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
     result=unittest.TextTestRunner(verbosity=2,resultclass=XmlResult).run(suite)
     result.xml.attrib.update(tests=str(result.testsRun),failures=str(len(result.failures)),errors=str(len(result.errors)),skipped=str(len(result.skipped)))
     args.junit.parent.mkdir(parents=True,exist_ok=True);ET.ElementTree(result.xml).write(args.junit,encoding='utf-8',xml_declaration=True)

@@ -9,6 +9,9 @@ import signal
 import socket
 import subprocess
 import sys
+# Extensionless module caches resemble controls to the recursive CI policy inventory.
+# Keep fixture/helper imports source-only, including independently launched children.
+sys.dont_write_bytecode = True
 import tempfile
 import time
 import urllib.request
