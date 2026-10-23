@@ -12,10 +12,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.legitimateapps.dulcet.core.AccountConnectionRequest
+import com.legitimateapps.dulcet.core.AccountConnector
+import com.legitimateapps.dulcet.core.AndroidServerIdentity
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.PlaybackService
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -37,10 +41,14 @@ class PlaybackBackgroundTest {
         check(credentials.load() == null) { "This test requires an empty disposable app installation" }
         awaitQueuedBroadcastsDelivered()
         LoopbackAudio().use { fixture ->
-            val account = credentials.save("Fixture", fixture.url, "USER_CANARY", "PASSWORD_CANARY", true)
-            // Saved as the connect form saves it, and connected in this process: a saved account the
-            // person has not connected plays nothing from the server until Reconnect (spec §13.1).
-            SavedAccountConnection.connectedOnTheForm(account.id)
+            // Use the form's authenticated save, including the identity derived from fixture ping.
+            // A bare credential save stays unverified until a reader's first probe (spec §13.1).
+            val outcome = runBlocking {
+                connectAndSaveAccount(AccountConnectionRequest(fixture.url, "USER_CANARY", "PASSWORD_CANARY",
+                    allowLocalHttp = true), AccountConnector()::connect, credentials)
+            }
+            check(outcome is AccountConnectOutcome.Connected) { "Loopback account connect failed: $outcome" }
+            val account = checkNotNull(credentials.load())
             val connected = CountDownLatch(1)
             var service: PlaybackService? = null
             val connection = object : ServiceConnection {
@@ -52,6 +60,12 @@ class PlaybackBackgroundTest {
             }
             var observerBound = false
             try {
+                // Check before any activity or library reader can start its first lineage probe.
+                assertTrue("Playback setup must be verified before launching playback",
+                    AndroidServerIdentity.isVerified(account.id))
+                assertTrue("Playback setup must be connected before launching playback",
+                    SavedAccountConnection.isConnected(account.id))
+                println("OBSERVED playback-setup verified=true connected=true before-activity-launch=true")
                 val intent = PlaybackIntents.playTrack(context, account.id, "fixture-song", "Background fixture")
                     .setClassName(context, PLAYBACK_ENTRY_ALIAS)
                 ActivityScenario.launch<MainActivity>(intent).use { activity ->
@@ -127,6 +141,10 @@ class PlaybackBackgroundTest {
                             val body = if (stream) audio else (
                                 if (path == "/rest/ping.view")
                                     """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"fixture","serverVersion":"1"}}"""
+                                else if (path == "/rest/getOpenSubsonicExtensions.view")
+                                    """{"subsonic-response":{"status":"ok","openSubsonicExtensions":[]}}"""
+                                else if (path == "/rest/getUser.view")
+                                    """{"subsonic-response":{"status":"ok","user":{"username":"USER_CANARY"}}}"""
                                 else if (path == "/rest/getSong.view")
                                     """{"subsonic-response":{"status":"ok","song":{"id":"fixture-song","suffix":"wav","duration":120}}}"""
                                 else """{"subsonic-response":{"status":"ok"}}""").toByteArray()
