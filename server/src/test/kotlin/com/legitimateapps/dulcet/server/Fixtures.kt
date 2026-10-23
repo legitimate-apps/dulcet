@@ -39,6 +39,7 @@ object Fixtures {
         val config = Config(
             musicFolder = root.resolve("music").also(Files::createDirectories),
             dataFolder = root.resolve("data").also(Files::createDirectories),
+            discover = com.legitimateapps.dulcet.server.discover.DiscoverSettings(enabled = false),
             port = 0, bind = "127.0.0.1", ffmpeg = ffmpeg, ffprobe = ffprobe, lrclibUrl = null, scanOnStart = false,
         )
         return ServerContext(config, Db.inMemory(), provider)

@@ -1,0 +1,83 @@
+{
+  "created": "2026-10-22T16:50:24.794Z",
+  "count": 5933,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "1ce77541-6eea-4d34-9ab3-14f741fbdccb",
+      "score": 100,
+      "artist-credit-id": "5a34a4b6-3ba0-35a6-be0b-9de26c283e78",
+      "title": "Björk...",
+      "length": 99000,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Henning Mankell",
+          "artist": {
+            "id": "9c5fa1fc-f9d8-491a-87cb-507972a0ad43",
+            "name": "Henning Mankell",
+            "sort-name": "Mankell, Henning",
+            "disambiguation": "author"
+          }
+        }
+      ],
+      "first-release-date": "2002-05",
+      "releases": [
+        {
+          "id": "86c299c1-8ecb-46f7-8493-53d423c2ee65",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "count": 3,
+          "title": "Die weisse Löwin",
+          "status": "Official",
+          "disambiguation": "audio play",
+          "release-group": {
+            "id": "5fc7694e-e892-4c21-9da4-f88fb80d9a91",
+            "type-id": "4fc3be2b-de1e-396b-a933-beb8f1607a22",
+            "primary-type-id": "4fc3be2b-de1e-396b-a933-beb8f1607a22",
+            "title": "Die weiße Löwin",
+            "primary-type": "Other",
+            "secondary-types": [
+              "Audio drama"
+            ],
+            "secondary-type-ids": [
+              "0eb547c2-8783-43e4-8f81-751c680e7b04"
+            ]
+          },
+          "date": "2002-05",
+          "country": "DE",
+          "release-events": [
+            {
+              "date": "2002-05",
+              "area": {
+                "id": "85752fda-13c4-31a3-bee5-0e5cb1f51dad",
+                "name": "Germany",
+                "sort-name": "Germany",
+                "iso-3166-1-codes": [
+                  "DE"
+                ]
+              }
+            }
+          ],
+          "track-count": 61,
+          "media": [
+            {
+              "id": "7d5f48eb-b722-3cee-a715-62df3437be04",
+              "position": 3,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "0f14f882-2e27-4ade-8cec-487070f5c2bf",
+                  "number": "6",
+                  "title": "Björk...",
+                  "length": 99000
+                }
+              ],
+              "track-count": 21,
+              "track-offset": 5
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

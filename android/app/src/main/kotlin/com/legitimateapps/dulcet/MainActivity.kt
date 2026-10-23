@@ -80,10 +80,22 @@ internal fun AccountConnectScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val signOut by viewModel.signOut.state.collectAsStateWithLifecycle()
+    val adding by viewModel.adding.collectAsStateWithLifecycle()
+    val replacement by viewModel.replacement.offer.collectAsStateWithLifecycle()
+    replacement?.let { offer ->
+        androidx.compose.material3.AlertDialog(onDismissRequest = { viewModel.replacement.answer(false) },
+            modifier = Modifier.testTag("account.replacement"),
+            title = { Text(stringResource(SharedR.string.account_replacement_title)) },
+            text = { Text(stringResource(SharedR.string.account_replacement_body, offer.downloadCount)) },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { viewModel.replacement.answer(true) },
+                modifier = Modifier.testTag("account.replacement.confirm")) { Text(stringResource(SharedR.string.account_replacement_confirm)) } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { viewModel.replacement.answer(false) },
+                modifier = Modifier.testTag("account.replacement.cancel")) { Text(stringResource(R.string.cancel)) } })
+    }
     val signOutCallbacks = remember(viewModel) { viewModel.signOut.callbacks() }
     val context = LocalContext.current
     // Re-read on every sign-out step too: a finished sign-out may leave the form state unchanged.
-    val storedAccount = remember(state.status, signOut) {
+    val storedAccount = remember(state, signOut, adding) {
         runCatching { searchDependencies.loadAccount(context) }.getOrNull()
     }
     SignOutDialogs(signOut, signOutCallbacks)
@@ -91,17 +103,21 @@ internal fun AccountConnectScreen(
         SigningOutSurface(signOut, signOutCallbacks)
         return
     }
-    if (storedAccount != null) {
+    if (storedAccount != null && !adding) {
         val actions = remember(storedAccount) {
             AccountActions(
                 serverName = runCatching { java.net.URI(storedAccount.normalizedBaseUrl).host }.getOrNull()
                     ?.takeIf { it.isNotBlank() } ?: storedAccount.normalizedBaseUrl,
                 username = storedAccount.username,
                 requestSignOut = viewModel.signOut::request,
+                savedServers = viewModel.savedAccounts(), selectServer = viewModel::switchServer,
+                addServer = viewModel::addServer,
             )
         }
         CompositionLocalProvider(LocalAccountActions provides actions) {
-            PhoneApp(storedAccount, searchDependencies, requests, restoredAccount = true)
+            androidx.compose.runtime.key(storedAccount.providerInstanceId) {
+                PhoneApp(storedAccount, searchDependencies, requests, restoredAccount = true)
+            }
         }
         return
     }
@@ -115,6 +131,7 @@ internal fun AccountConnectScreen(
         onAllowLocalHttpChanged = viewModel::updateAllowLocalHttp,
         onSubmit = viewModel::submitOrCancel,
         onSignOutUnreadable = if (unreadable) signOutCallbacks.retry else null,
+        onCancelAdding = if (adding) viewModel::cancelAdding else null,
     )
 }
 
@@ -127,6 +144,7 @@ private fun AccountConnectContent(
     onAllowLocalHttpChanged: (Boolean) -> Unit,
     onSubmit: () -> Unit,
     onSignOutUnreadable: (() -> Unit)? = null,
+    onCancelAdding: (() -> Unit)? = null,
 ) {
     val connecting = state.status == AccountConnectStatus.Connecting
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -196,6 +214,8 @@ private fun AccountConnectContent(
                 Text(stringResource(if (connecting) R.string.cancel else R.string.connect))
             }
 
+            if (onCancelAdding != null) OutlinedButton(onClick = onCancelAdding,
+                modifier = Modifier.fillMaxWidth().testTag("account.add.cancel")) { Text(stringResource(R.string.cancel)) }
             AccountStatusCard(state.status)
             if (onSignOutUnreadable != null) OutlinedButton(
                 onClick = onSignOutUnreadable,

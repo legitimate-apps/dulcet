@@ -313,4 +313,10 @@
     <string name="offline_cache_limit">Cache limit: %1$s</string>
     <string name="offline_clear_cache">Clear Cache</string>
     <string name="offline_cached">Cached for Offline Playback</string>
+    <string name="account_add_server">Add Server</string>
+    <string name="account_replacement_title">Replace this server?</string>
+    <string name="account_replacement_body">The server at this address has changed. Replacing it removes %1$d downloads from this device, along with its saved library and queue. Cancel keeps your account unchanged.</string>
+    <string name="account_replacement_confirm">Replace Server</string>
+    <string name="account_identity_changed_message">This address now belongs to a different server. Your saved content is kept offline.</string>
+    <string name="account_identity_changed_recovery">Open Account, choose Add Server, and connect again to review the replacement.</string>
 </resources>

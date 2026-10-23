@@ -309,6 +309,30 @@ internal interface LibrarySyncSource {
     suspend fun genres(): List<LibraryGenre>
 }
 
+/** A revoked native account cannot feed late rows into a durable legacy import. */
+private class AuthorizedLibrarySyncSource(
+    private val source: LibrarySyncSource,
+    private val authorize: () -> Unit,
+) : LibrarySyncSource {
+    private suspend fun <T> request(fetch: suspend () -> T): T {
+        authorize()
+        val result = try { fetch() }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Throwable) { authorize(); throw failure }
+        authorize()
+        return result
+    }
+    override suspend fun musicFolders() = request { source.musicFolders() }
+    override suspend fun probeEnumeration() = request { source.probeEnumeration() }
+    override suspend fun artistPage(offset: Long, size: Int) = request { source.artistPage(offset, size) }
+    override suspend fun albumPage(offset: Long, size: Int) = request { source.albumPage(offset, size) }
+    override suspend fun trackPage(offset: Long, size: Int) = request { source.trackPage(offset, size) }
+    override suspend fun playlists() = request { source.playlists() }
+    override suspend fun playlist(summary: LibraryPlaylistSummary) = request { source.playlist(summary) }
+    override suspend fun starred() = request { source.starred() }
+    override suspend fun genres() = request { source.genres() }
+}
+
 internal class HttpLibrarySyncSource(
     private val request: LibraryBrowseRequest,
     saltSource: SaltSource?,
@@ -1247,6 +1271,7 @@ internal class LibrarySyncEngine(
     private val logSink: LogSink? = null,
     private val hostResolver: HostResolver = systemHostResolver(),
     private val syncMutex: Mutex = LibrarySyncCoordinator.syncMutex,
+    private val authorizeRequest: () -> Unit = {},
 ) {
     init {
         require(enumerationPageSize in 1..MAX_LIBRARY_ENUMERATION_PAGE_SIZE)
@@ -1272,8 +1297,18 @@ internal class LibrarySyncEngine(
         source: LibrarySyncSource,
         restart: Boolean = false,
         progress: (LibrarySyncProgress) -> Unit = {},
+    ): LibrarySyncResult = synchronizeAuthorized(
+        serverId, AuthorizedLibrarySyncSource(source, authorizeRequest), restart, progress,
+    )
+
+    private suspend fun synchronizeAuthorized(
+        serverId: String,
+        source: LibrarySyncSource,
+        restart: Boolean,
+        progress: (LibrarySyncProgress) -> Unit,
     ): LibrarySyncResult = try {
         syncMutex.withLock {
+            authorizeRequest()
             require(serverId.isNotBlank())
             val isFirstSync = repository.committedGeneration() == 0L
             var checkpoint = repository.prepareCheckpoint(serverId, restart)
@@ -1289,6 +1324,7 @@ internal class LibrarySyncEngine(
                         isFirstSync = isFirstSync,
                     ),
                 )
+                authorizeRequest()
                 when (checkpoint.stage) {
                     LibrarySyncStage.Folders -> checkpoint = runSingleStage(
                         serverId, checkpoint, source::musicFolders,
@@ -1323,6 +1359,7 @@ internal class LibrarySyncEngine(
                         } else {
                             LibrarySyncStability.Verified
                         }
+                        authorizeRequest()
                         val commit = repository.commit(serverId, finished.generation, stability)
                         completed = LibrarySyncResult.Completed(
                             finished.generation, stability, commit.deletionReconciliations,

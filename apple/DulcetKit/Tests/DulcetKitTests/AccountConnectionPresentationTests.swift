@@ -133,6 +133,7 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
         .malformedEnvelope: .accountErrorProtocol,
         .incompatibleProtocol: .accountErrorProtocol,
         .notASubsonicServer: .accountErrorProtocol,
+        .serverIdentityChanged: .accountErrorProtocol,
         // An answer larger than this build reads is a fault in what came back, not in reaching the
         // server or in the server's own verdict: a protocol error.
         .responseTooLarge: .accountErrorProtocol,
@@ -1683,7 +1684,7 @@ func unentitledKeychainWriteFailsClosedWithoutLegacyFallback() throws {
 
 // Keep the published test identity while reversing its expectation with the contract.
 @Test(arguments: ["saved", "typed", "password", "endpoint", "superseded"]) @MainActor
-func onlyAuthenticatedUnchangedSavedCredentialsMayAdoptServerUsernameSpelling(scenario: String) throws {
+func onlyAuthenticatedUnchangedSavedCredentialsMayAdoptServerUsernameSpelling(scenario: String) async throws {
     let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "Alice",
         password: "saved-password", allowLocalHTTP: false)
     let credentials = InstanceCredentialStore(persisted: request, providerInstanceID: "canonical-proof-provider")
@@ -1707,7 +1708,14 @@ func onlyAuthenticatedUnchangedSavedCredentialsMayAdoptServerUsernameSpelling(sc
     let endpoint = scenario == "endpoint" ? "https://other.example.invalid" : request.serverURL
     connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: endpoint, canonicalUsername: "alice")))
     #expect(downloads.authenticatedAdoptions.count == (scenario == "saved" ? 1 : 0))
-    #expect(downloads.unconfirmedReplacements.count == (["typed", "password", "endpoint"].contains(scenario) ? 1 : 0))
+    #expect(downloads.unconfirmedReplacements.isEmpty, "Replacement waits for the person's consent")
+    if ["typed", "password", "endpoint"].contains(scenario) {
+        #expect(store.pendingDownloadRemovalCount == 0)
+        #expect(downloads.removeAccountDataCount == 0)
+        store.confirmServerReplacement()
+        for _ in 0..<100 where downloads.removeAccountDataCount == 0 { await Task.yield() }
+        #expect(downloads.removeAccountDataCount == 1)
+    }
     if scenario == "saved", let adoption = downloads.authenticatedAdoptions.first {
         #expect(adoption.0.username == "Alice")
         #expect(adoption.1.username == "alice")
@@ -1718,10 +1726,11 @@ func onlyAuthenticatedUnchangedSavedCredentialsMayAdoptServerUsernameSpelling(sc
         store.submitAccountConnection()
         connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL, canonicalUsername: "Alice")))
         #expect(downloads.authenticatedAdoptions.count == 1, "Typed alias is not saved-credential authentication")
-        #expect(downloads.unconfirmedReplacements.count == 1)
-        #expect(downloads.unconfirmedReplacements.first?.0.username == "alice")
-        #expect(downloads.unconfirmedReplacements.first?.1.username == "Alice")
-        #expect(try credentials.load()?.username == "Alice")
+        #expect(downloads.unconfirmedReplacements.isEmpty)
+        #expect(store.pendingDownloadRemovalCount == 0)
+        #expect(try credentials.load()?.username == "alice", "Unproven different canonical identity waits for consent")
+        store.cancelServerReplacement()
+        #expect(try credentials.load()?.username == "alice")
     }
     if scenario == "superseded" { #expect(try credentials.load()?.username == "different-principal") }
 }
@@ -2205,6 +2214,8 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
 
 @MainActor
 private final class ControlledDownloadController: DulcetDownloadControlling, DulcetOfflineLibraryControlling {
+    private(set) var identityRejectionCount = 0
+    func rejectServerIdentity() { identityRejectionCount += 1 }
     private(set) var authenticatedAdoptions: [(DulcetPlaybackAccount, DulcetPlaybackAccount)] = []
     private(set) var unconfirmedReplacements: [(DulcetPlaybackAccount, DulcetPlaybackAccount)] = []
     func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {
@@ -4488,4 +4499,403 @@ func signOutClearsDecodedArtworkAndRejectsLateArtworkCompletion() async throws {
     connect()
     #expect(store.cachedArtwork(seen, sizeBucket: .pixels256) == nil)
     #expect(store.cachedArtwork(pending, sizeBucket: .pixels256) == nil)
+}
+
+@Test @MainActor
+func serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice",
+        password: "fixture-password", allowLocalHTTP: false)
+    let credentials = InstanceCredentialStore(persisted: request, providerInstanceID: "canonical-case-provider")
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
+        credentialStore: credentials, playbackController: playback, downloadController: downloads))
+    store.cancelAccountConnection()
+    store.accountUsername = "Alice"
+    store.submitAccountConnection()
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL, canonicalUsername: "alice")))
+    #expect(downloads.unconfirmedReplacements.isEmpty)
+    #expect(downloads.removeAccountDataCount == 0)
+    #expect(playback.disconnectCount == 0)
+    #expect(downloads.configuredAccount?.providerInstanceID == "canonical-case-provider")
+    #expect(try credentials.load()?.username == "alice")
+}
+
+
+@MainActor
+private final class SavedServerMemoryCredentials: DulcetSavedServerCredentialStoring {
+    private var records: [String: (DulcetAccountConnectRequest, String)] = [:]
+    private(set) var savedProviderInstanceIDs: [String] = []
+    var providerInstanceID: String?
+    var serverIdentity: String { providerInstanceID.flatMap { records[$0]?.1 } ?? "" }
+    func load() throws -> DulcetAccountConnectRequest? { providerInstanceID.flatMap { records[$0]?.0 } }
+    func load(providerInstanceID: String) throws -> DulcetAccountConnectRequest {
+        guard let record = records[providerInstanceID] else { throw DulcetCredentialStoreError.credentialMissing }
+        return record.0
+    }
+    func serverIdentity(providerInstanceID: String) throws -> String { records[providerInstanceID]?.1 ?? "" }
+    func activate(providerInstanceID: String) throws { self.providerInstanceID = providerInstanceID }
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        try save(request, providerInstanceID: providerInstanceID ?? "server-a", serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        try save(request, providerInstanceID: providerInstanceID, serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String, serverIdentity: String) throws {
+        records[providerInstanceID] = (request, serverIdentity)
+        if !savedProviderInstanceIDs.contains(providerInstanceID) { savedProviderInstanceIDs.append(providerInstanceID) }
+        self.providerInstanceID = providerInstanceID
+    }
+    func delete() throws { if let providerInstanceID { try delete(providerInstanceID: providerInstanceID) } }
+    func delete(providerInstanceID: String) throws {
+        records[providerInstanceID] = nil
+        savedProviderInstanceIDs.removeAll { $0 == providerInstanceID }
+        if self.providerInstanceID == providerInstanceID { self.providerInstanceID = nil }
+    }
+}
+
+@Test("serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged",
+      arguments: [("navidrome", "dulcet"), ("dulcet", "navidrome")]) @MainActor
+func serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged(identities: (String, String)) async throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice",
+        password: "fixture", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(request, providerInstanceID: "server-a", serverIdentity: identities.0)
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    let playback = ControlledPlaybackController()
+    var removed: [String] = []
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        playbackController: playback, downloadController: downloads, providerInstanceIDFactory: { "replacement-id" },
+        countAccountDownloads: { _ in 7 }, removeSavedAccountData: { id in
+            #expect(playback.disconnectCount > 0, "The player must retire before deletion starts")
+            removed.append(id)
+            return true
+        })
+    let store = DulcetPresentationStore(source: source)
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        canonicalUsername: "alice", serverIdentity: identities.0)))
+    let before = store.snapshot
+    store.submitAccountConnection()
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        canonicalUsername: "alice", serverIdentity: identities.1)))
+    #expect(store.pendingDownloadRemovalCount == 7)
+    #expect(removed.isEmpty)
+    #expect(playback.disconnectCount == 0)
+    #expect(credentials.providerInstanceID == "server-a")
+    #expect(credentials.serverIdentity == identities.0)
+    store.cancelServerReplacement()
+    #expect(store.snapshot == before)
+    #expect(try credentials.load() == request)
+    #expect(credentials.serverIdentity == identities.0)
+    #expect(removed.isEmpty)
+    store.submitAccountConnection()
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        canonicalUsername: "alice", serverIdentity: identities.1)))
+    store.confirmServerReplacement()
+    for _ in 0..<100 where credentials.providerInstanceID != "replacement-id" { await Task.yield() }
+    #expect(removed == ["server-a"])
+    #expect(credentials.providerInstanceID == "replacement-id")
+    #expect(credentials.serverIdentity == identities.1)
+    #expect(credentials.savedProviderInstanceIDs == ["replacement-id"])
+    #expect(downloads.configuredAccount?.providerInstanceID == "replacement-id")
+}
+
+@Test @MainActor
+func savedServerSwitcherKeepsEachAccountNamespaceAndNeverDeletesOnSwitch() throws {
+    let first = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid", username: "alice", password: "one", allowLocalHTTP: false)
+    let second = DulcetAccountConnectRequest(serverURL: "https://two.example.invalid", username: "bob", password: "two", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(first, providerInstanceID: "server-a", serverIdentity: "navidrome")
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    let playback = ControlledPlaybackController()
+    var deletions = 0
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
+        credentialStore: credentials, playbackController: playback, downloadController: downloads,
+        providerInstanceIDFactory: { "server-b" }, removeSavedAccountData: { _ in deletions += 1; return true }))
+    connector.complete(.connected(.init(serverName: "Navidrome", normalizedServerURL: first.serverURL, canonicalUsername: first.username, serverIdentity: "navidrome")))
+    store.selectDestination(.settings)
+    store.addServer()
+    store.accountServerURL = second.serverURL
+    store.accountUsername = second.username
+    store.accountPassword = second.password
+    store.submitAccountConnection()
+    connector.complete(.connected(.init(serverName: "Dulcet", normalizedServerURL: second.serverURL, canonicalUsername: second.username, serverIdentity: "dulcet")))
+    #expect(store.savedServers.count == 2)
+    #expect(credentials.providerInstanceID == "server-b")
+    #expect(try credentials.load(providerInstanceID: "server-a") == first)
+    store.selectSavedServer("server-a")
+    #expect(connector.requests.last == first)
+    connector.complete(.connected(.init(serverName: "Navidrome", normalizedServerURL: first.serverURL, canonicalUsername: first.username, serverIdentity: "navidrome")))
+    #expect(playback.configuredProviderInstanceID == "server-a")
+    #expect(downloads.configuredAccount?.providerInstanceID == "server-a")
+    store.selectSavedServer("server-b")
+    connector.complete(.connected(.init(serverName: "Dulcet", normalizedServerURL: second.serverURL, canonicalUsername: second.username, serverIdentity: "dulcet")))
+    #expect(playback.configuredProviderInstanceID == "server-b")
+    #expect(downloads.configuredAccount?.providerInstanceID == "server-b")
+    #expect(deletions == 0)
+    #expect(store.pendingDownloadRemovalCount == nil)
+    #expect(credentials.savedProviderInstanceIDs == ["server-a", "server-b"])
+}
+
+@Test @MainActor
+func sameServerUpgradeOrRestartKeepsAccountAndMediaNamespace() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice", password: "fixture", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(request, providerInstanceID: "server-a", serverIdentity: "same-stable-lineage")
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector, credentialStore: credentials, downloadController: downloads))
+    for version in ["Navidrome 1.0", "Navidrome 2.0", "Navidrome restarted"] {
+        if connector.requests.count > 1 || store.snapshot.accountConnected { store.submitAccountConnection() }
+        connector.complete(.connected(.init(serverName: version, normalizedServerURL: request.serverURL,
+            canonicalUsername: "alice", serverIdentity: "same-stable-lineage")))
+        #expect(store.pendingDownloadRemovalCount == nil)
+        #expect(credentials.providerInstanceID == "server-a")
+        #expect(downloads.configuredAccount?.providerInstanceID == "server-a")
+    }
+    #expect(downloads.removeAccountDataCount == 0)
+}
+
+#if os(macOS)
+import SwiftUI
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
+/// The shipping root and account view, with a controlled server response and in-memory secrets.
+/// Native accessibility activation exercises the same Button action as touch, keyboard or remote.
+@Test @MainActor
+func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws {
+    let first = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid", username: "alice", password: "fixture-a", allowLocalHTTP: false)
+    let second = DulcetAccountConnectRequest(serverURL: "https://two.example.invalid", username: "bob", password: "fixture-b", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(second, providerInstanceID: "server-b", serverIdentity: "dulcet")
+    try credentials.save(first, providerInstanceID: "server-a", serverIdentity: "navidrome")
+    let connector = ControlledAccountConnector()
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
+        credentialStore: credentials, playbackController: playback))
+    connector.complete(.connected(.init(serverName: "Navidrome", normalizedServerURL: first.serverURL,
+        canonicalUsername: first.username, serverIdentity: "navidrome")))
+#if os(macOS)
+    _ = NSApplication.shared
+    let enhanced = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+    let previous = NSApp.accessibilityAttributeValue(enhanced) ?? false
+    NSApp.accessibilitySetValue(true, forAttribute: enhanced)
+    defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
+    let host = NSHostingView(rootView: DulcetRootView(store: store))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 900),
+        styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = host
+    window.makeKeyAndOrderFront(nil)
+    defer { window.close() }
+    let root: NSObject = host
+    let accountID = "dulcet.sidebar.settings"
+#else
+    let controller = UIHostingController(rootView: DulcetRootView(store: store))
+#if os(tvOS)
+    let size = CGSize(width: 1920, height: 1080)
+#else
+    let size = UIScreen.main.bounds.size
+#endif
+    let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    controller.loadViewIfNeeded()
+    controller.view.frame = window.bounds
+    controller.view.layoutIfNeeded()
+    defer { window.isHidden = true }
+    let root: NSObject = controller.view
+#if os(iOS)
+    let accountID = UIDevice.current.userInterfaceIdiom == .pad ? "dulcet.sidebar.settings" : "dulcet.tab.settings"
+#else
+    let accountID = "dulcet.tab.settings"
+#endif
+#endif
+    func element(_ id: String) async -> NSObject? {
+        let end = ContinuousClock.now.advanced(by: .seconds(5))
+        repeat {
+            if let found = savedServerAccessibilityDescendants(root).first(where: {
+                savedServerAccessibilityValue("accessibilityIdentifier", $0) as? String == id
+            }) { return found }
+            try? await Task.sleep(for: .milliseconds(25))
+        } while ContinuousClock.now < end
+        return nil
+    }
+    let account = try #require(await element(accountID), "Root offers Account directly")
+    savedServerAccessibilityActivate(account)
+    let entry = try #require(await element("dulcet.account.server.server-b"), "Account shows the second saved server")
+    let add = try #require(await element("dulcet.account.add-server"), "Account offers Add Server beside saved servers")
+    #expect(savedServerAccessibilityValue("accessibilityLabel", add) != nil)
+    savedServerAccessibilityActivate(entry)
+    #expect(connector.requests.last == second, "Native activation must connect the chosen saved account")
+    connector.complete(.connected(.init(serverName: "Dulcet", normalizedServerURL: second.serverURL,
+        canonicalUsername: second.username, serverIdentity: "dulcet")))
+    #expect(playback.configuredProviderInstanceID == "server-b")
+    #expect(credentials.savedProviderInstanceIDs.count == 2)
+    print("DULCET SAVED SERVER UI PASS root=\(accountID) selected=server-b kept=2")
+}
+
+@MainActor
+private func savedServerAccessibilityValue(_ name: String, _ object: NSObject) -> Any? {
+    let selector = NSSelectorFromString(name)
+    guard object.responds(to: selector) else { return nil }
+    return object.perform(selector)?.takeUnretainedValue()
+}
+
+@MainActor
+private func savedServerAccessibilityDescendants(_ root: NSObject) -> [NSObject] {
+    var result: [NSObject] = []
+    var pending = [root]
+    var visited: Set<ObjectIdentifier> = []
+    while let next = pending.popLast() {
+        guard visited.insert(ObjectIdentifier(next)).inserted else { continue }
+        result.append(next)
+#if os(macOS)
+        pending.append(contentsOf: savedServerAccessibilityValue("accessibilityChildren", next) as? [NSObject] ?? [])
+        if let view = next as? NSView { pending.append(contentsOf: view.subviews) }
+#else
+        if let view = next as? UIView { pending.append(contentsOf: view.subviews) }
+        if let children = next.accessibilityElements as? [NSObject] { pending.append(contentsOf: children) }
+        let count = next.accessibilityElementCount()
+        if count > 0 && count < 2000 {
+            for index in 0..<count {
+                if let child = next.accessibilityElement(at: index) as? NSObject { pending.append(child) }
+            }
+        }
+#endif
+    }
+    return result
+}
+
+@MainActor
+private func savedServerAccessibilityActivate(_ object: NSObject) {
+#if os(macOS)
+    let selector = #selector(NSAccessibilityProtocol.accessibilityPerformPress)
+    #expect(object.responds(to: selector))
+    _ = object.perform(selector)
+#else
+    #expect(object.accessibilityActivate())
+#endif
+}
+#endif
+
+
+@Test @MainActor
+func savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible() throws {
+    let first = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid", username: "alice", password: "fixture-a", allowLocalHTTP: false)
+    let second = DulcetAccountConnectRequest(serverURL: "https://two.example.invalid", username: "bob", password: "fixture-b", allowLocalHTTP: false)
+    for failureKind in [DulcetAccountFailureKind.transportUnreachable, .invalidCredentials] {
+        let credentials = SavedServerMemoryCredentials()
+        try credentials.save(second, providerInstanceID: "server-b", serverIdentity: "dulcet")
+        try credentials.save(first, providerInstanceID: "server-a", serverIdentity: "navidrome")
+        let connector = ControlledAccountConnector()
+        let playback = ControlledPlaybackController()
+        let downloads = ControlledDownloadController()
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
+            credentialStore: credentials, playbackController: playback, downloadController: downloads))
+        connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: first.serverURL, canonicalUsername: first.username, serverIdentity: "navidrome")))
+        store.selectSavedServer("server-b")
+        connector.complete(.failed(accountFailure(failureKind)))
+        if failureKind == .transportUnreachable {
+            #expect(credentials.providerInstanceID == "server-b")
+            #expect(playback.offlineConfiguredProviderInstanceID == "server-b")
+            #expect(downloads.configuredAccount?.providerInstanceID == "server-b")
+            #expect(!downloads.automaticContactPermitted)
+            #expect(store.selectedDestination == .listenNow)
+        } else { #expect(credentials.providerInstanceID == "server-a") }
+        #expect(shownFailureKind(store) == failureKind)
+        #expect(downloads.removeAccountDataCount == 0)
+        #expect(credentials.savedProviderInstanceIDs.count == 2)
+    }
+}
+
+#if os(iOS) || os(tvOS)
+import SwiftUI
+
+/// The UIKit Kit targets are hostless. This verifies the account action boundary and root
+/// composition; native touch/remote accessibility activation requires an app-hosted UI proof.
+@Test @MainActor
+func savedServerChooserAccountActionsSelectEntryAndKeepBothServers() throws {
+    let first = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid", username: "alice", password: "fixture-a", allowLocalHTTP: false)
+    let second = DulcetAccountConnectRequest(serverURL: "https://two.example.invalid", username: "bob", password: "fixture-b", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(second, providerInstanceID: "server-b", serverIdentity: "dulcet")
+    try credentials.save(first, providerInstanceID: "server-a", serverIdentity: "navidrome")
+    let connector = ControlledAccountConnector()
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
+        credentialStore: credentials, playbackController: playback))
+    connector.complete(.connected(.init(serverName: "Navidrome", normalizedServerURL: first.serverURL,
+        canonicalUsername: first.username, serverIdentity: "navidrome")))
+    _ = DulcetRootView(store: store)
+    store.navigate(to: .settings)
+    #expect(store.selectedDestination == .settings)
+    #expect(store.savedServers.map(\.id).sorted() == ["server-a", "server-b"])
+    store.selectSavedServer("server-b")
+    #expect(connector.requests.last == second)
+    connector.complete(.connected(.init(serverName: "Dulcet", normalizedServerURL: second.serverURL,
+        canonicalUsername: second.username, serverIdentity: "dulcet")))
+    #expect(playback.configuredProviderInstanceID == "server-b")
+    #expect(credentials.savedProviderInstanceIDs.count == 2)
+    print("DULCET SAVED SERVER ACTIONS PASS selected=server-b kept=2 native-ui=unproven")
+}
+#endif
+
+@Test @MainActor
+func detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice", password: "fixture", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(request, providerInstanceID: "server-a", serverIdentity: "navidrome")
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    let session = DulcetLibrarySession(factory: nil)
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        playbackController: ControlledPlaybackController(), downloadController: downloads, librarySession: session,
+        countAccountDownloads: { _ in 7 })
+    let store = DulcetPresentationStore(source: source)
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        canonicalUsername: "alice", serverIdentity: "navidrome")))
+    session.onServerIdentityChanged?()
+    #expect(downloads.identityRejectionCount == 1, "Quarantine must precede even the account negotiation answer")
+    #expect(downloads.removeAccountDataCount == 0)
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        canonicalUsername: "alice", serverIdentity: "dulcet")))
+    #expect(store.pendingDownloadRemovalCount == 7)
+    let rejectionCount = downloads.identityRejectionCount
+    store.cancelServerReplacement()
+    #expect(downloads.identityRejectionCount == rejectionCount && rejectionCount > 0, "Cancel cannot reopen a known rejected remote namespace")
+    #expect(downloads.removeAccountDataCount == 0)
+    #expect(credentials.providerInstanceID == "server-a")
+    #expect(credentials.serverIdentity == "navidrome")
+    #expect(downloads.offlineLibraryStorage.downloadBytes == 123)
+}
+
+@Test @MainActor
+func learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt() throws {
+    for (learned, replacement) in [("navidrome", "dulcet"), ("dulcet-instance-a", "dulcet-instance-b")] {
+        let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice", password: "fixture", allowLocalHTTP: false)
+        let credentials = SavedServerMemoryCredentials()
+        try credentials.save(request, providerInstanceID: "legacy", serverIdentity: "")
+        let connector = ControlledAccountConnector()
+        var accepted: [String] = []
+        let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+            acceptServerIdentity: { _, identity in accepted.append(identity); return true },
+            readServerIdentity: { _ in learned }, countAccountDownloads: { _ in 3 })
+        let store = DulcetPresentationStore(source: source)
+        connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+            canonicalUsername: "alice", serverIdentity: replacement)))
+        #expect(store.pendingDownloadRemovalCount == 3)
+        #expect(accepted.isEmpty, "An empty legacy Keychain identity cannot overwrite learned lineage")
+        store.cancelServerReplacement()
+        #expect(credentials.providerInstanceID == "legacy")
+        #expect(credentials.serverIdentity.isEmpty)
+        #expect(accepted.isEmpty)
+    }
 }

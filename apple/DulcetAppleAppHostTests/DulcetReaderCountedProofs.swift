@@ -175,7 +175,7 @@ final class DulcetReaderCountedProofs {
 
     // MARK: CONF-77
 
-    /// A reconnect performs the outbox flush, the epoch read and the visible screen's revalidation
+    /// A reconnect verifies server identity, performs the outbox flush, the epoch read and the visible screen's revalidation
     /// and nothing else, counted at the proxy (with no download, there is no downloaded album to
     /// recheck).
     ///
@@ -184,7 +184,7 @@ final class DulcetReaderCountedProofs {
     /// with home live, the platform reports the network lost; an album starred offline sends
     /// nothing. The favourites row's read is held and the network is reported back: while it is
     /// held every row says it is revalidating and none live; released, each row says live once, at
-    /// the end. What the reconnect sent is the star first, then the epoch read (`getMusicFolders`
+    /// the end. What the reconnect sent is the authenticated identity ping, then the star, then the epoch read (`getMusicFolders`
     /// and `getScanStatus`), then the four rows' reads, and nothing else.
     func conf77() async throws {
         let fixture = try await counted()
@@ -255,10 +255,12 @@ final class DulcetReaderCountedProofs {
 
         let sent = try await fixture.proxy.requests(since: mark).filter { $0.endpoint != "getCoverArt" }
         let names = sent.map(\.endpoint)
-        XCTAssertEqual(names.first, "star", "The outbox flush goes first: \(sent)")
+        XCTAssertEqual(sent.first?.description, "ping:200", "Server identity is authenticated before sending saved opaque IDs: \(sent)")
+        XCTAssertEqual(names.filter { $0 == "ping" }.count, 1, "One reconnect identity check: \(sent)")
+        XCTAssertEqual(names.dropFirst().first, "star", "The outbox flush follows the identity check: \(sent)")
         XCTAssertEqual(names.filter { $0 == "star" }.count, 1, "One change, one send: \(sent)")
-        XCTAssertEqual(Array(names.dropFirst().prefix(2)).sorted(), ["getMusicFolders", "getScanStatus"], "Then the epoch read: \(sent)")
-        XCTAssertEqual(sent.dropFirst(3).map(\.description).sorted(),
+        XCTAssertEqual(Array(names.dropFirst(2).prefix(2)).sorted(), ["getMusicFolders", "getScanStatus"], "Then the epoch read: \(sent)")
+        XCTAssertEqual(sent.dropFirst(4).map(\.description).sorted(),
             ["getAlbumList2[frequent]:200", "getAlbumList2[newest]:200", "getAlbumList2[recent]:200", "getStarred2:200"],
             "Then the visible screen, each row once, and nothing else: \(sent)")
         let starred = try await fixture.server.call("getAlbum", [URLQueryItem(name: "id", value: album.id.rawID)])
@@ -302,10 +304,13 @@ final class DulcetReaderCountedProofs {
         let summary = { DulcetHomeRow.allCases.map { "\($0.rawValue)=\(rows[$0]?.summary ?? "-")" }.joined(separator: " ") }
         // The rows read in parallel, so the held row's request can reach the proxy after the
         // others are answered. Wait for it too; the assertions below still require it unanswered.
+        // A row can publish its failure after the poll captured an unanswered ledger entry.
+        // Observe the proxy's failed answer too before asserting that independent-row state.
         var whileHeld: [Seen] = []
         try await waitUntil("rows: \(summary()) requests: \(whileHeld)", condition: {
             freshness(.recentlyAdded) == .live && freshness(.recentlyPlayed) == .live && failed(.favourites)
                 && whileHeld.contains { $0.endpoint == "getAlbumList2" && $0.type == "frequent" }
+                && whileHeld.contains { $0.endpoint == "getStarred2" && $0.answered && $0.status == 500 }
         }, poll: { whileHeld = (try? await fixture.proxy.requests(since: mark)) ?? [] })
         let frequent = whileHeld.filter { $0.endpoint == "getAlbumList2" && $0.type == "frequent" }
         XCTAssertFalse(frequent.isEmpty, "Control: the most-played row did ask: \(whileHeld)")

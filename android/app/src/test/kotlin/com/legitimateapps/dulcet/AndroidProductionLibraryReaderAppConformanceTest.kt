@@ -28,7 +28,11 @@ import org.robolectric.annotation.Config
 @Config(application = Application::class, shadows = [HostCredentialCipher::class],
     instrumentedPackages = ["com.legitimateapps.dulcet"], qualifiers = "w420dp-h900dp")
 class AndroidProductionLibraryReaderAppConformanceTest {
-    private val environment = ProductionLibraryEnvironment()
+    // Listen Now can read the same frequent albums before the test body. CONF-86 must install
+    // its hold before those reads too, otherwise an earlier response counterfeits the control.
+    private val environment = ProductionLibraryEnvironment(parkLaunchRequestsForTests = setOf(
+        "conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive",
+    ))
     private val compose = createAndroidComposeRule<MainActivity>()
     @get:Rule val rules: RuleChain = RuleChain.outerRule(environment).around(compose)
 

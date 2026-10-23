@@ -337,3 +337,16 @@ unauthenticated responses. The seeded catalog must yield at least one item, so e
 cannot pass as a visibility proof. `HOME_DUPLICATE_ITEM` is its negative control. Ranking is
 implementation-defined; the reference server separately tests imported annotations, per-user
 isolation, favourites and rediscovery. This profile does not claim a recommendation-quality score.
+
+## Planned optional Discover and Wishlist profiles
+
+`DA-DISCOVER-1` and `DA-WISHLIST-1` are planned profile names, not runnable profiles or earned
+compatibility claims. This lane supplies server fixture tests and complete contracts. A future
+profile must bind every source and server base to a disposable local fixture, test scope and
+capability withdrawal, caching/outages, matching/edition completeness, durable retries, scan
+arrival, owner feeds and signed admin requests, plus a real Navidrome client control that issues
+zero new calls. Server JUnit evidence does not establish core or native app behavior.
+
+The existing runnable MCP profile does filter optional tool definitions by advertised capability
+version as well as scope. This preserves scope-only checks for all existing tools and prevents
+optional Discover/Wishlist tools from becoming mandatory on other Dulcet API servers.

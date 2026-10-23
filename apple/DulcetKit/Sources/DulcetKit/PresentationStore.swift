@@ -155,6 +155,22 @@ public final class DulcetPresentationStore {
     @ObservationIgnored private let source: any DulcetDataSource
     @ObservationIgnored private var isApplyingSourceSnapshot = false
 
+    /// Reading the snapshot keeps account chrome invalidated by source publications.
+    public var savedServers: [DulcetSavedServer] {
+        _ = snapshot
+        return (source as? any DulcetSavedServerManaging)?.savedServers ?? []
+    }
+    public var pendingDownloadRemovalCount: Int? {
+        _ = snapshot
+        return (source as? any DulcetSavedServerManaging)?.pendingDownloadRemovalCount
+    }
+    public func addServer() { (source as? any DulcetSavedServerManaging)?.addServer() }
+    public func selectSavedServer(_ id: String) {
+        (source as? any DulcetSavedServerManaging)?.selectSavedServer(id)
+    }
+    public func confirmServerReplacement() { (source as? any DulcetSavedServerManaging)?.confirmServerReplacement() }
+    public func cancelServerReplacement() { (source as? any DulcetSavedServerManaging)?.cancelServerReplacement() }
+
     public private(set) var snapshot: DulcetSnapshot
     public private(set) var selectedDestination: DulcetSidebarDestination
     /// Set by the search command and cleared by the search field once it has taken focus. A

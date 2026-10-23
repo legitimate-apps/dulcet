@@ -45,9 +45,14 @@ enum DulcetAppleProduction {
 
     #if os(iOS)
     static func makeIOSComposition() -> DulcetiOSProductionComposition {
-        let credentialStore = DulcetKeychainCredentialStore()
+        let credentialStore: any DulcetProviderInstanceCredentialStoring
+        #if DEBUG
+        credentialStore = DulcetDebugHandoffCredentialStore.whenProbing() ?? DulcetKeychainCredentialStore()
+        #else
+        credentialStore = DulcetKeychainCredentialStore()
+        #endif
         let downloads = DulcetCoreDownloadController.production()
-        let artworkFetcher = DulcetCoreArtworkFetcher()
+        let artworkFetcher = DulcetCoreArtworkFetcher(databaseName: databaseName)
         let playbackController = DulcetCorePlaybackController(
             databaseName: databaseName,
             downloadController: downloads,
@@ -68,8 +73,13 @@ enum DulcetAppleProduction {
 
     #if os(tvOS)
     static func makeTVComposition() -> DulcetTVProductionComposition {
-        let credentialStore = DulcetKeychainCredentialStore()
-        let artworkFetcher = DulcetCoreArtworkFetcher()
+        let credentialStore: any DulcetProviderInstanceCredentialStoring
+        #if DEBUG
+        credentialStore = DulcetDebugHandoffCredentialStore.whenProbing() ?? DulcetKeychainCredentialStore()
+        #else
+        credentialStore = DulcetKeychainCredentialStore()
+        #endif
+        let artworkFetcher = DulcetCoreArtworkFetcher(databaseName: databaseName)
         let playbackController = DulcetCorePlaybackController(
             downloadController: nil,
             artworkFetcher: artworkFetcher
@@ -108,7 +118,7 @@ enum DulcetAppleProduction {
         credentialStore: any DulcetProviderInstanceCredentialStoring,
         downloads: (any DulcetDownloadControlling)?,
         playbackController: DulcetCorePlaybackController? = nil,
-        artworkFetcher: DulcetCoreArtworkFetcher = DulcetCoreArtworkFetcher()
+        artworkFetcher: DulcetCoreArtworkFetcher = DulcetCoreArtworkFetcher(databaseName: DulcetAppleProduction.databaseName)
     ) -> DulcetPresentationStore {
         #if os(macOS) || os(iOS)
         if let downloads = downloads as? DulcetCoreDownloadController {
@@ -145,11 +155,11 @@ enum DulcetAppleProduction {
                 credentialStore: credentialStore,
                 libraryBrowser: DulcetCoreLibraryBrowser(databaseName: databaseName),
                 artworkFetcher: artworkFetcher,
-                serverSearch: DulcetCoreServerSearch(),
+                serverSearch: DulcetCoreServerSearch(databaseName: databaseName),
                 playbackController: playbackController,
                 downloadController: downloads,
                 providerInstanceIDFactory: {
-                    credentialStore.providerInstanceID ?? UUID().uuidString
+                    UUID().uuidString
                 },
                 localNetworkAccess: DulcetNetworkLocalNetworkAccessProbe(),
                 librarySession: DulcetLibrarySession(
@@ -171,7 +181,38 @@ enum DulcetAppleProduction {
                     ),
                     reachability: DulcetNetworkReachability(),
                     foreground: initialForeground
-                )
+                ),
+                acceptServerIdentity: { id, identity in
+                    AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: databaseName,
+                        providerInstanceId: id, identity: identity)
+                },
+                readServerIdentity: { id in
+                    AppleMediaBindingClient.shared.acceptedServerIdentity(databaseName: databaseName, providerInstanceId: id)
+                },
+                seedServerIdentity: { id, identity in
+                    AppleMediaBindingClient.shared.seedServerIdentity(databaseName: databaseName, providerInstanceId: id, identity: identity)
+                },
+                identityPolicy: DulcetAccountIdentityPolicy(samePrincipal: { oldURL, oldUser, newURL, newUser in
+                    SavedServerPolicy.shared.samePrincipal(savedUrl: oldURL, savedUsername: oldUser,
+                        connectedUrl: newURL, confirmedUsername: newUser)
+                }, isReplacement: { old, new in
+                    SavedServerPolicy.shared.isServerReplacement(savedServerIdentity: old, connectedServerIdentity: new)
+                }),
+                countAccountDownloads: { id in
+                    let count = Int(AppleMediaBindingClient.shared.downloadCount(databaseName: databaseName, providerInstanceId: id))
+                    return count >= 0 ? count : nil
+                },
+                removeSavedAccountData: { id in
+                    #if os(macOS) || os(iOS)
+                    if let downloads = downloads as? DulcetCoreDownloadController {
+                        return await downloads.removeSavedAccountData(providerInstanceID: id)
+                    }
+                    #endif
+                    let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("Dulcet/Downloads", isDirectory: true)
+                    return AppleMediaBindingClient.shared.removeAccountData(databaseName: databaseName,
+                        downloadRootPath: root.path, providerInstanceId: id)
+                }
             )
         )
         DulcetSystemActions.shared.store = store
@@ -259,6 +300,7 @@ final class DulcetDebugScrobbleDeliveryMarker {
 final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibraryBrowsing,
     DulcetAlbumTracksLoading {
     private let client: AppleLibrarySyncClient
+    private let databaseName: String
     private let previewClient = AppleLibraryBrowseClient()
 
     private(set) var startedSyncCount = 0
@@ -273,6 +315,7 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
     private(set) var previewAlbumOrder: [String] = []
 
     init(databaseName: String = "dulcet.db") {
+        self.databaseName = databaseName
         client = AppleLibrarySyncClient(
             databaseName: databaseName,
             maximumInFlightPerServer: 4
@@ -284,10 +327,13 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
         albumRawID: String,
         completion: @escaping @MainActor (DulcetAlbumTracksOutcome) -> Void
     ) -> any DulcetLibraryBrowseOperation {
+        let authority = AppleServerIdentityAccess(databaseName: databaseName, providerInstanceId: request.providerInstanceID)
+        guard authority.authorized else { completion(.cancelled); return DulcetCompletedLibraryOperation() }
         let operation = previewClient.startAlbumTracks(
             request: request.coreBrowseRequest,
             albumRawId: albumRawID
         ) { outcome in
+            guard authority.authorized else { completion(.cancelled); return }
             if let album = outcome.album {
                 completion(.loaded(Self.copyAlbum(album).tracks))
                 return
@@ -308,6 +354,8 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
         _ request: DulcetLibraryBrowseRequest,
         completion: @escaping @MainActor (DulcetLibraryBrowseOutcome) -> Void
     ) -> any DulcetLibraryBrowseOperation {
+        let authority = AppleServerIdentityAccess(databaseName: databaseName, providerInstanceId: request.providerInstanceID)
+        guard authority.authorized else { completion(.cancelled); return DulcetCompletedLibraryOperation() }
         startedSyncCount += 1
         var syncFinished = false
         var previewDelivered = false
@@ -316,7 +364,7 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
         // sync that is still working.
         let preview = previewClient.startBrowse(request: request.coreBrowseRequest) {
             [weak self] outcome in
-            guard let self, !syncFinished, let snapshot = outcome.snapshot else { return }
+            guard let self, authority.authorized, !syncFinished, let snapshot = outcome.snapshot else { return }
             previewDelivered = true
             self.deliveredPreviewCount += 1
             self.publicationOrder.append("preview")
@@ -341,6 +389,7 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
             guard let self else { return }
             syncFinished = true
             preview.cancel()
+            guard authority.authorized else { completion(.cancelled); return }
             if let success = outcome.success {
                 self.completedSyncGenerations.append(success.generation)
                 self.completeFromCommitted(
@@ -550,11 +599,15 @@ extension AppleSearchPageDto: @retroactive DulcetSearchPageCounts {}
 @MainActor
 final class DulcetCoreServerSearch: DulcetServerSearching {
     private let client = AppleSearchClient()
+    private let databaseName: String
+    init(databaseName: String = "dulcet.db") { self.databaseName = databaseName }
 
     func search(
         _ request: DulcetSearchPageRequest,
         completion: @escaping @MainActor (DulcetSearchPageOutcome) -> Void
     ) -> any DulcetSearchOperation {
+        let authority = AppleServerIdentityAccess(databaseName: databaseName, providerInstanceId: request.providerInstanceID)
+        guard authority.authorized else { completion(.cancelled); return DulcetCompletedSearchOperation() }
         let coreRequest = AppleSearchPageRequest(
             providerInstanceId: request.providerInstanceID,
             normalizedBaseUrl: request.normalizedServerURL,
@@ -570,6 +623,7 @@ final class DulcetCoreServerSearch: DulcetServerSearching {
             trackOffset: Int32(request.trackOffset)
         )
         let operation = client.startSearch(request: coreRequest) { outcome in
+            guard authority.authorized else { completion(.cancelled); return }
             if let page = outcome.page {
                 completion(.loaded(DulcetSearchPage(
                     results: page.results.compactMap(Self.copyResult),
@@ -667,17 +721,42 @@ private final class DulcetCoreSearchOperation: DulcetSearchOperation {
     }
 }
 
+// The Kotlin getter reads an atomic authority and is safe on the disk-cache actor too.
+private final class DulcetArtworkAccountAccess: @unchecked Sendable {
+    private let access: AppleServerIdentityAccess
+    init(databaseName: String, serverID: String) {
+        access = AppleServerIdentityAccess(databaseName: databaseName, providerInstanceId: serverID)
+    }
+    var authorized: Bool { access.authorized }
+}
+
 @MainActor
-final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
+final class DulcetCoreArtworkFetcher: DulcetArtworkFetching, DulcetArtworkRemoteAccessControlling {
     private let client: AppleArtworkFetchClient
     private let cache: DulcetArtworkDiskCache
+    private let databaseName: String
     private var operations: [DulcetCoreArtworkFetchOperation] = []
+    private var rejectedServers: Set<String> = []
+    private var authorityGenerations: [String: UInt64] = [:]
+
+    func rejectServerIdentity(serverID: String) {
+        guard rejectedServers.insert(serverID).inserted else { return }
+        authorityGenerations[serverID, default: 0] &+= 1
+        for operation in operations where operation.serverID == serverID && operation.isRemote { operation.cancel() }
+        operations.removeAll { !$0.isActive }
+    }
+
+    func acceptServerIdentity(serverID: String) {
+        rejectedServers.remove(serverID)
+    }
     var cacheBudgetPlan: (@MainActor (String, Int64, Int64, DulcetArtworkCacheIntent) -> ArtworkCacheBudgetPlan?)?
 
     init(
         client: AppleArtworkFetchClient = AppleArtworkFetchClient(),
-        cache: DulcetArtworkDiskCache = DulcetArtworkDiskCache()
+        cache: DulcetArtworkDiskCache = DulcetArtworkDiskCache(),
+        databaseName: String = "dulcet.db"
     ) {
+        self.databaseName = databaseName
         self.client = client
         self.cache = cache
     }
@@ -686,7 +765,15 @@ final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
         _ request: DulcetArtworkFetchRequest,
         completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
     ) -> any DulcetArtworkFetchOperation {
+        let serverID = request.reference.serverID
+        let generation = authorityGenerations[serverID, default: 0]
+        let accountAccess = DulcetArtworkAccountAccess(databaseName: databaseName, serverID: serverID)
         let operation = DulcetCoreArtworkFetchOperation(
+            authorizeCacheWrite: { accountAccess.authorized },
+            mayFetchRemote: { [weak self] in
+                guard let self else { return false }
+                return accountAccess.authorized && !rejectedServers.contains(serverID) && authorityGenerations[serverID, default: 0] == generation
+            },
             client: client,
             cache: cache,
             request: request,
@@ -729,6 +816,8 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
     private let client: AppleArtworkFetchClient
     private let cache: DulcetArtworkDiskCache
     private let request: DulcetArtworkFetchRequest
+    private let authorizeCacheWrite: @Sendable () -> Bool
+    private let mayFetchRemote: @MainActor () -> Bool
     private let reconcileCacheBudget: @MainActor () async -> Void
     private var completion: (@MainActor (DulcetArtworkFetchOutcome) -> Void)?
     private var task: Task<Void, Never>?
@@ -736,14 +825,19 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
     private var cancelled = false
     var isActive: Bool { completion != nil }
     var serverID: String { request.reference.serverID }
+    var isRemote: Bool { !request.cachedOnly }
 
     init(
+        authorizeCacheWrite: @escaping @Sendable () -> Bool,
+        mayFetchRemote: @escaping @MainActor () -> Bool,
         client: AppleArtworkFetchClient,
         cache: DulcetArtworkDiskCache,
         request: DulcetArtworkFetchRequest,
         reconcileCacheBudget: @escaping @MainActor () async -> Void,
         completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
     ) {
+        self.authorizeCacheWrite = authorizeCacheWrite
+        self.mayFetchRemote = mayFetchRemote
         self.client = client
         self.cache = cache
         self.request = request
@@ -766,7 +860,7 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
                 await cache.remove(key)
             }
             guard !Task.isCancelled, !cancelled else { return }
-            guard !request.cachedOnly else { deliver(.unavailable); return }
+            guard !request.cachedOnly, mayFetchRemote() else { deliver(.unavailable); return }
             startNetworkRequest(key: key)
         }
     }
@@ -792,7 +886,7 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
             allowLocalHttp: request.allowLocalHTTP
         )
         coreOperation = client.startFetch(request: coreRequest) { [weak self] outcome in
-            guard let self, !cancelled else { return }
+            guard let self, !cancelled, mayFetchRemote() else { return }
             coreOperation = nil
             if let foundationData = outcome.data {
                 let data = foundationData as Data
@@ -801,10 +895,10 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
                     return
                 }
                 task = Task { [weak self] in
-                    guard let self, !Task.isCancelled, !cancelled else { return }
-                    await cache.insert(data, for: key)
+                    guard let self, !Task.isCancelled, !cancelled, mayFetchRemote() else { return }
+                    await cache.insert(data, for: key, authorize: authorizeCacheWrite)
                     await reconcileCacheBudget()
-                    guard !Task.isCancelled, !cancelled else { return }
+                    guard !Task.isCancelled, !cancelled, mayFetchRemote() else { return }
                     deliver(.loaded(data))
                 }
                 return
@@ -855,6 +949,11 @@ final class DulcetCoreLibraryOperation: DulcetLibraryBrowseOperation {
 
 @MainActor
 private final class DulcetCompletedLibraryOperation: DulcetLibraryBrowseOperation {
+    func cancel() {}
+}
+
+@MainActor
+private final class DulcetCompletedSearchOperation: DulcetSearchOperation {
     func cancel() {}
 }
 
@@ -922,7 +1021,8 @@ final class DulcetCoreAccountConnector: DulcetAccountConnecting {
                 completion(.connected(DulcetConnectedAccountSummary(
                     serverName: account.serverType.isEmpty ? fallbackName : account.serverType,
                     normalizedServerURL: account.normalizedBaseUrl,
-                    canonicalUsername: account.canonicalUsername
+                    canonicalUsername: account.canonicalUsername,
+                    serverIdentity: account.serverIdentity
                 )))
                 return
             }
@@ -1113,6 +1213,10 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
     func downloadsChanged() {
         client.downloadsChanged()
         myLibraryClient?.refreshLocal()
+    }
+
+    func rejectServerIdentity() {
+        client.rejectServerIdentity()
     }
 
     func setOnline(_ reachable: Bool) {

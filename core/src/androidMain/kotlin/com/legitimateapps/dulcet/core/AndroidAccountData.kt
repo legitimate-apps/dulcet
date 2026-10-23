@@ -43,6 +43,7 @@ public class AndroidAccountData internal constructor(
     private val monotonic: OutboxMonotonicClock,
     /** How long a removal waits for the library reader before it gives up and deletes nothing. */
     private val readerCloseBound: Duration = READER_CLOSE_BOUND,
+    private val validateIdentity: suspend (DulcetDatabaseStore, PlaybackEndpointAccount) -> DomainError? = { _, _ -> null },
     /** Returns once the process's library reader has terminated (§14.7 step 6 waits for it). */
     private val closeLibraryReader: suspend () -> Unit,
 ) {
@@ -51,10 +52,16 @@ public class AndroidAccountData internal constructor(
         openStore = { DulcetDriverFactory(context.applicationContext).openDulcetDatabase() },
         artworkRoot = artworkRootFor(context.applicationContext, serverId),
         downloadRoot = downloadRootFor(context.applicationContext),
-        senderFor = { account -> ScrobbleEndpointSender(account) },
+        senderFor = { account -> ScrobbleEndpointSender(account, identityAuthorization = {
+            AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
+        }) },
         wall = OutboxWallClock(System::currentTimeMillis),
         monotonic = OutboxMonotonicClock { SystemClock.elapsedRealtime().milliseconds },
         closeLibraryReader = ::closeProcessLibraryReader,
+        validateIdentity = { store, account -> AndroidServerIdentity.validate(account.providerInstanceId) {
+            ServerIdentityGate(store.database, account.providerInstanceId,
+                AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+        } },
     )
 
     init {
@@ -99,6 +106,9 @@ public class AndroidAccountData internal constructor(
                         wall,
                         monotonic,
                         ScrobbleOutboxDiagnosticSink {},
+                        validateServerIdentity = {
+                            validateIdentity(store, account)
+                        },
                     ).onForeground()
                 }
             } catch (failure: kotlinx.coroutines.CancellationException) {
@@ -183,34 +193,64 @@ public class AndroidAccountData internal constructor(
             )
         }
 
+        /** Retains every saved server, including accounts not currently selected. */
+        public suspend fun sweepAccountsExcept(context: Context, savedAccountIds: () -> Set<String>): Set<String> {
+            val application = context.applicationContext
+            return sweepRetaining(
+                { DulcetDriverFactory(application).openDulcetDatabase() }, artworkParentFor(application),
+                downloadRootFor(application), savedAccountIds,
+            )
+        }
+
+        /** Non-cache download items a replacement removes, including queued and interrupted transfers. */
+        public suspend fun downloadedTrackCount(context: Context, serverId: String): Int = withContext(Dispatchers.IO) {
+            withStore({ DulcetDriverFactory(context.applicationContext).openDulcetDatabase() }) { store ->
+                val cached = store.database.offlineLibraryQueries.selectServerRetentions(serverId).executeAsList()
+                    .filter { it.explicit_download == 0L && it.automatic_download == 0L }
+                    .mapTo(mutableSetOf()) { it.raw_id to it.transcode_profile }
+                store.database.downloadsQueries.selectDownloadItemsForServer(serverId).executeAsList()
+                    .filter { (it.raw_id to it.transcode_profile) !in cached }
+                    .map { it.raw_id }.distinct().size
+            }
+        }
+
         internal suspend fun sweep(
             openStore: () -> DulcetDatabaseStore,
             artworkParent: File,
             downloadRoot: File,
             activeAccountId: () -> String?,
-        ): Set<String> = withContext(Dispatchers.IO) {
+        ): Set<String> = sweepRetaining(openStore, artworkParent, downloadRoot) { setOfNotNull(activeAccountId()) }
+
+        private suspend fun sweepRetaining(
+            openStore: () -> DulcetDatabaseStore,
+            artworkParent: File,
+            downloadRoot: File,
+            savedAccountIds: () -> Set<String>,
+        ): Set<String> = withContext(AndroidDownloadController.databaseDispatcher) {
+            // Revoke bindings only between download turns, never between a queued callback's
+            // ownership check and its file/policy work. The same boundary orders close cleanup.
             val files = downloadFiles(downloadRoot)
             val listedFiles = files.listFiles()
             val withRows = withStore(openStore) { store ->
                 store.database.serverDataQueries.selectServerIdsWithRows().executeAsList().toSet()
             }
             val directories = artworkParent.listFiles { entry -> entry.isDirectory }.orEmpty().toList()
-            val active = activeAccountId()
+            val saved = savedAccountIds()
             val named = withStore(openStore) { store ->
                 store.database.downloadsQueries.selectDownloadFileNames().executeAsList()
                     .map { DownloadId(it.download_id) to it.file_relative_path }
             }
-            val keptDirectory = active?.let(AndroidArtworkRepository::digest)
+            val keptDirectories = saved.mapTo(mutableSetOf(), AndroidArtworkRepository::digest)
             var failure: IOException? = null
             val swept = mutableSetOf<String>()
             for (id in withRows) {
-                if (id == active) continue
+                if (id in saved) continue
                 removed += id
                 withStore(openStore) { store -> DownloadPolicyEngine(store.database, files).removeAccountData(id) }
                 swept += id
             }
             for (directory in directories) {
-                if (directory.name == keptDirectory) continue
+                if (directory.name in keptDirectories) continue
                 if (!directory.deleteRecursively()) failure = IOException("cached artwork could not be deleted")
             }
             // A file no row names belongs to no account: nothing could find it to delete it later.
@@ -224,7 +264,7 @@ public class AndroidAccountData internal constructor(
         }
 
         private suspend fun removeStored(serverId: String, openStore: () -> DulcetDatabaseStore, artworkRoot: File, downloadRoot: File) =
-            withContext(Dispatchers.IO) {
+            withContext(AndroidDownloadController.databaseDispatcher) {
                 // Before the directory goes, so an artwork load finishing after this cannot recreate it.
                 removed += serverId
                 if (artworkRoot.exists() && !artworkRoot.deleteRecursively()) {

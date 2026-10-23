@@ -25,7 +25,11 @@ concurrency:
 jobs:
   core-build:
     name: core-build
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the server tests install Ubuntu Noble's exact FFmpeg below, and the
+    # ubuntu-latest label moves to Ubuntu 26 from 2026-10-19
+    # (https://github.com/actions/runner-images/issues/14748). On that image the release check
+    # fails before any test runs. ubuntu-24.04 is a standard hosted label, free on this public repo.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     # The required job downloads this job's evidence by the attempt that PRODUCED it. See there.
     outputs:
@@ -113,6 +117,11 @@ jobs:
         run: |
           . /etc/os-release
           test "$ID:$VERSION_ID" = "ubuntu:24.04"
+          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
+          # https://github.com/actions/runner-images/issues/14823
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
           test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
@@ -157,6 +166,7 @@ jobs:
           # The core's Android host tests carry CONF-82 and CONF-87, whose reader rules the
           # disposable corpus cannot reach; their server is scripted inside the test.
           path: |
+            core/build/test-results/jvmTest
             core/build/test-results/testAndroidHostTest
             android/app/build/test-results/testDevDebugUnitTest
             android/app/build/test-results/testProdDebugUnitTest
@@ -336,6 +346,11 @@ jobs:
         run: |
           . /etc/os-release
           test "$ID:$VERSION_ID" = "ubuntu:24.04"
+          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
+          # https://github.com/actions/runner-images/issues/14823
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
           test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"

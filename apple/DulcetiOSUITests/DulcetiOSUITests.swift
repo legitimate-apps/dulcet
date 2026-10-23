@@ -7,6 +7,9 @@ final class DulcetiOSUITests: XCTestCase {
     /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
     /// comes from XCTest's Swift overlay, which `tools/typecheck-xcuitest-sources` cannot resolve.
     private var afterTest: [() -> Void] = []
+    // Each test owns its accounts. Relaunches of one endpoint keep the same identity; a
+    // disposable fault proxy is an independent server rather than an implicit account rebind.
+    private var liveAccountFixtures: [String: String] = [:]
 
     override func tearDown() {
         let cleanups = afterTest
@@ -787,7 +790,8 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func awaitLiveAccountConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
-        if signOut.waitForExistence(timeout: 5) { return true }
+        // A connecting launch can navigate to Listen Now during a global Sign Out query.
+        // Route to Connection in the bounded loop before querying its connected-state control.
         let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
         let tryAgain = app.buttons["Try Again"].firstMatch
         var retries = 0
@@ -804,8 +808,19 @@ final class DulcetiOSUITests: XCTestCase {
                 retries += 1
                 print("ACCOUNT CONNECT RETRY \(retries): account setup reached its request limit")
                 tryAgain.tap()
-                // One more request limit, and the time a loaded host takes to show the outcome.
-                if signOut.waitForExistence(timeout: 45) { return true }
+                // A successful retry can navigate to Listen Now while its state is queried.
+                // Revisit Connection within the same request-limit/readiness budget.
+                let retryDeadline = Date().addingTimeInterval(45)
+                repeat {
+                    guard openDestination(
+                        "Connection",
+                        sidebarIdentifier: "dulcet.sidebar.settings",
+                        in: app,
+                        compact: compact
+                    ) else { return false }
+                    let remaining = max(0, retryDeadline.timeIntervalSince(Date()))
+                    if signOut.waitForExistence(timeout: min(10, remaining)) { return true }
+                } while Date() < retryDeadline
             }
         } while Date() < deadline
         return false
@@ -1064,15 +1079,8 @@ final class DulcetiOSUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         guard let configuration = livePlaybackConfiguration() else { return }
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -1194,15 +1202,8 @@ final class DulcetiOSUITests: XCTestCase {
         guard let configuration = livePlaybackConfiguration() else { return }
         let album = "Double Lines"
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -1242,7 +1243,7 @@ final class DulcetiOSUITests: XCTestCase {
 
         // 2. Relaunch with nothing but the saved account.
         app.terminate()
-        app.launchArguments = []
+        app.launchArguments = liveAccountFixtureArguments(serverURL: configuration.serverURL)
         app.launch()
         let libraryTile = app.buttons["dulcet.library.album"].firstMatch
         XCTAssertTrue(libraryTile.waitForExistence(timeout: 15),
@@ -1618,16 +1619,9 @@ final class DulcetiOSUITests: XCTestCase {
         extraLaunchArguments: [String] = []
     ) -> SkipProbeRun? {
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-ui-markers",
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ] + extraLaunchArguments
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration,
+            extraArguments: ["-dulcet-debug-ui-markers"] + extraLaunchArguments)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -1833,12 +1827,8 @@ final class DulcetiOSUITests: XCTestCase {
         }
 
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -2408,6 +2398,17 @@ final class DulcetiOSUITests: XCTestCase {
     /// A regular-width window shows Up Next beside the player and has no toggle for it.
     @MainActor
     private func upNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool = true) -> [String]? {
+        var labels: [String]?
+        // The player may still carry the drag/menu animation counted by XCTest after Close.
+        // Read and dismiss by their explicit states, keeping the live uncovered-bar assertion.
+        withoutIdleWaits(app) {
+            labels = self.readUpNextLabels(openingFrom: bar, in: app, compact: compact)
+        }
+        return labels
+    }
+
+    @MainActor
+    private func readUpNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool) -> [String]? {
         bar.tap()
         if compact {
             let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
@@ -2419,8 +2420,16 @@ final class DulcetiOSUITests: XCTestCase {
         }
         let rows = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.upNext.row."))
-        // An empty Up Next has no row to wait for; give the list a moment to draw.
-        _ = rows.firstMatch.waitForExistence(timeout: 2)
+        // Empty is a positively rendered state. Waiting for a row that cannot exist
+        // makes XCTest retry a missing-element snapshot even when this list is ready.
+        let contents = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ OR identifier BEGINSWITH %@",
+            "dulcet.upNext.empty", "dulcet.upNext.row."
+        )).firstMatch
+        guard contents.waitForExistence(timeout: 2) else {
+            XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
+            return nil
+        }
         // Read through snapshots, which throw when a row has gone, instead of recording a failure
         // as a bare `.label` does: the queue can change between counting its rows and reading them
         // (OBSERVED: a restored queue replaced under the read, "No matches found for Element at
@@ -2443,19 +2452,20 @@ final class DulcetiOSUITests: XCTestCase {
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
         // The bar remains in the accessibility tree beneath the full-screen player on iPad.
         // Its existence alone let a read return while the player still obscured the drag source.
-        let dismissalDeadline = Date().addingTimeInterval(10)
-        repeat {
-            // A loaded accessibility server can spend the waiter's entire budget inside one
-            // query. Accept a successful observation before checking elapsed time, as in the
-            // connection driver, rather than letting the timer discard the observed dismissal.
-            if !close.exists, bar.exists, bar.isHittable {
-                print("DULCET UP NEXT read=\(labels)")
-                return labels
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < dismissalDeadline
-        XCTFail("Closing the player must dismiss it and uncover the bar: " + app.debugDescription)
-        return nil
+        // A missing-element query alone has taken 9.25 s on CI. Polling it together
+        // with a second accessibility query exhausted one deadline despite a dismissed
+        // player and visible bar. Wait for each required state in its own bounded phase.
+        guard close.waitForNonExistence(timeout: 10) else {
+            XCTFail("Closing the player must dismiss it: " + app.debugDescription)
+            return nil
+        }
+        let uncovered = NSPredicate(format: "hittable == true")
+        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: uncovered, object: bar)], timeout: 10) == .completed else {
+            XCTFail("Closing the player must dismiss it and uncover the bar: " + app.debugDescription)
+            return nil
+        }
+        print("DULCET UP NEXT read=\(labels)")
+        return labels
     }
 
     /// Drags `source` onto the now-playing bar until Up Next holds `count` more entries than
@@ -3329,12 +3339,8 @@ final class DulcetiOSUITests: XCTestCase {
         let track = "Twenty Nine Seconds"
         let line = "Dulcet English line one"
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -3377,12 +3383,8 @@ final class DulcetiOSUITests: XCTestCase {
         let album = "Threshold Boundary"
         let track = "Twenty Nine Seconds"
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -3473,12 +3475,8 @@ final class DulcetiOSUITests: XCTestCase {
         }
 
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -3992,6 +3990,29 @@ final class DulcetiOSUITests: XCTestCase {
             + " started=\(started ?? "nil")")
     }
 
+    /// Unrelated proofs own separate credential stores; relaunches of one endpoint keep the
+    /// same saved account. Explicit credential fixtures and killed-process handoffs own theirs.
+    private func liveAccountFixtureArguments(serverURL: String, extraArguments: [String] = []) -> [String] {
+        guard !extraArguments.contains("-dulcet-debug-account-fixture"),
+              !extraArguments.contains("-dulcet-debug-download-handoff") else { return [] }
+        let fixture = liveAccountFixtures[serverURL] ?? UUID().uuidString
+        liveAccountFixtures[serverURL] = fixture
+        return ["-dulcet-debug-account-fixture", fixture]
+    }
+
+    private func liveAccountLaunchArguments(
+        serverURL: String,
+        configuration: LivePlaybackConfiguration,
+        extraArguments: [String] = []
+    ) -> [String] {
+        extraArguments + liveAccountFixtureArguments(serverURL: serverURL, extraArguments: extraArguments) + [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", serverURL,
+            "-dulcet-debug-account-username", configuration.username,
+            "-dulcet-debug-account-password", configuration.password,
+        ]
+    }
+
     /// Launches the app with the account injected for `serverURL` and waits for its live
     /// connection, on the device class the caller names.
     @MainActor
@@ -4002,12 +4023,8 @@ final class DulcetiOSUITests: XCTestCase {
         extraArguments: [String] = []
     ) -> XCUIApplication? {
         let app = XCUIApplication()
-        app.launchArguments += extraArguments + [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: serverURL, configuration: configuration, extraArguments: extraArguments)
         app.launch()
         let window = app.windows.firstMatch
         guard window.waitForExistence(timeout: 10) else {
@@ -4271,9 +4288,21 @@ final class DulcetiOSUITests: XCTestCase {
             return false
         }
         picker.tap()
-        let item = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", option, identifier)).firstMatch
-        guard item.waitForExistence(timeout: 5) else {
-            XCTFail("The picker must offer \(option): " + app.debugDescription)
+        // Resolve the native menu's option, rather than an identically labelled Form picker.
+        // Existence alone does not establish a usable native menu activation target.
+        let item = app.collectionViews.buttons.matching(NSPredicate(
+            format: "label == %@ AND identifier != %@ AND identifier != %@", option,
+            "dulcet.streaming-quality.unmetered", "dulcet.streaming-quality.metered"
+        )).firstMatch
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard item.exists else { return false }
+            let frame = item.frame
+            return frame.origin.x.isFinite && frame.origin.y.isFinite
+                && frame.width.isFinite && frame.height.isFinite
+                && frame.width > 0 && frame.height > 0 && item.isHittable
+        }, object: item)
+        guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
+            XCTFail("The picker must offer a hittable \(option): " + app.debugDescription)
             return false
         }
         item.tap()
@@ -4562,12 +4591,8 @@ final class DulcetiOSUITests: XCTestCase {
         let album = "Threshold Boundary"
         let track = "Twenty Nine Seconds"
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", configuration.serverURL,
-            "-dulcet-debug-account-username", configuration.username,
-            "-dulcet-debug-account-password", configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
@@ -5138,16 +5163,9 @@ final class DulcetiOSUITests: XCTestCase {
         guard requireSimulator(.pad, "The iPad full-screen player proof") else { return }
         guard let configuration = livePlaybackConfiguration() else { return }
         let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-ui-markers",
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration,
+            extraArguments: ["-dulcet-debug-ui-markers"])
         app.launch()
 
         let window = app.windows.firstMatch
@@ -5377,15 +5395,8 @@ final class DulcetiOSUITests: XCTestCase {
         let app = XCUIApplication()
         // The delivery marker is the other proof of playback below, for a canary that has ended.
         app.launchArguments += ["-dulcet-debug-scrobble-delivery-marker"]
-        app.launchArguments += [
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ]
+        app.launchArguments += liveAccountLaunchArguments(
+            serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
 
         let window = app.windows.firstMatch
@@ -5750,15 +5761,8 @@ final class DulcetiOSUITests: XCTestCase {
         // 2026-09-11: NowPlaying logged, no Scrobbled line, count stayed 0, test green).
         app.launchArguments += ["-dulcet-debug-scrobble-delivery-marker"]
         if usingInjectedAccount {
-            app.launchArguments += [
-                "-dulcet-debug-connect-account",
-                "-dulcet-debug-account-server-url",
-                configuration.serverURL,
-                "-dulcet-debug-account-username",
-                configuration.username,
-                "-dulcet-debug-account-password",
-                configuration.password,
-            ]
+            app.launchArguments += liveAccountLaunchArguments(
+                serverURL: configuration.serverURL, configuration: configuration)
         } else {
             installSystemAlertInterruptionMonitors()
         }

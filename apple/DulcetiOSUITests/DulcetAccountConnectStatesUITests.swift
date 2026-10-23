@@ -334,11 +334,27 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.launchArguments = []
         launchInInteractionScope(app)
         let window = app.windows.firstMatch
-        XCTAssertTrue(window.waitForExistence(timeout: 15), "The app window must exist")
-        let compact = window.frame.width < 700
-        print("DULCET ACCOUNT STATES destination=\(compact ? "compact" : "regular") window=\(window.frame)")
+        // Launch can expose an existing window before its frame is laid out. Keep the same
+        // readiness budget and classify one captured frame, rather than separate live snapshots.
+        var readyFrame: CGRect?
+        let laidOutWindow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard window.exists else { return false }
+            let frame = window.frame
+            guard frame.origin.x.isFinite, frame.origin.y.isFinite,
+                  frame.width.isFinite, frame.height.isFinite,
+                  frame.width > 0, frame.height > 0 else { return false }
+            readyFrame = frame
+            return true
+        }, object: nil)
+        guard XCTWaiter.wait(for: [laidOutWindow], timeout: 15) == .completed,
+              let frame = readyFrame else {
+            XCTFail("The app window must have finite, nonzero bounds within 15 seconds")
+            return
+        }
+        let compact = frame.width < 700
+        print("DULCET ACCOUNT STATES destination=\(compact ? "compact" : "regular") window=\(frame)")
         guard compact == expectedCompact else {
-            XCTFail("This proof expected a \(expectedCompact ? "compact" : "regular") window, got \(window.frame)")
+            XCTFail("This proof expected a \(expectedCompact ? "compact" : "regular") window, got \(frame)")
             return
         }
 

@@ -6,7 +6,7 @@ import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -61,6 +61,7 @@ class AndroidTvGridActionsProof(private val compose: ComposeTestRule) {
                 ActivityScenario.launch<Activity>(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)).use {
                     awaitTag("listenNow.surface")
                     select("browse.open")
+                    awaitTag("library.surface")
                     select("library.view.albums")
                     awaitTag("library.albums.item.0")
                     observer.bind()
@@ -97,13 +98,24 @@ class AndroidTvGridActionsProof(private val compose: ComposeTestRule) {
             else probe.call("removeFromDulcetLibrary", mapOf("id" to id))
         }
     }
-    private fun awaitTag(tag: String) = compose.waitUntil("$tag exists", 30_000) {
-        compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+    private fun awaitTag(tag: String) {
+        try {
+            compose.waitUntil("$tag exists", 30_000) {
+                compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (failure: Throwable) {
+            println(compose.onRoot(useUnmergedTree = true).printToString())
+            throw failure
+        }
     }
     private fun select(tag: String) {
-        awaitTag(tag)
-        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
-        compose.waitForIdle()
+        if (tag.startsWith("library.view.")) {
+            compose.focusTvBrowseCategory(tag)
+        } else {
+            awaitTag(tag)
+            compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
+            compose.waitForIdle()
+        }
         compose.onNodeWithTag(tag).assertIsFocused()
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
     }

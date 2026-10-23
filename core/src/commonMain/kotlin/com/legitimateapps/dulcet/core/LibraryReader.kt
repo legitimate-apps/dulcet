@@ -56,6 +56,8 @@ internal class LibraryReader(
     internal val overlay: LibraryMutationOverlay = LibraryMutationOverlay.None,
     internal val downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     private val outboxes: ReconnectOutboxes = ReconnectOutboxes.None,
+    private val validateServerIdentity: suspend () -> DomainError? = { null },
+    private val identityAuthorization: () -> Long? = { 0L },
     internal val playlistOverlay: LibraryPlaylistOverlay = LibraryPlaylistOverlay.None,
     /**
      * Observed endpoint health for this account (§10.4). The reader holds it because the reader
@@ -118,6 +120,45 @@ internal class LibraryReader(
 
     private var connected = true
 
+    // Reachability says nothing about who is behind the saved origin. Rejection survives network
+    // and foreground reports until this reader authenticates its accepted identity again.
+    private var identityRejected = false
+    private var identityGeneration = 0L
+
+    private suspend fun validateIdentity(): DomainError? {
+        val generation = identityGeneration
+        val authorization = identityAuthorization()
+        val failure = validateServerIdentity()
+        if (failure == DomainError.Protocol.ServerIdentityChanged) {
+            rejectIdentity()
+        } else if (failure == null) {
+            val accepted = identityAuthorization()
+            // Neither an older negotiation nor a reject/accept cycle may reopen an old request.
+            if (generation != identityGeneration || accepted == null ||
+                (authorization != null && accepted != authorization)) {
+                return DomainError.Protocol.ServerIdentityChanged
+            }
+            identityRejected = false
+        }
+        return failure
+    }
+
+    private fun rejectIdentity() {
+        identityRejected = true
+        identityGeneration += 1
+    }
+
+    /** Called on the reader's owner after another account client detects a replacement. */
+    internal fun rejectServerIdentity() {
+        checkConfined()
+        rejectIdentity()
+        goOffline()
+        afterFailedRead(DomainError.Protocol.ServerIdentityChanged)
+    }
+
+    private fun refusesIdentity(generation: Long, authorization: Long): Boolean =
+        identityRejected || generation != identityGeneration || identityAuthorization() != authorization
+
     /**
      * The only way [online] changes. Coming back online resets [breaker]: failures observed before
      * the network went away say nothing about an endpoint after it came back (§10.4). The one
@@ -145,7 +186,7 @@ internal class LibraryReader(
      * the reader is offline and no reconnect runs — after a failed reconnect, for instance — so a
      * tap is then kept, not sent.
      */
-    internal val canSend: Boolean get() = reachable || online || inFlightReconnect != null
+    internal val canSend: Boolean get() = !identityRejected && identityAuthorization() != null && (reachable || online || inFlightReconnect != null)
 
     /** The reconnect running now; every reconnect requested meanwhile joins it. */
     private var inFlightReconnect: Deferred<ReaderConnectionOutcome>? = null
@@ -254,6 +295,12 @@ internal class LibraryReader(
     suspend fun connect(): CatalogEpoch? {
         checkConfined()
         if (!online) return null
+        val identityFailure = validateIdentity()
+        if (identityFailure != null) {
+            goOffline()
+            afterFailedRead(identityFailure)
+            return null
+        }
         return readEpoch()
     }
 
@@ -265,6 +312,12 @@ internal class LibraryReader(
         checkConfined()
         if (!online) return ReaderConnectionOutcome.Failed(DomainError.Transport.Unreachable)
         return try {
+            val identityFailure = validateIdentity()
+            if (identityFailure != null) {
+                goOffline()
+                afterFailedRead(identityFailure)
+                return ReaderConnectionOutcome.Failed(identityFailure)
+            }
             readEpochReporting()
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -352,6 +405,14 @@ internal class LibraryReader(
     private suspend fun performReconnect(): ReaderConnectionOutcome {
         var transitioned = false
         return try {
+            val identityFailure = validateIdentity()
+            if (identityFailure != null) {
+                // This check runs ahead of the writable outboxes. The old namespace remains usable
+                // offline until account UI obtains consent to replace it.
+                if (online) goOffline()
+                afterFailedRead(identityFailure)
+                return ReaderConnectionOutcome.Failed(identityFailure)
+            }
             // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
             flushOutboxes()
             // Pinned BEFORE the reading is adopted: if a later step throws, the next sequence still
@@ -830,7 +891,12 @@ internal class LibraryReader(
         request: suspend () -> LibraryEndpointResponse,
     ): SentResponse {
         val outbox = whileOffline || currentCoroutineContext()[OutboxRequestsKey] != null
-        if (!online && (!outbox || !canSend)) throw ReaderSendRefused()
+        val authorization = identityAuthorization() ?: run {
+            rejectServerIdentity()
+            throw ReaderSendRefused()
+        }
+        if (identityRejected || (!online && (!outbox || !canSend))) throw ReaderSendRefused()
+        val generation = identityGeneration
         val seq = cache.issue()
         issued(seq)
         val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
@@ -839,13 +905,18 @@ internal class LibraryReader(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: LibraryRequestFailure) {
+            if (refusesIdentity(generation, authorization)) throw ReaderSendRefused()
             throw failure
         } catch (failure: Throwable) {
+            if (refusesIdentity(generation, authorization)) throw ReaderSendRefused()
             val error = failure.asReaderError()
             // The local-HTTP policy refuses before any socket opens, so nothing it stops was sent.
             val neverSent = failure is LocalHttpPolicyFailure || provesNeverConnected(failure)
             throw LibraryRequestFailure(error, mayHaveArrived = error == DomainError.Transport.Unreachable && !neverSent)
         }
+        // This is shared by ordinary reads, held-slot/repeated requests and every outbox send.
+        // Nothing downstream may parse, cache, adopt or acknowledge a reply from a retired fence.
+        if (refusesIdentity(generation, authorization)) throw ReaderSendRefused()
         return SentResponse(seq, before, response)
     }
 

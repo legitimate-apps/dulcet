@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
@@ -250,6 +251,7 @@ internal class ScrobbleOutboxDeliveryWorker(
     private val wallClock: OutboxWallClock,
     private val monotonicClock: OutboxMonotonicClock,
     private val diagnosticSink: ScrobbleOutboxDiagnosticSink,
+    private val validateServerIdentity: suspend () -> DomainError? = { null },
 ) {
     private val mutex = Mutex()
     private var nextRetryAt: Duration? = null
@@ -295,6 +297,14 @@ internal class ScrobbleOutboxDeliveryWorker(
             val acceptancesAtStart = acceptances
             val attemptedEntries = mutableListOf<ScrobbleOutboxEntry>()
             val pending = outbox.pending(serverId)
+            if (pending.isNotEmpty()) {
+                val identityFailure = validateServerIdentity()
+                if (identityFailure != null) {
+                    val retry = identityFailure.automaticRetryFloorMillis()?.let { maxOf(it, 60_000).milliseconds }
+                    nextRetryAt = retry?.let { now + it }
+                    return@withLock ScrobbleOutboxDeliveryResult(0, 0, 0, retry)
+                }
+            }
             refused.keys.retainAll(pending.map { it.refusedKey() }.toSet())
             pending.forEach { entry ->
                 val key = entry.refusedKey()

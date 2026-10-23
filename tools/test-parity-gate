@@ -106,6 +106,9 @@ def materialize(root: Path) -> None:
         # library.browse cites the core reader's own conformance tests for CONF-82 and CONF-87,
         # whose rules the disposable corpus cannot reach; the gate looks their names up here.
         "core/src/commonTest",
+        # Server lineage negotiation cites real JVM loopback transport tests. The synthetic
+        # checkout must contain their declarations before any evidence mutation is judged.
+        "core/src/jvmTest",
         # Android listening sessions cite the controller and Media3 host seams directly.
         # Their declarations must exist in the synthetic baseline before mutations run.
         "core/src/androidHostTest",
@@ -1069,6 +1072,8 @@ passing_cases = """\
             name="testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnAppleTV" time="0.1" />
   <testcase classname="DulcetMacAccountConnectAppTest"
             name="searchQueryRanksAndActivatesTrackThroughHostedAppUI" time="0.1" />
+  <testcase classname="DulcetMacAccountConnectAppTest"
+            name="connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState" time="0.1" />
   <testcase classname="DulcetiOSUITests"
             name="testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone" time="0.1" />
   <testcase classname="DulcetiOSUITests"
@@ -1342,6 +1347,33 @@ passing_cases = """\
 # The fixed passing-report fixture includes each newly cited platform alias explicitly;
 # never derive these cases from FEATURES, which could make a bad citation prove itself.
 for alias, methods in (
+    ("DulcetKitTests", (
+        "serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged",
+        "learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt",
+        "detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia",
+        "rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime",
+        "serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges",
+        "savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible",
+        "savedServerChooserIsReachableFromAccountAndActivatesItsEntry",
+    )),
+    ("DulcetKitIOSTests", (
+        "serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged",
+        "learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt",
+        "detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia",
+        "rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime",
+        "serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges",
+        "savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible",
+        "savedServerChooserAccountActionsSelectEntryAndKeepBothServers",
+    )),
+    ("DulcetKitTVOSTests", (
+        "serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged",
+        "learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt",
+        "detectedServerReplacementQuarantinesDownloadsBeforeNegotiationAndCancelKeepsMedia",
+        "rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime",
+        "serverConfirmedIdenticalCanonicalUsernameRetainsMediaAfterTypedCaseChanges",
+        "savedServerCanSwitchToItsOfflineLibraryWithoutNetworkAndAuthenticationFailuresStayVisible",
+        "savedServerChooserAccountActionsSelectEntryAndKeepBothServers",
+    )),
     ("DulcetMyLibraryIPhoneUITests", (
         "testBrowseAddRemoveRelaunchAndOfflineReplay",
         "testNonDulcetServerKeepsTheOriginalLibraryNavigation",

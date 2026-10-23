@@ -22,6 +22,7 @@ public data class StoredAccount(
     val username: String,
     val password: String,
     val allowLocalHttp: Boolean,
+    val serverIdentity: String = "",
 ) {
     override fun toString(): String = "StoredAccount(id=$id, <redacted>)"
 }
@@ -35,10 +36,20 @@ public interface AccountCredentialStore {
         password: String,
         allowLocalHttp: Boolean,
     ): StoredAccount
-    /** A successful connect using the exact saved credentials may retain its provider identity.
-     * Stores without in-place continuation support return null and use ordinary save semantics. */
+    /** A server-authenticated continuation retains its provider namespace, including password
+     * refreshes and a canonical username confirmed by the server. Unsupported stores return null. */
     fun saveAuthenticatedContinuation(expected: StoredAccount, confirmed: StoredAccount): StoredAccount? = null
     fun delete()
+    /** All encrypted saved accounts; switching never destroys another account's namespace. */
+    fun remove(id: String) { if (activeAccountId() == id) delete() }
+    fun savedAccounts(): List<StoredAccount> = listOfNotNull(load())
+    /** Strongest accepted lineage, including identity learned after a legacy credential was saved. */
+    fun acceptedServerIdentity(account: StoredAccount): String = account.serverIdentity
+    fun savedAccountIds(): Set<String> = setOfNotNull(activeAccountId())
+    fun activate(id: String): StoredAccount? = load()?.takeIf { it.id == id }
+    /** Adds an authenticated server, keeping the accounts already saved. */
+    fun saveAdditional(account: StoredAccount): StoredAccount = save(account.serverName, account.serverUrl,
+        account.username, account.password, account.allowLocalHttp)
 
     /**
      * The id of the saved account, read without decrypting its record, so it is known even when
@@ -89,19 +100,47 @@ public class AndroidAccountCredentialStore public constructor(
 
     override fun load(): StoredAccount? {
         val id = preferences.getString(ACTIVE_ACCOUNT_KEY, null) ?: return null
+        return load(id)
+    }
+
+    private fun load(id: String): StoredAccount {
         val encrypted = preferences.getString(payloadKey(id), null)
             ?: throw CredentialStoreException(CredentialStoreException.Reason.CorruptRecord)
         return try {
             CredentialCodec.decode(
                 id,
                 cipher.decrypt(id, Base64.decode(encrypted, Base64.NO_WRAP)),
-            )
+            ).also { account ->
+                if (account.serverIdentity.isNotEmpty()) com.legitimateapps.dulcet.core.AndroidServerIdentity.seed(
+                    applicationContext, account.id, account.serverIdentity)
+            }
         } catch (failure: CredentialStoreException) {
             throw failure
         } catch (failure: Exception) {
             throw CredentialStoreException(CredentialStoreException.Reason.CorruptRecord, failure)
         }
     }
+
+    override fun savedAccountIds(): Set<String> = preferences.all.keys
+        .filter { it.startsWith("account.") }.map { it.removePrefix("account.") }.toSet()
+
+    override fun savedAccounts(): List<StoredAccount> = savedAccountIds().mapNotNull { id -> runCatching { load(id) }.getOrNull() }
+
+    override fun acceptedServerIdentity(account: StoredAccount): String = try {
+        com.legitimateapps.dulcet.core.AndroidServerIdentity.acceptedIdentity(applicationContext, account.id, account.serverIdentity)
+    } catch (failure: Exception) {
+        throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed, failure)
+    }
+
+    override fun activate(id: String): StoredAccount? {
+        if (id !in savedAccountIds()) return null
+        val account = load(id)
+        if (!preferences.edit().putString(ACTIVE_ACCOUNT_KEY, id).commit())
+            throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
+        return account
+    }
+
+    override fun saveAdditional(account: StoredAccount): StoredAccount = writeNew(account.copy(id = UUID.randomUUID().toString()), true)
 
     override fun save(
         serverName: String,
@@ -110,15 +149,11 @@ public class AndroidAccountCredentialStore public constructor(
         password: String,
         allowLocalHttp: Boolean,
     ): StoredAccount {
+        return writeNew(StoredAccount(UUID.randomUUID().toString(), serverName, serverUrl, username, password, allowLocalHttp), false)
+    }
+
+    private fun writeNew(account: StoredAccount, keepPrevious: Boolean): StoredAccount {
         val previousId = preferences.getString(ACTIVE_ACCOUNT_KEY, null)
-        val account = StoredAccount(
-            id = UUID.randomUUID().toString(),
-            serverName = serverName,
-            serverUrl = serverUrl,
-            username = username,
-            password = password,
-            allowLocalHttp = allowLocalHttp,
-        )
         return try {
             val encoded = Base64.encodeToString(
                 try {
@@ -139,12 +174,14 @@ public class AndroidAccountCredentialStore public constructor(
                 throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
             }
 
-            if (previousId != null && previousId != account.id) {
+            if (!keepPrevious && previousId != null && previousId != account.id) {
                 preferences.edit().remove(payloadKey(previousId)).apply()
                 // The new account is already committed, so old-key deletion is best-effort.
                 // A stale keystore entry is preferable to destroying the active credential.
                 runCatching { cipher.delete(previousId) }
             }
+            if (account.serverIdentity.isNotEmpty()) com.legitimateapps.dulcet.core.AndroidServerIdentity.accept(
+                applicationContext, account.id, account.serverIdentity)
             account
         } catch (failure: Exception) {
             // A failed secure write must not leave the new account selected, even if a
@@ -167,14 +204,14 @@ public class AndroidAccountCredentialStore public constructor(
             value.id, value.serverUrl, value.username, value.password, value.allowLocalHttp,
         )
         val identity = com.legitimateapps.dulcet.core.MediaBindingIdentity
-        if (load() != expected) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
-        if (confirmed.id != expected.id || confirmed.password != expected.password ||
+        if (load(expected.id) != expected) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
+        if (confirmed.id != expected.id ||
             !identity.isValidBinding(expected.id, expected.serverUrl, expected.username) ||
             !identity.isValidBinding(confirmed.id, confirmed.serverUrl, confirmed.username) ||
             identity.canonicalServerUrl(expected.serverUrl) != identity.canonicalServerUrl(confirmed.serverUrl)
         ) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
-        // The caller authenticated the exact saved request. Adopt before committing credentials:
-        // either spelling remains valid if secure storage fails or the process exits between them.
+        // The caller authenticated this canonical principal (or the unchanged saved request).
+        // Adopt before committing: either spelling remains valid if secure storage fails.
         if (!com.legitimateapps.dulcet.core.AndroidMediaBindingIdentity.adoptAuthenticatedAccount(
                 applicationContext, endpoint(expected), endpoint(confirmed),
             )) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
@@ -186,18 +223,20 @@ public class AndroidAccountCredentialStore public constructor(
             throw CredentialStoreException(CredentialStoreException.Reason.SecureStorageUnavailable, failure)
         }
         // Other account choices must not be overwritten by an old authentication result.
-        if (load() != expected) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
+        if (load(expected.id) != expected) throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
         if (!preferences.edit().putString(payloadKey(confirmed.id), encoded).commit()) {
             preferences.edit().putString(payloadKey(expected.id), previousPayload).commit()
             throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
         }
+        if (confirmed.serverIdentity.isNotEmpty()) com.legitimateapps.dulcet.core.AndroidServerIdentity.accept(
+            applicationContext, confirmed.id, confirmed.serverIdentity)
         return confirmed
     }
 
     override fun activeAccountId(): String? = preferences.getString(ACTIVE_ACCOUNT_KEY, null)
 
     override fun deleteKey(id: String) {
-        require(id != activeAccountId()) { "the saved account's key is deleted only with its record" }
+        require(id !in savedAccountIds()) { "a saved account's key is deleted only with its record" }
         try {
             cipher.delete(id)
         } catch (failure: Exception) {
@@ -212,13 +251,21 @@ public class AndroidAccountCredentialStore public constructor(
      * not be deleted after that fails with [CredentialStoreException.Reason.SecureStorageUnavailable]:
      * the record is gone from disk by then, and the key alone decrypts nothing.
      */
-    override fun delete() {
-        val id = preferences.getString(ACTIVE_ACCOUNT_KEY, null) ?: return
+    override fun delete() { activeAccountId()?.let(::remove) }
+
+    override fun remove(id: String) {
+        val wasActive = activeAccountId() == id
         val payload = preferences.getString(payloadKey(id), null)
-        if (!preferences.edit().remove(payloadKey(id)).remove(ACTIVE_ACCOUNT_KEY).commit()) {
+        val edit = preferences.edit().remove(payloadKey(id))
+        if (wasActive) {
+            val next = (savedAccountIds() - id).sorted().firstOrNull()
+            if (next == null) edit.remove(ACTIVE_ACCOUNT_KEY) else edit.putString(ACTIVE_ACCOUNT_KEY, next)
+        }
+        if (!edit.commit()) {
             // The failed commit still removed the record from the in-memory map. Put it back, so this
             // process goes on seeing the account that is still on disk rather than no account.
-            val restore = preferences.edit().putString(ACTIVE_ACCOUNT_KEY, id)
+            val restore = preferences.edit()
+            if (wasActive) restore.putString(ACTIVE_ACCOUNT_KEY, id)
             if (payload != null) restore.putString(payloadKey(id), payload)
             restore.apply()
             throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
@@ -317,26 +364,32 @@ private class AndroidKeystoreAccountCredentialCipher : AccountCredentialCipher {
 private object CredentialCodec {
     fun encode(account: StoredAccount): ByteArray = ByteArrayOutputStream().use { bytes ->
         DataOutputStream(bytes).use { output ->
-            output.writeInt(1)
+            output.writeInt(2)
             output.writeUTF(account.serverName)
             output.writeUTF(account.serverUrl)
             output.writeUTF(account.username)
             output.writeUTF(account.password)
             output.writeBoolean(account.allowLocalHttp)
+            output.writeUTF(account.serverIdentity)
         }
         bytes.toByteArray()
     }
 
     fun decode(id: String, payload: ByteArray): StoredAccount {
         val input = DataInputStream(ByteArrayInputStream(payload))
-        require(input.readInt() == 1)
+        val version = input.readInt()
+        require(version in 1..2)
+        val serverName = input.readUTF()
+        val legacyIdentity = if (serverName.lowercase() in setOf("navidrome", "dulcet", "dulcet server"))
+            com.legitimateapps.dulcet.core.ServerIdentityPolicy.identity(serverName) else ""
         val account = StoredAccount(
             id = id,
-            serverName = input.readUTF(),
+            serverName = serverName,
             serverUrl = input.readUTF(),
             username = input.readUTF(),
             password = input.readUTF(),
             allowLocalHttp = input.readBoolean(),
+            serverIdentity = if (version >= 2) input.readUTF() else legacyIdentity,
         )
         require(input.available() == 0)
         return account

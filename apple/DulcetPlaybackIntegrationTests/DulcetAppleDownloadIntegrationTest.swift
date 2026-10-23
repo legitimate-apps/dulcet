@@ -2,6 +2,7 @@ import DulcetCore
 @testable import DulcetKit
 import AVFoundation
 import Foundation
+import Network
 import SQLite3
 import XCTest
 #if os(iOS)
@@ -153,6 +154,534 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             XCTAssertEqual(controller.offlineLibraryStorage.cacheBytes, 0, "old playback tap must not publish into new binding")
             XCTAssertNil(controller.offlinePlaybackAsset(for: track))
         }
+    }
+
+    func testACompletedDeliveryWinsAgainstALatePreparedDownload() async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let audio = try Data(contentsOf: audioURL)
+        let server = try ProductionPathLoopbackServer(audio: audio, answersIdentity: true)
+        defer { server.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-delivery-race-\(UUID())")
+        let name = "dulcet-delivery-race-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1)
+        let controller = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer { controller.disconnect(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name) }
+        var held: (() -> Void)?
+        controller.preparedDownloadDelivery = { held = $0 }
+        controller.configure(account: account)
+        controller.setAutomaticDownloadsEnabled(false)
+        let track = rejectionTrack("delivered")
+        controller.requestDownload(track)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Real core preparation did not complete") { held != nil }
+        // An OS-delivered secured payload promotes while the earlier prepare callback is delayed.
+        let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: account.providerInstanceID,
+            normalizedBaseUrl: account.normalizedServerURL, username: account.username, password: account.password,
+            allowLocalHttp: true), databaseName: name, downloadRootPath: root.path)
+        defer { seed.close() }
+        XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1).errorKind)
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(name)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT download_id FROM download WHERE raw_id='delivered'", -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+        let id = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 0)))
+        let target = try XCTUnwrap(seed.fileTarget(downloadIdentifier: id).temporaryFilePath)
+        try FileManager.default.createDirectory(at: URL(fileURLWithPath: target).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try audio.write(to: URL(fileURLWithPath: target))
+        XCTAssertEqual(seed.finishDownload(downloadIdentifier: id, statusCode: 200, contentType: "audio/mpeg",
+            contentLength: Int64(audio.count), retryAfterMilliseconds: -1, wallClockMilliseconds: 2).state, "downloaded")
+        let answer = try XCTUnwrap(held)
+        held = nil; answer()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.requestQueries.count, 0, "A delayed prepare must not fetch an already-promoted delivery")
+        XCTAssertTrue(controller.status(for: track.id).isLocallyPlayable)
+        controller.preparedDownloadDelivery = nil
+        let ordinary = rejectionTrack("ordinary-after-delivery")
+        controller.requestDownload(ordinary)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Ordinary pending download did not resume") {
+            controller.status(for: ordinary.id).isLocallyPlayable
+        }
+        XCTAssertEqual(server.requestQueries.count, 1, "Only the new ordinary track may fetch after delivery reconciliation")
+    }
+
+    func testAnAuthorizedNativeDeliveryPromotesOfflineWithoutAnotherIdentityRequest() async throws {
+        try await proveAuthorizedNativeDelivery(rejectBeforePromotion: false)
+    }
+
+    func testKnownReplacementRejectsAnAlreadyDeliveredAuthorizedNativeTask() async throws {
+        try await proveAuthorizedNativeDelivery(rejectBeforePromotion: true)
+    }
+
+    private func proveAuthorizedNativeDelivery(rejectBeforePromotion: Bool) async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let audio = try Data(contentsOf: audioURL)
+        let server = try ProductionPathLoopbackServer(audio: audio, answersIdentity: true, holdStreams: true)
+        defer { server.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-offline-delivery-\(UUID())")
+        let name = "dulcet-offline-delivery-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1)
+        let downloads = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        let playback = DulcetCorePlaybackController(databaseName: name, downloadController: downloads)
+        defer { playback.disconnect(); downloads.disconnect(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name) }
+        var delivery: (() -> Void)?
+        if rejectBeforePromotion { downloads.completedDownloadDelivery = { delivery = $0 } }
+        downloads.configure(account: account)
+        downloads.setAutomaticDownloadsEnabled(false)
+        let track = rejectionTrack("offline-delivery")
+        downloads.requestDownload(track)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Native task did not reach the held real stream") {
+            server.requestQueries.count == 1 && downloads.status(for: track.id) == .downloading
+        }
+        // Match the hosted reader proof: playback becomes device-only while its existing
+        // authenticated native transfer remains held; no new contact may follow that boundary.
+        playback.configureOffline(account: account)
+        downloads.setAutomaticDownloadContactPermitted(false)
+        let baseline = server.requestPaths.count
+        server.releaseStreams()
+        if rejectBeforePromotion {
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Real native delivery did not reach the held completion") { delivery != nil }
+            downloads.rejectServerIdentity()
+            try XCTUnwrap(delivery)()
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertFalse(downloads.status(for: track.id).isLocallyPlayable, "Known rejection must fence even an already-delivered authorized task")
+            XCTAssertNil(downloads.offlinePlaybackAsset(for: track))
+            XCTAssertEqual(Array(server.requestPaths.dropFirst(baseline)), [], "Rejected delivery must not initiate replacement contact")
+            return
+        }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "The already-authorized receipt did not promote locally") {
+            downloads.status(for: track.id) == .downloaded
+        }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(Array(server.requestPaths.dropFirst(baseline)), [],
+                       "Promotion must not schedule new contact after publishing Complete")
+        downloads.closeNetworkAccessForTesting()
+        let asset = try XCTUnwrap(downloads.offlinePlaybackAsset(for: track))
+        let local = await load(resource: asset.resource, range: .init(start: 0, endInclusive: Int64(audio.count - 1)))
+        if case let .loaded(bytes, _) = local { XCTAssertEqual(bytes, audio) }
+        else { XCTFail("Offline promotion must retain the exact delivered bytes") }
+        let additional = Array(server.requestPaths.dropFirst(baseline))
+        XCTAssertEqual(additional, [], "Already-authorized native delivery must promote without new HTTP; paths=\(additional)")
+        XCTAssertEqual(server.requestQueries.count, 1, "Offline promotion must keep the original single stream")
+    }
+
+    func testRestoredReceiptWinsBeforeRemoteTaskEnumerationReturns() async throws {
+        try await provePendingReceiptWins(restored: true)
+    }
+
+    func testPendingReceiptWinsAgainstAnAlreadyPreparedDownload() async throws {
+        try await provePendingReceiptWins(restored: false)
+    }
+
+    func testPreparedDownloadWaitsForTheFinalSecuredReceiptValidator() async throws {
+        try await provePendingReceiptWins(restored: false, companion: true)
+    }
+
+    private func provePendingReceiptWins(restored: Bool, companion: Bool = false) async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let audio = try Data(contentsOf: audioURL)
+        let server = try ProductionPathLoopbackServer(audio: audio, answersIdentity: true)
+        defer { server.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-pending-receipt-\(UUID())")
+        let name = "dulcet-pending-receipt-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1)
+        var controller = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer { controller.disconnect(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name) }
+        var prepared: (() -> Void)?
+        controller.preparedDownloadDelivery = { prepared = $0 }
+        controller.configure(account: account)
+        controller.setAutomaticDownloadsEnabled(false)
+        let track = rejectionTrack("pending-receipt")
+        controller.requestDownload(track)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Real core preparation did not finish") { prepared != nil }
+        if companion {
+            var companionPrepared: (() -> Void)?
+            controller.preparedDownloadDelivery = { companionPrepared = $0 }
+            controller.requestDownload(rejectionTrack("companion-receipt"))
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Companion core preparation did not finish") { companionPrepared != nil }
+        }
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(name)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT download_id FROM download WHERE raw_id='pending-receipt'", -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+        let downloadID = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 0)))
+        if restored {
+            controller.disconnect()
+            controller = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        }
+        // The durable inbox pair is the same format written synchronously by the OS delegate.
+        let inbox = root.appendingPathComponent(".incoming")
+        try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+        func writeReceipt(_ id: String) throws {
+            let receiptID = UUID().uuidString
+            try audio.write(to: inbox.appendingPathComponent("\(receiptID).download"))
+            let receipt: [String: Any] = ["identifier": receiptID, "downloadIdentifier": id,
+                "statusCode": 200, "contentType": "audio/mpeg", "contentLength": String(audio.count),
+                "deliveredFileLength": audio.count]
+            try JSONSerialization.data(withJSONObject: receipt).write(to: inbox.appendingPathComponent("\(receiptID).json"))
+        }
+        try writeReceipt(downloadID)
+        var companionID: String?
+        if companion {
+            var companionStatement: OpaquePointer?
+            XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT download_id FROM download WHERE raw_id='companion-receipt'", -1, &companionStatement, nil), SQLITE_OK)
+            defer { sqlite3_finalize(companionStatement) }
+            XCTAssertEqual(sqlite3_step(companionStatement), SQLITE_ROW)
+            companionID = String(cString: try XCTUnwrap(sqlite3_column_text(companionStatement, 0)))
+            try writeReceipt(try XCTUnwrap(companionID))
+        }
+        let identityRequestsBeforeReceipt = server.requestPaths.filter { $0 == "/rest/ping.view" }.count
+        var validations: [String: () -> Void] = [:]
+        controller.securedDownloadValidationDelivery = { validations[$0] = $1 }
+        if restored {
+            var enumeration: (() -> Void)?
+            controller.remoteTaskEnumerationDelivery = { enumeration = $0 }
+            controller.configure(account: account)
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Remote task enumeration did not return") { enumeration != nil }
+            controller.requestDownload(track)
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertEqual(server.requestQueries.count, 0, "A restored receipt must block streams before enumeration delivery")
+            try XCTUnwrap(enumeration)()
+        } else {
+            controller.processSecuredDownloads()
+        }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Receipt did not reach real identity validation") { validations.count == (companion ? 2 : 1) }
+        XCTAssertGreaterThan(server.requestPaths.filter { $0 == "/rest/ping.view" }.count, identityRequestsBeforeReceipt,
+                             "A receipt without current-process authorization must still negotiate identity")
+        if !restored { try XCTUnwrap(prepared)() }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.requestQueries.count, 0, "A prepared URL must wait while its secured receipt is validating")
+        if let companionID {
+            try XCTUnwrap(validations.removeValue(forKey: companionID))()
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertTrue(controller.status(for: rejectionTrack("companion-receipt").id).isLocallyPlayable)
+            XCTAssertFalse(controller.status(for: track.id).isLocallyPlayable)
+            XCTAssertEqual(server.requestQueries.count, 0, "An unrelated validator must not drain the target's prepared URL")
+        }
+        controller.securedDownloadValidationDelivery = nil
+        validations.values.forEach { $0() }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Validated receipt did not promote") {
+            controller.status(for: track.id).isLocallyPlayable
+        }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.requestQueries.count, 0, "Promoted receipt must never be fetched again")
+        XCTAssertEqual(controller.status(for: track.id), .downloaded)
+        let asset = try XCTUnwrap(controller.offlinePlaybackAsset(for: track))
+        let local = await load(resource: asset.resource, range: .init(start: 0, endInclusive: Int64(audio.count - 1)))
+        if case let .loaded(bytes, _) = local { XCTAssertEqual(bytes, audio) }
+        else { XCTFail("Promoted receipt must retain its exact playable bytes") }
+        controller.preparedDownloadDelivery = nil
+        controller.remoteTaskEnumerationDelivery = nil
+        let ordinary = rejectionTrack("ordinary-after-receipt")
+        controller.requestDownload(ordinary)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Ordinary successor was starved") {
+            controller.status(for: ordinary.id).isLocallyPlayable
+        }
+        XCTAssertEqual(server.requestQueries.count, 1, "Only the ordinary successor may fetch")
+    }
+
+    func testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue() throws {
+        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        defer { queue.close() }
+        var offlineConfigurations = 0
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: RejectionPlaybackEngine(),
+            catalog: [], configureOfflineDelivery: {
+                offlineConfigurations += 1
+                return queue.configureOfflineDelivery()
+            })
+        defer { controller.disconnect() }
+        controller.configure(account: .init(providerInstanceID: "loopback-provider",
+            normalizedServerURL: "http://127.0.0.1:9", username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        XCTAssertNil(queue.replaceAndStart(request: ApplePlaybackQueueRequestDto(
+            items: [ApplePlaybackQueueItemDto(providerInstanceId: "loopback-provider", rawId: "saved-song", durationMilliseconds: 120_000)],
+            sourceKind: "playlist", sourceRawId: "saved-playlist", sourceDisplayName: "Saved playlist",
+            startIndex: 0, shuffle: false)).errorKind)
+        controller.rejectServerIdentity()
+        controller.rejectServerIdentity()
+        controller.setNetworkAvailable(true)
+        controller.setServerAvailable(true)
+        XCTAssertEqual(offlineConfigurations, 1, "Known lineage rejection must retire network delivery exactly once")
+        XCTAssertEqual(queue.snapshot().snapshot?.entries.map(\.rawId), ["saved-song"], "Quarantine must keep the saved queue")
+        XCTAssertEqual(queue.snapshot().snapshot?.entries.map(\.sourceDisplayName), ["Saved playlist"])
+    }
+
+    func testKnownReplacementRejectsLateCurrentResolve() async throws {
+        try await proveRejectedPlaybackResolve(preload: false)
+    }
+
+    func testKnownReplacementRejectsLatePreloadResolve() async throws {
+        try await proveRejectedPlaybackResolve(preload: true)
+    }
+
+    func testDownloadFirstRejectionBlocksHeldCurrentBeforeSourceNotification() async throws {
+        try await proveCrossClientPlaybackAuthority(preload: false, reject: true)
+    }
+
+    func testDownloadFirstRejectionBlocksHeldPreloadBeforeSourceNotification() async throws {
+        try await proveCrossClientPlaybackAuthority(preload: true, reject: true)
+    }
+
+    func testSameIdentityDownloadProbePreservesHeldCurrentAuthority() async throws {
+        try await proveCrossClientPlaybackAuthority(preload: false, reject: false)
+    }
+
+    private func proveCrossClientPlaybackAuthority(preload: Bool, reject: Bool) async throws {
+        let name = "dulcet-cross-client-authority-\(UUID()).db"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-cross-client-authority-\(UUID())")
+        let server = try ProductionPathLoopbackServer(audio: Data(), answersIdentity: true)
+        defer { server.stop() }
+        let account = PlaybackEndpointAccount(providerInstanceId: "loopback-provider",
+            normalizedBaseUrl: server.baseURL.absoluteString, username: "fixture", password: "fixture", allowLocalHttp: true)
+        XCTAssertTrue(AppleMediaBindingClient.shared.seedServerIdentity(databaseName: name,
+            providerInstanceId: "loopback-provider", identity: #"["navidrome",""]"#))
+        let downloads = AppleDownloadClient(account: account, databaseName: name, downloadRootPath: root.path)
+        let queue = ApplePlaybackQueueClient(databaseName: name)
+        let engine = RejectionPlaybackEngine()
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: engine, catalog: [], identityDatabaseName: name)
+        defer {
+            controller.disconnect(); downloads.close(); queue.close()
+            try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name)
+        }
+        controller.configure(account: .init(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        var held: [() -> Void] = []
+        controller.resolvePlayback = { client, request, completion in
+            client.startResolve(request: request) { outcome in
+                Task { @MainActor in held.append { completion(outcome) } }
+            }
+        }
+        controller.replaceQueueAndPlay(.init(tracks: [rejectionTrack("first"), rejectionTrack("second")],
+            sourceKind: .library, sourceID: nil, sourceDisplayName: "Cross-client authority", startIndex: 0, shuffle: false))
+        try await waitUntil(timeout: .seconds(3), failureMessage: "Current resolve was not held") { !held.isEmpty }
+        if preload {
+            held.removeFirst()()
+            try await waitUntil(timeout: .seconds(3), failureMessage: "Current plan did not install") { engine.plans.count == 1 }
+            let plan = try XCTUnwrap(engine.plans.first)
+            engine.emit(.ready(attemptID: plan.attemptID, duration: 120, seekability: .seekable))
+            engine.emit(.playbackProgressBegan(attemptID: plan.attemptID,
+                wallClock: Date(timeIntervalSince1970: 1), mediaPosition: 1))
+            try await waitUntil(timeout: .seconds(3), failureMessage: "Preload resolve was not held") { !held.isEmpty }
+        }
+        if reject {
+            // Deliberately omit the source/controller notification: the Kotlin account token must suffice.
+            downloads.rejectServerIdentity()
+        } else {
+            var completed = false
+            var validationError: String?
+            let validation = downloads.startValidateServerIdentity { validationError = $0; completed = true }
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Same-identity probe did not complete") { completed }
+            withExtendedLifetime(validation) {}
+            XCTAssertNil(validationError)
+            XCTAssertTrue(server.requestPaths.contains("/rest/ping.view"))
+        }
+        controller.setServerAvailable(true)
+        held.removeFirst()()
+        if !reject {
+            try await waitUntil(timeout: .seconds(3), failureMessage: "Ordinary probe revoked accepted playback") { engine.plans.count == 1 }
+        } else {
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertEqual(engine.plans.count, preload || !reject ? 1 : 0)
+        XCTAssertEqual(engine.preloads.count, 0)
+    }
+
+    func testDownloadRejectionStopsAutoplayFallbacksAfterHeldSeedReply() async throws {
+        try await proveAutoplayAccountAuthority(reject: true)
+    }
+
+    func testSameIdentityProbePreservesAutoplayFallbacksAfterHeldSeedReply() async throws {
+        try await proveAutoplayAccountAuthority(reject: false)
+    }
+
+    private func proveAutoplayAccountAuthority(reject: Bool) async throws {
+        let name = "dulcet-autoplay-authority-\(UUID()).db"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-autoplay-authority-\(UUID())")
+        let server = try ProductionPathLoopbackServer(audio: Data(), answersIdentity: true, autoplay: true)
+        defer { server.stop() }
+        let provider = "autoplay-authority-\(UUID())"
+        XCTAssertTrue(AppleMediaBindingClient.shared.seedServerIdentity(databaseName: name,
+            providerInstanceId: provider, identity: #"["navidrome",""]"#))
+        let account = PlaybackEndpointAccount(providerInstanceId: provider, normalizedBaseUrl: server.baseURL.absoluteString,
+            username: "fixture", password: "fixture", allowLocalHttp: true)
+        let downloads = AppleDownloadClient(account: account, databaseName: name, downloadRootPath: root.path)
+        defer { downloads.close(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(name) }
+        let client = AppleAutoplayClient(databaseName: name)
+        var outcome: AppleAutoplayOutcome?
+        let operation = client.startCandidates(request: AppleLibraryBrowseRequest(providerInstanceId: provider,
+            normalizedBaseUrl: server.baseURL.absoluteString, username: "fixture", password: "fixture", allowLocalHttp: true),
+            seedRawId: "seed", excludedRawIds: [], count: 2) { outcome = $0 }
+        defer { operation.cancel() }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "Actual AutoPlay seed HTTP reply was not held") { server.hasHeldAutoplaySeed }
+        if reject {
+            downloads.rejectServerIdentity()
+        } else {
+            var probed = false
+            var error: String?
+            let validation = downloads.startValidateServerIdentity { error = $0; probed = true }
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Matching identity probe did not finish") { probed }
+            withExtendedLifetime(validation) {}
+            XCTAssertNil(error)
+        }
+        server.releaseAutoplaySeed()
+        try await waitUntil(timeout: .seconds(5), failureMessage: "AutoPlay facade completion did not arrive") { outcome != nil }
+        let paths = server.requestPaths.filter { !$0.contains("ping") }
+        if reject {
+            XCTAssertEqual(paths, ["/rest/getSong.view"], "No fallback may send old IDs after the held seed returns")
+            XCTAssertNil(outcome?.tracks)
+            XCTAssertNotNil(outcome?.error)
+        } else {
+            XCTAssertEqual(paths, ["/rest/getSong.view", "/rest/getSimilarSongs2.view", "/rest/getSimilarSongs.view",
+                "/rest/getTopSongs.view", "/rest/getRandomSongs.view", "/rest/getRandomSongs.view"])
+            XCTAssertEqual(outcome?.tracks?.map(\.rawId), ["candidate"])
+            XCTAssertNil(outcome?.error)
+        }
+    }
+
+    private func rejectionTrack(_ raw: String) -> DulcetTrack {
+        DulcetTrack(id: .init(providerInstanceID: "loopback-provider", rawID: raw),
+            title: raw, credits: [], albumTitle: nil, duration: .seconds(120),
+            sourceContainer: .mp3, mediaSourceID: nil, artwork: .init(seed: raw, palette: .indigoCoral))
+    }
+
+    private func proveRejectedPlaybackResolve(preload: Bool) async throws {
+        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        defer { queue.close() }
+        let engine = RejectionPlaybackEngine()
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: engine, catalog: [])
+        defer { controller.disconnect() }
+        controller.configure(account: .init(providerInstanceID: "loopback-provider",
+            normalizedServerURL: "http://127.0.0.1:9", username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        var held: [() -> Void] = []
+        controller.resolvePlayback = { client, request, completion in
+            client.startResolve(request: request) { outcome in
+                Task { @MainActor in held.append { completion(outcome) } }
+            }
+        }
+        controller.replaceQueueAndPlay(.init(tracks: [rejectionTrack("first"), rejectionTrack("second")],
+            sourceKind: .library, sourceID: nil, sourceDisplayName: "Rejected fixture", startIndex: 0, shuffle: false))
+        try await waitUntil(timeout: .seconds(3), failureMessage: "real current resolve did not complete") { !held.isEmpty }
+        if preload {
+            let answer = try XCTUnwrap(held.first)
+            held.removeFirst(); answer()
+            try await waitUntil(timeout: .seconds(3), failureMessage: "current plan was not installed") { engine.plans.count == 1 }
+            let plan = try XCTUnwrap(engine.plans.first)
+            engine.emit(.ready(attemptID: plan.attemptID, duration: 120, seekability: .seekable))
+            engine.emit(.playbackProgressBegan(attemptID: plan.attemptID,
+                wallClock: Date(timeIntervalSince1970: 1), mediaPosition: 1))
+            try await waitUntil(timeout: .seconds(3), failureMessage: "real preload resolve did not complete") { !held.isEmpty }
+        }
+        controller.rejectServerIdentity()
+        controller.setServerAvailable(true) // Ordinary progress/reconnect signals cannot reopen a rejected lineage.
+        let answer = try XCTUnwrap(held.first)
+        held.removeFirst(); answer()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(engine.plans.count, preload ? 1 : 0, "Late remote current plan must not be installed")
+        XCTAssertEqual(engine.preloads.count, 0, "Late remote preload must not be installed")
+    }
+
+    func testKnownReplacementBlocksAnInstalledResourcesNextHTTPRange() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let server = try ProductionPathLoopbackServer(audio: Data(contentsOf: url))
+        defer { server.stop() }
+        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        defer { queue.close() }
+        let engine = RejectionPlaybackEngine()
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: engine, catalog: [])
+        defer { controller.disconnect() }
+        controller.configure(account: .init(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        controller.replaceQueueAndPlay(.init(tracks: [rejectionTrack("loopback-track")],
+            sourceKind: .library, sourceID: nil, sourceDisplayName: "HTTP guard", startIndex: 0, shuffle: false))
+        try await waitUntil(timeout: .seconds(3), failureMessage: "remote plan was not installed") { engine.plans.count == 1 }
+        let resource = try XCTUnwrap(engine.plans.first?.resource as? any DulcetPlaybackResourceLoading)
+        func load(_ start: Int64) async -> DulcetPlaybackResourceLoadOutcome {
+            var operation: (any DulcetPlaybackResourceLoadOperation)?
+            let result: DulcetPlaybackResourceLoadOutcome = await withCheckedContinuation { continuation in
+                operation = resource.load(.init(range: .init(start: start, endInclusive: start + 1023),
+                    requiresAudioSignature: start == 0)) { continuation.resume(returning: $0) }
+            }
+            withExtendedLifetime(operation) {}
+            return result
+        }
+        guard case .loaded = await load(0) else { XCTFail("Positive real HTTP range must load"); return }
+        XCTAssertEqual(server.requestQueries.count, 1)
+        controller.rejectServerIdentity()
+        controller.setServerAvailable(true)
+        if case .loaded = await load(1024) { XCTFail("Known rejected server cannot receive another range") }
+        XCTAssertEqual(server.requestQueries.count, 1, "No new HTTP request after identity rejection")
+    }
+
+    func testKnownServerReplacementQuarantinesLateMediaAndKeepsOfflinePlayback() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-rejected-identity-\(UUID())")
+        let databaseName = "dulcet-rejected-identity-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+            normalizedServerURL: "https://media.example.invalid", username: "alice", password: "fixture",
+            allowLocalHTTP: false, credentialGeneration: 1)
+        let bytes = bindingPCMWave(seconds: 1)
+        let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+            normalizedBaseUrl: account.normalizedServerURL, username: account.username,
+            password: account.password, allowLocalHttp: false), databaseName: databaseName, downloadRootPath: root.path)
+        XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1).errorKind)
+        let write = try XCTUnwrap(seed.beginStreamingCache(rawId: "retained", container: .wav,
+            totalLength: Int64(bytes.count), durationMilliseconds: 1000, rangeStart: 0, credentialGeneration: 1, wallClockMilliseconds: 1))
+        XCTAssertTrue(seed.appendStreamingCache(writeId: write, bytes: bytes, offset: 0))
+        XCTAssertTrue(seed.finishStreamingCache(writeId: write, totalLength: Int64(bytes.count), wallClockMilliseconds: 2))
+        let path = try XCTUnwrap(seed.localPlaybackPlan(rawId: "retained").plan?.filePath)
+        seed.close()
+        let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer {
+            controller.disconnect()
+            try? FileManager.default.removeItem(at: root)
+            removeAdapterTestDatabase(databaseName)
+        }
+        func track(_ raw: String) -> DulcetTrack {
+            DulcetTrack(id: .init(providerInstanceID: providerInstanceID, rawID: raw), title: raw, credits: [], albumTitle: nil,
+                duration: .seconds(1), sourceContainer: .wav, mediaSourceID: nil,
+                artwork: DulcetArtwork(seed: raw, palette: .indigoCoral))
+        }
+        controller.configure(account: account)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "offline media did not reconcile") {
+            controller.offlineLibraryStorage.cacheBytes == Int64(bytes.count)
+        }
+        let sourceURL = root.appendingPathComponent("late-source.wav")
+        try bytes.write(to: sourceURL)
+        let late = controller.cachingResource(DulcetLocalFilePlaybackResource(fileURL: sourceURL,
+            exactByteLength: Int64(bytes.count)), track: track("late"), expectedContainer: .wav)
+        controller.rejectServerIdentity()
+        controller.requestDownload(track("queued-after-rejection"))
+        let delivered = await load(resource: late, range: .init(start: 0, endInclusive: Int64(bytes.count - 1)))
+        if case let .loaded(actual, _) = delivered { XCTAssertEqual(actual, bytes) }
+        else { XCTFail("the real late resource must deliver bytes to exercise its callback") }
+        await Task.yield()
+        await Task.yield()
+        XCTAssertNil(controller.offlinePlaybackAsset(for: track("late")))
+        XCTAssertEqual(controller.offlineLibraryStorage.cacheBytes, Int64(bytes.count))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+        let retained = try XCTUnwrap(controller.offlinePlaybackAsset(for: track("retained")))
+        let local = await load(resource: retained.resource, range: .init(start: 0, endInclusive: Int64(bytes.count - 1)))
+        if case let .loaded(actual, _) = local { XCTAssertEqual(actual, bytes) }
+        else { XCTFail("quarantine must preserve ordinary offline playback") }
+        let tasks = await controller.debugSessionTasks()
+        XCTAssertTrue(tasks.isEmpty, "known rejected namespaces cannot start a transfer")
+        print("DULCET REJECTED SERVER MEDIA PASS late-promotion=blocked offline-bytes=retained remote-tasks=0")
     }
 
     func testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair() async throws {
@@ -330,6 +859,20 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 XCTAssertEqual(connector.requests.last?.username, "Alice")
                 connector.complete(.connected(.init(serverName: "Binding proof", normalizedServerURL: account.normalizedServerURL,
                     canonicalUsername: "Alice")))
+                XCTAssertEqual(presentation.pendingDownloadRemovalCount, 1)
+                XCTAssertEqual(try credentials.load()?.username, "alice", "Consent precedes credential replacement")
+                XCTAssertTrue(nativePlayer.currentItem === current, "The confirmation keeps playback intact")
+                XCTAssertTrue(paths.allSatisfy { FileManager.default.fileExists(atPath: $0) })
+                presentation.cancelServerReplacement()
+                XCTAssertEqual(try credentials.load()?.username, "alice")
+                presentation.accountUsername = "Alice"
+                presentation.submitAccountConnection()
+                connector.complete(.connected(.init(serverName: "Binding proof", normalizedServerURL: account.normalizedServerURL,
+                    canonicalUsername: "Alice")))
+                presentation.confirmServerReplacement()
+                try await waitUntil(timeout: .seconds(10), failureMessage: "Confirmed account replacement did not complete") {
+                    (try? credentials.load()?.username) == "Alice"
+                }
                 XCTAssertEqual(try credentials.load()?.username, "Alice")
                 XCTAssertEqual(witnessedBeforePurge, 1, "Unproven typed alias must retire once before forced replacement")
                 XCTAssertNil(nativePlayer.currentItem)
@@ -355,6 +898,96 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         defer { sqlite3_close(db) }
         XCTAssertEqual(sqlite3_exec(db, "UPDATE offline_media_retention SET explicit_download=1 WHERE raw_id='current'", nil, nil, nil), SQLITE_OK)
         XCTAssertEqual(sqlite3_changes(db), 1, "The fixture must mark an existing payload explicit")
+    }
+
+    /// The production account data source selects two durable namespaces; the real download,
+    /// queue and reader facades must each return the first server's state when it is selected again.
+    /// Credentials and connector results are controlled; media validation, files and SQLite are real.
+    func testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-saved-roundtrip-\(UUID())")
+        let databaseName = "dulcet-saved-roundtrip-\(UUID()).db"
+        let credentials = BindingMultiCredentials()
+        let accounts: [(String, DulcetAccountConnectRequest)] = [
+            ("saved-a", .init(serverURL: "https://one.example.invalid", username: "alice", password: "fixture-a", allowLocalHTTP: false)),
+            ("saved-b", .init(serverURL: "https://two.example.invalid", username: "bob", password: "fixture-b", allowLocalHTTP: false))
+        ]
+        var payloads: [String: Data] = [:]
+        let queue = ApplePlaybackQueueClient(databaseName: databaseName)
+        defer { queue.close(); try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(databaseName) }
+        for (id, request) in accounts {
+            let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: id,
+                normalizedBaseUrl: request.serverURL, username: request.username, password: request.password,
+                allowLocalHttp: false), databaseName: databaseName, downloadRootPath: root.path)
+            XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 0).errorKind)
+            var bytes = bindingPCMWave(seconds: 1)
+            bytes[bytes.count - 1] = id == "saved-a" ? 1 : 2
+            payloads[id] = bytes
+            let write = try XCTUnwrap(seed.beginStreamingCache(rawId: "same-raw-id", container: .wav,
+                totalLength: Int64(bytes.count), durationMilliseconds: 1000, rangeStart: 0,
+                credentialGeneration: 0, wallClockMilliseconds: 1))
+            XCTAssertTrue(seed.appendStreamingCache(writeId: write, bytes: bytes, offset: 0))
+            XCTAssertTrue(seed.finishStreamingCache(writeId: write, totalLength: Int64(bytes.count), wallClockMilliseconds: 2))
+            seed.close()
+            try credentials.save(request, providerInstanceID: id, serverIdentity: "stable-\(id)")
+            XCTAssertNil(queue.selectAccount(providerInstanceId: id).errorKind)
+            XCTAssertNil(queue.replaceAndStart(request: ApplePlaybackQueueRequestDto(
+                items: [ApplePlaybackQueueItemDto(providerInstanceId: id, rawId: "same-raw-id", durationMilliseconds: 1000)],
+                sourceKind: "album", sourceRawId: "album-\(id)", sourceDisplayName: id,
+                startIndex: 0, shuffle: false)).errorKind)
+        }
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(databaseName)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        let seedSQL = """
+        UPDATE offline_media_retention SET explicit_download=1;
+        INSERT OR REPLACE INTO cache_track(server_id,raw_id,title,normalized_title,duration_milliseconds,source_container,issue_seq,last_access_wall)
+        VALUES ('saved-a','same-raw-id','Library A','library a',1000,'wav',1,1),('saved-b','same-raw-id','Library B','library b',1000,'wav',1,1);
+        """
+        XCTAssertEqual(sqlite3_exec(database, seedSQL, nil, nil, nil), SQLITE_OK)
+        try credentials.activate(providerInstanceID: "saved-a")
+        let downloads = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer { downloads.disconnect() }
+        let playback = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(), catalog: [])
+        let connector = BindingSavedConnector()
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
+            credentialStore: credentials, playbackController: playback, downloadController: downloads))
+        for index in [0, 1, 0] {
+            let (id, request) = accounts[index]
+            if credentials.providerInstanceID != id || index == 1 { store.selectSavedServer(id) }
+            connector.complete(.connected(.init(serverName: id, normalizedServerURL: request.serverURL,
+                canonicalUsername: request.username, serverIdentity: "stable-\(id)")))
+            try await waitUntil(timeout: .seconds(10), failureMessage: "Selected server media did not reconcile") {
+                downloads.status(for: .init(providerInstanceID: id, rawID: "same-raw-id")).isLocallyPlayable
+            }
+            XCTAssertEqual(credentials.providerInstanceID, id)
+            XCTAssertEqual(queue.snapshot().snapshot?.entries.map(\.providerInstanceId), [id])
+            XCTAssertEqual(queue.snapshot().snapshot?.entries.map(\.rawId), ["same-raw-id"])
+            XCTAssertTrue(downloads.status(for: .init(providerInstanceID: id, rawID: "same-raw-id")).isLocallyPlayable)
+            XCTAssertEqual(downloads.downloadCountToRemove, 1)
+            let local = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: id,
+                normalizedBaseUrl: request.serverURL, username: request.username, password: request.password, allowLocalHttp: false),
+                databaseName: databaseName, downloadRootPath: root.path)
+            XCTAssertNil(local.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 0).errorKind)
+            let plan = try XCTUnwrap(local.localPlaybackPlan(rawId: "same-raw-id").plan)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: plan.filePath)), payloads[id])
+            local.close()
+            let reader = AppleLibraryReaderClient(databaseName: databaseName, account: AppleLibraryReaderAccount(
+                providerInstanceId: id, normalizedBaseUrl: request.serverURL, username: request.username,
+                password: request.password, allowLocalHttp: false), foreground: false)
+            reader.setOnline(reachable: false)
+            let listener = BindingLibraryListener()
+            let subscription = reader.subscribeLibraryWindow(request: AppleLibraryWindowRequest(kind: "songs", rawId: nil,
+                listType: "title", genre: "", fromYear: 0, toYear: 0, musicFolderId: nil), listener: listener)
+            try await waitUntil(timeout: .seconds(5), failureMessage: "Selected server's seen library was not restored") {
+                listener.titles == [index == 0 ? "Library A" : "Library B"]
+            }
+            subscription.close()
+            await withCheckedContinuation { done in reader.close { done.resume() } }
+        }
+        XCTAssertEqual(credentials.savedProviderInstanceIDs, ["saved-a", "saved-b"])
+        print("DULCET SAVED SERVER STORAGE PASS selection=A->B->A media=distinct-bytes queue=restored library=restored deleted=0")
     }
 
     private func removeAdapterTestDatabase(_ name: String) {
@@ -580,7 +1213,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
 
         try await Task.sleep(for: .seconds(3))
         let observed = try await downloadProxyRequests(baseURL: context.baseURL, since: browseRequests.total)
-        XCTAssertEqual(observed.entries.count, 0, "a new Download must wait for successful negotiation")
+        XCTAssertEqual(observed.entries.filter { $0.endpoint != "ping" }.count, 0,
+                       "Only the authenticated identity check may run; a new Download must wait for successful negotiation")
         XCTAssertEqual(replacement.status(for: track.id), .notDownloaded, "the tap must not enqueue a transfer")
         XCTAssertEqual(connector.requestCount, 1, "saved launch reconnects without permitting a new stream yet")
         XCTAssertEqual(source.currentSnapshot.accountConnection, .connecting)
@@ -614,8 +1248,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         // Nothing after this baseline browses, connects, or asks for another Download. The real
         // saved-account presentation configures the replacement controller as production does.
         let seedRequests = try await downloadProxyRequests(baseURL: context.baseURL, since: seedBaseline)
-        XCTAssertEqual(seedRequests.entries.count, 1, "the request counter must observe the earlier Download")
-        let seedStream = try XCTUnwrap(seedRequests.entries.first)
+        let seedTransfers = seedRequests.entries.filter { $0.endpoint != "ping" }
+        XCTAssertEqual(seedTransfers.count, 1, "the request counter must observe the earlier Download beside its identity checks")
+        let seedStream = try XCTUnwrap(seedTransfers.first)
         XCTAssertEqual(seedStream.endpoint, "stream")
         XCTAssertEqual(seedStream.rawID, track.id.rawID)
         XCTAssertTrue(seedStream.answered)
@@ -656,11 +1291,14 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         let observed = try await downloadProxyRequests(baseURL: context.baseURL, since: baseline)
         XCTAssertEqual(connector.requestCount, 1, "saved launch reconnects independently of download recovery")
         XCTAssertEqual(source.currentSnapshot.accountConnection, .connecting)
+        XCTAssertTrue(observed.entries.contains { $0.endpoint == "ping" && $0.answered && $0.status == 200 },
+                      "Saved recovery must authenticate server identity before resuming remote work")
+        let recoveryTransfers = observed.entries.filter { $0.endpoint != "ping" }
         if recovery == .intact {
-            XCTAssertEqual(observed.entries.count, 0, "an intact download has no recovery read to make")
+            XCTAssertEqual(recoveryTransfers.count, 0, "an intact download has no recovery read to make")
         } else {
-            XCTAssertEqual(observed.entries.count, 1, "only the permitted recovery stream may be sent")
-            let stream = try XCTUnwrap(observed.entries.first)
+            XCTAssertEqual(recoveryTransfers.count, 1, "only the permitted recovery stream may be sent beside identity checks")
+            let stream = try XCTUnwrap(recoveryTransfers.first)
             XCTAssertEqual(stream.endpoint, "stream")
             XCTAssertEqual(stream.rawID, track.id.rawID)
             XCTAssertTrue(stream.answered, "the replacement must promote the actual server response")
@@ -727,6 +1365,26 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         // delivery across asynchronous transfer reconciliation.
         try await testRebindingTheSameProviderRejectsPriorLocalBytesAndLateCacheCallbacks()
         try await testLocalPlaybackStopsBeforeARealBindingPurgeAndEquivalentRefreshKeepsIt()
+        try await testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary()
+        try await testKnownServerReplacementQuarantinesLateMediaAndKeepsOfflinePlayback()
+        try await testACompletedDeliveryWinsAgainstALatePreparedDownload()
+        try await testAnAuthorizedNativeDeliveryPromotesOfflineWithoutAnotherIdentityRequest()
+        try await testKnownReplacementRejectsAnAlreadyDeliveredAuthorizedNativeTask()
+        try await testRestoredReceiptWinsBeforeRemoteTaskEnumerationReturns()
+        try await testPendingReceiptWinsAgainstAnAlreadyPreparedDownload()
+        try await testPreparedDownloadWaitsForTheFinalSecuredReceiptValidator()
+        try testKnownReplacementRetiresNetworkDeliveryOnceAndKeepsTheSavedQueue()
+        try await testKnownReplacementRejectsLateCurrentResolve()
+        try await testKnownReplacementRejectsLatePreloadResolve()
+        try await testDownloadFirstRejectionBlocksHeldCurrentBeforeSourceNotification()
+        try await testDownloadFirstRejectionBlocksHeldPreloadBeforeSourceNotification()
+        try await testSameIdentityDownloadProbePreservesHeldCurrentAuthority()
+        try await testDownloadRejectionStopsAutoplayFallbacksAfterHeldSeedReply()
+        try await testSameIdentityProbePreservesAutoplayFallbacksAfterHeldSeedReply()
+        #if os(macOS)
+        try await DulcetCorePlaybackSystemTests().testRejectedArtworkCompletionCannotReplacePausedPlayersExistingImage()
+        #endif
+        try await testKnownReplacementBlocksAnInstalledResourcesNextHTTPRange()
         try await testRestoredCompletionWhoseRowWasRemovedCleansOnlyItsSecuredInboxPair()
         try await testAutomaticDownloadPreferenceIsNotLostDuringSameAccountReconciliation()
         try await testPendingAutomaticDownloadPreferenceUsesLatestIntentAndDoesNotCrossAccounts()
@@ -1487,6 +2145,7 @@ private final class BindingBoundaryDownloads: DulcetDownloadControlling {
     var afterRetirement: (() -> Void)?
     init(_ base: DulcetCoreDownloadController) { self.base = base }
     var downloadsEnabled: Bool { base.downloadsEnabled }
+    var downloadCountToRemove: Int? { base.downloadCountToRemove }
     func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {
         base.setMediaBindingWillChangeHandler { [weak self] upcoming in
             handler(upcoming)
@@ -1517,7 +2176,11 @@ private final class BindingBoundaryDownloads: DulcetDownloadControlling {
     func requestDownload(_ track: DulcetTrack) { base.requestDownload(track) }
     func status(for id: DulcetProviderItemID) -> DulcetDownloadState { base.status(for: id) }
     func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? { base.offlinePlaybackAsset(for: track) }
-    func removeAccountData() async -> Bool { await base.removeAccountData() }
+    func removeAccountData() async -> Bool {
+        afterRetirement?()
+        afterRetirement = nil
+        return await base.removeAccountData()
+    }
     func disconnect() { base.disconnect() }
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) { base.setStateRefreshHandler(handler) }
 }
@@ -1542,13 +2205,13 @@ private func bindingPCMWave(seconds: Int) -> Data {
 
 @MainActor
 private final class BindingSavedCredentials: DulcetProviderInstanceCredentialStoring {
-    let providerInstanceID: String?
+    private(set) var providerInstanceID: String?
     private var request: DulcetAccountConnectRequest?
     init(provider: String, request: DulcetAccountConnectRequest) { providerInstanceID = provider; self.request = request }
     func load() throws -> DulcetAccountConnectRequest? { request }
     func save(_ request: DulcetAccountConnectRequest) throws { self.request = request }
     func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
-        XCTAssertEqual(providerInstanceID, self.providerInstanceID)
+        self.providerInstanceID = providerInstanceID
         self.request = request
     }
     func delete() throws { request = nil }
@@ -1568,3 +2231,289 @@ private final class BindingSavedConnector: DulcetAccountConnecting {
 
 @MainActor
 private final class BindingSavedOperation: DulcetAccountConnectOperation { func cancel() {} }
+
+
+private final class BindingLibraryListener: NSObject, AppleLibraryWindowListener, @unchecked Sendable {
+    @MainActor var titles: [String] = []
+    func onWindowPublication(publication: AppleLibraryWindowPublication) {
+        let publishedTitles = publication.items.compactMap(\.title)
+        MainActor.assumeIsolated { titles = publishedTitles }
+    }
+}
+
+@MainActor
+private final class BindingMultiCredentials: DulcetSavedServerCredentialStoring {
+    private var records: [String: (DulcetAccountConnectRequest, String)] = [:]
+    var providerInstanceID: String?
+    private(set) var savedProviderInstanceIDs: [String] = []
+    var serverIdentity: String { providerInstanceID.flatMap { records[$0]?.1 } ?? "" }
+    func load() throws -> DulcetAccountConnectRequest? { providerInstanceID.flatMap { records[$0]?.0 } }
+    func load(providerInstanceID: String) throws -> DulcetAccountConnectRequest {
+        try XCTUnwrap(records[providerInstanceID]?.0)
+    }
+    func serverIdentity(providerInstanceID: String) throws -> String { records[providerInstanceID]?.1 ?? "" }
+    func activate(providerInstanceID: String) throws { self.providerInstanceID = providerInstanceID }
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        try save(request, providerInstanceID: providerInstanceID ?? "new", serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        try save(request, providerInstanceID: providerInstanceID, serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String, serverIdentity: String) throws {
+        records[providerInstanceID] = (request, serverIdentity)
+        if !savedProviderInstanceIDs.contains(providerInstanceID) { savedProviderInstanceIDs.append(providerInstanceID) }
+        self.providerInstanceID = providerInstanceID
+    }
+    func delete() throws { if let providerInstanceID { try delete(providerInstanceID: providerInstanceID) } }
+    func delete(providerInstanceID: String) throws {
+        records[providerInstanceID] = nil
+        savedProviderInstanceIDs.removeAll { $0 == providerInstanceID }
+        if self.providerInstanceID == providerInstanceID { self.providerInstanceID = nil }
+    }
+}
+
+private final class RejectionPlaybackEngine: DulcetCorePlaybackEngine, @unchecked Sendable {
+    private let lock = NSLock()
+    private var listener: DulcetPlaybackEventHandler?
+    private var storedPlans: [DulcetPlaybackPlan] = []
+    private var storedPreloads: [DulcetPlaybackPlan] = []
+    var plans: [DulcetPlaybackPlan] { lock.withLock { storedPlans } }
+    var preloads: [DulcetPlaybackPlan] { lock.withLock { storedPreloads } }
+    func setEventListener(_ listener: DulcetPlaybackEventHandler?) { lock.withLock { self.listener = listener } }
+    func emit(_ event: DulcetPlaybackEvent) { lock.withLock { listener }?(event) }
+    func stopForAccountChange() {}
+    func execute(_ command: DulcetPlaybackCommand, completion: @escaping DulcetPlaybackCommandCompletion) {
+        lock.withLock {
+            if case let .prepare(_, plan) = command { storedPlans.append(plan) }
+            if case let .preloadNext(_, plan) = command { storedPreloads.append(plan) }
+        }
+        completion(.accepted(commandID: command.commandID))
+    }
+    func setRemoteCommandRouter(_ router: (any DulcetRemotePlaybackCommandRouting)?) {}
+    func updateRemoteCommandCapabilities(_ capabilities: DulcetRemoteCommandCapabilities,
+        for sessionID: DulcetPlaybackSessionID) -> Bool { true }
+}
+
+final class ProductionPathLoopbackServer: @unchecked Sendable {
+    private let audio: Data
+    private let answersIdentity: Bool
+    private let autoplay: Bool
+    private var heldAutoplaySeed: (@Sendable () -> Void)?
+    var hasHeldAutoplaySeed: Bool { lock.withLock { heldAutoplaySeed != nil } }
+    func releaseAutoplaySeed() {
+        let reply = lock.withLock { let reply = heldAutoplaySeed; heldAutoplaySeed = nil; return reply }
+        reply?()
+    }
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.production-http")
+    private let lock = NSLock()
+    private var rangeStorage: [String?] = []
+    private var queryStorage: [String] = []
+    private var pathStorage: [String] = []
+    private var holdingStreams: Bool
+    private var heldResponses: [@Sendable () -> Void] = []
+
+    var requestQueries: [String] { lock.withLock { queryStorage } }
+    var requestPaths: [String] { lock.withLock { pathStorage } }
+
+    func releaseStreams() {
+        let responses = lock.withLock {
+            holdingStreams = false
+            let pending = heldResponses
+            heldResponses = []
+            return pending
+        }
+        responses.forEach { $0() }
+    }
+
+    var baseURL: URL {
+        URL(string: "http://127.0.0.1:\(listener.port!.rawValue)")!
+    }
+
+    var rangeHeaders: [String?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return rangeStorage
+    }
+
+    init(audio: Data, answersIdentity: Bool = false, holdStreams: Bool = false, autoplay: Bool = false) throws {
+        self.audio = audio
+        self.answersIdentity = answersIdentity
+        self.autoplay = autoplay
+        holdingStreams = holdStreams
+        listener = try NWListener(using: .tcp, on: .any)
+        let startup = ProductionPathLoopbackStartup()
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                startup.complete()
+            case let .failed(error):
+                startup.complete(error: error)
+            default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.accept(connection)
+        }
+        listener.start(queue: queue)
+        guard startup.wait(timeout: 5) else {
+            listener.cancel()
+            throw ProductionPathLoopbackError.startupTimedOut
+        }
+        if let startupError = startup.error {
+            listener.cancel()
+            throw startupError
+        }
+        guard listener.port != nil else {
+            listener.cancel()
+            throw ProductionPathLoopbackError.missingPort
+        }
+    }
+
+    func stop() {
+        releaseStreams()
+        listener.cancel()
+    }
+
+    private func accept(_ connection: NWConnection) {
+        connection.start(queue: queue)
+        receive(from: connection, accumulated: Data())
+    }
+
+    private func receive(from connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
+            [weak self, weak connection] data, _, isComplete, error in
+            guard let self, let connection else { return }
+            var requestData = accumulated
+            if let data { requestData.append(data) }
+            if requestData.range(of: Data("\r\n\r\n".utf8)) != nil {
+                respond(to: connection, requestData: requestData)
+            } else if error != nil || isComplete {
+                connection.cancel()
+            } else {
+                receive(from: connection, accumulated: requestData)
+            }
+        }
+    }
+
+    private func respond(to connection: NWConnection, requestData: Data) {
+        let request = String(decoding: requestData, as: UTF8.self)
+        let path = request.split(separator: " ").dropFirst().first?
+            .split(separator: "?").first.map(String.init) ?? ""
+        lock.withLock { pathStorage.append(path) }
+        let rangeHeader = request
+            .split(separator: "\r\n")
+            .first { $0.lowercased().hasPrefix("range:") }
+            .map { String($0.dropFirst("range:".count)).trimmingCharacters(in: .whitespaces) }
+        if answersIdentity, request.split(separator: " ").dropFirst().first?.contains("/ping") == true {
+            let body = Data(#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"test"}}"#.utf8)
+            var response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+            response.append(body)
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+        if autoplay {
+            let endpoint = path.split(separator: "/").last.map(String.init) ?? ""
+            let payload: String
+            switch endpoint {
+            case "getSong.view": payload =  #""song":{"id":"seed","title":"Seed","artistId":"artist","artist":"Artist","genre":"Jazz"}"#
+            case "getSimilarSongs2.view": payload =  #""similarSongs2":{"song":[]}"#
+            case "getSimilarSongs.view": payload =  #""similarSongs":{"song":[]}"#
+            case "getTopSongs.view": payload =  #""topSongs":{"song":[]}"#
+            default:
+                payload = request.contains("genre=") ?  #""randomSongs":{"song":[]}"#
+                    :  #""randomSongs":{"song":[{"id":"candidate","title":"Candidate","album":"A","albumId":"album","duration":200}]}"#
+            }
+            let body = Data((#"{"subsonic-response":{"status":"ok","version":"1.16.1","# + payload + "}}").utf8)
+            let reply: @Sendable () -> Void = {
+                var response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+                response.append(body)
+                connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            }
+            if endpoint == "getSong.view" { lock.withLock { heldAutoplaySeed = reply } } else { reply() }
+            return
+        }
+        lock.lock()
+        rangeStorage.append(rangeHeader)
+        queryStorage.append(request.split(separator: " ").dropFirst().first.map(String.init) ?? "")
+        lock.unlock()
+
+        let bounds = requestedBounds(from: rangeHeader)
+        let body = audio.subdata(in: bounds.start..<(bounds.endInclusive + 1))
+        let status = rangeHeader == nil ? "200 OK" : "206 Partial Content"
+        var headers = [
+            "HTTP/1.1 \(status)",
+            "Content-Type: audio/mpeg",
+            "Content-Length: \(body.count)",
+            "Accept-Ranges: bytes",
+            "Connection: close",
+        ]
+        if rangeHeader != nil {
+            headers.append(
+                "Content-Range: bytes \(bounds.start)-\(bounds.endInclusive)/\(audio.count)"
+            )
+        }
+        var response = Data((headers.joined(separator: "\r\n") + "\r\n\r\n").utf8)
+        response.append(body)
+        let responseBytes = response
+        let send: @Sendable () -> Void = {
+            connection.send(content: responseBytes, completion: .contentProcessed { _ in connection.cancel() })
+        }
+        let held = lock.withLock {
+            if holdingStreams { heldResponses.append(send); return true }
+            return false
+        }
+        if !held { send() }
+    }
+
+    private func requestedBounds(from rangeHeader: String?) -> (start: Int, endInclusive: Int) {
+        guard let rangeHeader,
+              rangeHeader.lowercased().hasPrefix("bytes="),
+              let separator = rangeHeader.firstIndex(of: "-") else {
+            return (0, audio.count - 1)
+        }
+        let startText = rangeHeader[rangeHeader.index(rangeHeader.startIndex, offsetBy: 6)..<separator]
+        let endText = rangeHeader[rangeHeader.index(after: separator)...]
+        let start = min(Int(startText) ?? 0, audio.count - 1)
+        let requestedEnd = Int(endText) ?? (audio.count - 1)
+        return (start, min(max(start, requestedEnd), audio.count - 1))
+    }
+}
+
+private final class ProductionPathLoopbackStartup: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var completed = false
+    private var errorStorage: Error?
+
+    var error: Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        return errorStorage
+    }
+
+    func complete(error: Error? = nil) {
+        lock.lock()
+        guard !completed else {
+            lock.unlock()
+            return
+        }
+        completed = true
+        errorStorage = error
+        lock.unlock()
+        semaphore.signal()
+    }
+
+    func wait(timeout: TimeInterval) -> Bool {
+        semaphore.wait(timeout: .now() + timeout) == .success
+    }
+}
+
+enum ProductionPathLoopbackError: Error {
+    case lifecycleTimedOut
+    case missingFixture
+    case missingPort
+    case resolveFailed
+    case startupTimedOut
+}

@@ -117,6 +117,7 @@ private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading, Dul
         return RecordingCancellable()
     }
 
+    func rejectServerIdentity() { events.append("rejectIdentity"); setOnline(false) }
     func setOnline(_ reachable: Bool) { events.append("setOnline(\(reachable))") }
     func setForeground(_ foreground: Bool) { events.append("setForeground(\(foreground))") }
     func setNetworkConstrained(_ constrained: Bool) { events.append("setNetworkConstrained(\(constrained))") }
@@ -658,6 +659,38 @@ func tryAgainIsTheReconnectNeverAScreensOwnRead() throws {
 }
 
 @Test @MainActor
+func rejectedReaderIgnoresHeldSuccessAndRequiresNegotiationBeforeANewLifetime() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    var negotiations = 0
+    session.onSavedReconnectRequested = { negotiations += 1 }
+    session.open(account: readerAccount, mode: .connected)
+    let old = try #require(factory.made.first)
+    #expect(old.connectCompletions.count == 1)
+    session.rejectServerIdentity()
+    #expect(old.events.contains("rejectIdentity"))
+    #expect(!session.isOnline)
+    #expect(session.connectionFailure == .serverIdentityChanged)
+    let refreshes = old.libraryRefreshes
+    old.answerConnections(DulcetReaderConnection(
+        epochKnown: true, serverReportsNoEpoch: true, discardedPendingChanges: 0, errorKind: nil))
+    #expect(!session.isOnline, "A held successful callback cannot reopen rejected authority")
+    #expect(session.connectionFailure == .serverIdentityChanged)
+    #expect(old.libraryRefreshes == refreshes)
+    let reconnects = old.events.filter { $0 == "reconnect" }.count
+    session.reconnect()
+    #expect(negotiations == 1)
+    #expect(old.events.filter { $0 == "reconnect" }.count == reconnects)
+    session.open(account: readerAccount, mode: .connected)
+    #expect(factory.made.count == 1, "The accepted lifetime must wait for the old reader thread")
+    #expect(old.events.last == "close")
+    old.finishClose()
+    #expect(factory.made.count == 2)
+    #expect(factory.made.last !== old)
+    #expect(session.connectionFailure == nil)
+}
+
+@Test @MainActor
 func anotherAccountsReaderIsMadeOnlyOnceTheOldOneHasStopped() throws {
     let factory = RecordingReaderFactory()
     let session = DulcetLibrarySession(factory: factory)
@@ -1157,7 +1190,8 @@ private func readerModeStore(
     serverSearch: ForbiddenServerSearch? = nil,
     credentials: ReaderTestCredentials? = nil,
     reachability: ManualReachability? = nil,
-    delays: ManualDelays = ManualDelays()
+    delays: ManualDelays = ManualDelays(),
+    identityPolicy: DulcetAccountIdentityPolicy = .exact
 ) -> (DulcetPresentationStore, DulcetLibrarySession, ReaderTestCredentials) {
     let session = DulcetLibrarySession(factory: factory, reachability: reachability, delays: delays)
     let store = credentials ?? ReaderTestCredentials(persisted: persisted, providerInstanceID: providerInstanceID)
@@ -1168,7 +1202,8 @@ private func readerModeStore(
         serverSearch: serverSearch,
         providerInstanceIDFactory: { "provider-new" },
         librarySession: session,
-        reconnectDelays: delays
+        reconnectDelays: delays,
+        identityPolicy: identityPolicy
     ))
     return (presentation, session, store)
 }
@@ -1284,7 +1319,12 @@ func reconnectFromTheLibraryConnectsInPlaceAndSavesTheReachedAddress() throws {
     )
     let (store, session, credentials) = readerModeStore(
         persisted: saved, providerInstanceID: "provider-reader", factory: factory,
-        connector: connector, browser: browser)
+        connector: connector, browser: browser,
+        // Production injects SavedServerPolicy, whose common URL parser resolves this legacy
+        // raw address. The Kit fixture supplies that known result without duplicating the parser.
+        identityPolicy: .init(samePrincipal: { oldURL, oldUser, newURL, newUser in
+            oldUser == newUser && oldURL == "music.example.invalid" && newURL == "https://music.example.invalid"
+        }, isReplacement: { _, _ in false }))
     store.submitAccountConnection()
     store.navigate(to: .library)
     #expect(store.selectedDestination == .library, "Reconnect on the library connects where the person is")

@@ -90,7 +90,8 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 
 - The repo is public, so standard hosted runners are free. Apple jobs use `macos-latest` (or a pinned
   `macos-<version>`) and **never a larger/premium label** — those bill even on public repos.
-  Kotlin core, Android, lint, conformance and the parity gate run on `ubuntu-latest`.
+  Kotlin core, Android, lint, conformance and the parity gate run on `ubuntu-latest`, except
+  `core-build`, pinned to `ubuntu-24.04` because its server tests install Noble's exact FFmpeg.
 - No self-hosted runner, except the §21.3.1 evidence runners (`workflow_dispatch` on `main` only).
 - Every workflow: `concurrency: cancel-in-progress` and per-job `timeout-minutes`.
 - `main` requires `core-ci`, `parity-gate`, `apple-ci`, with `strict` up-to-date and **no required

@@ -20,7 +20,15 @@ internal class AndroidPlaybackResponse(
     val headers: AuthenticatedEndpointResponseHeaders,
     val input: InputStream,
     val close: () -> Unit,
-)
+) {
+    var authorizeRead: () -> Unit = {}
+        private set
+
+    constructor(status: Int, headers: AuthenticatedEndpointResponseHeaders, input: InputStream,
+        authorizeRead: () -> Unit, close: () -> Unit) : this(status, headers, input, close) {
+        this.authorizeRead = authorizeRead
+    }
+}
 
 internal fun interface AndroidPlaybackResource {
     fun open(position: Long, length: Long): AndroidPlaybackResponse
@@ -72,6 +80,7 @@ internal class AndroidPlaybackDataSourceFactory(
             transferInitializing(dataSpec)
             val loaded = resource.open(dataSpec.position, dataSpec.length)
             response = loaded
+            loaded.authorizeRead()
             spec = dataSpec
             val buffer = ByteArrayOutputStream()
             val scratch = ByteArray(8192)
@@ -128,12 +137,14 @@ internal class AndroidPlaybackDataSourceFactory(
             if (exactRemaining != null && prefix.size > exactRemaining!!)
                 throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
             prefixOffset = 0
+            loaded.authorizeRead()
             transferStarted(dataSpec)
             started = true
             remaining
         }
 
         override fun read(buffer: ByteArray, offset: Int, length: Int): Int = closed {
+            checkNotNull(response).authorizeRead()
             if (length == 0) return@closed 0
             if (remaining == 0L) return@closed C.RESULT_END_OF_INPUT
             val maximum = if (remaining >= 0) minOf(length.toLong(), remaining).toInt() else length
@@ -143,6 +154,7 @@ internal class AndroidPlaybackDataSourceFactory(
                     prefixOffset += it
                 }
             } else checkNotNull(response).input.read(buffer, offset, maximum)
+            checkNotNull(response).authorizeRead()
             if (count < 0) {
                 if (exactRemaining?.let { it > 0 } == true)
                     throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
@@ -235,6 +247,13 @@ internal class AndroidHttpPlaybackResource(
     private val currentAuthorizer: (() -> AuthenticatedEndpointClient?)? = null,
 ) : AndroidPlaybackResource {
     override fun open(position: Long, length: Long): AndroidPlaybackResponse = try {
+        val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
+            ?: throw AndroidPlaybackIOException(DomainError.Transport.Cancelled)
+        fun requireAuthorization() {
+            if (authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId) ||
+                (currentAuthorizer != null && currentAuthorizer.invoke() == null))
+                throw AndroidPlaybackIOException(DomainError.Transport.Cancelled)
+        }
         val range = if (position > 0 || length >= 0) "bytes=$position-" +
             if (length >= 0) Math.addExact(position, length - 1).toString() else "" else null
         // Select once per HTTP open. A seek can use refreshed same-account credentials without
@@ -243,6 +262,7 @@ internal class AndroidHttpPlaybackResource(
             else currentAuthorizer.invoke() ?: throw AndroidPlaybackIOException(DomainError.Transport.Cancelled)
         val prepared = runBlocking { selectedAuthorizer.prepareGetRequest(plan.endpoint, plan.parameters,
             AuthenticatedEndpointRequestOptions(range = range)) }
+        requireAuthorization()
         var url = prepared.url
         var hostHeader = prepared.hostHeader
         // Origins are compared on the address the account names, never on the pinned IP the
@@ -251,6 +271,7 @@ internal class AndroidHttpPlaybackResource(
         var logical = playbackLogicalUrl(url, hostHeader)
         var redirects = 0
         while (true) {
+            requireAuthorization()
             val connection = URL(url).openConnection() as HttpURLConnection
             try {
                 connection.instanceFollowRedirects = false
@@ -261,6 +282,7 @@ internal class AndroidHttpPlaybackResource(
                 range?.let { connection.setRequestProperty("Range", it) }
                 connection.setRequestProperty("Accept-Encoding", "identity")
                 val status = connection.responseCode
+                requireAuthorization()
                 if (status in listOf(301, 302, 303, 307, 308)) {
                     val location = connection.getHeaderField("Location")
                         ?: throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
@@ -298,7 +320,18 @@ internal class AndroidHttpPlaybackResource(
                 )
                 val input = if (status >= 400) connection.errorStream ?: java.io.ByteArrayInputStream(byteArrayOf())
                     else connection.inputStream
-                return AndroidPlaybackResponse(status, headers, input) {
+                requireAuthorization()
+                val guardedInput = object : java.io.FilterInputStream(input) {
+                    override fun read(): Int {
+                        requireAuthorization()
+                        return super.read().also { requireAuthorization() }
+                    }
+                    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                        requireAuthorization()
+                        return input.read(buffer, offset, length).also { requireAuthorization() }
+                    }
+                }
+                return AndroidPlaybackResponse(status, headers, guardedInput, ::requireAuthorization) {
                     try { input.close() } finally { connection.disconnect() }
                 }
             } catch (error: Exception) { connection.disconnect(); throw error }

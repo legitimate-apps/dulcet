@@ -184,6 +184,40 @@ class PlaylistPlayContextTest {
     }
 
     @Test
+    fun closingTheSenderDuringHeldDiscoveryRetainsDurablePlaylistContextWithoutSendingIds() = runTest {
+        val driver = createTestDriver()
+        try {
+            val outbox = PersistentScrobbleOutbox(DulcetDatabaseStore.open(driver).database, OutboxWallClock { 20000 })
+            outbox.persistSynchronously(EVENT)
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val sent = mutableListOf<Map<String, String>>()
+            val sender = ScrobbleEndpointSender(object : ScrobbleEndpointTransport {
+                override suspend fun extensions(): AuthenticatedEndpointResponse {
+                    entered.complete(Unit)
+                    release.await()
+                    return advertised()
+                }
+                override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse {
+                    sent += parameters
+                    return response("""{"subsonic-response":{"status":"ok"}}""")
+                }
+            })
+            val worker = ScrobbleOutboxDeliveryWorker(SERVER, outbox, sender, OutboxWallClock { 20000 },
+                OutboxMonotonicClock { Duration.ZERO }, ScrobbleOutboxDiagnosticSink {})
+            val drain = async { worker.onForeground() }
+            entered.await()
+            sender.close()
+            release.complete(Unit)
+            val result = drain.await()
+            assertEquals(emptyList(), sent, "A retired sender must not disclose stored song or playlist IDs after discovery returns")
+            assertEquals(0, result.deliveredCount)
+            assertEquals(EVENT, outbox.pending(SERVER).single().toSubmittedPlay(),
+                "Retiring network delivery must retain the durable play and its original playlist provenance")
+        } finally { driver.close() }
+    }
+
+    @Test
     fun anotherAccountsPlaylistCannotBeAttachedToASong() {
         assertFailsWith<IllegalArgumentException> { EVENT.copy(playlistContextId = ProviderItemId("other", "playlist")) }
     }

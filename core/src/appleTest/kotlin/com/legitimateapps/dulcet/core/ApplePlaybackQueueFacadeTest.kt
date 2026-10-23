@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
@@ -8,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertIs
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertNotEquals
@@ -535,6 +537,72 @@ class ApplePlaybackQueueFacadeTest {
             assertEquals(5, transport.parameters.size, "Nothing is sent for a dropped play")
         } finally {
             delivery.close()
+        }
+    }
+
+    @Test
+    fun offlineConfigurationRetiresASenderSuspendedInPlaylistDiscoveryWithoutDeletingThePlay() = runTest {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        val positions = PersistentResumePositionStore(database)
+        val client = ApplePlaybackQueueClient(database,
+            PlaybackQueueController(PersistentQueueStore(database), positions, PlaybackIdentitySource { it }),
+            positions, StandardTestDispatcher(testScheduler))
+        val wallClock = OutboxWallClock { kotlin.time.Clock.System.now().toEpochMilliseconds() }
+        val outbox = PersistentScrobbleOutbox(database, wallClock)
+        val releaseDiscovery = CompletableDeferred<Unit>()
+        var discoveries = 0
+        val retiredSends = mutableListOf<Map<String, String>>()
+        val transport = object : ScrobbleEndpointTransport {
+            override suspend fun extensions(): AuthenticatedEndpointResponse {
+                discoveries++
+                releaseDiscovery.await()
+                return envelope("""{"subsonic-response":{"status":"ok","openSubsonicExtensions":[{"name":"dulcetHome","versions":[1]}]}}""")
+            }
+            override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse {
+                retiredSends += parameters
+                return okEnvelope()
+            }
+        }
+        val event = RecordedPlaybackEvent.SubmittedPlay(ProviderItemId("server", "song"),
+            PlaybackWallClockTime(wallClock.nowEpochMilliseconds()), ProviderItemId("server", "playlist"))
+        try {
+            outbox.persistSynchronously(event)
+            client.installDelivery(ServerId("server"), ScrobbleEndpointSender(transport), outbox, wallClock)
+            testScheduler.runCurrent()
+            assertEquals(1, discoveries, "The real outbox worker must be held after identity authorization")
+            assertEquals(1, outbox.count())
+            assertTrue(client.configureOfflineDelivery().configured)
+            // A later foreground/reachability observation cannot reopen the retired sender.
+            client.setNetworkAvailable(true)
+            releaseDiscovery.complete(Unit)
+            testScheduler.runCurrent()
+            assertEquals(emptyList(), retiredSends, "A retired composition must send no old IDs after discovery")
+            val retained = outbox.pending(ServerId("server")).single()
+            assertEquals("song", retained.rawId)
+            assertEquals("playlist", retained.playlistRawId)
+            assertEquals(0, client.deliveryReport().submittedPlaysDelivered)
+
+            // A newly authenticated composition must still drain that exact durable context.
+            val reconnectedSends = mutableListOf<Map<String, String>>()
+            val reconnected = object : ScrobbleEndpointTransport {
+                override suspend fun extensions() = envelope("""{"subsonic-response":{"status":"ok","openSubsonicExtensions":[{"name":"dulcetHome","versions":[1]}]}}""")
+                override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse {
+                    reconnectedSends += parameters
+                    return okEnvelope()
+                }
+            }
+            client.installDelivery(ServerId("server"), ScrobbleEndpointSender(reconnected), outbox, wallClock)
+            testScheduler.runCurrent()
+            assertEquals(1, reconnectedSends.size)
+            assertEquals("song", reconnectedSends.single()["id"])
+            assertEquals("playlist", reconnectedSends.single()["dulcetContextId"])
+            assertEquals(0, outbox.count())
+            assertEquals(1, client.deliveryReport().submittedPlaysDelivered)
+        } finally {
+            releaseDiscovery.complete(Unit)
+            client.close()
+            driver.close()
         }
     }
 

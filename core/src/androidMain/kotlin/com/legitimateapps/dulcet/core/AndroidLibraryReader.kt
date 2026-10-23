@@ -582,6 +582,26 @@ public class AndroidLibraryReader internal constructor(
         }
     }
 
+    /** A different account worker detected a replacement; retire this reader's pending replies. */
+    public fun rejectServerIdentity() {
+        val id = account?.providerInstanceId ?: return
+        AndroidServerIdentity.rejectionEpoch(id)?.let(::rejectServerIdentity)
+    }
+
+    internal fun rejectServerIdentity(epoch: Long) {
+        val id = account?.providerInstanceId ?: return
+        onReader {
+            // Check AND write under acceptance's lock, after dispatch to the reader owner.
+            // Looking up this reader happened outside the gate lock to avoid registry inversion.
+            val applied = AndroidServerIdentity.applyRejection(id, epoch) {
+                automaticDownloadsMayStart = false
+                serverAvailableForPlayback = false
+                composition?.session?.reader?.rejectServerIdentity()
+            }
+            if (applied) myLibraries.toList().forEach { it.republishAll() }
+        }
+    }
+
     /**
      * Reachability as the platform reports it; call it on every change. Unreachable takes the reader
      * offline at once — no request is issued offline. Reachable while offline REQUESTS a reconnect;
@@ -1200,6 +1220,13 @@ private fun productionComposer(
                 downloads = DownloadedTrackSource.fromDownloads(opened.database),
                 formPost = false,
                 foreground = foreground,
+                identityAuthorization = { AndroidServerIdentity.authorizationEpoch(account.providerInstanceId) },
+                validateServerIdentity = {
+                    AndroidServerIdentity.validate(account.providerInstanceId) {
+                        ServerIdentityGate(opened.database, account.providerInstanceId,
+                            AccountConnectionRequest(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp)).validate()
+                    }
+                },
             ),
             release = {
                 live.close()

@@ -35,6 +35,9 @@ import com.legitimateapps.dulcet.ui.DulcetIcons
 internal class AccountActions(
     val serverName: String,
     val username: String,
+    val savedServers: List<StoredAccount> = emptyList(),
+    val selectServer: (String) -> Unit = {},
+    val addServer: (() -> Unit)? = null,
     val requestSignOut: () -> Unit,
 )
 
@@ -68,6 +71,17 @@ internal fun AccountDialog(actions: AccountActions, onDismiss: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(stringResource(R.string.account_signout_account_body, actions.serverName, actions.username))
+                actions.savedServers.forEach { server ->
+                    TextButton(onClick = { onDismiss(); actions.selectServer(server.id) },
+                        modifier = Modifier.testTag("account.server.${server.id}")) {
+                        Text("${server.serverName} · ${server.username}\n${server.serverUrl}")
+                    }
+                }
+                actions.addServer?.let { add ->
+                    TextButton(onClick = { onDismiss(); add() }, modifier = Modifier.testTag("account.add-server")) {
+                        Text(stringResource(R.string.account_add_server))
+                    }
+                }
                 StreamingQualitySection()
                 OfflineStorageSection()
             }

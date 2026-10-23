@@ -126,3 +126,19 @@ Listen Now: optional dulcet.home v1 in GET /capabilities. GET /recommendations/h
 1–50 items/shelf; private ETag; cache per account, show age, retain cached data on errors.
 Empty personal shelves are valid. No fabricated preference claims; random means exploration.
 Home conformance profile: DA-HOME-1. Reading home never records a play or creates a playlist.
+
+Optional Discover/Wishlist v1: check capabilities dulcet.discover and dulcet.wishlist independently.
+GET /discover/search?kind=artist|album|song&q=... and shelves/artists/albums/playlists/artwork need catalog:read.
+GET /me/wishes needs user:read; POST snapshot add needs user:write, no upstream lookup; DELETE and
+POST /me/wishes/cancellations need user:delete. Admin list/state PATCH need admin; no admin MCP tool.
+MCP search_discover, list_wishes, add_wish require their scope AND advertised optional capability v1.
+Read mcp-tools.json, including x-dulcet-capability; tools/list replaces it with _meta[dulcet/capability].
+Keep operationId UUID and actionTime on retries. Remove by addOperationId can precede add. Old adds
+never resurrect removed wishes, even after 24-hour retry cache expiry. New intentional add uses new UUID.
+wish feed is owner-only, includes fulfilled history and deletion tombstones even when disabled. Omitted
+types on continuation preserve the cursor's original filter. wishlist.changed=user:read owner-only;
+wishlist.requested=admin all owners, data.wish.userId is the true owner. Signed durable webhooks.
+Fulfilled comes only from a complete scan match plus My Library; partial/unknown editions stay open.
+30-day default-list aging does not delete a wish. Rejection persists per user and reopens linked arrival.
+Discover returns age/stale; uncached outage503, generation expiry410. Images only from the server.
+Core, native readers/outboxes and app UI are later work; optional conformance profiles remain planned.
