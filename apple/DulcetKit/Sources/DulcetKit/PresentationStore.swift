@@ -633,11 +633,13 @@ public final class DulcetPresentationStore {
         defer { navigationWriter = previousWriter }
         readerReturn = nil
         readerArrival = route
+#if !os(tvOS)
         if route == .wishlist {
             if selectedDestination != .library { selectDestination(.library) }
             readerPath = [.wishlist]
             return
         }
+#endif
         if isReaderDestination {
             if readerPath.last != route { readerPath.append(route) }
         } else {
