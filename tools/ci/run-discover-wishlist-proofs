@@ -8,6 +8,7 @@ sys.dont_write_bytecode = True
 from discover_process_owner import ProcessOwner
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--self-test',action='store_true')
+p.add_argument('--build-for-testing',action='store_true',help='compile iPhone/iPad tests without a fixture or simulator boot')
 p.add_argument('mode',nargs='?',choices=['components','sessions','iphone','ipad','mac','macos','android'])
 a=p.parse_args()
 if a.self_test:
@@ -16,7 +17,7 @@ if a.self_test:
     result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromModule(test_discover_proof_report))
     sys.exit(0 if result.wasSuccessful() else 1)
 if not a.mode:p.error('mode is required')
-if os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
+if not a.build_for_testing and os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
 if a.mode=='android':
     helper=str(Path(__file__).resolve().parent/'run-discover-wishlist-android')
     os.execv(helper,[helper])
@@ -49,6 +50,37 @@ def completed_native_report(bundle, suite, selected, output):
         (output/'completed-tests.txt').write_text(transcript)
         return dict(total=len(results),passed=len(results)-failures,failed=failures,skipped=0)
     return None
+
+def apple_build_for_testing(mode):
+    import json
+    import subprocess
+    import tempfile
+    if mode not in {'iphone','ipad'}:p.error('--build-for-testing requires iphone or ipad')
+    owner=ProcessOwner().install()
+    session='dulcet-discover-build-'+mode+'-'+str(os.getpid())
+    hosted=os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('RUNNER_ENVIRONMENT')=='github-hosted'
+    derived=Path(tempfile.gettempdir())/('dulcet-discover-'+mode)
+    output=Path(os.environ.get('DULCET_DISCOVER_PROOF_OUTPUT',str(repo/'build/discover-proofs'/mode/'native'))).parent/'build'
+    output.mkdir(parents=True,exist_ok=True)
+    suite='DulcetDiscoverWishlistIPadUITests' if mode=='ipad' else 'DulcetDiscoverWishlistUITests'
+    command=['xcodebuild','build-for-testing','-project',str(repo/'apple/Dulcet.xcodeproj'),
+             '-scheme','DulcetiOS','-destination','generic/platform=iOS Simulator',
+             '-parallel-testing-enabled','NO','-derivedDataPath',str(derived),
+             '-only-testing:DulcetiOSUITests/'+suite,'ARCHS=arm64','ONLY_ACTIVE_ARCH=YES']
+    try:
+        gate=os.environ.get('DULCET_DISCOVER_HOST_GATE')
+        if gate:owner.run([gate,'--wait','3600'],check=True)
+        if not hosted:owner.run(['leg-lease','create','--kind','build','--session',session,'--project','dulcet','--pid',str(os.getpid()),'--wait','7200'],check=True)
+        with (output/'xcodebuild.log').open('w') as log:
+            owner.run(command,cwd=repo,stdout=log,stderr=subprocess.STDOUT,check=True)
+        receipt=dict(mode=mode,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip())
+        (derived/'discover-build.json').write_text(json.dumps(receipt))
+        (output/'invocation.json').write_text(json.dumps(dict(**receipt,command=command),indent=2))
+    finally:
+        owner.stop_children()
+        if not hosted:subprocess.run(['leg-lease','release','--session',session],check=False,timeout=30)
+        owner.close()
+    return 0
 
 def apple_proof(mode):
     import json
@@ -188,7 +220,12 @@ def apple_proof(mode):
         env['TEST_RUNNER_DULCET_DISCOVER_CAPTURE_UPLOAD_URL']='http://127.0.0.1:'+str(capture_server.server_address[1])
         env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
         selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
-        command=['xcodebuild','test','-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
+        action='test-without-building' if os.environ.get('DULCET_DISCOVER_PREBUILT')=='true' else 'test'
+        if action=='test-without-building':
+            receipt=json.loads((derived/'discover-build.json').read_text())
+            head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()
+            if receipt!={'mode':mode,'head':head}:raise RuntimeError('prebuilt test source does not match the proof invocation')
+        command=['xcodebuild',action,'-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
         if mode=='macos':
             # Match the app-hosted Mac proofs: finite disposable tests use ad hoc signing.
             command += ['CODE_SIGN_STYLE=Manual','CODE_SIGN_IDENTITY=-','CODE_SIGN_ENTITLEMENTS=','DEVELOPMENT_TEAM=','PROVISIONING_PROFILE_SPECIFIER=',
@@ -284,6 +321,7 @@ def apple_proof(mode):
             if not hosted:subprocess.run(['leg-lease','release','--session',session],check=False,timeout=30)
             owner.close()
 
+if a.build_for_testing:sys.exit(apple_build_for_testing(a.mode))
 if a.mode in {'iphone','ipad','mac','macos'}:sys.exit(apple_proof(a.mode))
 runner=os.environ.get('DULCET_DISCOVER_GRADLE_RUNNER',str(repo/'tools/run-gradle-exclusive'))
 cls='DiscoverWishlistTransportComponentsTest' if a.mode=='components' else 'DiscoverWishlistConformanceTest'

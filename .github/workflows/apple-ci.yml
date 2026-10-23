@@ -2809,7 +2809,7 @@ jobs:
     needs: [apple-plan, apple-conformance-ipad-iphone]
     if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 75
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -2844,8 +2844,13 @@ jobs:
           python3 tools/ci/test_discover_simulator_health.py
       - name: Select the iphone evidence directory
         run: echo "DULCET_DISCOVER_PROOF_OUTPUT=$RUNNER_TEMP/discover-iphone/native" >> "$GITHUB_ENV"
+      - name: Compile iphone tests before starting the timed fixture proof
+        timeout-minutes: 20
+        run: tools/ci/run-discover-wishlist-proofs iphone --build-for-testing
       - name: Drive Discover and Wishlist through the native iphone app
         timeout-minutes: 30
+        env:
+          DULCET_DISCOVER_PREBUILT: "true"
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-iphone/fixture" -- tools/ci/run-discover-wishlist-proofs iphone
       - name: Stage finalized native parity results
         run: |
@@ -2877,7 +2882,7 @@ jobs:
     needs: [apple-plan, apple-conformance-ipad-iphone]
     if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 75
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -2912,8 +2917,13 @@ jobs:
           python3 tools/ci/test_discover_simulator_health.py
       - name: Select the ipad evidence directory
         run: echo "DULCET_DISCOVER_PROOF_OUTPUT=$RUNNER_TEMP/discover-ipad/native" >> "$GITHUB_ENV"
+      - name: Compile ipad tests before starting the timed fixture proof
+        timeout-minutes: 20
+        run: tools/ci/run-discover-wishlist-proofs ipad --build-for-testing
       - name: Drive Discover and Wishlist through the native ipad app
         timeout-minutes: 30
+        env:
+          DULCET_DISCOVER_PREBUILT: "true"
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-ipad/fixture" -- tools/ci/run-discover-wishlist-proofs ipad
       - name: Stage finalized native parity results
         run: |
