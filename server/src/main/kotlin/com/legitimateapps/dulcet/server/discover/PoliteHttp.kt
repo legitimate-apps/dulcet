@@ -34,11 +34,11 @@ class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private
         val mutex = Mutex(); val waiting = AtomicInteger()
         var lastStart: Long? = null; var blockedUntil = 0L; var gapMillis = 1000L
     }
-    private val gates = ConcurrentHashMap<String,Gate>()
+    private val gates = ConcurrentHashMap<UpstreamOrigin,Gate>()
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build()
     @Volatile private var closed = false
     var onRequest: (() -> Unit)? = null
-    private fun gate(uri: URI) = gates.computeIfAbsent("${uri.scheme.lowercase()}://${uri.host.lowercase()}:${if(uri.port<0) if(uri.scheme=="https") 443 else 80 else uri.port}") { Gate() }
+    private fun gate(uri: URI) = gates.computeIfAbsent(UpstreamOrigin.of(uri)) { Gate() }
     fun configureOrigin(baseUrl: String, gapMillis: Long) {
         DiscoverSettings.validateBase(baseUrl)
         require(gapMillis >= 0)

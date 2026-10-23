@@ -17,10 +17,45 @@ class DiscoverArtworkTest {
         override fun monotonicNanos()=now*1_000_000
         override suspend fun sleepMillis(millis:Long){now+=millis}
     }
+    @Test fun configuredArtworkOriginStillRefusesLoopbackBeforeConnecting() = runBlocking<Unit> {
+        FixtureDiscoverUpstream().use { f -> Db.inMemory().use { db -> PoliteHttp().use { h ->
+            f.respond(path,body=png)
+            val c=CoverArtClient(h,DiscoverCache(db),DiscoverSettings(coverArtArchiveUrl=f.baseUrl))
+            assertFailsWith<UpstreamUnavailable> { c.thumbnail(id) }
+            assertTrue(f.requests.isEmpty(),"The configured origin must not bypass address policy")
+        } } }
+    }
+    @Test fun canonicalDefaultPortCannotBypassDnsPolicyAndRebindingIsCheckedOnEveryHop() = runBlocking<Unit> {
+        Db.inMemory().use { db -> PoliteHttp().use { h ->
+            var connections=0;h.onRequest={connections++}
+            for(base in listOf("https://coverartarchive.org","https://coverartarchive.org:443","https://COVERARTARCHIVE.ORG:443")) {
+                for(address in listOf("127.0.0.1","10.0.0.1","169.254.169.254","100.100.100.200","::1","fd00::1")) {
+                    val c=CoverArtClient(h,DiscoverCache(db),DiscoverSettings(coverArtArchiveUrl=base),resolver={arrayOf(InetAddress.getByName(address))})
+                    assertFailsWith<UpstreamUnavailable>("$base resolved to $address") { c.thumbnail(id) }
+                }
+            }
+            assertEquals(0,connections)
+        } }
+        FixtureDiscoverUpstream().use { f -> Db.inMemory().use { db -> PoliteHttp().use { h ->
+            f.json(path,"",307,mapOf("Location" to "/rebound"));f.respond("/rebound",body=png)
+            var resolutions=0
+            val c=CoverArtClient(h,DiscoverCache(db),DiscoverSettings(coverArtArchiveUrl=f.baseUrl),testingOverride={true},resolver={
+                arrayOf(InetAddress.getByName(if(resolutions++==0)"127.0.0.1" else "169.254.169.254"))
+            })
+            assertFailsWith<UpstreamUnavailable> { c.thumbnail(id) }
+            assertEquals(2,resolutions);assertEquals(listOf(path),f.requests.map {it.path})
+        } } }
+    }
+    @Test fun canonicalOriginsNormalizeSchemeHostAndDefaultPort() {
+        assertEquals(UpstreamOrigin.of(URI("https://coverartarchive.org")),UpstreamOrigin.of(URI("HTTPS://COVERARTARCHIVE.ORG:443/path")))
+        assertEquals(UpstreamOrigin.of(URI("http://example.test")),UpstreamOrigin.of(URI("HTTP://EXAMPLE.TEST:80/other")))
+        assertNotEquals(UpstreamOrigin.of(URI("http://example.test")),UpstreamOrigin.of(URI("https://example.test")))
+        assertNotEquals(UpstreamOrigin.of(URI("https://example.test")),UpstreamOrigin.of(URI("https://example.test:444")))
+    }
     @Test fun redirectImageStaysOnServerAndCachesThirtyDays() = runBlocking<Unit> {
         FixtureDiscoverUpstream().use { f -> Db.inMemory().use { db -> PoliteHttp().use { h ->
             h.configureOrigin(f.baseUrl,0); val clock=Clock()
-            val c=CoverArtClient(h,DiscoverCache(db,clock),DiscoverSettings(coverArtArchiveUrl=f.baseUrl))
+            val c=CoverArtClient(h,DiscoverCache(db,clock),DiscoverSettings(coverArtArchiveUrl=f.baseUrl),testingOverride={true})
             f.json(path,"",307,mapOf("Location" to "/storage")); f.respond("/storage",body=png,headers=mapOf("Content-Type" to "text/plain"))
             val first=c.thumbnail(id); assertEquals("image/png",first.contentType); assertFalse(first.placeholder)
             assertContentEquals(png,first.bytes)
@@ -32,7 +67,7 @@ class DiscoverArtworkTest {
     @Test fun fiveRedirectHopsWorkButSixAndPrivateTargetsFail() = runBlocking<Unit> {
         FixtureDiscoverUpstream().use { f -> Db.inMemory().use { db -> PoliteHttp().use { h ->
             h.configureOrigin(f.baseUrl,0)
-            val c=CoverArtClient(h,DiscoverCache(db),DiscoverSettings(coverArtArchiveUrl=f.baseUrl))
+            val c=CoverArtClient(h,DiscoverCache(db),DiscoverSettings(coverArtArchiveUrl=f.baseUrl),testingOverride={true})
             f.json(path,"",307,mapOf("Location" to "/hop1"))
             for(n in 1..4) f.json("/hop$n","",307,mapOf("Location" to "/hop${n+1}"))
             f.respond("/hop5",body=png)
@@ -54,7 +89,7 @@ class DiscoverArtworkTest {
     @Test fun missingArtGetsPlaceholderButOutageRetainsCachedBytes() = runBlocking<Unit> {
         FixtureDiscoverUpstream().use { f -> Db.inMemory().use { db -> PoliteHttp().use { h ->
             h.configureOrigin(f.baseUrl,0); val clock=Clock()
-            val c=CoverArtClient(h,DiscoverCache(db,clock),DiscoverSettings(coverArtArchiveUrl=f.baseUrl))
+            val c=CoverArtClient(h,DiscoverCache(db,clock),DiscoverSettings(coverArtArchiveUrl=f.baseUrl),testingOverride={true})
             f.respond(path,body=png); val first=c.thumbnail(id)
             clock.now+=30*DiscoverCache.DAY; f.json(path,"{bad image}")
             val stale=c.thumbnail(id); assertTrue(stale.age.stale); assertContentEquals(first.bytes,stale.bytes)
@@ -65,7 +100,7 @@ class DiscoverArtworkTest {
     @Test fun signatureAndByteCapAreRequired() = runBlocking<Unit> {
         FixtureDiscoverUpstream().use { f -> Db.inMemory().use { db -> PoliteHttp().use { h ->
             h.configureOrigin(f.baseUrl,0)
-            val c=CoverArtClient(h,DiscoverCache(db),DiscoverSettings(coverArtArchiveUrl=f.baseUrl))
+            val c=CoverArtClient(h,DiscoverCache(db),DiscoverSettings(coverArtArchiveUrl=f.baseUrl),testingOverride={true})
             for(body in listOf("{}".toByteArray(),byteArrayOf(0),png+ByteArray(5*1024*1024))) {
                 f.respond(path,body=body); assertFailsWith<UpstreamUnavailable> { c.thumbnail(id) }
             }

@@ -13,7 +13,7 @@ class ApiDiscoverTest {
     private val id="11111111-1111-4111-8111-111111111111"
     private fun context(f:FixtureDiscoverUpstream,enabled:Boolean=true):ServerContext {
         val root=Files.createTempDirectory("api-discover")
-        return ServerContext(Config(port=0,bind="127.0.0.1",musicFolder=root.resolve("music").also(Files::createDirectories),dataFolder=root.resolve("data"),ffmpeg=Fixtures.ffmpeg,ffprobe=Fixtures.ffprobe,scanOnStart=false,lrclibUrl=null,discover=DiscoverSettings(enabled=enabled,musicBrainzUrl=f.baseUrl,musicBrainzMinGapMillis=0,coverArtArchiveUrl=f.baseUrl,listenBrainzUrl=f.baseUrl,listenBrainzLabsUrl=f.baseUrl)),Db.inMemory())
+        return ServerContext(Config(testMode=true,port=0,bind="127.0.0.1",musicFolder=root.resolve("music").also(Files::createDirectories),dataFolder=root.resolve("data"),ffmpeg=Fixtures.ffmpeg,ffprobe=Fixtures.ffprobe,scanOnStart=false,lrclibUrl=null,discover=DiscoverSettings(enabled=enabled,musicBrainzUrl=f.baseUrl,musicBrainzMinGapMillis=0,coverArtArchiveUrl=f.baseUrl,listenBrainzUrl=f.baseUrl,listenBrainzLabsUrl=f.baseUrl)),Db.inMemory()).also {it.testing.replace(com.legitimateapps.dulcet.server.v1.j("discoverArtworkAllowLoopback" to true))}
     }
     private fun resource(name:String)=javaClass.getResource("/discover/$name.json")!!.readText()
     private fun search(f:FixtureDiscoverUpstream,count:Int=40) { f.json("/ws/2/artist","""{"count":$count,"artists":[${(1..count).joinToString(",") { """{"id":"${it.toString().padStart(8,'0')}-1111-4111-8111-111111111111","name":"Artist $it"}""" }}]}""") }

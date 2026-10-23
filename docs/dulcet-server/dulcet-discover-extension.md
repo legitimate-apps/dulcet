@@ -123,11 +123,17 @@ Server settings (environment variables, or the corresponding lowercase hyphenate
 | `DULCET_DISCOVER` | `on` | Outside lookups and Discover advertisement |
 | `DULCET_WISHLIST` | `on` | Wishlist, independent of Discover |
 | `DULCET_MUSICBRAINZ_URL` | `https://musicbrainz.org` | MusicBrainz base; mirrors and fixture upstream supported |
-| `DULCET_COVER_ART_ARCHIVE_URL` | `https://coverartarchive.org` | Thumbnail source base |
+| `DULCET_COVER_ART_ARCHIVE_URL` | `https://coverartarchive.org` | Thumbnail source base; every connection requires public addresses, including this origin |
 | `DULCET_LISTENBRAINZ_URL` | `https://api.listenbrainz.org` | Public ListenBrainz base |
 | `DULCET_LISTENBRAINZ_LABS_URL` | `https://labs.api.listenbrainz.org` | Similar-artists base |
 | `DULCET_MUSICBRAINZ_MIN_GAP_MS` | `1000` | Mirrors may lower the gap; public MusicBrainz cannot go below 1000 ms |
 | `DULCET_LISTENBRAINZ_TOKEN` | absent | Optional secret reserved for later, currently unused; never sent |
+
+Artwork checks every resolved address before connecting, including the configured source and each
+redirect hop, and pins the checked socket address. Private-network artwork mirrors are unsupported.
+Only an explicit `discoverArtworkAllowLoopback` Testing-profile override permits loopback fixtures;
+it requires startup test mode and an admin token, resets on restart and never admits other private
+or metadata addresses. Origin comparisons normalize scheme, host casing and default ports.
 
 Requests serialize per origin with the Dulcet Server/repository User-Agent and respect Retry-After
 and ListenBrainz rate headers. LB Radio, acquisition, downloads and previews stay outside v1.

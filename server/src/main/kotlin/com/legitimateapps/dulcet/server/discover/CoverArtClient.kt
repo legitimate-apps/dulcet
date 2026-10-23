@@ -9,7 +9,10 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 data class DiscoverImage(val bytes:ByteArray,val contentType:String,val age:CacheAge,val placeholder:Boolean)
-class CoverArtClient(private val http:PoliteHttp,private val cache:DiscoverCache,private val settings:DiscoverSettings) {
+class CoverArtClient(private val http:PoliteHttp,private val cache:DiscoverCache,private val settings:DiscoverSettings,
+    private val testingOverride:()->Boolean={false},
+    private val resolver:(String)->Array<InetAddress> = InetAddress::getAllByName,
+) {
     companion object {
         const val MAX_BYTES=5*1024*1024
         fun imageType(bytes:ByteArray):String {
@@ -25,27 +28,24 @@ class CoverArtClient(private val http:PoliteHttp,private val cache:DiscoverCache
         fun publicAddress(address:InetAddress)=WebhookHttpTransport().allowed(address)
         private val placeholder="""<svg xmlns="http://www.w3.org/2000/svg" width="250" height="250" viewBox="0 0 250 250"><rect width="250" height="250" fill="#303036"/><circle cx="125" cy="125" r="64" fill="#62626a"/><circle cx="125" cy="125" r="14" fill="#303036"/></svg>""".toByteArray()
     }
-    private fun sameOrigin(a:URI,b:URI):Boolean {
-        fun port(uri:URI)=if(uri.port>=0)uri.port else if(uri.scheme=="https")443 else 80
-        return a.scheme==b.scheme && a.host.equals(b.host,true) && port(a)==port(b)
-    }
     fun validateRedirect(from:URI,location:String):URI {
         val to=runCatching { from.resolve(location) }.getOrNull() ?: throw UpstreamUnavailable()
-        if(to.toString().length>8192 || to.host==null || to.userInfo!=null || to.fragment!=null || to.port==0 || to.port>65535 || to.scheme !in listOf("http","https") || (from.scheme=="https" && to.scheme!="https")) throw UpstreamUnavailable()
+        if(to.toString().length>8192 || to.host==null || to.userInfo!=null || to.fragment!=null || to.port==0 || to.port>65535 || to.scheme.lowercase() !in listOf("http","https") || (from.scheme.equals("https",true) && !to.scheme.equals("https",true))) throw UpstreamUnavailable()
         return to
     }
     private suspend fun fetch(path:String):UpstreamResponse {
-        val configured=URI(settings.coverArtArchiveUrl)
         var uri=URI(settings.coverArtArchiveUrl.trimEnd('/')+path)
         val seen=HashSet<URI>()
         repeat(6) { hop ->
             if(!seen.add(uri)) throw UpstreamUnavailable()
             val target=uri
             val addresses=withContext(Dispatchers.IO) {
-                try { CompletableFuture.supplyAsync { InetAddress.getAllByName(target.host) }.get(5,TimeUnit.SECONDS) }
+                try { CompletableFuture.supplyAsync { resolver(target.host) }.get(5,TimeUnit.SECONDS) }
                 catch(_:Exception) { throw UpstreamUnavailable() }
             }
-            if(addresses.isEmpty() || (!(settings.coverArtArchiveUrl.trimEnd('/')!="https://coverartarchive.org" && sameOrigin(configured,uri)) && addresses.any { !publicAddress(it) })) throw UpstreamUnavailable()
+            // Every DNS answer is checked before selecting the pinned socket address, including
+            // the configured origin. Only explicit fixture injection can admit loopback.
+            if(addresses.isEmpty() || addresses.any { !publicAddress(it) && !(testingOverride() && it.isLoopbackAddress) }) throw UpstreamUnavailable()
             val response=http.request(uri,MAX_BYTES,addresses.first())
             if(response.status !in listOf(301,302,303,307,308)) return response
             if(hop==5) throw UpstreamUnavailable()

@@ -6241,6 +6241,9 @@ components:
         syncRetentionSeconds: {type: integer, minimum: 1}
         mediaUrlTtlSeconds: {type: integer, minimum: 1}
         artworkUrlTtlSeconds: {type: integer, minimum: 1}
+        discoverArtworkAllowLoopback:
+          type: boolean
+          description: Test-mode only. Permit loopback artwork fixtures; other private and metadata addresses remain refused. Resets on restart.
         rateLimit:
           type: object
           required: [requestsPerWindow, windowSeconds]

@@ -23,7 +23,7 @@ data class DiscoverSettings(
     companion object {
         fun validateBase(value: String) {
             val uri = URI(value)
-            require(uri.scheme in setOf("http", "https") && uri.host != null && uri.userInfo == null && uri.rawQuery == null && uri.rawFragment == null && uri.port in -1..65535 && uri.port != 0) { "Upstream base must be an HTTP(S) URL without credentials, query or fragment" }
+            require(uri.scheme?.lowercase() in setOf("http", "https") && uri.host != null && uri.userInfo == null && uri.rawQuery == null && uri.rawFragment == null && uri.port in -1..65535 && uri.port != 0) { "Upstream base must be an HTTP(S) URL without credentials, query or fragment" }
         }
         fun load(value: (String, String?) -> String?): DiscoverSettings = DiscoverSettings(
             enabled = value("discover", "on") != "off", wishlistEnabled = value("wishlist", "on") != "off",

@@ -969,7 +969,9 @@ profile** adds the few hooks for that, and nothing else.
   id metadata documents given inline, so a verified client can be signed in with no network), and
   webhook delivery (`webhooks.allowPrivateTargets` for an `http://` or private receiver beside the
   suite, `webhooks.retryScheduleSeconds` and `webhooks.disableAfterFailures`, so retries and
-  disabling happen in seconds). `POST /admin/test/checkpoints` saves
+  disabling happen in seconds), and `discoverArtworkAllowLoopback` for loopback artwork fixtures
+  (other private and metadata addresses remain refused; the configured artwork origin gets the
+  same address checks as redirects). Overrides reset on restart. `POST /admin/test/checkpoints` saves
   the data as a backup would; `POST /admin/test/checkpoints/{id}/restore` restores it through the
   server's real restore path, so `instanceId` changes as after any restore.
 

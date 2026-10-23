@@ -27,9 +27,10 @@ internal object PinnedImageHttp {
         deadlines.schedule(deadline,10_000)
         try {
             socket.use {
-                val port=if(uri.port>=0) uri.port else if(uri.scheme=="https") 443 else 80
+                val origin=UpstreamOrigin.of(uri)
+                val port=origin.port
                 socket.connect(InetSocketAddress(address,port),5000);socket.soTimeout=10_000
-                val wire=if(uri.scheme=="https") (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(socket,uri.host,port,true) else socket
+                val wire=if(origin.scheme=="https") (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(socket,uri.host,port,true) else socket
                 wire.use {
                     if(wire is SSLSocket) { wire.sslParameters=wire.sslParameters.apply { endpointIdentificationAlgorithm="HTTPS" };wire.startHandshake() }
                     val host=if(uri.host.contains(':')) "[${uri.host}]" else uri.host
