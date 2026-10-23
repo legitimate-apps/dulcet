@@ -152,3 +152,13 @@ outbox. Its direct component probe does not claim production account/fence integ
 traffic on Navidrome, and production-client scan arrival/lost-response removal. The Navidrome case
 observes the healthy baseline before reaching that missing integration. None is skipped, and no
 parallel `DiscoverClient` or identity fence substitutes for the missing session.
+
+The `delayed-old-query` response now prefixes only old-query row titles with `Obsolete old query · `;
+normal/new payloads retain the recorded titles. Its response effects include `response: true` and
+`payload: old|new`, so an order proof can distinguish the answers after both have returned.
+
+`held-detail` holds artist/album requests after a `held: true` effect. Read that effect before closing
+or changing a window; then POST `{}` to `/control/release-detail` and require `released: true` on the
+same revision. A 90-second safety expiry returns 504 and `released: false`, which is a failed proof.
+The remove-before-add hold is released only after the server acknowledges the remove, rather than
+when its request first reaches the proxy.

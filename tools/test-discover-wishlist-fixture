@@ -15,6 +15,7 @@ import sys
 sys.dont_write_bytecode = True
 import tempfile
 import time
+import concurrent.futures
 import unittest
 import urllib.error
 import urllib.request
@@ -101,7 +102,13 @@ class FixtureTests(unittest.TestCase):
     def test_scenariosWitnessDelayStaleOfflineAndFutureMetadata(self):
         f=self.fixture;url=f.urls['controlUrl']
         ack=f.scenario('delayed-old-query');started=time.monotonic()
-        f.rest('searchDulcetDiscover',kind='song',query='old');self.assertGreaterEqual(time.monotonic()-started,.6)
+        old=f.rest('searchDulcetDiscover',kind='song',query='old')['dulcetDiscover']['item']
+        self.assertGreaterEqual(time.monotonic()-started,.6)
+        new=f.rest('searchDulcetDiscover',kind='song',query='Fixture')['dulcetDiscover']['item']
+        self.assertNotEqual([r['title'] for r in old],[r['title'] for r in new])
+        self.assertTrue(all(r['title'].startswith('Obsolete old query · ') for r in old))
+        self.assertTrue(all(not r['title'].startswith('Obsolete old query · ') for r in new))
+        self.assertEqual({'old','new'},{e.get('payload') for e in call(url,'/control/state')['effects'] if e.get('response')})
         self.assertEqual(ack['revision'],call(url,'/control/state')['effects'][-1]['revision'])
         f.scenario('stale-answer');page=f.rest('searchDulcetDiscover',kind='song',query='stale')['dulcetDiscover']
         self.assertTrue(page['stale']);self.assertEqual(7200,page['ageSeconds'])
@@ -110,6 +117,21 @@ class FixtureTests(unittest.TestCase):
         f.scenario('offline')
         with self.assertRaises((OSError,urllib.error.URLError)):f.rest('ping')
         self.assertGreater(call(url,'/control/state')['hits'],0)
+    def test_detailHoldAcknowledgesPendingAndExplicitRelease(self):
+        f=self.fixture;url=f.urls['controlUrl'];ack=f.scenario('held-detail')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pending=pool.submit(f.rest,'getDulcetDiscoverAlbum',mbid='000000c8-1111-4111-8111-111111111111')
+            try:
+                deadline=time.monotonic()+10
+                while not any(e.get('held') for e in call(url,'/control/state')['effects']):
+                    self.assertLess(time.monotonic(),deadline);time.sleep(.05)
+                self.assertFalse(pending.done(),'held acknowledgement must precede completion')
+                self.assertEqual(ack['revision'],call(url,'/control/state')['revision'])
+            finally:call(url,'/control/release-detail',{})
+            self.assertEqual('ok',pending.result(timeout=15)['status'])
+        effects=call(url,'/control/state')['effects']
+        self.assertTrue(any(e.get('released') is True and e['revision']==ack['revision'] for e in effects))
+
     def test_realScanArrivalLostReceiptAndRemoveBeforeAdd(self):
         import uuid
         f=self.fixture;target=f.ids['arrival'];op=str(uuid.uuid4())
