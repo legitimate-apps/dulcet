@@ -200,6 +200,7 @@ private struct DulcetPlaylistPageContent: View {
                             // accessibility as no element at all. This one is a menu button.
                             Menu(DulcetStrings.more, systemImage: "ellipsis.circle") {
                                 Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") { renaming = true }
+                                    .accessibilityIdentifier("dulcet.playlist.rename")
                                 Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
                             }
                             .labelStyle(.iconOnly)
@@ -244,6 +245,7 @@ private struct DulcetPlaylistPageContent: View {
 
     @ViewBuilder private var playlistMenuItems: some View {
         Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") { renaming = true }
+            .accessibilityIdentifier("dulcet.playlist.rename")
         Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
     }
 #endif

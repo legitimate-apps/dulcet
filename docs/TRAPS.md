@@ -342,6 +342,16 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     before the helper could open Connection. Open Connection first, preserving its form if already
     selected, then wait for Sign Out. The host control rejects querying Sign Out on Library and
     still accepts a slow navigation whose successful arrival consumes the wait deadline.
+    OBSERVED in main run 39728604012: a broad Rename `firstMatch` query consumed about 25 s,
+    and the playlist proxy's unchanged 45 s hold expired before the prompt was activated.
+    The playlist proof now identifies the menu action explicitly, witnesses its enabled, visible,
+    stationary frame, and requires the named prompt. A historical `held > 0` is insufficient:
+    the read must still be pending under that prompt, and the terminal receipt must prove every
+    held read was explicitly released with zero timeouts. The AX stall's internal cause remains
+    UNKNOWN. The same run's iPad My Library failure was a snapshot timeout after a 60 s launch
+    idle wait; its recording remained Connecting, with no stack identifying why. The fixture
+    proxy now records credential-free endpoint/phase timings (`tools/test-my-library-ui-proxy`)
+    so a future failure can distinguish arrival, upstream completion and delivery.
 49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
     album or playlist in the reader's grids and lists is a `DulcetReaderItem`: a title, an id and
     counts, with its track list read on demand (`resolveTracks`). `dulcetQueueDragSource` needs the

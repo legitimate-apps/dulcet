@@ -2882,19 +2882,29 @@ final class DulcetiOSUITests: XCTestCase {
                 return
             }
             guard openLibraryPlaylists(in: app, compact: expectedCompact), openPlaylistRow(known, in: app) else { return }
-            guard let heldRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 15, until: { $0.held >= 1 }) else {
+            guard let heldRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 15, until: { $0.isPending }) else {
                 XCTFail("The page must have asked for the playlist, and the proxy must be holding that read")
                 return
             }
             guard openRenamePrompt(in: app) else { return }
+            // A historical arrival does not prove that the read is still waiting. Run
+            // 39728604012 exhausted its hold during a slow Rename lookup. Refuse to call that
+            // the known-gone order, and retain the proxy's original safety limit.
+            guard let pending = playlistHoldObservations(proxyRequest("GET",
+                "/__dulcet/playlist-observations?playlist=\(knownID)", proxy: proxy)), pending.isPending else {
+                XCTFail("The playlist read must still be pending under the open Rename prompt")
+                return
+            }
             guard restCall("deletePlaylist", [URLQueryItem(name: "id", value: knownID)], configuration: configuration) != nil,
                   awaitServerPlaylistAbsent(knownID, configuration: configuration) else {
                 XCTFail("The other client's delete must reach the server before the held read")
                 return
             }
             guard proxyPlaylistHold(knownID, on: false, proxy: proxy) != nil,
-                  let releasedRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 10, until: { $0.released >= 1 }) else {
-                XCTFail("The held read must be released to the server")
+                  let releasedRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 10, until: {
+                      !$0.holding && $0.held > 0 && $0.released == $0.held && $0.timedOut == 0
+                  }) else {
+                XCTFail("Every held read must reach the server by explicit release, with none timing out")
                 return
             }
             // The page says the playlist is gone before the rename is confirmed: the order is met,
@@ -3118,23 +3128,69 @@ final class DulcetiOSUITests: XCTestCase {
     /// Rename… from the playlist page's menu, leaving its prompt open.
     @MainActor
     private func openRenamePrompt(in app: XCUIApplication) -> Bool {
-        let more = app.buttons["dulcet.playlist.more"].firstMatch
+        let more = app.buttons.matching(identifier: "dulcet.playlist.more").element(boundBy: 0)
         guard more.waitForExistence(timeout: 10) else {
             XCTFail("The person's own playlist must offer its menu: " + app.debugDescription)
             return false
         }
         more.tap()
-        let rename = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Rename")).firstMatch
-        guard rename.waitForExistence(timeout: 5) else {
-            XCTFail("The menu must offer Rename: " + app.debugDescription)
+        // Resolve the menu action itself, with an indexed query. A broad label firstMatch
+        // spent 25 seconds resolving this action in run 39728604012, consuming the held read.
+        let rename = app.buttons.matching(identifier: "dulcet.playlist.rename").element(boundBy: 0)
+        guard waitForStableButton(rename, identifier: "dulcet.playlist.rename", in: app, timeout: 5) else {
+            XCTFail("The menu must offer a settled Rename action: " + app.debugDescription)
             return false
         }
         rename.tap()
-        guard app.alerts.firstMatch.waitForExistence(timeout: 5) else {
+        let prompt = app.alerts.matching(identifier: "Rename").element(boundBy: 0)
+        guard prompt.waitForExistence(timeout: 5), prompt.textFields.element(boundBy: 0).exists else {
             XCTFail("Rename… must open its prompt: " + app.debugDescription)
             return false
         }
         return true
+    }
+
+    /// Flatten one immutable observation; querying each descendant separately can span a
+    /// presentation handoff and combine elements which were never on screen together.
+    private func snapshotElements(in root: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+        var pending = [root]
+        var elements: [XCUIElementSnapshot] = []
+        while let element = pending.popLast() {
+            elements.append(element)
+            pending.append(contentsOf: element.children.reversed())
+        }
+        return elements
+    }
+
+    @MainActor
+    private func waitForStableButton(
+        _ button: XCUIElement, identifier: String, in app: XCUIApplication, timeout: TimeInterval
+    ) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        var previous: CGRect?
+        var stableSince = ProcessInfo.processInfo.systemUptime
+        repeat {
+            if let window = try? app.windows.element(boundBy: 0).snapshot() {
+                let matches = snapshotElements(in: window).filter {
+                    $0.elementType == .button && $0.identifier == identifier && $0.isEnabled
+                        && !$0.frame.isEmpty && window.frame.contains($0.frame)
+                }
+                let now = ProcessInfo.processInfo.systemUptime
+                if matches.count == 1, let match = matches.first {
+                    if match.frame != previous {
+                        previous = match.frame
+                        stableSince = now
+                    } else if now - stableSince >= 0.4, button.isHittable {
+                        return true
+                    }
+                } else {
+                    previous = nil
+                    stableSince = now
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return false
     }
 
     /// Delete Playlist from the page's menu, confirmed; the page closes.
@@ -4315,6 +4371,7 @@ final class DulcetiOSUITests: XCTestCase {
         let held: Int
         let released: Int
         let timedOut: Int
+        var isPending: Bool { holding && held > 0 && released == 0 && timedOut == 0 }
     }
 
     /// Holds, or releases, every read of `playlist` at the proxy.
