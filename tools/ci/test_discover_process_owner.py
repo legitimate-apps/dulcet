@@ -26,6 +26,26 @@ finally:
 '''
 
 
+# Cleanup controls fake every native executable, so their host sampler is fake too. Real host
+# pressure must not kill a lease-control child before the test's deliberate TERM. Health policy
+# and real sampling are exercised separately by the health controls and native proof receipts.
+CONTROL_LAUNCHER = r'''
+import os, pathlib, runpy, sys, time
+sys.path.insert(0, sys.argv[1])
+import discover_simulator_health
+class ControlSampler:
+    def __init__(self, udid): pass
+    def sample(self):
+        pathlib.Path(os.environ['CONTROL_ROOT'], 'sampler-used').write_text('controlled')
+        return dict(time=time.monotonic(), launchd='control', children=1, rssKB=0,
+                    swapoutsPerSecond=0, load1=0, memoryFreePercent=80,
+                    bootDiskFreeGiB=100), []
+discover_simulator_health.HostSampler=ControlSampler
+sys.argv=[sys.argv[2], 'iphone']
+runpy.run_path(sys.argv[0], run_name='__main__')
+'''
+
+
 class OwnerTests(unittest.TestCase):
     def exercise(self, parent_death):
         with tempfile.TemporaryDirectory() as directory:
@@ -62,6 +82,7 @@ class OwnerTests(unittest.TestCase):
             worker.write_text('#!'+sys.executable+'\n'+r"""
 import json,os,pathlib,sys,time
 root=pathlib.Path(os.environ['CONTROL_ROOT']);name=pathlib.Path(sys.argv[0]).name
+with (root/'commands.jsonl').open('a') as log:log.write(json.dumps([name,*sys.argv[1:]])+'\n')
 if name=='leg-lease':
     if sys.argv[1]=='create':(root/'build-lease').write_text('held');print('lease-control')
     else:(root/'build-lease').unlink()
@@ -89,11 +110,14 @@ elif sys.argv[1:3]==['simctl','spawn']:time.sleep(180)
             env.pop('DULCET_DISCOVER_HOST_GATE',None)
             env.pop('DULCET_DISCOVER_PROOF_UDID',None)
             with (root/'runner.log').open('w') as log:
-                runner=subprocess.Popen([sys.executable,str(HERE/'run-discover-wishlist-proofs'),'iphone'],env=env,stdout=log,stderr=subprocess.STDOUT)
+                runner=subprocess.Popen([sys.executable,'-c',CONTROL_LAUNCHER,str(HERE),str(HERE/'run-discover-wishlist-proofs')],env=env,stdout=log,stderr=subprocess.STDOUT)
                 try:
                     deadline=time.monotonic()+15
-                    while not (root/'boot-pid').exists() and runner.poll() is None and time.monotonic()<deadline:time.sleep(.05)
-                    self.assertTrue((root/'boot-pid').exists(),(root/'runner.log').read_text())
+                    while (not (root/'boot-pid').exists() or (not hosted and not (root/'sampler-used').exists())) and runner.poll() is None and time.monotonic()<deadline:time.sleep(.05)
+                    self.assertTrue((root/'boot-pid').exists(),
+                        'runner_exit='+str(runner.poll())+' log='+(root/'runner.log').read_text()+
+                        ' commands='+((root/'commands.jsonl').read_text() if (root/'commands.jsonl').exists() else 'none'))
+                    if not hosted:self.assertTrue((root/'sampler-used').exists())
                     child=int((root/'boot-pid').read_text())
                     runner.terminate();runner.wait(timeout=30)
                     self.assertEqual(143,runner.returncode,(root/'runner.log').read_text())
