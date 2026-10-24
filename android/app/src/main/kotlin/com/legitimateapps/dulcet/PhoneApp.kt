@@ -15,7 +15,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -47,6 +46,7 @@ import com.legitimateapps.dulcet.ui.DroppedAdditionsNotice
 import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.library.ArtistPlayResult
 import com.legitimateapps.dulcet.library.LibraryLifecycle
+import com.legitimateapps.dulcet.core.DiscoverLibraryRef
 import com.legitimateapps.dulcet.library.playAlbum
 import com.legitimateapps.dulcet.library.playArtist
 import com.legitimateapps.dulcet.library.playTracks
@@ -126,11 +126,20 @@ internal fun PhoneApp(
     // My Library (spec §29.4): with `dulcetLibrary` advertised, Library is the account's own library
     // and the catalog moves to Browse; without it, everything is exactly as it always was.
     val myLibrarySession = myLibrary ?: library.myLibrary
+    val discoverSession = library.discoverWishlist
+    val discoverPublication by discoverSession.publication.collectAsState()
     val myLibraryPublication by myLibrarySession.state.collectAsState()
     val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
     if (!split && tab == PhoneTab.Browse) tab = PhoneTab.Library
     // The split says the server advertises the extension; bring the device's library up to its.
     LaunchedEffect(split) { if (split) myLibrarySession.refresh() }
+    val arrivals = discoverPublication?.wishes.orEmpty().mapNotNull { row ->
+        row.wish?.takeIf { it.state == "fulfilled" && it.libraryItem != null }?.let { "${it.id}:${it.revision}" }
+    }.toSet()
+    val seenArrivals = remember(account) { mutableSetOf<String>() }
+    LaunchedEffect(arrivals, split) {
+        if (split && seenArrivals.addAll(arrivals)) myLibrarySession.refresh()
+    }
     val pending by requests.pending.collectAsState()
     LaunchedEffect(playback, pending) {
         val request = pending ?: return@LaunchedEffect
@@ -197,6 +206,15 @@ internal fun PhoneApp(
         SearchActivation(context, openAlbum = { routes += "album:$it" }, openArtist = { routes += "artist:$it" })
     }
 
+    val openDiscoverLibrary: (DiscoverLibraryRef) -> Unit = { ref ->
+        if (ref.providerInstanceId == provider) when (ref.type) {
+            "artist" -> routes += "artist:${ref.id}"
+            "album" -> routes += "album:${ref.id}"
+            "song" -> { plays.play { it.playSong(provider, ref.id, "") }; playerOpen = true }
+        }
+    }
+    val openDiscoverArtist: (String) -> Unit = { routes += "discoverArtist:$it" }
+    val openDiscoverAlbum: (String) -> Unit = { routes += "discoverAlbum:$it" }
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
         back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, tabs = {
         // Above the tabs on the library's home, the screen that offers to reconnect the saved account.
@@ -206,28 +224,28 @@ internal fun PhoneApp(
                 selected = tab == PhoneTab.ListenNow && routes.isEmpty(),
                 onClick = { tab = PhoneTab.ListenNow; routes.clear(); saveTab(preferences, PhoneTab.ListenNow) },
                 icon = { Icon(DulcetIcons.Play, null) },
-                label = { Text("Listen Now") },
+                label = { PhoneNavigationLabel("Listen Now") },
                 modifier = Modifier.testTag("listenNow.open"),
             )
             NavigationBarItem(
                 selected = tab == PhoneTab.Library && routes.isEmpty(),
                 onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
                 icon = { Icon(DulcetIcons.LibraryMusic, null) },
-                label = { Text(stringResource(R.string.tab_library)) },
+                label = { PhoneNavigationLabel(stringResource(R.string.tab_library)) },
                 modifier = Modifier.testTag("library.open"),
             )
             if (split) NavigationBarItem(
                 selected = tab == PhoneTab.Browse && routes.isEmpty(),
                 onClick = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
                 icon = { Icon(DulcetIcons.Browse, null) },
-                label = { Text(stringResource(SharedR.string.library_browse)) },
+                label = { PhoneNavigationLabel(stringResource(SharedR.string.library_browse)) },
                 modifier = Modifier.testTag("browse.open"),
             )
             NavigationBarItem(
                 selected = tab == PhoneTab.Search && routes.isEmpty(),
                 onClick = { tab = PhoneTab.Search; routes.clear(); saveTab(preferences, PhoneTab.Search) },
                 icon = { Icon(DulcetIcons.Search, null) },
-                label = { Text(stringResource(R.string.tab_search)) },
+                label = { PhoneNavigationLabel(stringResource(R.string.tab_search)) },
                 modifier = Modifier.testTag("search.open"),
             )
             // The account and its Sign out (spec §14.7); provided by AccountConnectScreen.
@@ -239,6 +257,11 @@ internal fun PhoneApp(
         // over it, so Back from a playlist returns to the playlists, not to the home rows.
         val saved = rememberSaveableStateHolder()
         when {
+            route == "wishlist" -> PhoneWishlist(discoverSession, openDiscoverLibrary, actions.back)
+            route?.startsWith("discoverArtist:") == true -> PhoneDiscoverArtist(discoverSession,
+                route.removePrefix("discoverArtist:"), openDiscoverLibrary, openDiscoverAlbum, actions.back)
+            route?.startsWith("discoverAlbum:") == true -> PhoneDiscoverAlbum(discoverSession,
+                route.removePrefix("discoverAlbum:"), openDiscoverLibrary, actions.back)
             route?.startsWith("album:") == true ->
                 AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions,
                     myLibrary = myLibrarySession.takeIf { split })
@@ -253,18 +276,22 @@ internal fun PhoneApp(
             tab == PhoneTab.ListenNow -> saved.SaveableStateProvider("listenNow") { PhoneListenNow(account, library, actions, playbackState, playback) }
             tab == PhoneTab.Library && split -> saved.SaveableStateProvider("mylibrary") {
                 MyLibraryHome(account, library, myLibrarySession, actions,
-                    openBrowse = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) })
+                    openBrowse = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
+                    wishlist = { PhoneWishlistEntry(discoverSession) { routes += "wishlist" } })
             }
-            tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId) }
+            tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId,
+                wishlist = { PhoneWishlistEntry(discoverSession) { routes += "wishlist" } }) }
             tab == PhoneTab.Browse -> saved.SaveableStateProvider("browse") {
                 LibraryHome(account, library, actions, playingRawId,
                     title = SharedR.string.library_browse, myLibrary = myLibrarySession)
             }
-            else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account, { result ->
+            else -> saved.SaveableStateProvider("search") { PhoneSearchScopes(discoverSession, server = {
+                MobileSearchScreen(searchPresenter, searchActivation::activate, account, { result ->
                 plays.play { it.playSong(result.id.providerInstanceId, result.id.rawId, result.title) }
             }, (if (playback != null) { result, insertion ->
                 if (!queueSearchResult(playback, provider, result, insertion, libraryName)) queueEditRefused(context)
-            } else null))
+            } else null), embedded = discoverPublication?.access?.discoverAvailable == true)
+            }, openLibrary = openDiscoverLibrary, openArtist = openDiscoverArtist, openAlbum = openDiscoverAlbum) }
         }
     }
     // One session for every tab and detail page, started with the activity. The search tab's

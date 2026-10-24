@@ -32,6 +32,11 @@ on:
         required: false
         default: false
         type: boolean
+      discover_fixture:
+        description: Use the finite Discover and Wishlist fixture for PhoneWishlistIntegrationTest
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -85,11 +90,23 @@ jobs:
           packages: platform-tools platforms;android-${{ steps.pins.outputs.compile_sdk }}
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: Start disposable conformance environment
-        if: ${{ inputs.disposable_conformance }}
+        if: ${{ inputs.disposable_conformance && !inputs.discover_fixture }}
         run: |
           root="$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label android-soak)"
           echo "SOAK_CONFORMANCE_ROOT=$root" >> "$GITHUB_ENV"
           tools/conformance-env/linux-local --root "$root" up
+      - name: Provision the Discover fixture
+        if: ${{ inputs.discover_fixture }}
+        timeout-minutes: 10
+        run: |
+          # Use the same Ubuntu archive fallback as the existing server conformance leg.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg lsof
+          tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist
+          python3 tools/ci/prepare-discover-fixture
       - name: Repeat the filtered tests
         shell: bash
         run: |
@@ -119,6 +136,9 @@ jobs:
             command=(tools/conformance-env/linux-local --root "$SOAK_CONFORMANCE_ROOT" run -- "${command[@]}" -Pdulcet.productionSearchConformance)
           fi
 
+          if [[ "${{ inputs.discover_fixture }}" == true ]]; then
+            command=(tools/ci/with-discover-wishlist-fixture -- "${command[@]}" -Pdulcet.discoverWishlistConformance)
+          fi
           passed=0
           failed=0
           started=$SECONDS
@@ -136,6 +156,8 @@ jobs:
             gradle_exit=0
             "${command[@]}" "$SOAK_TASK" "${test_args[@]}" --rerun \
               > "$RUNNER_TEMP/soak-$label.log" 2>&1 || gradle_exit=$?
+            mkdir -p "$RUNNER_TEMP/android-test-soak-results/repetition-$label"
+            cp "$results_dir"/TEST-*.xml "$RUNNER_TEMP/android-test-soak-results/repetition-$label/" 2>/dev/null || true
             counts="$(python3 - "$results_dir" <<'PY'
           import sys
           import xml.etree.ElementTree as ET
@@ -199,6 +221,14 @@ jobs:
           if [[ -n "${SOAK_CONFORMANCE_ROOT:-}" ]]; then
             tools/conformance-env/linux-local --root "$SOAK_CONFORMANCE_ROOT" down
           fi
+      - name: Upload every repetition's XML
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-test-soak-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/android-test-soak-results
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload failing repetitions
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

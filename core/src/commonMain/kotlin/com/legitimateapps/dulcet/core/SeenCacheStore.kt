@@ -79,6 +79,7 @@ internal class SeenCacheStore(
                 outbox.deleteMutationsForServer(binding.serverId)
             }
             if (stored != null && !matches) {
+                discarded += database.wishlistQueries.countPending(binding.serverId).executeAsOne()
                 queries.purgeNamespace(binding.serverId)
                 check(queries.countNamespaceRows(binding.serverId).executeAsOne().sum == 0L) {
                     "binding purge left rows behind"

@@ -47,7 +47,7 @@ def mapping_entry(line: str) -> tuple[int, str, str] | None:
 # aggregator then checks the leg against the plan (plan-apple-legs require-leg) instead of requiring
 # `success` outright: a planned leg must succeed and an unplanned one must be skipped. Any other
 # job condition on a leg is one the aggregator cannot reason about.
-PLAN_CONDITION = re.compile(r"^\$\{\{ needs\.([\w-]+)\.outputs\.([\w-]+) == 'true' \}\}$")
+PLAN_CONDITION = re.compile(r"^\$\{\{ (?:!cancelled\(\) && )?needs\.([\w-]+)\.outputs\.([\w-]+) == 'true' \}\}$")
 LEG_CHECK = ["python3", "tools/ci/plan-apple-legs", "require-leg"]
 
 
@@ -507,6 +507,21 @@ def method_emission_associations(source: str, cited: dict[str, set[str]]) -> set
             # Filtering an otherwise whole-suite invocation needs explicit support.
             if any(word.startswith("-skip-testing:") for word in words):
                 selected = set()
+        native_command = command + 1 if words[command] == "run:" and command + 1 < len(words) else command
+        proof = "tools/ci/run-discover-wishlist-proofs"
+        position = native_command if words[native_command] == proof else None
+        if words[native_command] == "tools/ci/with-discover-wishlist-fixture" and "--" in words:
+            after = words.index("--") + 1
+            if after < len(words) and words[after] == proof:position = after
+        if position is not None:
+            mode = words[position + 1] if position + 1 < len(words) else ""
+            # Each mode executes a whole, distinct XCTest suite; its runtime report guard requires
+            # exact identities and the matching device idiom before this emission can run.
+            suites = {"iphone": "DulcetDiscoverWishlistUITests",
+                      "ipad": "DulcetDiscoverWishlistIPadUITests",
+                      "macos": "DulcetMacDiscoverWishlistAppTest"}
+            selected = {(suite, method) for suite in [suites.get(mode)]
+                        for method, names in cited.items() if suite in names}
         if words[:2] == ["python3", "tools/swift-testing-junit"]:
             if len(words) == 5:
                 resolved.update(pair for pair in selected if pair[0] == words[4])
@@ -1096,6 +1111,64 @@ def cancels_in_progress(lines: list[str]) -> bool:
     return False
 
 
+def discover_native_condition_errors(lines: list[str]) -> list[str]:
+    """Planned native proofs collect evidence even if a preceding baseline leg fails.
+
+    The aggregate still requires every leg to succeed. Cancellation stops all remaining work.
+    """
+    result = []
+    expected = "${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}"
+    for name, start, end in job_spans(lines):
+        if name in {"discover-wishlist-iphone", "discover-wishlist-ipad", "discover-wishlist-macos"}:
+            if job_properties(lines, start, end).get("if") != expected:
+                result.append(f"job {name} must run every planned native proof unless cancelled")
+    return result
+
+
+def discover_ios_test_compile_errors(lines: list[str]) -> list[str]:
+    """Discover integration compiles shared test sources for iOS, not only its framework."""
+    spans=list(job_spans(lines))
+    if not any(name in {'discover-wishlist-iphone','discover-wishlist-ipad'} for name,_,_ in spans):
+        return []
+    for name,start,end in spans:
+        if name!='apple-conformance-core':continue
+        for step in job_steps(lines,start,end):
+            if step.get('if') or step.get('continue-on-error','false')!='false':continue
+            for words in evidence_commands(str(step.get('run',''))):
+                command=next((i for i,word in enumerate(words) if not re.match(r'^\w+=',word)),0)
+                if (words[command] in {'./gradlew','tools/run-gradle-exclusive'}
+                    and ':core:compileTestKotlinIosSimulatorArm64' in words
+                    and not set(words).intersection({'-x','--exclude-task','-m','--dry-run'})):
+                    return []
+        return ['Discover integration must compile :core:compileTestKotlinIosSimulatorArm64 in a blocking apple-conformance-core step']
+    return []
+
+
+def discover_native_fixture_errors(lines: list[str]) -> list[str]:
+    """Each dedicated native job drives its full mode inside the finite fixture."""
+    errors = []
+    for name, start, end in job_spans(lines):
+        modes = {"discover-wishlist-" + mode: mode for mode in ("iphone", "ipad", "macos", "android")}
+        if name not in modes:
+            continue
+        invoked = False
+        for step in job_steps(lines, start, end):
+            if step.get("if") or step.get("continue-on-error", "false") != "false":
+                continue
+            inputs = step.get("with") or {}
+            source = str(step.get("run", "")) + "\n" + str(inputs.get("script", ""))
+            for words in evidence_commands(source):
+                command = next((i for i, word in enumerate(words) if not re.match(r"^\w+=", word)), 0)
+                if words[command] != "tools/ci/with-discover-wishlist-fixture" or "--" not in words:
+                    continue
+                child = words[words.index("--") + 1:]
+                if child == ["tools/ci/run-discover-wishlist-proofs", modes[name]]:
+                    invoked = True
+        if not invoked:
+            errors.append(f"job {name} must execute its full native mode inside with-discover-wishlist-fixture in a blocking step")
+    return errors
+
+
 # spec §21.1 caveat 1: runs-on for every job is a STANDARD hosted label and nothing else. A larger
 # runner is billed even on a public repository and fails as a bill, not as a red build, so this is
 # an allowlist rather than a list of forbidden suffixes: any label not matched here is refused,
@@ -1129,6 +1202,10 @@ for workflow in workflows:
                 f"{workflow}: job {job} runs on {runner_value.strip()!r}; only the standard hosted "
                 "labels ubuntu-latest, ubuntu-<LTS version>, macos-latest and macos-<version> are allowed",
             )
+    for name, start, end in job_spans(lines):
+        env = job_properties(lines, start, end).get("env") or {}
+        if isinstance(env, dict) and any("runner." in str(value) for value in env.values()):
+            errors.append(f"{workflow}: job {name} env cannot use runner context; set it in a step after runner allocation")
     for action, ref in re.findall(r"uses:\s+([^@\s]+)@([^\s#]+)", text):
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             errors.append(f"{workflow}: {action} is not pinned to an immutable commit")
@@ -1136,6 +1213,9 @@ for workflow in workflows:
     # attempt, so a "Re-run failed jobs" of one emulator leg could never go green -- the jobs it
     # left alone had uploaded under attempt 1. Checked in every workflow, not only the two known
     # aggregators, so a new aggregator cannot reintroduce it.
+    errors.extend(discover_native_condition_errors(lines))
+    errors.extend(discover_native_fixture_errors(lines))
+    errors.extend(discover_ios_test_compile_errors(lines))
     errors.extend(partial_rerun_errors(workflow, lines))
     # core-ci's stale-evidence argument rests on its result check running before any download.
     # That was enforced only for apple-ci, and twelve edits to the real core-ci.yml that defeat it
@@ -1238,6 +1318,22 @@ APPLE_AGGREGATOR = "apple-ci"
 # account (5 on the Free, Pro and Team plans): main's post-merge run takes four slots and a pull
 # request's fast check one. A fifth is a spec change that lands in §21.5 first, then here.
 MAX_APPLE_MACOS_JOBS = 4
+
+def max_concurrent_macos_slots(dependencies, weights):
+    """Maximum weighted antichain: dependency paths serialize jobs, including through Linux."""
+    from itertools import combinations
+    def ancestors(name, seen=frozenset()):
+        if name in seen:raise ValueError("cyclic job dependencies")
+        parents = dependencies.get(name, set())
+        return parents | set().union(*(ancestors(p, seen | {name}) for p in parents))
+    upstream = {name: ancestors(name) for name in weights}
+    return max((sum(weights[n] for n in group)
+                for size in range(len(weights) + 1)
+                for group in combinations(weights, size)
+                if all(a not in upstream[b] and b not in upstream[a]
+                       for a, b in combinations(group, 2))), default=0)
+
+
 def apple_matrix_values(job_lines: list[str]) -> dict[str, list[str]] | str | None:
     """An Apple leg's matrix as {key: [values]}, None for a leg without one, or why it is not read.
 
@@ -1277,7 +1373,13 @@ if apple_ci:
         values = apple_matrix_values(apple_lines[start + 1:end])
         return len(next(iter(values.values()))) if isinstance(values, dict) else 1
 
-    slots = sum(macos_slots(name) for name in macos_jobs)
+    dependencies = {name: set(listed(job_properties(apple_lines, *span).get("needs")))
+                    for name, span in apple_jobs.items()}
+    try:
+        slots = max_concurrent_macos_slots(dependencies, {n: macos_slots(n) for n in macos_jobs})
+    except ValueError as error:
+        errors.append(f"{apple_ci_path}: {error}")
+        slots = 0
     if slots > MAX_APPLE_MACOS_JOBS:
         errors.append(
             f"{apple_ci_path}: {slots} macOS slots across {macos_jobs}; at most "

@@ -138,7 +138,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertFalse(
-            app.staticTexts["dulcet.sidebar.library"].firstMatch.exists,
+            app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.exists,
             "A compact window must not fall back to the sidebar list"
         )
         // The fixture opens on the Connection tab. A compact window must not raise the keyboard
@@ -439,7 +439,7 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(nowPlayingTitle.waitForNonExistence(timeout: 10), "Close must dismiss the player")
         // Checks the experiment: the turn must actually have produced the regular shell.
         let regularShell = !app.tabBars.firstMatch.exists
-            && app.staticTexts["dulcet.sidebar.library"].firstMatch.waitForExistence(timeout: 5)
+            && app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.waitForExistence(timeout: 5)
         XCTAssertTrue(regularShell,
                       "Landscape must be a regular-width window (sidebar, no tab bar); a device that"
                         + " stays compact never crosses the boundary. width=\(landscapeWidth)")
@@ -831,7 +831,7 @@ final class DulcetiOSUITests: XCTestCase {
     /// sideways and so cannot bring a named album into view by scrolling the page.
     @MainActor
     private func openSidebarLibrarySection(_ section: String, in app: XCUIApplication) -> Bool {
-        let row = app.staticTexts["dulcet.sidebar.section.\(section)"].firstMatch
+        let row = app.descendants(matching: .any)["dulcet.sidebar.section.\(section)"].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else {
             XCTFail("The sidebar must list the library's \(section) section: " + app.debugDescription)
             return false
@@ -869,9 +869,9 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The \(tabTitle) tab must become selected: " + app.debugDescription)
             return false
         }
-        // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
-        // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
-        let row = app.staticTexts[sidebarIdentifier].firstMatch
+        // The explicit sidebar button owns the destination identifier. Its child label carries
+        // only the visible title, so resolve the actionable control rather than a text child.
+        let row = app.buttons[sidebarIdentifier].firstMatch
         guard row.waitForExistence(timeout: 5), row.isHittable else {
             XCTFail("The \(tabTitle) row must be visible in the sidebar: " + app.debugDescription)
             return false
@@ -2426,7 +2426,10 @@ final class DulcetiOSUITests: XCTestCase {
             format: "identifier == %@ OR identifier BEGINSWITH %@",
             "dulcet.upNext.empty", "dulcet.upNext.row."
         )).firstMatch
-        guard contents.waitForExistence(timeout: 2) else {
+        // Presenting the regular-width player can publish its list after the transition.
+        // A hosted failure's next snapshot already contained the expected empty state;
+        // give this positive content check the same bound as opening and closing the player.
+        guard contents.waitForExistence(timeout: 10) else {
             XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
             return nil
         }
@@ -5199,7 +5202,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertFalse(
-            app.staticTexts["dulcet.sidebar.nowPlaying"].exists,
+            app.descendants(matching: .any)["dulcet.sidebar.nowPlaying"].exists,
             "Now Playing is presented from the bar on iPad, never listed as a sidebar place"
         )
 
@@ -5707,7 +5710,7 @@ final class DulcetiOSUITests: XCTestCase {
         // staticTexts, not descendants(matching: .any): the row's identifier is carried by BOTH its
         // SF Symbol image and its label (OBSERVED in the captured hierarchy), so an .any query is
         // ambiguous and resolves against the decorative image, whose isHittable is false.
-        let sidebar = app.staticTexts["dulcet.sidebar.library"].firstMatch
+        let sidebar = app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch
         let detail = app.staticTexts["dulcet.account-connect.title"].firstMatch
 
         XCTAssertTrue(sidebar.waitForExistence(timeout: 10), "The Library row must be in the sidebar")

@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.testing.AbstractTestTask
+import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -105,5 +106,19 @@ tasks.withType<AbstractTestTask>().configureEach {
         showStackTraces = true
         showCauses = true
         showExceptions = true
+    }
+}
+
+// These five cases own a different disposable server stack from baseline Navidrome conformance.
+// Explicit selection without its opt-in fails rather than treating an absent fixture as a skip.
+val discoverWishlistConformance = providers.gradleProperty("dulcet.discoverWishlistConformance").isPresent
+tasks.withType<Test>().configureEach {
+    if (!discoverWishlistConformance) {
+        filter {
+            excludeTestsMatching("*DiscoverWishlistConformanceTest")
+            excludeTestsMatching("*DiscoverWishlistTransportComponentsTest")
+        }
+    } else {
+        outputs.upToDateWhen { false }
     }
 }

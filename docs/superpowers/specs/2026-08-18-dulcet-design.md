@@ -7918,6 +7918,17 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-23 - Integrate Discover and Wishlist native clients and finite proof jobs.**
+Step 2 composes the existing REST extension reader and durable wish outbox with Search Everywhere,
+artist/album metadata and Library Wishlist on iPhone, iPad, Mac and Android phone. Account changes
+share the saved-lineage authorization fence; native Swift publications copy Objective-C DTOs into
+values. The iPad reader stack replays an initially unpresented path after destination registration.
+The Mac proofs use app-hosted XCTest. Finite hosted proof jobs keep separate device/runtime,
+finalized test, fixture-effect and capture evidence, with explicit expected identities and negative
+runner controls. Native matrix promotion awaits the final integrated-head proofs in
+`docs/evidence/discover-wishlist-clients.md`. Shelves and playlist pages remain step 3, television UI
+step 4; production terms and upstream rights conditions are unchanged.
+
 
 **2026-10-23 — Retain Android Play across a chosen connection's transient validation loss.**
 

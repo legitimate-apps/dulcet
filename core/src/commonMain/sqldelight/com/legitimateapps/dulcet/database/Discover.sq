@@ -1,0 +1,22 @@
+CREATE TABLE discover_read (
+  server_id TEXT NOT NULL,
+  cache_key TEXT NOT NULL,
+  payload BLOB NOT NULL,
+  artwork INTEGER NOT NULL,
+  issue_seq INTEGER NOT NULL,
+  last_access INTEGER NOT NULL,
+  PRIMARY KEY (server_id, cache_key)
+);
+
+selectRead:
+SELECT * FROM discover_read WHERE server_id = ? AND cache_key = ?;
+upsertRead:
+INSERT OR REPLACE INTO discover_read VALUES (?, ?, ?, ?, ?, ?);
+touchRead:
+UPDATE discover_read SET last_access = ? WHERE server_id = ? AND cache_key = ?;
+readBytes:
+SELECT coalesce(sum(length(payload)),0) FROM discover_read WHERE server_id = ? AND artwork = ?;
+oldestRead:
+SELECT cache_key FROM discover_read WHERE server_id = ? AND artwork = ? ORDER BY last_access, cache_key LIMIT 1;
+deleteRead:
+DELETE FROM discover_read WHERE server_id = ? AND cache_key = ?;

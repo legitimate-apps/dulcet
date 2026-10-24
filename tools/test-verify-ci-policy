@@ -1971,3 +1971,92 @@ release_case("release.yml with no cancellation policy", "release.yml",
              "  workflow_dispatch:", "", False)
 assert len(release_cases_run) == EXPECTED_RELEASE_CASES, release_cases_run
 print(f"Release cancellation exemption controls passed: {len(release_cases_run)}/{EXPECTED_RELEASE_CASES}")
+
+# A serial tail must not widen the four-slot hosted envelope. Exercise the production calculation.
+capacity_ast=next(n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='max_concurrent_macos_slots')
+capacity_namespace={}
+exec(compile(ast.Module(body=[capacity_ast],type_ignores=[]),str(VERIFIER),'exec'),capacity_namespace)
+capacity=capacity_namespace['max_concurrent_macos_slots']
+weights={'platform':1,'core':1,'devices':2,'mac':1,'phone':1,'pad':1}
+dependencies={'mac':{'platform','core','devices'},'phone':{'mac'},'pad':{'phone'}}
+assert capacity(dependencies,weights)==4
+assert capacity({},weights)==7
+assert capacity({'mac':{'platform','core','devices'},'phone':{'mac'},'pad':{'linux'},'linux':{'phone'}},weights)==4
+assert capacity({'mac':{'platform'},'phone':{'mac'},'pad':{'phone'}},weights)==4
+assert capacity({'phone':{'mac'},'pad':{'phone'}},weights)==5
+assert capacity({'mac':{'platform'},'phone':{'devices'},'pad':{'devices'}},weights)==4
+print('Hosted macOS capacity controls passed: 6/6 cases, parallel device tails, matrix weights and transitive paths')
+
+for graph in [{'a':{'a'}},{'a':{'b'},'b':{'a'}}]:
+    try:capacity(graph,{'a':1,'b':1})
+    except ValueError as error:assert str(error)=='cyclic job dependencies'
+    else:raise AssertionError('capacity accepted cyclic job dependencies')
+print('Hosted capacity rejects self and transitive dependency cycles: 2/2')
+
+runner_env_fixture=workflow_for(next(case for case in CASES if case.accepted))
+with tempfile.TemporaryDirectory() as directory:
+    root=Path(directory);workflows=root/'.github/workflows';workflows.mkdir(parents=True)
+    # Job env is evaluated before a runner exists. Step env may use runner context.
+    bad=runner_env_fixture.replace('    steps:', '    env:\n      OUTPUT: ${{ runner.temp }}/proof\n    steps:',1)
+    (workflows/'core-ci.yml').write_text(bad)
+    result=subprocess.run([sys.executable,str(VERIFIER)],cwd=root,capture_output=True,text=True)
+    assert result.returncode==1 and 'env cannot use runner context' in result.stderr,result.stderr
+print('Job environment runner-context rejection: 1/1')
+
+# Native Discover selectors require their own matching finalized-xcresult emission.
+import shlex
+association_namespace={'re':re,'shlex':shlex,'Path':Path}
+functions=[n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name in {'code_before_comment','evidence_commands','method_emission_associations'}]
+exec(compile(ast.Module(body=functions,type_ignores=[]),str(VERIFIER),'exec'),association_namespace)
+associate=association_namespace['method_emission_associations']
+for mode,suite in [('iphone','DulcetDiscoverWishlistUITests'),('ipad','DulcetDiscoverWishlistIPadUITests'),('macos','DulcetMacDiscoverWishlistAppTest')]:
+    cited={'testBusyStaleAndNavidromeControl':{suite}}
+    invoke='run: tools/ci/with-discover-wishlist-fixture -- tools/ci/run-discover-wishlist-proofs '+mode
+    emission='\npython3 tools/swift-testing-junit proof.xcresult report.xml '+suite
+    assert associate(invoke+emission,cited)=={(suite,'testBusyStaleAndNavidromeControl')}
+    for bad in ['echo '+invoke,'# '+invoke,invoke.replace(mode,'unknown'),invoke.replace('tools/ci/run-discover-wishlist-proofs','tools/ci/unrelated-runner')]:
+        assert associate(bad+emission,cited)==set(),bad
+    assert associate(invoke+emission.replace(suite,'OtherSuite'),cited)==set()
+print('Native Discover selector/emission controls: 18/18, all three idioms and five negative mutations each')
+
+# A baseline red must not suppress a separately planned native proof; the aggregate stays red.
+condition_functions=[n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name in {'discover_native_condition_errors','job_spans','job_properties','mapping_entry','nested_mapping','code_before_comment','block_end'}]
+condition_namespace={'re':re,'MAPPING_ENTRY':re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z0-9_-]+|'[^']+'|\"[^\"]+\")\s*:(?P<value>.*)$"),'BLOCK_SCALARS':{'|','|-','|+','>','>-','>+'}}
+exec(compile(ast.Module(body=condition_functions,type_ignores=[]),str(VERIFIER),'exec'),condition_namespace)
+condition_check=condition_namespace['discover_native_condition_errors']
+for mode in ['iphone','ipad','macos']:
+    header='jobs:\n  discover-wishlist-'+mode+':\n'
+    good="    if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}\n"
+    assert condition_check((header+good+'    steps: []').splitlines())==[]
+    for bad in ["", "    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}\n", "    if: false\n"]:
+        assert len(condition_check((header+bad+'    steps: []').splitlines()))==1
+print('Planned native proof cancellation controls: 12/12')
+
+# A named native proof job must execute the real mode inside its finite fixture.
+fixture_functions=[n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name in {'discover_native_fixture_errors','job_steps','job_spans','mapping_entry','nested_mapping','code_before_comment','block_end','evidence_commands'}]
+fixture_namespace={**condition_namespace,'shlex':shlex}
+exec(compile(ast.Module(body=fixture_functions,type_ignores=[]),str(VERIFIER),'exec'),fixture_namespace)
+fixture_check=fixture_namespace['discover_native_fixture_errors']
+for mode in ['iphone','ipad','macos','android']:
+    prefix='jobs:\n  discover-wishlist-'+mode+':\n    steps:\n'
+    command='tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/proof/fixture" -- tools/ci/run-discover-wishlist-proofs '+mode
+    good='      - run: '+command+'\n'
+    if mode=='android':good='      - uses: emulator@pin\n        with:\n          script: ANDROID_SERIAL=emulator-5554 '+command+'\n'
+    assert fixture_check((prefix+good).splitlines())==[]
+    for bad in [good.replace('tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/proof/fixture" -- ',''),good.replace(command,'echo '+command),good.replace('proofs '+mode,'proofs components'),good.replace('proofs '+mode,'proofs '+mode+' --self-test'),good.replace('proofs '+mode,'proofs '+mode+' --build-for-testing'),good+'        continue-on-error: true\n',good+'        if: false\n']:
+        assert fixture_check((prefix+bad).splitlines()),bad
+print('Finite native fixture invocation controls: 32/32, all four surfaces and seven negative mutations each')
+
+# A framework build does not compile commonTest/appleTest for the iOS target.
+compile_functions=[n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='discover_ios_test_compile_errors']
+exec(compile(ast.Module(body=compile_functions,type_ignores=[]),str(VERIFIER),'exec'),fixture_namespace)
+compile_check=fixture_namespace['discover_ios_test_compile_errors']
+compile_prefix='jobs:\n  discover-wishlist-iphone:\n    steps: []\n  apple-conformance-core:\n    steps:\n'
+compile_command='tools/run-gradle-exclusive --no-daemon :core:compileTestKotlinIosSimulatorArm64'
+compile_good='      - run: '+compile_command+'\n'
+assert compile_check((compile_prefix+compile_good).splitlines())==[]
+for mutation in ['echo '+compile_command,compile_command.replace('compileTestKotlinIosSimulatorArm64','linkDebugFrameworkIosSimulatorArm64'),compile_command+' --dry-run',compile_command+' -x :core:compileTestKotlinIosSimulatorArm64']:
+    assert compile_check((compile_prefix+'      - run: '+mutation+'\n').splitlines()),mutation
+for mutation in [compile_good+'        if: false\n',compile_good+'        continue-on-error: true\n','      - run: echo no-native-test-compile\n']:
+    assert compile_check((compile_prefix+mutation).splitlines()),mutation
+print('Discover iOS shared-test compilation controls: 8/8, framework-only, echo, dry-run, exclusion, disabled and allowed-failure rejections')
