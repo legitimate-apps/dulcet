@@ -226,8 +226,11 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                     // cold transcode, and the body then stops at an arbitrary earlier write. So the
                     // core validator treats every declared length as exact and refuses the short
                     // body, and the load fails as the lost connection it was. A 200 that declared no
-                    // length is never ended this way: with nothing to compare against, a body cut
-                    // off by a real drop would pass as the whole representation.
+                    // length is never ended this way. If it was chunked, the session's strict
+                    // transport has already reported a body whose zero chunk never came as that
+                    // -1005, so the load stays the lost connection. Only a close-delimited body has
+                    // no framing to check, and a real drop there still passes as the whole
+                    // representation.
                     let lostConnectionResponse = error.map { Self.isLostConnection($0) } == true
                         ? response as? HTTPURLResponse : nil
                     let endedShort = lostConnectionResponse.map {

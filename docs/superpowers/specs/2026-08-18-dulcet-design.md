@@ -1788,7 +1788,10 @@ session** (`DulcetURLSessionPlaybackResource`), and it sends the plan's request,
 with 206 and an exact total. It reads each chunk through its delegate and, when a 200 body that
 declared a length ends in the -1005 after at least one byte, hands what arrived to the core
 validator, which treats every declared length as exact and refuses the short body; refused, with no
-byte, or on a 200 that declared no length, the load stays the lost connection. A cold transcode
+byte, or on a 200 that declared no length, the load stays the lost connection. For a chunked 200,
+the session's strict transport is what reports a body whose zero chunk never arrived as that
+-1005 (§28, 2026-10-24). A close-delimited body has no framing to check, so a drop there still
+reads as its end. A cold transcode
 answers the loader's first ranged read with 200 and the whole representation, which the loader
 accepts as the resource only from byte 0 and only at the length the validator measured (§28,
 2026-10-02). `TranscodeDecision.LegacyHint` records that we are on this path so the UI never claims a
