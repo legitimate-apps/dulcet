@@ -13,9 +13,9 @@ import java.util.concurrent.TimeUnit
 import org.robolectric.Shadows.shadowOf
 
 /**
- * The seen-cache can retain absent titles, although a fresh REST read requires a nonblank title.
+ * Reproduce an album already seen with absent titles as well as its untitled server response.
  * Seed ordinary album membership through the real reader, then remove only its display metadata.
- * The online server's untitled response cannot replace it, so the cached tracks stay streamable.
+ * Both cached and refreshed tracks must remain streamable.
  */
 fun seedUntitledAlbum(context: Context, account: SearchAccount, server: LoopbackLibraryServer, albumId: String) {
     server.albumSongTitles = listOf("First", "Second", "Third")
@@ -47,3 +47,10 @@ private fun awaitFixture(condition: () -> Boolean) {
         Thread.sleep(5)
     }
 }
+
+/** Valid one-second mono PCM WAV, consumed by the production validating Media3 data source. */
+fun untitledAlbumAudio(): ByteArray = java.nio.ByteBuffer.allocate(88_244).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {
+    put("RIFF".toByteArray()); putInt(88_236); put("WAVEfmt ".toByteArray())
+    putInt(16); putShort(1); putShort(1); putInt(44_100); putInt(88_200); putShort(2); putShort(16)
+    put("data".toByteArray()); putInt(88_200)
+}.array()

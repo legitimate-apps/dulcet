@@ -17,6 +17,8 @@ import com.google.common.util.concurrent.SettableFuture
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.SavedAccountConnection
+import com.legitimateapps.dulcet.library.canBeQueued
+import com.legitimateapps.dulcet.library.toTrack as libraryTrack
 import kotlinx.coroutines.*
 
 /** A driver-safe projection of the same core reader as the native library. IDs carry no URLs. */
@@ -167,13 +169,13 @@ internal class SystemMediaLibrary(
         val kind = when (item) { is AndroidLibraryItem.Track -> "song"; is AndroidLibraryItem.Album -> "album"; is AndroidLibraryItem.Artist -> "artist"; is AndroidLibraryItem.Playlist -> "playlist"; is AndroidLibraryItem.Genre -> "genre" }
         val id = Uri.Builder().scheme("dulcet").authority(accountId).appendPath(kind).appendPath(item.rawId).build().toString()
         issued[id] = item
-        val title = when (item) { is AndroidLibraryItem.Track -> item.title; is AndroidLibraryItem.Album -> item.title; is AndroidLibraryItem.Artist -> item.name; is AndroidLibraryItem.Playlist -> item.name; is AndroidLibraryItem.Genre -> item.rawId }
+        val title = when (item) { is AndroidLibraryItem.Track -> item.title?.takeIf { it.isNotBlank() } ?: context.getString(com.legitimateapps.dulcet.core.R.string.playback_untitled); is AndroidLibraryItem.Album -> item.title; is AndroidLibraryItem.Artist -> item.name; is AndroidLibraryItem.Playlist -> item.name; is AndroidLibraryItem.Genre -> item.rawId }
         return MediaItem.Builder().setMediaId(id).setMediaMetadata(MediaMetadata.Builder().setTitle(title)
-            .setIsBrowsable(item !is AndroidLibraryItem.Track).setIsPlayable(item is AndroidLibraryItem.Track && item.playability != AndroidLibraryPlayability.UnavailableOffline)
+            .setIsBrowsable(item !is AndroidLibraryItem.Track).setIsPlayable(item is AndroidLibraryItem.Track && item.canBeQueued())
             .setMediaType(if (item is AndroidLibraryItem.Track) MediaMetadata.MEDIA_TYPE_MUSIC else MediaMetadata.MEDIA_TYPE_FOLDER_MIXED).build()).build()
     }
     private fun AndroidLibraryItem.Track.toTrack(provider: String): AndroidTrack? =
-        if (playability == AndroidLibraryPlayability.UnavailableOffline || title.isNullOrBlank()) null else AndroidTrack(provider, rawId, title.orEmpty(), artistName, albumTitle, durationMilliseconds, artworkKey = artworkKey)
+        if (!canBeQueued()) null else libraryTrack(provider)
 
     private fun <T> future(block: suspend () -> T): ListenableFuture<T> {
         val future = SettableFuture.create<T>()

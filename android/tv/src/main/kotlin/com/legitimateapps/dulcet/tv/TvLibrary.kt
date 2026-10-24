@@ -1400,7 +1400,7 @@ internal fun tvSearchAddition(
     playability: AndroidLibraryPlayability?,
 ): TvQueueAddition? {
     if (playback == null || provider == null || result.type != SearchResultType.Track) return null
-    if (playability == AndroidLibraryPlayability.UnavailableOffline || result.title.isBlank()) return null
+    if (playability == AndroidLibraryPlayability.UnavailableOffline || result.duration == null) return null
     val search = context.getString(R.string.tv_nav_search)
     fun add(insertion: AndroidQueueInsertion) {
         if (!queueSearchResult(playback, provider, result, insertion, search)) queueEditRefused(context)

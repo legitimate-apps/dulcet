@@ -1283,6 +1283,32 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun restoredUntitledDownloadsAndRememberedRowsUseTheLocalizedTitle() {
+        val context = RuntimeEnvironment.getApplication()
+        val title = context.getString(R.string.playback_untitled)
+        for (blank in listOf("", "   ")) {
+            val file = java.io.File.createTempFile("dulcet-untitled-local", ".wav")
+            val downloads = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = if (rawId != "down") null else LocalPlaybackPlan(
+                    DownloadId("download:down"), DownloadIdentity(OWNER, "down", DownloadIdentity.ORIGINAL_PROFILE),
+                    AudioContainer.Wav, 44, file.path)
+                override suspend fun localTrack(rawId: String) = if (rawId != "down") null else
+                    AndroidTrack(OWNER, "down", blank, "Artist", "Album", 40_000)
+            }
+            try {
+                Fixture(savedOwner = OWNER, savedSongs = listOf("down", "remembered"), localPlans = downloads,
+                    loadSong = { throw AndroidPlaybackIOException(DomainError.Transport.Unreachable) }).use { f ->
+                    shadowOf(Looper.getMainLooper()).idle()
+                    assertEquals(listOf("down"), f.preparedLocal.map { it.itemId.rawId })
+                    assertEquals(title, f.controller.state.value.title)
+                    assertEquals(title, f.controller.state.value.queue.first().track.title)
+                    f.controller.rememberTracks(listOf(AndroidTrack(OWNER, "remembered", blank, durationMilliseconds = 40_000)))
+                    assertEquals(listOf(title, title), f.controller.state.value.queue.map { it.track.title })
+                }
+            } finally { file.delete() }
+        }
+    }
+
     @Test fun anEndedQueueReportsNoSessionAndNoStalePosition() {
         Fixture().use { f ->
             f.controller.playQueue(album("only"), 0, AndroidQueueSource.Album, "Album", "album-id")

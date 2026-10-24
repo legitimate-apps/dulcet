@@ -2,6 +2,12 @@ package com.legitimateapps.dulcet.tv
 
 import android.os.Looper
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.*
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -11,6 +17,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.tv.material3.MaterialTheme
+import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
@@ -18,6 +25,8 @@ import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
 import com.legitimateapps.dulcet.library.LibraryObservation
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.conformance.seedUntitledAlbum
+import com.legitimateapps.dulcet.search.conformance.assertUntitledPlayback
+import com.legitimateapps.dulcet.search.conformance.untitledAlbumAudio
 import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertTrue
@@ -53,12 +62,23 @@ class TvUntitledAlbumPlayTest {
         context.getSharedPreferences("dulcet.ui", 0).edit().clear().commit()
     }
 
-    @Test fun anAlbumWithOnlyBlankOrMissingTitlesOffersNoPlayOrShuffle() {
+    @Test fun anAlbumWithOnlyBlankOrMissingTitlesPlaysWithLocalizedUntitledMetadata() = exerciseAlbum(false)
+    @Test fun anAlbumWithOnlyBlankOrMissingTitlesShufflesWithLocalizedUntitledMetadata() = exerciseAlbum(true)
+    @Test fun anAlbumWithoutDurationsKeepsPlayAndShuffleHidden() = exerciseAlbum(false, false)
+
+    private fun exerciseAlbum(shuffle: Boolean, knownDuration: Boolean = true) {
         seedUntitledAlbum(context, account, server, "newest-1")
+        server.albumPlaybackAudio = untitledAlbumAudio()
+        if (!knownDuration) server.albumSongDurationSeconds = null
+        var playerOpen by mutableStateOf(false)
         // Bind playback so a missing queue action cannot pass just because the service is absent.
         controller = AndroidPlaybackController(context,
             PlaybackEndpointAccount(account.providerInstanceId, server.url, "u", "p", true))
-        compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = controller) { _, _ -> } } }
+        compose.setContent { MaterialTheme {
+            val state by controller!!.state.collectAsState()
+            if (playerOpen) TvNowPlayingScreen(account, state, null)
+            else TvLibraryEntry(account, playback = controller) { _, _ -> }
+        } }
         await { focused("listenNow.open") }
         key(Key.DirectionRight)
         key(Key.DirectionRight)
@@ -69,15 +89,28 @@ class TvUntitledAlbumPlayTest {
         await {
             val surfaces = compose.onAllNodesWithTag("album.surface").fetchSemanticsNodes()
             surfaces.singleOrNull()?.config?.get(LibraryObservation)?.surfaces?.values?.flatten()?.any {
-                it.itemsState == AndroidLibraryItemsState.Present && it.itemCount == 3
+                it.freshness == AndroidLibraryFreshness.Live && it.itemsState == AndroidLibraryItemsState.Present && it.itemCount == 3
             } == true
         }
         compose.waitForIdle()
         compose.onNodeWithTag("album.title").assertExists()
-        compose.onNodeWithTag("album.play").assertDoesNotExist()
-        compose.onNodeWithTag("album.shuffle").assertDoesNotExist()
-        compose.onNodeWithTag("album.queue").assertDoesNotExist()
-        assertTrue(server.requests("getSong").isEmpty(), "No queue was started")
+        if (!knownDuration) {
+            compose.onNodeWithTag("album.play").assertDoesNotExist()
+            compose.onNodeWithTag("album.shuffle").assertDoesNotExist()
+            assertTrue(controller!!.state.value.queue.isEmpty())
+            return
+        }
+        compose.onNodeWithTag("album.play").assertIsEnabled()
+        compose.onNodeWithTag("album.shuffle").assertIsEnabled()
+        val action = if (shuffle) "album.shuffle" else "album.play"
+        compose.onNodeWithTag(action).performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.onNodeWithTag(action).assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.waitForIdle()
+        await { controller!!.state.value.validatedBytesConsumed > 0 }
+        assertUntitledPlayback(context, controller!!, "newest-1", shuffle)
+        assertTrue(shadowOf(context).nextStartedActivity != null, "Playback opens the TV player")
+        compose.runOnIdle { playerOpen = true }
+        compose.onNodeWithTag("tv.player.title").assertTextEquals(context.getString(com.legitimateapps.dulcet.core.R.string.playback_untitled))
     }
 
     private fun focused(tag: String) = compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()
@@ -88,8 +121,11 @@ class TvUntitledAlbumPlayTest {
         compose.waitForIdle()
     }
 
-    private fun await(condition: () -> Boolean) = compose.waitUntil(30_000) {
-        shadowOf(Looper.getMainLooper()).idle()
-        condition()
+    private fun await(condition: () -> Boolean) {
+        try {
+            compose.waitUntil(30_000) { shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(20)); condition() }
+        } catch (failure: Throwable) {
+            throw AssertionError("Timed out; endpoints=${server.endpoints()}; state=${controller?.state?.value}", failure)
+        }
     }
 }

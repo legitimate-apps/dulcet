@@ -207,6 +207,7 @@ public class AndroidPlaybackController internal constructor(
         localPlans: AndroidLocalPlaybackSource?,
         serverContact: AndroidServerContact?,
     ) : this(context, account, boundaries = null, localPlans = localPlans, serverContact = serverContact)
+    private val untitledTitle = context.getString(R.string.playback_untitled)
     private val preferences = context.applicationContext.getSharedPreferences("listening-session", Context.MODE_PRIVATE)
     private var crossfadeSeconds = PlaybackCrossfade.decodeSeconds(preferences.getInt("crossfade-seconds", 0))
     private val sleepCountdown = SleepTimerCountdown()
@@ -566,9 +567,11 @@ public class AndroidPlaybackController internal constructor(
         if (!live()) return
         var added = false
         for (track in tracks) {
-            if (track.providerInstanceId != account.providerInstanceId || track.title.isBlank()) continue
+            if (track.providerInstanceId != account.providerInstanceId) continue
             val known = metadata[ProviderItemId(track.providerInstanceId, track.rawId)]
-            if (known == null || known.title.isBlank()) { remember(track); added = true }
+            if (known == null || known.title.isBlank() || (known.title == untitledTitle && track.title.isNotBlank())) {
+                remember(track); added = true
+            }
         }
         if (added) publish()
     }
@@ -1242,7 +1245,7 @@ public class AndroidPlaybackController internal constructor(
         val duration = (song["duration"] as? JsonPrimitive)?.longOrNull?.takeIf { it >= 0 }?.seconds
         val known = metadata[ProviderItemId(account.providerInstanceId, rawId)]
         val track = AndroidTrack(account.providerInstanceId, rawId,
-            field("title")?.takeIf { it.isNotBlank() } ?: known?.title.orEmpty(),
+            field("title")?.takeIf { it.isNotBlank() } ?: known?.title?.takeIf { it.isNotBlank() } ?: untitledTitle,
             field("artist")?.takeIf { it.isNotBlank() } ?: known?.artist,
             field("album")?.takeIf { it.isNotBlank() } ?: known?.album,
             duration?.inWholeMilliseconds ?: known?.durationMilliseconds,
@@ -1257,13 +1260,14 @@ public class AndroidPlaybackController internal constructor(
         try { source.localTrack(rawId) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { null }
-    }?.takeIf { it.providerInstanceId == account.providerInstanceId && it.rawId == rawId && it.title.isNotBlank() }
+    }?.takeIf { it.providerInstanceId == account.providerInstanceId && it.rawId == rawId }
 
     private fun remember(track: AndroidTrack) {
         val id = ProviderItemId(track.providerInstanceId, track.rawId)
         val known = metadata[id]
-        metadata[id] = if (known == null) track else AndroidTrack(track.providerInstanceId, track.rawId,
-            track.title.ifBlank { known.title }, track.artist ?: known.artist, track.album ?: known.album,
+        val titled = if (track.title.isBlank()) track.copy(title = known?.title?.takeIf { it.isNotBlank() } ?: untitledTitle) else track
+        metadata[id] = if (known == null) titled else AndroidTrack(track.providerInstanceId, track.rawId,
+            titled.title, track.artist ?: known.artist, track.album ?: known.album,
             track.durationMilliseconds ?: known.durationMilliseconds, track.artworkKey ?: known.artworkKey,
             track.albumRawId ?: known.albumRawId)
     }

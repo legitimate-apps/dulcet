@@ -50,7 +50,7 @@ class PlaylistAndLyricsPresentationTest {
 
     private fun track(id: String, title: String? = id, missing: Boolean = false,
                       playability: AndroidLibraryPlayability = AndroidLibraryPlayability.Streamable) =
-        AndroidLibraryItem.Track(id, title, null, null, null, null, null, null, 1_000, null, null, null, null, null, playability, missing)
+        AndroidLibraryItem.Track(id, title, null, null, null, null, null, null, if (missing) null else 1_000, null, null, null, null, null, playability, missing)
 
     private fun playlist(editable: Boolean = true, owner: String? = "listener", pending: Boolean = false, local: Boolean = false) =
         AndroidLibraryItem.Playlist("pl-1", "Mix", 4, null, owner, null, editable = editable, pendingChanges = pending, local = local)
@@ -85,7 +85,7 @@ class PlaylistAndLyricsPresentationTest {
         val items = listOf(track("a"), track("gone", missing = true), track("off", playability = AndroidLibraryPlayability.UnavailableOffline),
             track("untitled", title = null), track("d"))
         val queue = assertNotNull(publication(items).playlistQueue("provider", 1))
-        assertEquals(listOf("a", "d"), queue.tracks.map { it.rawId })
+        assertEquals(listOf("a", "untitled", "d"), queue.tracks.map { it.rawId })
         assertEquals(1, queue.start, "a start on an entry that cannot play begins at the next that can")
         assertNull(publication(listOf(track("gone", missing = true))).playlistQueue("provider", 0), "nothing playable plays nothing")
         assertNull(publication(items, AndroidLibraryItemsState.Loading).playlistQueue("provider", 0), "entries not present play nothing")

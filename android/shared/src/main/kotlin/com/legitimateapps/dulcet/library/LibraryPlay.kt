@@ -159,9 +159,9 @@ public fun AndroidLibraryItem.Track.queueSource(album: AndroidLibraryItem.Album?
     else QueueSourceOf(AndroidQueueSource.Album, albumTitle?.takeIf { it.isNotBlank() } ?: album?.title ?: libraryName, albumRawId)
 }
 
-/** Whether a row may offer Play Next and Add to Queue: the track can play now and has a title to show. */
+/** Whether a row may offer Play Next and Add to Queue: the track can play now and has a known duration. */
 public fun AndroidLibraryItem.Track.canBeQueued(): Boolean =
-    playability != AndroidLibraryPlayability.UnavailableOffline && !title.isNullOrBlank()
+    playability != AndroidLibraryPlayability.UnavailableOffline && durationMilliseconds != null
 
 /**
  * One search track added to the queue, attributed to the search (spec §14.1 `sourceContext`), exactly
@@ -176,7 +176,8 @@ public fun queueSearchResult(
     searchName: String,
 ): Boolean {
     if (playback == null || result.type != SearchResultType.Track) return false
-    val title = result.title.takeIf { it.isNotBlank() } ?: return false
+    val duration = result.duration ?: return false
+    val title = result.title
     val artist = result.credits.singleOrNull { it.role == CreditRole.Artist }?.name?.takeIf { it.isNotBlank() }
     val track = AndroidTrack(
         providerInstanceId = providerInstanceId,
@@ -184,7 +185,7 @@ public fun queueSearchResult(
         title = title,
         artist = artist,
         album = result.albumTitle?.takeIf { it.isNotBlank() },
-        durationMilliseconds = result.duration?.inWholeMilliseconds,
+        durationMilliseconds = duration.inWholeMilliseconds,
         artworkKey = result.artworkKey,
     )
     return playback.addToQueue(listOf(track), insertion, AndroidQueueSource.Search, searchName)

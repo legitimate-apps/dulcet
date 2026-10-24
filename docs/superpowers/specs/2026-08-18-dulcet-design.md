@@ -7919,6 +7919,19 @@ argue against the recorded rationale — not as filling in a blank.
 ## 28. Revision record
 
 
+**2026-10-24 - Android untitled playback and queue admission.**
+
+Android phone and TV library queues accept tracks with a known duration regardless of whether
+there is a title, matching the Apple reader adapter. Missing, empty and whitespace-only titles
+use the localized Android `playback_untitled` string, "Untitled", in the queue, Now Playing,
+Media3 session and notification. Cached, fresh and downloaded metadata follow the same policy.
+Play and Shuffle use the exact `playableTracks` list that starts playback; Play Next, Add to
+Queue, playlists and system media browsing use the same duration and offline availability
+requirements. Android continues to exclude tracks unavailable offline from a new queue, while
+Apple's adapter labels them `metadataOnly` for its queue's offline policy. Apple's existing
+nil/empty title fallback is retained; Android also treats whitespace as absent display text.
+
+
 **2026-10-23 — Retain Android Play across a chosen connection's transient validation loss.**
 
 On Android phone and TV, an explicit queue selection for a connection already chosen by a

@@ -202,7 +202,7 @@ internal fun MobileSearchScreen(
                         unavailableOffline = !playable,
                         onActivate = { presenter.commitQuery(); onActivate(result) },
                         onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { presenter.commitQuery(); play(result) } },
-                        onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable }
+                        onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable && result.duration != null }
                             ?.let { queue -> { insertion -> queue(result, insertion) } },
                     )
                 }

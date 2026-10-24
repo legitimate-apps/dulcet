@@ -38,6 +38,9 @@ class LoopbackLibraryServer : AutoCloseable {
     /** Titles returned by getAlbum, including absent and blank metadata. */
     @Volatile var albumSongTitles: List<String?> = listOf("Opening")
 
+    @Volatile var albumSongDurationSeconds: Int? = 120
+    @Volatile var albumPlaybackAudio: ByteArray? = null
+
     /** Optional complete song catalog for library-depth UI proofs. */
     @Volatile var librarySongs: List<Pair<String, String>>? = null
 
@@ -159,6 +162,15 @@ class LoopbackLibraryServer : AutoCloseable {
         if (endpoint == "getGenres" && holdGenres) genresReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "getSong" && holdSongs) songsReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "stream" && holdStreams) streamsReleased.await(30, TimeUnit.SECONDS)
+        if (endpoint == "stream" && albumPlaybackAudio != null) {
+            val audio = checkNotNull(albumPlaybackAudio)
+            client.getOutputStream().apply {
+                write("HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: ${audio.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                write(audio)
+                flush()
+            }
+            return@use
+        }
         respond(client, 200, envelope(endpoint, parameters))
     }
 
@@ -220,8 +232,9 @@ class LoopbackLibraryServer : AutoCloseable {
                 val songs = albumSongTitles.mapIndexed { index, songTitle ->
                     val songId = "$id-song-${index + 1}"
                     val titleField = songTitle?.let { "\"title\":${quote(it)}," }.orEmpty()
+                    val durationField = albumSongDurationSeconds?.let { "\"duration\":$it," }.orEmpty()
                     """{"id":${quote(songId)},${titleField}"album":$title,"albumId":${quote(id)},""" +
-                        """"artist":"Fixture Artist","track":${index + 1},"duration":120,"suffix":"mp3","contentType":"audio/mpeg"${flagSong(songId)}}"""
+                        """"artist":"Fixture Artist","track":${index + 1},${durationField}"suffix":"mp3","contentType":"audio/mpeg"${flagSong(songId)}}"""
                 }
                 """"album":{"id":${quote(id)},"name":$title,"artist":"Fixture Artist","artistId":"artist-1","songCount":${songs.size}${flagAlbum(id)},"song":[${songs.joinToString(",")}] }"""
             }
@@ -232,7 +245,12 @@ class LoopbackLibraryServer : AutoCloseable {
             }
             // A genre's songs, as a play re-reads each before queueing it; any other id stays the empty
             // envelope it always was.
-            "getSong" -> songsByGenre.values.flatten().firstOrNull { it.first == parameters["id"] }
+            "getSong" -> if (albumPlaybackAudio != null && parameters["id"].orEmpty().contains("-song-")) {
+                val id = parameters["id"].orEmpty()
+                val index = id.substringAfterLast("-song-").toInt() - 1
+                val titleField = albumSongTitles[index]?.let { "\"title\":${quote(it)}," }.orEmpty()
+                """"song":{"id":${quote(id)},${titleField}"duration":120,"suffix":"wav","contentType":"audio/wav"}"""
+            } else songsByGenre.values.flatten().firstOrNull { it.first == parameters["id"] }
                 ?.let { (id, title) -> """"song":${genreSong(id, title)}""" }
             else -> null
         }
