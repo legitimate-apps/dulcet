@@ -4301,22 +4301,41 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("Connection must offer the \(identifier) picker: " + app.debugDescription)
             return false
         }
-        picker.tap()
-        // Resolve the native menu's option, rather than an identically labelled Form picker.
-        // Existence alone does not establish a usable native menu activation target.
+        // Hosted queries in run 40058182881 took 1-4 seconds each. Give existence,
+        // bounds and hittability enough time for several complete evaluations, then reopen
+        // once if this presentation never supplies a usable activation target.
         let item = app.collectionViews.buttons.matching(NSPredicate(
             format: "label == %@ AND identifier != %@ AND identifier != %@", option,
             "dulcet.streaming-quality.unmetered", "dulcet.streaming-quality.metered"
         )).firstMatch
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            guard item.exists else { return false }
-            let frame = item.frame
-            return frame.origin.x.isFinite && frame.origin.y.isFinite
-                && frame.width.isFinite && frame.height.isFinite
-                && frame.width > 0 && frame.height > 0 && item.isHittable
-        }, object: item)
-        guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
-            XCTFail("The picker must offer a hittable \(option): " + app.debugDescription)
+        var usable = false
+        for attempt in 1...2 {
+            picker.tap()
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard item.exists else { return false }
+                let frame = item.frame
+                return frame.origin.x.isFinite && frame.origin.y.isFinite
+                    && frame.width.isFinite && frame.height.isFinite
+                    && frame.width > 0 && frame.height > 0 && item.isHittable
+            }, object: item)
+            if XCTWaiter.wait(for: [ready], timeout: 30) == .completed {
+                usable = true
+                break
+            }
+            print("DULCET QUALITY MENU unusable option=\(option) attempt=\(attempt)")
+            if attempt < 2 {
+                // A tap on the navigation bar outside the native menu dismisses it without
+                // activating an option or changing the saved quality. Confirm closure first.
+                app.navigationBars.firstMatch
+                    .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                guard item.waitForNonExistence(timeout: 10) else {
+                    XCTFail("The unusable quality menu must dismiss before reopening: " + app.debugDescription)
+                    return false
+                }
+            }
+        }
+        guard usable else {
+            XCTFail("The picker must offer a hittable \(option) after two presentations: " + app.debugDescription)
             return false
         }
         item.tap()

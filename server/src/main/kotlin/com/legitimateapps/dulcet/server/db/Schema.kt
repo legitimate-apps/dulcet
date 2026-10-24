@@ -196,9 +196,12 @@ object Schema {
     private fun installJournal(s: Db.Session) = with(s) {
         execute("CREATE TABLE IF NOT EXISTS api_journal (seq INTEGER PRIMARY KEY AUTOINCREMENT,type TEXT NOT NULL,id TEXT NOT NULL,user_id TEXT,op TEXT NOT NULL,at INTEGER NOT NULL,reason TEXT,replaced_by TEXT,stamp TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))))")
         execute("CREATE INDEX IF NOT EXISTS api_journal_entity ON api_journal(type,id,user_id,seq)")
+        // The trigger maintains revisions transactionally. Backfill only when installing it or
+        // its table on a legacy database, rather than grouping retained history on every open.
+        val revisionBackfill = long("SELECT COUNT(*) FROM sqlite_master WHERE (type='table' AND name='api_revision') OR (type='trigger' AND name='api_journal_revision')") != 2L
         execute("CREATE TABLE IF NOT EXISTS api_revision(type TEXT NOT NULL,id TEXT NOT NULL,user_id TEXT NOT NULL DEFAULT '',seq INTEGER NOT NULL,PRIMARY KEY(type,id,user_id))")
         execute("CREATE TRIGGER IF NOT EXISTS api_journal_revision AFTER INSERT ON api_journal BEGIN INSERT INTO api_revision(type,id,user_id,seq) VALUES(NEW.type,NEW.id,COALESCE(NEW.user_id,''),NEW.seq) ON CONFLICT(type,id,user_id) DO UPDATE SET seq=NEW.seq; INSERT INTO meta(key,value) VALUES('api_journal_stamp',NEW.stamp) ON CONFLICT(key) DO UPDATE SET value=NEW.stamp; END")
-        execute("INSERT INTO api_revision(type,id,user_id,seq) SELECT type,id,COALESCE(user_id,''),MAX(seq) FROM api_journal GROUP BY type,id,COALESCE(user_id,'') ON CONFLICT(type,id,user_id) DO UPDATE SET seq=MAX(api_revision.seq,excluded.seq)")
+        if (revisionBackfill) execute("INSERT INTO api_revision(type,id,user_id,seq) SELECT type,id,COALESCE(user_id,''),MAX(seq) FROM api_journal GROUP BY type,id,COALESCE(user_id,'') ON CONFLICT(type,id,user_id) DO UPDATE SET seq=MAX(api_revision.seq,excluded.seq)")
         execute("INSERT OR IGNORE INTO meta(key,value) SELECT 'api_journal_stamp',stamp FROM api_journal ORDER BY seq DESC LIMIT 1")
         execute("CREATE TABLE IF NOT EXISTS api_identity (type TEXT NOT NULL,id TEXT NOT NULL,reason TEXT,replaced_by TEXT,deleted_at INTEGER,PRIMARY KEY(type,id))")
         execute("CREATE TABLE IF NOT EXISTS api_group_identity (type TEXT NOT NULL,key TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(type,key))")

@@ -151,6 +151,17 @@ class WishlistService(private val ctx:ServerContext,private val clock:()->Long=S
             store.read(this,wish.userId,wishId)!!
         }
     }
+    /** Read the user's rejected pairs once for a projection, with the same canonical target key. */
+    internal fun rejectionLookup(userId:String):(DiscoverItem,LibraryRef)->Boolean {
+        data class Key(val kind:String,val mbid:String,val type:String,val id:String)
+        val pairs=db.read { query("SELECT kind,mbid,library_type,library_id FROM wishlist_rejected_match WHERE user_id=?",userId) {
+            Key(it.string("kind"),it.string("mbid"),it.string("library_type"),it.string("library_id"))
+        }.toHashSet() }
+        return { item,ref ->
+            val mbid=item.externalIds[item.kind.registryKey]?.let { runCatching { canonicalMbid(it) }.getOrNull() }
+            mbid!=null && Key(item.kind.wire,mbid,ref.type,ref.id) in pairs
+        }
+    }
     fun isRejected(userId:String,target:ExternalTarget,libraryItem:LibraryRef):Boolean {
         val mbid=target.externalIds[target.kind.registryKey]?.let { runCatching { canonicalMbid(it) }.getOrNull() } ?: return false
         return db.read { long("SELECT count(*) FROM wishlist_rejected_match WHERE user_id=? AND kind=? AND mbid=? AND library_type=? AND library_id=?",userId,target.kind.wire,mbid,libraryItem.type,libraryItem.id)>0 }

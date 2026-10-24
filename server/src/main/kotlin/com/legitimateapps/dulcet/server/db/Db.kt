@@ -21,6 +21,15 @@ import kotlin.concurrent.withLock
 class Db private constructor(private val connection: Connection, val file: Path? = null) : AutoCloseable {
     private val lock = ReentrantLock()
 
+    /** Internal, opt-in work accounting. Never receives bound parameters or result rows. */
+    internal interface WorkObserver {
+        fun statement(sql: String)
+        fun transaction(write: Boolean)
+        fun statementFinished(sql: String, nanos: Long) {}
+        fun transactionFinished(write: Boolean, nanos: Long) {}
+    }
+    @Volatile internal var workObserver: WorkObserver? = null
+
     /** Coordinate operations that must span several transactions, such as a restore. */
     fun <T> exclusive(block: () -> T): T = lock.withLock(block)
 
@@ -67,14 +76,14 @@ class Db private constructor(private val connection: Connection, val file: Path?
 
     /** Nested reads share the enclosing snapshot; every outer read is one SQLite transaction. */
     fun <T> read(block: Session.() -> T): T = lock.withLock {
-        if (!connection.autoCommit) Session(connection).block() else transaction(false, block)
+        if (!connection.autoCommit) Session(connection, workObserver).block() else transaction(false, block)
     }
 
     fun <T> write(block: Session.() -> T): T = lock.withLock {
         if (!connection.autoCommit) {
             val savepoint = connection.setSavepoint()
             try {
-                val result = Session(connection).block()
+                val result = Session(connection, workObserver).block()
                 connection.releaseSavepoint(savepoint)
                 return@withLock result
             } catch (error: Throwable) {
@@ -87,9 +96,12 @@ class Db private constructor(private val connection: Connection, val file: Path?
     }
 
     private fun <T> transaction(notify: Boolean, block: Session.() -> T): T {
+        val observer = workObserver
+        val started = if (observer == null) 0L else System.nanoTime()
+        observer?.transaction(notify)
         connection.autoCommit = false
         try {
-            val session = Session(connection)
+            val session = Session(connection, workObserver)
             val initialChanges = session.long("SELECT total_changes()")
             val result = session.block()
             // Some read helpers reconcile stored metadata. Those writes must commit through the
@@ -104,23 +116,29 @@ class Db private constructor(private val connection: Connection, val file: Path?
             throw error
         } finally {
             connection.autoCommit = true
+            observer?.transactionFinished(notify, System.nanoTime() - started)
         }
     }
 
     override fun close() = lock.withLock { connection.close() }
 
-    class Session(val connection: Connection) {
-        fun execute(sql: String, vararg args: Any?): Int = prepare(sql, args).use { it.executeUpdate() }
+    class Session internal constructor(val connection: Connection, private val observer: WorkObserver? = null) {
+        private inline fun <T> observed(sql: String, block: () -> T): T {
+            val started = if (observer == null) 0L else System.nanoTime()
+            observer?.statement(sql)
+            try { return block() } finally { observer?.statementFinished(sql, System.nanoTime() - started) }
+        }
+        fun execute(sql: String, vararg args: Any?): Int = observed(sql) { prepare(sql, args).use { it.executeUpdate() } }
 
         fun <T> query(sql: String, vararg args: Any?, map: (Row) -> T): List<T> =
-            prepare(sql, args).use { statement ->
+            observed(sql) { prepare(sql, args).use { statement ->
                 statement.executeQuery().use { rows ->
                     val result = ArrayList<T>()
                     val row = Row(rows)
                     while (rows.next()) result.add(map(row))
                     result
                 }
-            }
+            } }
 
         fun <T> single(sql: String, vararg args: Any?, map: (Row) -> T): T? = query(sql, *args, map = map).firstOrNull()
 
@@ -130,13 +148,13 @@ class Db private constructor(private val connection: Connection, val file: Path?
 
         fun batch(sql: String, rows: List<List<Any?>>) {
             if (rows.isEmpty()) return
-            connection.prepareStatement(sql).use { statement ->
+            observed(sql) { connection.prepareStatement(sql).use { statement ->
                 for (row in rows) {
                     bind(statement, row.toTypedArray())
                     statement.addBatch()
                 }
                 statement.executeBatch()
-            }
+            } }
         }
 
         private fun prepare(sql: String, args: Array<out Any?>): PreparedStatement {
