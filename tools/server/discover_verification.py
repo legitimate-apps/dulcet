@@ -12,7 +12,7 @@ import sys
 
 LABEL = re.compile(r"(?:musicbrainz|cover-art-archive|listenbrainz|listenbrainz-labs)(?:-[0-9]+)?|origin-[0-9]+|other-origins")
 EVENTS = {"http", "decode", "refresh_failure", "stale_serve"}
-OUTCOMES = {"response", "http_status", "timeout", "transport", "dns_timeout", "dns_transport", "cache_write", "backoff", "waiting_cap", "invalid_body", "parse_failure", "closed", "unavailable", "cancelled"}
+OUTCOMES = {"cache_only", "response", "http_status", "timeout", "transport", "dns_timeout", "dns_transport", "cache_write", "backoff", "waiting_cap", "invalid_body", "parse_failure", "closed", "unavailable", "cancelled"}
 COUNTERS = {"duration_ms", "attempts", "requests", "status_1xx", "status_2xx", "status_3xx", "status_4xx", "status_5xx", "duration_total_ms", "timeouts", "backoff_applied", "backoff_refused", "waiting_cap", "parse_failures", "stale_serves", "refresh_failures", "refresh_timeouts"}
 
 

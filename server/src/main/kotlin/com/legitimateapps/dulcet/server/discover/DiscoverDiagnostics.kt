@@ -65,6 +65,6 @@ class DiscoverDiagnostics(private val emit: (String) -> Unit = { LoggerFactory.g
 }
 
 enum class UpstreamFailure(val wire: String) {
-    Cancelled("cancelled"), Unavailable("unavailable"), HttpStatus("http_status"), Timeout("timeout"), Transport("transport"),
+    CacheOnly("cache_only"), Cancelled("cancelled"), Unavailable("unavailable"), HttpStatus("http_status"), Timeout("timeout"), Transport("transport"),
     DnsTimeout("dns_timeout"), DnsTransport("dns_transport"), CacheWrite("cache_write"), Backoff("backoff"), WaitingCap("waiting_cap"), Body("invalid_body"), Parse("parse_failure"), Closed("closed"),
 }

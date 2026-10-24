@@ -70,6 +70,32 @@ class DiscoverDiagnosticsTest {
             assertTrue(diagnostics.snapshot().isEmpty())
         }
     }
+    @Test fun intentionalCacheOnlyMissAndStaleReadAreNotUpstreamRefreshFailures() = runBlocking {
+        FixtureDiscoverUpstream().use { f ->
+            Db.inMemory().use { db ->
+                val clock=Clock(); val lines=mutableListOf<String>(); val diagnostics=DiscoverDiagnostics { lines+=it }
+                val cache=DiscoverCache(db,clock,diagnostics=diagnostics)
+                PoliteHttp(clock,diagnostics=diagnostics).use { http ->
+                    val settings=DiscoverSettings(enabled=false,musicBrainzUrl=f.baseUrl)
+                    val client=MusicBrainzClient(http,cache,settings)
+                    val id="11111111-1111-4111-8111-111111111111"
+                    assertFailsWith<UpstreamUnavailable> { client.album(id) }
+                    assertTrue(lines.isEmpty(),"A deliberately disabled fetch with no cache is not an upstream failure")
+                    val key=CacheKey(f.baseUrl,"/ws/2/release-group/$id",mapOf("inc" to "artist-credits+url-rels","fmt" to "json"))
+                    val body="""{"id":"$id","title":"Cached album","artist-credit":[]}""".toByteArray()
+                    cache.read(key,DiscoverCache.DAY,{it}) { UpstreamResponse(200,emptyMap(),body) }
+                    clock.millis+=DiscoverCache.DAY+1
+                    val result=client.album(id)
+                    assertTrue(result.age.stale,"The test must actually exercise expired-cache fallback")
+                    assertEquals(0,f.requests.size,"Cache-only reads must never send HTTP")
+                    val counts=diagnostics.snapshot().single()
+                    assertEquals(0L,counts.requests); assertEquals(0L,counts.refreshFailures)
+                    assertEquals(1L,counts.staleServes)
+                    assertTrue(lines.single().contains("event=stale_serve outcome=cache_only"))
+                }
+            }
+        }
+    }
     @Test fun resolverTimeoutWithoutCachedValueIsObservable() = runBlocking {
         Db.inMemory().use { db ->
             val lines=mutableListOf<String>(); val diagnostics=DiscoverDiagnostics { lines+=it }

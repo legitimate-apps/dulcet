@@ -67,7 +67,8 @@ class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDisc
               catch(e:UpstreamNotFound) { throw e }
               catch(e:Exception) {
                 val reason=if(storing)UpstreamFailure.CacheWrite else (e as? UpstreamUnavailable)?.reason ?: UpstreamFailure.Unavailable
-                diagnostics.refreshFailure(key.baseUrl,reason,clock.monotonicNanos()-refreshStarted)
+                // A deliberately cache-only lookup never attempted an upstream refresh.
+                if(reason!=UpstreamFailure.CacheOnly) diagnostics.refreshFailure(key.baseUrl,reason,clock.monotonicNanos()-refreshStarted)
                 if(previous!=null && entry!=null && clock.wallMillis()-entry.fetched<=MAX_AGE) {
                     diagnostics.stale(key.baseUrl,reason)
                     Cached(previous,CacheAge(entry.fetched,(clock.wallMillis()-entry.fetched).coerceAtLeast(0)/1000,true),entry.generation,mapOf(digest to entry.generation))

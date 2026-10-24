@@ -234,7 +234,8 @@ Each record includes status class and duration where available, cumulative statu
 duration, applied/refused backoff counts, timeout counts, waiting-cap refusals, parse failures,
 refresh failures and stale serves. `attempts` includes refusals/cancellations; `requests` counts
 wire starts. HTTP timeouts and failed-refresh timeouts are separate counters, not additive.
-These process-local counters reset on restart. Cancellation propagates and never serves stale.
+Intentional cache-only misses are not refresh failures; any stale fallback they serve is
+labeled `cache_only`. These process-local counters reset on restart. Cancellation propagates and never serves stale.
 
 A freshness gate should save the response's `stale` boolean and the allowlisted upstream records
 from the request's log window even on failure. `tools/server/discover_verification.py` supplies
