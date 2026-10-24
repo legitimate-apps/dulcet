@@ -134,3 +134,36 @@ for did_settle in [True, False]:
         assert tool.main() == (0 if did_settle else 1)
     assert ('bootstatus', 'IPAD', '-b') in calls
     print(f'SETTLE ACK CONTROL PASS observed={did_settle} accepted={did_settle}')
+
+# Boot completion does not establish that Xcode still offers the selected device. The platform
+# red listed only placeholders after a successful boot. Exercise the actual post-boot gate with
+# a controlled resolver, retaining the selected UDID and refusing failed or substituted results.
+import os
+import textwrap
+step_name = 'Confirm booted iPad remains an Xcode destination'
+assert '      - name: ' + step_name in workflow, 'missing post-boot Xcode destination acknowledgment'
+confirmation = workflow.split('      - name: ' + step_name, 1)[1].split('      - name: ', 1)[0]
+assert workflow.index('      - name: Boot iPadOS simulator before the layout launch') < workflow.index('      - name: ' + step_name) < workflow.index('      - name: Launch iPadOS shell and prove layout plus stored Keychain attributes')
+assert 'IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}' in confirmation
+confirmation_code = textwrap.dedent(confirmation.split('        run: |\n', 1)[1])
+with tempfile.TemporaryDirectory() as directory:
+    resolver = Path(directory) / 'python3'
+    resolver.write_text('#!' + sys.executable + '\n' + '''import os, sys
+assert sys.argv[1:] == ['tools/resolve-ipad-destination', '--print', 'udid'], sys.argv
+print(os.environ['CONTROL_RESOLVED'])
+sys.exit(int(os.environ['CONTROL_EXIT']))
+''')
+    resolver.chmod(0o755)
+    for label, resolved, exit_status, accepted in [
+        ('same-device', 'IPAD-SELECTED', 0, True),
+        ('substituted-device', 'OTHER-IPAD', 0, False),
+        ('empty-result', '', 0, False),
+        ('query-failed', 'IPAD-SELECTED', 1, False),
+    ]:
+        result = subprocess.run(['bash', '-c', confirmation_code], capture_output=True, text=True,
+                                env={**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
+                                     'IPAD_UDID': 'IPAD-SELECTED', 'CONTROL_RESOLVED': resolved,
+                                     'CONTROL_EXIT': str(exit_status)}, timeout=5)
+        assert (result.returncode == 0) is accepted, (label, result.stdout, result.stderr)
+        assert ('IPADOS XCODE DESTINATION PASS' in result.stdout) is accepted, (label, result.stdout)
+        print(f'POST-BOOT XCODE DESTINATION CONTROL PASS {label} accepted={accepted}')
