@@ -1770,9 +1770,9 @@ since §28 2026-10-04, and where one is still branched on it is never accepted a
 body short of it. A network drop part-way through a response that declares a length is therefore
 a failure on every platform, not an early end. A cold transcode declares no length and arrives
 chunked, so its completeness must be established by the HTTP framing. **OBSERVED 2026-10-24** (#228, real loopback sockets): CIO on
-JVM and Android core, Darwin core on macOS and the macOS/iOS URLSession playback/download
-loaders accepted
-EOF after a whole chunk without a terminating zero chunk. Mid-chunk cuts failed. Android's
+JVM and Android core, Darwin core on macOS and native URLSession on macOS, iOS and tvOS accepted
+EOF after a whole chunk without a terminating zero chunk. All Apple shells share the playback
+loader; the durable download/cache controller compiles only on macOS and iOS. Mid-chunk cuts failed. Android's
 shipping `HttpURLConnection` player, cache and download paths rejected both cuts under Robolectric.
 Media GETs now use strict framing transports: OkHttp in JVM/Android core, raw Foundation streams
 in Darwin core and Network framework in the Swift resource loader. They require the zero chunk

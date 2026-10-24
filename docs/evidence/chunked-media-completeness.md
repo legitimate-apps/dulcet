@@ -26,8 +26,11 @@ Core tests cover `/rest/stream`, `/rest/download` and the shared framing transpo
 `getTranscodeStream`. Explicit original-file downloads use `stream?format=raw`. Android
 measurements run under Robolectric with the host JDK's `HttpURLConnection`; they do not claim
 physical Android network-stack or decoder evidence. Darwin core baseline measurements run on macOS. Swift URLSession baseline measurements run on
-macOS 27.0.1 and iOS 26.5 (23F77): both accept the boundary cut and reject the mid-chunk cut.
-Apple shells share the resource and download implementations. An equivalent-baseline controller
+macOS 27.0.1, iOS 26.5 (23F77) and tvOS 26.5 (23L470): all accept the boundary cut and reject the mid-chunk cut.
+All three shells use the shared playback resource loader. The durable cache and background download
+controller compile only on macOS and iOS; the tvOS native download delegate fixture measures the OS
+transport, not a shipping tvOS download feature. Final tvOS unit validation passed 362 methods,
+including all 26 strict media socket invocations. An equivalent-baseline controller
 mutant that bypasses the new replacement guard promoted the boundary-cut file and exposed an
 offline asset; complete and mid-chunk controls passed. A separate loader mutant that disables strict
 framing also promoted the boundary-cut response through the actual durable stream-cache writer.
