@@ -15,11 +15,16 @@ public struct DulcetWishlistView: View {
                 HStack { filters }
                 VStack(alignment: .leading) { filters }
             }.padding(.horizontal, DulcetSpacing.md)
-            HStack {
-                Toggle(DulcetStrings.wishlistHistory, isOn: $filter.includeFulfilledHistory)
-                Spacer()
-                Button(DulcetStrings.myLibraryRefresh, systemImage: "arrow.clockwise", action: refresh)
-                    .accessibilityIdentifier("wishlist.refresh")
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    historyToggle
+                    Spacer()
+                    refreshButton
+                }.fixedSize(horizontal: true, vertical: true)
+                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                    historyToggle
+                    refreshButton
+                }
             }.padding(.horizontal, DulcetSpacing.md)
             if let publication = model.publication {
                 DulcetDiscoverStatusView(status: .init(age: nil, error: publication.access.error ?? publication.wishlistError, connection: publication.connection), retry: refresh)
@@ -74,7 +79,11 @@ public struct DulcetWishlistView: View {
                 DulcetDiscoverArtworkView(reader: model.reader, artworkId: presentation.snapshot?.artworkId)
                 VStack(alignment: .leading) {
                     if let destination = presentation.destination, model.publication?.access.discoverAvailable == true {
-                        Button { openMetadata(destination) } label: { Text(verbatim: presentation.snapshot?.title ?? "").font(.headline) }
+                        Button { openMetadata(destination) } label: {
+                            Text(verbatim: presentation.snapshot?.title ?? "").font(.headline)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                             .accessibilityIdentifier("wishlist.metadata")
                     } else { Text(verbatim: presentation.snapshot?.title ?? "").font(.headline) }
                     if let artist = presentation.snapshot?.artist { Text(verbatim: artist).font(.subheadline) }
@@ -103,15 +112,24 @@ public struct DulcetWishlistView: View {
             }.padding(.leading, 48 + DulcetSpacing.sm)
         }.padding(.vertical, DulcetSpacing.xs)
     }
+    private var historyToggle: some View {
+        Toggle(DulcetStrings.wishlistHistory, isOn: $filter.includeFulfilledHistory)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+    private var refreshButton: some View {
+        Button(DulcetStrings.myLibraryRefresh, systemImage: "arrow.clockwise", action: refresh)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("wishlist.refresh")
+    }
     private func timestamp(_ label: String, _ date: Date) -> some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
                 Text(label)
                 Text(date, format: .dateTime)
-            }
+            }.fixedSize(horizontal: true, vertical: true)
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 Text(label)
-                Text(date, format: .dateTime)
+                Text(date, format: .dateTime).fixedSize(horizontal: false, vertical: true)
             }
         }.font(.caption).accessibilityElement(children: .combine)
     }
