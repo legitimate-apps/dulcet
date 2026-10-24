@@ -405,12 +405,6 @@ public final class DulcetLibrarySession {
             discoverSubscription = discover.observe { [weak self] publication in
                 guard let self, self.readerGeneration == generation,
                       self.account?.providerInstanceID == publication.providerInstanceId else { return }
-#if DEBUG
-                if self.discoverPublication?.access != publication.access {
-                    let access = publication.access
-                    DulcetUIProofMarkers.record("discover-access:\(publication.providerInstanceId):\(access.detection):\(access.error?.code ?? "ok"):read=\(access.canReadWishlist):remove=\(access.canRemoveWish):advertised=\(access.wishlistAvailable)")
-                }
-#endif
                 self.discoverPublication = publication
             }
             // The child begins unresolved. Its first refresh negotiates extensions before any

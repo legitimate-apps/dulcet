@@ -8,11 +8,13 @@ import OSLog
 @MainActor
 enum DulcetUIProofMarkers {
     static let launchArgument = "-dulcet-debug-ui-markers"
+    static let navigationLaunchArgument = "-dulcet-debug-navigation-receipts"
     static let accessibilityIdentifier = "dulcet.debug.ui-markers"
 
 #if DEBUG
     static var isEnabled = ProcessInfo.processInfo.arguments.contains(launchArgument)
     static let log = DulcetUIProofMarkerLog()
+    private static let navigationReceiptsEnabled = ProcessInfo.processInfo.arguments.contains(navigationLaunchArgument)
     private static var navigationSequence = 0
     private static let logger = Logger(subsystem: "com.dulcet.navigation", category: "proof")
 #endif
@@ -20,7 +22,8 @@ enum DulcetUIProofMarkers {
     static func navigation(writer: String, oldDestination: String, newDestination: String,
                            oldPath: String, newPath: String, detail: String) {
 #if DEBUG
-        guard isEnabled else { return }
+        // Navigation diagnostics are separate from exact handler-marker proofs.
+        guard isEnabled, navigationReceiptsEnabled else { return }
         navigationSequence += 1
         let receipt = "NAV|\(navigationSequence)|\(writer)|dest=\(oldDestination)->\(newDestination)|path=\(oldPath)->\(newPath)|\(detail)"
         record(receipt)
