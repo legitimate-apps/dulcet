@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Install emulator SDK packages with bounded retries, then verify the booted image."""
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import re
+import shutil
+import shlex
+import signal
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+ATTEMPTS = 3
+
+
+def properties(path: Path) -> dict[str, str]:
+    result = {}
+    for line in path.read_text().splitlines():
+        if '=' in line and not line.lstrip().startswith('#'):
+            key, value = line.split('=', 1)
+            result[key.strip()] = value.strip()
+    return result
+
+
+def run(command: list[str], timeout: float, *, capture: bool = False) -> subprocess.CompletedProcess:
+    # sdkmanager is a shell wrapper around Java. Kill the group before deleting a timed-out install.
+    process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE if capture else None,
+                               stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    try:
+        output, _ = process.communicate('y\n' * 100, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate(timeout=10)
+        raise RuntimeError(f'command-timeout-{timeout:g}s') from None
+    if process.returncode:
+        raise RuntimeError(f'{Path(command[0]).name}-exit-{process.returncode}')
+    return subprocess.CompletedProcess(command, process.returncode, output)
+
+
+def image_ready(image: Path, package: str, api: str, target: str, arch: str) -> str:
+    values = properties(image / 'source.properties')
+    for key, expected in [('AndroidVersion.ApiLevel', api), ('SystemImage.TagId', target), ('SystemImage.Abi', arch)]:
+        if values.get(key) != expected:
+            raise RuntimeError(f'image-metadata-mismatch-{key}')
+    metadata = ET.parse(image / 'package.xml').getroot()
+    if not any(element.tag.split('}')[-1] == 'localPackage' and element.get('path') == package
+               for element in metadata.iter()):
+        raise RuntimeError('image-package-mismatch')
+    for name in ['system.img', 'ramdisk.img']:
+        if not (image / name).is_file() or (image / name).stat().st_size == 0:
+            raise RuntimeError(f'image-payload-missing-{name}')
+    if not any((image / name).is_file() and (image / name).stat().st_size > 0
+               for name in ['kernel-ranchu', 'kernel-ranchu-64']):
+        raise RuntimeError('image-payload-missing-kernel')
+    return values.get('Pkg.Revision', 'unknown')
+
+
+def remove(path: Path) -> None:
+    if path.is_symlink():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+
+
+def package_ready(path: Path, package: str) -> str:
+    metadata = ET.parse(path / 'package.xml').getroot()
+    if not any(element.tag.split('}')[-1] == 'localPackage' and element.get('path') == package
+               for element in metadata.iter()):
+        raise RuntimeError('sdk-package-mismatch')
+    revision = properties(path / 'source.properties').get('Pkg.Revision')
+    if not revision:
+        raise RuntimeError('sdk-package-missing-revision')
+    payload = (['emulator'] if package == 'emulator' else
+               ['adb'] if package == 'platform-tools' else
+               ['android.jar'] if package.startswith('platforms;') else
+               ['aapt2', 'apksigner', 'zipalign'])
+    for name in payload:
+        binary = path / name
+        if not binary.is_file() or binary.stat().st_size == 0:
+            raise RuntimeError(f'sdk-package-payload-missing-{name}')
+        if name != 'android.jar' and not os.access(binary, os.X_OK):
+            raise RuntimeError(f'sdk-package-payload-not-executable-{name}')
+    return revision
+
+
+def install(args, sdk: Path, package: str, image: Path) -> None:
+    for attempt in range(1, ATTEMPTS + 1):
+        print(f'ANDROID IMAGE INSTALL package={package} attempt={attempt}/{ATTEMPTS} '
+              f'timeout-seconds={args.attempt_timeout_seconds:g}', flush=True)
+        try:
+            run([args.sdkmanager, f'--sdk_root={sdk}', '--install', package, '--channel=0'],
+                args.attempt_timeout_seconds)
+            is_image = package.startswith('system-images;')
+            revision = (image_ready(image, package, args.api_level, args.target, args.arch) if is_image
+                        else package_ready(image, package))
+            coordinates = f' api={args.api_level} target={args.target} abi={args.arch}' if is_image else ''
+            print(f'ANDROID IMAGE READY package={package}{coordinates} revision={revision} attempt={attempt}', flush=True)
+            return
+        except (OSError, RuntimeError, ET.ParseError) as failure:
+            # This job installs SDK packages serially. Discard both the partial package (including
+            # .installer state) and sdkmanager's staged archives, so a bad zip cannot poison retry.
+            # Keep every other installed SDK package. No shared image/AVD cache is used.
+            remove(image)
+            remove(sdk / '.temp')
+            remove(sdk / '.downloadIntermediates')
+            if attempt == ATTEMPTS:
+                raise RuntimeError(f'package={package} attempts={ATTEMPTS} reason={failure}; '
+                                   'emulator and tests were not started') from None
+            delay = args.retry_delay_seconds * 2 ** (attempt - 1)
+            print(f'ANDROID IMAGE RETRY package={package} attempt={attempt}/{ATTEMPTS} '
+                  f'reason={failure} clean-partial=true delay-seconds={delay:g}', flush=True)
+            time.sleep(delay)
+
+
+def supported_dependency(package: str) -> bool:
+    return re.fullmatch(r'emulator|platform-tools|platforms;android-[1-9][0-9]*|build-tools;[0-9]+\.[0-9]+\.[0-9]+', package) is not None
+
+
+def action_wrapper(args, sdk: Path) -> None:
+    # The pinned action puts cmdline-tools/latest BEFORE latest/bin on PATH. Keep the real
+    # sdkmanager untouched in bin, and expose its output even when the action redirects stdout.
+    real = (sdk / 'cmdline-tools/latest/bin/sdkmanager').resolve(strict=True)
+    command = [sys.executable, str(Path(__file__).resolve()), 'action-sdkmanager',
+               '--api-level', args.api_level, '--target', args.target, '--arch', args.arch,
+               '--sdkmanager', str(real), '--attempt-timeout-seconds', str(args.attempt_timeout_seconds),
+               '--retry-delay-seconds', str(args.retry_delay_seconds), '--']
+    wrapper = sdk / 'cmdline-tools/latest/sdkmanager'
+    wrapper.write_text('#!/bin/bash\nset -euo pipefail\n' + shlex.join(command) +
+                       ' "$@" 2>&1 | tee -a ' + shlex.quote(str(Path(args.action_log).resolve())) + ' >&2\n')
+    wrapper.chmod(0o755)
+    print(f'ANDROID IMAGE ACTION WRAPPER real-sdkmanager={real} channel=0 log={args.action_log}', flush=True)
+
+
+def action_request(args, sdk: Path, image_package: str) -> None:
+    request = args.request
+    if request and request[0] == '--':
+        request = request[1:]
+    print(f'ANDROID IMAGE ACTION REQUEST {shlex.join(request)}', flush=True)
+    if request == ['--licenses']:
+        run([args.sdkmanager, '--licenses'], args.attempt_timeout_seconds)
+        return
+    if not request or request[0] != '--install':
+        raise RuntimeError('unsupported-action-sdkmanager-request')
+    packages = [item for item in request[1:] if item != '--channel=0']
+    if not packages or any(not supported_dependency(item) and item != image_package for item in packages):
+        raise RuntimeError('unsupported-action-sdkmanager-package-or-channel')
+    for package in dict.fromkeys(packages):
+        install(args, sdk, package, sdk.joinpath(*package.split(';')))
+    print('ANDROID IMAGE ACTION REQUEST COMPLETE channel=0', flush=True)
+
+
+def verify_booted(args, sdk: Path, package: str, image: Path) -> None:
+    def adb(*command: str) -> str:
+        return run(['adb', '-s', 'emulator-5554', *command], 30, capture=True).stdout.strip()
+    api = adb('shell', 'getprop', 'ro.build.version.sdk')
+    arch = adb('shell', 'getprop', 'ro.product.cpu.abi')
+    avd = adb('emu', 'avd', 'name').splitlines()[0].strip()
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+', avd) or avd in {'.', '..'}:
+        raise RuntimeError('invalid-running-avd-name')
+    avd_home = Path(os.environ.get('ANDROID_AVD_HOME', str(Path.home() / '.android/avd')))
+    config_path = avd_home / f'{avd}.avd/config.ini'
+    config = properties(config_path)
+    for line in config_path.read_text().splitlines():
+        if line.split('=', 1)[0].strip() == 'image.sysdir.1':
+            print(f'ANDROID IMAGE AVD name={avd} config-entry={line.strip()}', flush=True)
+    selected = Path(config.get('image.sysdir.1', ''))
+    if not selected.is_absolute():
+        selected = sdk / selected
+    if selected.resolve() != image.resolve() or api != args.api_level or arch != args.arch:
+        raise RuntimeError(f'booted-image-mismatch expected={package} observed-api={api} observed-abi={arch} observed-image={selected}')
+    image_ready(image, package, args.api_level, args.target, args.arch)
+    print(f'ANDROID IMAGE BOOTED package={package} api={api} target={args.target} abi={arch} avd={avd}', flush=True)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('operation', choices=['install', 'verify-booted', 'action-sdkmanager'])
+    parser.add_argument('--api-level', required=True)
+    parser.add_argument('--target', required=True)
+    parser.add_argument('--arch', required=True, choices=['x86', 'x86_64', 'arm64-v8a'])
+    parser.add_argument('--sdk-package', action='append', default=[],
+                        help='additional emulator dependency; installed serially before the image')
+    parser.add_argument('--action-log', help='install a logging/retrying shim for the pinned emulator action')
+    parser.add_argument('--sdkmanager', default='sdkmanager', help=argparse.SUPPRESS)
+    parser.add_argument('--attempt-timeout-seconds', type=float, default=240)
+    parser.add_argument('--retry-delay-seconds', type=float, default=10)
+    args, args.request = parser.parse_known_args()
+    if args.operation != 'action-sdkmanager' and args.request:
+        parser.error(f'unrecognized arguments: {shlex.join(args.request)}')
+    if not re.fullmatch(r'[1-9][0-9]*', args.api_level) or not re.fullmatch(r'[a-z0-9_][a-z0-9_-]*', args.target):
+        parser.error('expected a numeric API level and an SDK target identifier')
+    if not 0 < args.attempt_timeout_seconds <= 300 or not 0 <= args.retry_delay_seconds <= 30:
+        parser.error('attempt timeout must be (0,300] seconds and retry delay [0,30] seconds')
+    for package in args.sdk_package:
+        if not supported_dependency(package):
+            parser.error(f'unsupported emulator SDK dependency: {package}')
+    try:
+        sdk = Path(os.environ['ANDROID_HOME']).resolve(strict=True)
+        package = f'system-images;android-{args.api_level};{args.target};{args.arch}'
+        image = sdk / 'system-images' / f'android-{args.api_level}' / args.target / args.arch
+        if args.operation == 'install':
+            for dependency in dict.fromkeys(args.sdk_package):
+                install(args, sdk, dependency, sdk.joinpath(*dependency.split(';')))
+            install(args, sdk, package, image)
+            if args.action_log:
+                action_wrapper(args, sdk)
+        elif args.operation == 'action-sdkmanager':
+            action_request(args, sdk, package)
+        else:
+            verify_booted(args, sdk, package, image)
+    except (KeyError, OSError, RuntimeError, ET.ParseError) as failure:
+        print(f'::error title=Android emulator SDK infrastructure failure::ANDROID IMAGE INFRA FAILURE {failure}',
+              file=sys.stderr, flush=True)
+        return 75
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
