@@ -59,6 +59,280 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun aChosenAlbumWaitsVisiblyBetweenFailedAndSuccessfulIdentityProbes() {
+        val owner = "provider:reconnecting-album:${java.util.UUID.randomUUID()}"
+        kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+        val contact = object : AndroidServerContact {
+            override fun isChosen() = true
+            override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+            override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+            override suspend fun awaitOpen() { AndroidServerIdentity.verified.first { owner in it } }
+        }
+        val reads = mutableListOf<String>()
+        try {
+            Fixture(accountOwner = owner, serverContact = contact, localPlans = { null }, loadSong = { reads += it; song(it) }).use { f ->
+                assertTrue(contact.isOpen(), "Control: the account starts verified and connected")
+                kotlinx.coroutines.runBlocking {
+                    assertEquals(DomainError.Transport.Unreachable,
+                        AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable })
+                }
+                AndroidPlaybackController.notifyServerAvailable(owner, false)
+                assertTrue(contact.isChosen(), "Control: a transient failure did not withdraw the connection choice")
+                assertFalse(contact.isOpen(), "Control: the completed failed probe closed contact before Play")
+                val tracks = listOf("first", "second").map { AndroidTrack(owner, it, "Title $it", null, "Album", 40_000) }
+                f.controller.playQueue(tracks, 0, AndroidQueueSource.Album, "Album", "album")
+                assertEquals(listOf("first", "second"), f.controller.state.value.queue.map { it.track.rawId },
+                    "Play between probes must retain the selected album visibly, rather than discard it")
+                assertTrue(f.controller.state.value.needsReconnect, "The held selection explains that it needs a connection")
+                assertTrue(reads.isEmpty() && f.prepared.isEmpty(), "Closed contact must send nothing")
+                kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+                settle(5)
+                assertEquals(listOf("first"), f.prepared.map { it.itemId.rawId },
+                    "The same server reopening must prepare the latest explicit Play exactly once")
+                assertTrue(f.probe.requested, "Recovery honors the person's Play without another press")
+                assertFalse(f.controller.state.value.needsReconnect)
+            }
+        } finally { AndroidServerIdentity.requireValidation(owner) }
+    }
+
+    @Test fun aNewRemoteSelectionClearsTheNoticeBeforeTheReopenedHeldWaiterResumes() {
+        val owner = "provider:superseded-reconnect:${java.util.UUID.randomUUID()}"
+        val releaseOldWaiter = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var waiterEntered = false
+        var reopenedWaiterParked = false
+        var waiterReturned = false
+        var replacementReachedBeforeReturn = false
+        kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+        val contact = object : AndroidServerContact {
+            override fun isChosen() = true
+            override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+            override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+            override suspend fun awaitOpen() {
+                waiterEntered = true
+                AndroidServerIdentity.verified.first { owner in it }
+                reopenedWaiterParked = true
+                releaseOldWaiter.await()
+                waiterReturned = true
+            }
+        }
+        try {
+            Fixture(accountOwner = owner, serverContact = contact, localPlans = { null }, loadSong = {
+                assertEquals("replacement", it, "The held selection cannot read metadata before its waiter returns")
+                assertTrue(reopenedWaiterParked && !waiterReturned,
+                    "Control: the replacement reaches its read while the old reopened waiter has not returned")
+                replacementReachedBeforeReturn = true
+                song(it)
+            }).use { f ->
+                kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                AndroidPlaybackController.notifyServerAvailable(owner, false)
+                fun select(id: String) = f.controller.playQueue(listOf(AndroidTrack(owner, id, id)),
+                    0, AndroidQueueSource.Album, "Album", "album")
+                select("held")
+                assertTrue(waiterEntered && !reopenedWaiterParked,
+                    "Control: the selected queue is actually waiting for closed contact")
+                assertTrue(f.controller.state.value.needsReconnect)
+                assertTrue(f.prepared.isEmpty())
+                kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+                assertTrue(contact.isOpen() && reopenedWaiterParked && !waiterReturned,
+                    "Control: contact reopened, but the held selection's waiter is parked before returning")
+                AndroidPlaybackController.notifyServerAvailable(owner, true)
+                select("replacement")
+                ready(f)
+                assertTrue(replacementReachedBeforeReturn && !waiterReturned,
+                    "Control: the new selection superseded the held one before its waiter resumed")
+                assertEquals(listOf("replacement"), f.prepared.map { it.itemId.rawId })
+                assertTrue(f.probe.requested, "The replacement has received Play")
+                assertFalse(f.controller.state.value.needsReconnect,
+                    "An authorized replacement playing after contact reopens must clear the held selection's reconnect notice")
+            }
+        } finally { releaseOldWaiter.complete(Unit); AndroidServerIdentity.requireValidation(owner) }
+    }
+
+    @Test fun aLocalOfflineSelectionStillFiltersRemoteEntriesAfterAChosenConnectionProbeFails() {
+        for (supersedesHeld in listOf(false, true)) {
+            val owner = "provider:offline-local:${java.util.UUID.randomUUID()}"
+            val file = java.io.File.createTempFile("dulcet-offline-contact", ".wav")
+            kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+            val contact = object : AndroidServerContact {
+                override fun isChosen() = true
+                override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+                override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+                override suspend fun awaitOpen() { AndroidServerIdentity.verified.first { owner in it } }
+            }
+            val reads = mutableListOf<String>()
+            try {
+                Fixture(accountOwner = owner, serverContact = contact, loadSong = { reads += it; song(it) },
+                    localPlans = { rawId -> if (rawId != "down") null else LocalPlaybackPlan(DownloadId("download:down"),
+                        DownloadIdentity(owner, "down", DownloadIdentity.ORIGINAL_PROFILE), AudioContainer.Wav, 44, file.path) }
+                ).use { f ->
+                    kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                    AndroidPlaybackController.notifyServerAvailable(owner, false)
+                    assertFalse(contact.isOpen(), "Control: the chosen account is unverified while the OS network stays available")
+                    fun tracks(vararg ids: String) = ids.map { AndroidTrack(owner, it, "Title $it") }
+                    if (supersedesHeld) {
+                        f.controller.playQueue(tracks("net"), 0, AndroidQueueSource.Library, "Library")
+                        assertEquals(listOf("net"), f.controller.state.value.queue.map { it.track.rawId })
+                        assertTrue(f.controller.state.value.needsReconnect)
+                    }
+                    f.controller.playQueue(tracks("down", "net"), 0, AndroidQueueSource.Library, "Offline Library")
+                    assertEquals(listOf("down"), f.controller.state.value.queue.map { it.track.rawId },
+                        "A locally playable offline selection must not retain unavailable remote entries")
+                    assertEquals(listOf("down"), f.preparedLocal.map { it.itemId.rawId })
+                    assertFalse(f.controller.state.value.needsReconnect)
+                    assertTrue(reads.isEmpty() && f.prepared.isEmpty(), "Offline local playback sends no remote reads")
+                }
+            } finally { file.delete(); AndroidServerIdentity.requireValidation(owner) }
+        }
+    }
+
+    @Test fun recoveryDuringLocalAcquisitionEndsOnlyTheHeldQueuesAdmissionException() {
+        for (localRecovery in listOf(false, true)) {
+            val owner = "provider:acquisition-recovery:${java.util.UUID.randomUUID()}"
+            val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val file = java.io.File.createTempFile("dulcet-held-acquisition", ".wav")
+            var acquiring = false
+            val source = object : AndroidLocalPlaybackSource {
+                override fun isLocallyPlayable(rawId: String) = false
+                override suspend fun localPlan(rawId: String): LocalPlaybackPlan? {
+                    acquiring = true
+                    release.await()
+                    return if (!localRecovery || rawId != "first") null else LocalPlaybackPlan(DownloadId("download:first"),
+                        DownloadIdentity(owner, "first", DownloadIdentity.ORIGINAL_PROFILE), AudioContainer.Wav, 44, file.path)
+                }
+            }
+            kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+            val contact = object : AndroidServerContact {
+                override fun isChosen() = true
+                override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+                override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+                override suspend fun awaitOpen() { AndroidServerIdentity.verified.first { owner in it } }
+            }
+            try {
+                Fixture(accountOwner = owner, serverContact = contact, localPlans = source).use { f ->
+                    kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                    AndroidPlaybackController.notifyServerAvailable(owner, false)
+                    f.controller.playQueue(listOf("first", "second").map { AndroidTrack(owner, it, "Title $it") },
+                        0, AndroidQueueSource.Library, "Library")
+                    assertTrue(acquiring && f.controller.state.value.needsReconnect,
+                        "Control: the queue is held and its actual local-file acquisition is suspended")
+                    assertTrue(f.prepared.isEmpty() && f.preparedLocal.isEmpty())
+                    kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+                    release.complete(Unit)
+                    settle(5)
+                    assertEquals(listOf("first"), (f.prepared.map { it.itemId.rawId } + f.preparedLocal.map { it.itemId.rawId }),
+                        "Contact opening before the authorization wait still resumes despite the reader's lagging outage hint")
+                    assertFalse(f.controller.state.value.needsReconnect)
+                    kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                    AndroidPlaybackController.notifyServerAvailable(owner, false)
+                    f.controller.next()
+                    assertFalse(f.controller.state.value.needsReconnect,
+                        "A later outage cannot reactivate the completed held-selection admission")
+                    kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+                    settle(5)
+                    assertEquals(listOf("first"), (f.prepared.map { it.itemId.rawId } + f.preparedLocal.map { it.itemId.rawId }),
+                        "Ordinary offline continuation cannot revive a remote-only next entry")
+                }
+            } finally { release.complete(Unit); file.delete(); AndroidServerIdentity.requireValidation(owner) }
+        }
+    }
+
+    @Test fun contactLossDuringTheSelectionsMetadataReadRetainsAndReauthorizesOnlyThatSelection() {
+        val owner = "provider:metadata-reconnect:${java.util.UUID.randomUUID()}"
+        kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+        val contact = object : AndroidServerContact {
+            override fun isChosen() = true
+            override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+            override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+            override suspend fun awaitOpen() { AndroidServerIdentity.verified.first { owner in it } }
+        }
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var reads = 0
+        try {
+            Fixture(accountOwner = owner, serverContact = contact, localPlans = { null }, loadSong = {
+                reads++
+                if (reads == 1) release.await()
+                song(it)
+            }).use { f ->
+                f.controller.playQueue(listOf(AndroidTrack(owner, "first", "First", null, "Album", 40_000)),
+                    0, AndroidQueueSource.Album, "Album", "album")
+                assertEquals(1, reads, "Control: the selection's actual metadata read is suspended")
+                kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                AndroidPlaybackController.notifyServerAvailable(owner, false)
+                assertFalse(contact.isOpen(), "Control: contact closes while that reply is held")
+                release.complete(Unit)
+                settle(5)
+                assertEquals(listOf("first"), f.controller.state.value.queue.map { it.track.rawId })
+                assertTrue(f.controller.state.value.needsReconnect)
+                assertTrue(f.prepared.isEmpty())
+                kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+                settle(5)
+                assertEquals(2, reads, "The withdrawn reply is replaced by one fresh authorized read")
+                assertEquals(listOf("first"), f.prepared.map { it.itemId.rawId })
+                assertTrue(f.probe.requested)
+            }
+        } finally { release.complete(Unit); AndroidServerIdentity.requireValidation(owner) }
+    }
+
+    @Test fun aHeldAlbumHonorsPauseStopNewSelectionAndTheIdentityAuthorizationFence() {
+        for (action in listOf("pause", "stop", "new-selection", "next", "jump", "replace-server")) {
+            val owner = "provider:held-album-$action:${java.util.UUID.randomUUID()}"
+            kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+            val contact = object : AndroidServerContact {
+                override fun isChosen() = true
+                override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+                override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+                override suspend fun awaitOpen() { AndroidServerIdentity.verified.first { owner in it } }
+            }
+            val reads = mutableListOf<String>()
+            try {
+                Fixture(accountOwner = owner, serverContact = contact, localPlans = { null }, loadSong = { reads += it; song(it) }).use { f ->
+                    kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                    AndroidPlaybackController.notifyServerAvailable(owner, false)
+                    assertFalse(contact.isOpen(), "Control: $action starts with chosen contact closed")
+                    fun select(rawId: String) = f.controller.playQueue(
+                        (if (rawId == "first") listOf("first", "second") else listOf(rawId)).map {
+                            AndroidTrack(owner, it, it, null, "Album", 40_000)
+                        },
+                        0, AndroidQueueSource.Album, "Album", "album")
+                    select("first")
+                    assertTrue(f.controller.state.value.needsReconnect, "Control: $action acts on a held selection")
+                    assertEquals(listOf("first", "second"), f.controller.state.value.queue.map { it.track.rawId })
+                    assertTrue(reads.isEmpty() && f.prepared.isEmpty())
+                    when (action) {
+                        "pause" -> f.controller.pause()
+                        "stop" -> f.controller.stop()
+                        "new-selection" -> select("later")
+                        "next" -> f.controller.next()
+                        "jump" -> f.controller.jumpTo(f.controller.state.value.queue[1].queueEntryId)
+                        "replace-server" -> AndroidServerIdentity.accept(RuntimeEnvironment.getApplication(), owner,
+                            ServerIdentityPolicy.identity("fixture", "replacement-instance"))
+                    }
+                    if (action != "replace-server") kotlinx.coroutines.runBlocking {
+                        assertNull(AndroidServerIdentity.validate(owner) { null })
+                    }
+                    AndroidPlaybackController.notifyServerAvailable(owner, true)
+                    settle(5)
+                    when (action) {
+                        "pause" -> {
+                            assertEquals(listOf("first"), f.prepared.map { it.itemId.rawId })
+                            assertFalse(f.probe.requested, "Pause must remain paused when contact returns")
+                        }
+                        "new-selection", "next", "jump" -> {
+                            assertEquals(listOf(if (action == "new-selection") "later" else "second"), f.prepared.map { it.itemId.rawId })
+                            assertTrue(f.probe.requested)
+                        }
+                        else -> {
+                            assertTrue(f.prepared.isEmpty() && reads.isEmpty(), "$action cannot revive old Play")
+                            assertFalse(f.probe.requested)
+                        }
+                    }
+                    if (action == "replace-server") assertEquals(DomainError.Protocol.ServerIdentityChanged,
+                        f.controller.state.value.error, "Explicit consent must not reauthorize the held old IDs")
+                }
+            } finally { AndroidServerIdentity.requireValidation(owner) }
+        }
+    }
+
     @Test fun identityRejectionDuringMetadataCannotRenameThePriorQueue() {
         val release = kotlinx.coroutines.CompletableDeferred<Unit>()
         val contact = ChosenContact().also { it.open.value = true }

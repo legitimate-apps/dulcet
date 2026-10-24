@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
@@ -1085,6 +1086,7 @@ private fun TvAlbumScreen(
     fun play(current: AndroidLibraryPublication, trackRawId: String?, shuffle: Boolean) {
         // A note that a track plays only on reconnect no longer applies.
         note = null
+        android.util.Log.d("DulcetAlbumPlay", "library handoff items=${current.items.size} state=${current.itemsState} playable=${current.playableTracks(provider).size}")
         playAlbum(plays, provider, current, trackRawId, shuffle) { showNowPlaying(context) }
     }
     // tv-material buttons can keep an onClick from an earlier composition: they play what is shown now.
@@ -1973,9 +1975,16 @@ internal fun TvAction(
     onClick: () -> Unit,
 ) {
     Button(
-        onClick = onClick,
+        onClick = {
+            if (tag == "album.play") android.util.Log.d("DulcetAlbumPlay", "button clicked")
+            onClick()
+        },
         enabled = enabled,
-        modifier = modifier.tvFocus(tag, default).semantics { description?.let { contentDescription = it } },
+        modifier = modifier.tvFocus(tag, default).onPreviewKeyEvent { event ->
+            if (tag == "album.play" && event.key == Key.DirectionCenter)
+                android.util.Log.d("DulcetAlbumPlay", "button centre type=${event.type}")
+            false
+        }.semantics { description?.let { contentDescription = it } },
     ) {
         if (icon != null) Icon(icon, null, Modifier.size(20.dp))
         Text(label, Modifier.padding(start = if (icon != null) 8.dp else 0.dp))
