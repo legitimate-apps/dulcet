@@ -103,6 +103,7 @@ extensions.configure<ApplicationExtension> {
     // Emulator playback proofs, shared with the TV app. They require the disposable server and
     // fail, never skip, without it (see DisposableServerProbe).
     sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("android/emulator-conformance"))
+    sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("android/compose-proof-support"))
 }
 
 // A failing test must say WHY in the console. Gradle's default console format is SHORT, which
