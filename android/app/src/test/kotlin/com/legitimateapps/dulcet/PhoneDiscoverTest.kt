@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
@@ -69,6 +70,21 @@ class PhoneDiscoverTest {
             assertEquals("new",sources.last().queries.lastOrNull(),
                 "A restored field must drive the new reader, rather than showing a query with no results")
         }
+    }
+    @Test fun replacingAVisibleReaderSubmitsTheQueryToThatReader() {
+        val active=mutableStateOf(session)
+        val replacementSource=FakeDiscoverWishlistSource()
+        val replacement=DiscoverWishlistSession(replacementSource)
+        try {
+            compose.setContent { MaterialTheme { PhoneDiscoverSearch(active.value,{}, {}, {}) } }
+            compose.onNodeWithTag("discover.search.field").performTextInput("new")
+            compose.runOnIdle { active.value=replacement }
+            compose.onNodeWithTag("discover.search.field").assertTextContains("new")
+            compose.runOnIdle {
+                assertEquals("new",replacementSource.queries.lastOrNull(),
+                    "The retained field must drive the current reader rather than its previous publication")
+            }
+        } finally { replacement.close() }
     }
     @Test fun busyStaleAndOfflineKeepRowsVisible() {
         source.state=source.state.copy(connection="offline",query="music",groups=listOf(DiscoverGroup("album",source.page(listOf(source.item("album")),stale=true),false,DiscoverFailure("rate-limited",System.currentTimeMillis()+120_000,true))))

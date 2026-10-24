@@ -68,7 +68,9 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
     LaunchedEffect(session) {
         // Saved UI state can outlive its reader after activity recreation. Restore the
         // request too, so a populated field cannot sit above an empty replacement session.
-        if (query != state.query) session.setQuery(query)
+        // collectAsState can retain the previous flow's frame during a session handoff.
+        // Compare the current reader directly before deciding its request is already set.
+        if (query != session.publication.value?.query) session.setQuery(query)
         session.refreshWishlist(WishFilter())
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).testTag("discover.search.surface")) {
