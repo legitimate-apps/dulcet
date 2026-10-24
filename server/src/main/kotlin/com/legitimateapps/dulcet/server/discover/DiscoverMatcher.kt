@@ -6,7 +6,7 @@ import java.text.Normalizer
 import java.util.Locale
 
 /** Pure local matching. Edition metadata is supplied by the service, outside any DB transaction. */
-class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private val rejected:(String,DiscoverItem,LibraryRef)->Boolean={_,_,_->false}) {
+class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private val rejectedForUser:((String)->(DiscoverItem,LibraryRef)->Boolean)?=null,private val rejected:(String,DiscoverItem,LibraryRef)->Boolean={_,_,_->false}) {
     fun normalizeName(value:String)=Normalizer.normalize(value,Normalizer.Form.NFKC).lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}\\p{M}]+")," ").trim().replace(Regex("\\s+")," ")
     private fun same(a:String?,b:String?)= !a.isNullOrBlank() && !b.isNullOrBlank() && normalizeName(a)==normalizeName(b)
     private val versionWords=setOf("live","remix","demo","acoustic","instrumental")
@@ -16,24 +16,37 @@ class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private
     }
     private fun identifier(value:String?)=mbidOrNull(value)
     private data class Track(val id:String,val albumId:String,val title:String,val artist:String,val album:String,val albumArtist:String,val recording:String?,val release:String?,val group:String?,val disc:Int?,val position:Int?)
-    fun match(userId:String,item:DiscoverItem,editions:List<Edition>?=null):Availability {
+    /** One request owns one lazy visible-catalog snapshot, never shared across users or requests. */
+    fun session(userId:String)=MatchingSession(userId)
+    fun match(userId:String,item:DiscoverItem,editions:List<Edition>?=null):Availability = session(userId).match(item,editions)
+
+    inner class MatchingSession internal constructor(private val userId:String) {
+        private val rejection by lazy { rejectedForUser?.invoke(userId) ?: { item:DiscoverItem,ref:LibraryRef -> rejected(userId,item,ref) } }
+        private val artists by lazy { db.read {
+            rejection
+            query("SELECT a.id,a.name,a.mbz_artist_id FROM artist a WHERE ${access.catalogPredicate(userId,"artist","a")}") { Triple(it.string("id"),it.string("name"),it.stringOrNull("mbz_artist_id")) }
+        } }
+        private val tracks by lazy { db.read {
+            rejection
+            query("SELECT t.id,t.album_id,t.title,t.artist,t.album,t.album_artist,t.mbz_recording_id,t.mbz_album_id,t.mbz_release_group_id,t.disc_no,t.track_no FROM track t WHERE ${access.catalogPredicate(userId,"track","t")}") { t ->
+                Track(t.string("id"),t.string("album_id"),t.string("title"),t.string("artist"),t.string("album"),t.string("album_artist"),t.stringOrNull("mbz_recording_id"),t.stringOrNull("mbz_album_id"),t.stringOrNull("mbz_release_group_id"),t.intOrNull("disc_no"),t.intOrNull("track_no"))
+            }
+        } }
+        private val albums by lazy { tracks.groupBy { it.albumId }.values }
+        fun match(item:DiscoverItem,editions:List<Edition>?=null):Availability {
         val target=item.externalIds[item.kind.registryKey]?.let(::identifier) ?: return Availability()
         if(item.kind==DiscoverKind.Artist) {
-            val rows=db.read { query("SELECT a.id,a.name,a.mbz_artist_id FROM artist a WHERE ${access.catalogPredicate(userId,"artist","a")}") { Triple(it.string("id"),it.string("name"),it.stringOrNull("mbz_artist_id")) } }
-            val matches=rows.mapNotNull { (id,name,mbid) ->
+            val matches=artists.mapNotNull { (id,name,mbid) ->
                 val by=if(!mbid.isNullOrBlank()) if(identifier(mbid)==target) "mbid" else null else if(same(name,item.title)) "name" else null
-                if(by==null || rejected(userId,item,LibraryRef(id,"artist"))) null else LibraryRef(id,"artist") to by
+                if(by==null || rejection(item,LibraryRef(id,"artist"))) null else LibraryRef(id,"artist") to by
             }
             if(matches.isEmpty())return Availability()
             return Availability("held",matches.map { it.first },if(matches.any { it.second=="mbid" })"mbid" else "name")
         }
-        val tracks=db.read { query("SELECT * FROM track t WHERE ${access.catalogPredicate(userId,"track","t")}") { t ->
-            Track(t.string("id"),t.string("album_id"),t.string("title"),t.string("artist"),t.string("album"),t.string("album_artist"),t.stringOrNull("mbz_recording_id"),t.stringOrNull("mbz_album_id"),t.stringOrNull("mbz_release_group_id"),t.intOrNull("disc_no"),t.intOrNull("track_no"))
-        } }
         if(item.kind==DiscoverKind.Song) {
             val matches=tracks.mapNotNull { t ->
                 val by=if(!t.recording.isNullOrBlank()) if(identifier(t.recording)==target && sameVersion(t.title,item.title)) "mbid" else null else if(same(t.title,item.title) && same(t.artist,item.artist)) "name" else null
-                if(by==null || rejected(userId,item,LibraryRef(t.id,"track")))null else LibraryRef(t.id,"track") to by
+                if(by==null || rejection(item,LibraryRef(t.id,"track")))null else LibraryRef(t.id,"track") to by
             }
             if(matches.isEmpty())return Availability()
             // Name-only ambiguities cannot choose a recording automatically.
@@ -42,9 +55,8 @@ class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private
         }
         val editionRows=editions.orEmpty().filter { it.releaseGroupMbid==target && it.tracks.isNotEmpty() }
         data class Candidate(val tracks:List<Track>,val by:String)
-        val candidates=tracks.groupBy { it.albumId }.values.mapNotNull { local ->
+        val candidates=albums.mapNotNull { local ->
             val ref=LibraryRef(local.first().albumId,"album")
-            if(rejected(userId,item,ref))return@mapNotNull null
             val groups=local.mapNotNull { it.group?.takeIf(String::isNotBlank) }.toSet()
             val releases=local.mapNotNull { it.release?.takeIf(String::isNotBlank) }.toSet()
             val by=when {
@@ -53,6 +65,7 @@ class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private
                 local.all { same(it.album,item.title) && same(it.albumArtist,item.artist) }->"name"
                 else->null
             } ?: return@mapNotNull null
+            if(rejection(item,ref))return@mapNotNull null
             Candidate(local,by)
         }
         if(candidates.isEmpty())return Availability()
@@ -64,6 +77,7 @@ class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private
         val complete=best.complete && !ambiguous
         val refs=if(complete) proofs.filter { it.complete }.map { LibraryRef(it.candidate.tracks.first().albumId,"album") }.distinct() else listOf(LibraryRef(best.candidate.tracks.first().albumId,"album"))
         return Availability(if(complete)"held" else "partlyHeld",refs,best.candidate.by,best.matched,best.edition.tracks.size,best.edition.releaseMbid,if(ambiguous)"unknown" else "known")
+    }
     }
     private fun assign(local:List<Track>,slots:List<EditionTrack>):Int {
         val available=local.toMutableList();val filled=HashSet<Int>()

@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.test.core.app.ActivityScenario
@@ -126,34 +125,16 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         // searches can dispose an initially empty shelf before its live read arrives.
                         if (!isTelevision()) compose.onNodeWithTag("listenNow.surface")
                             .performScrollToIndex(if (observer.state().hasSession) 3 else 2)
-                        var direction = KeyEvent.KEYCODE_DPAD_DOWN
-                        var lastMove = 0L
-                        try {
+                        val recentPlaylist = hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists"))
+                        if (isTelevision()) {
+                            compose.focusTvListenNowItem("recentPlaylists", recentPlaylist)
+                            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                        } else {
                             compose.waitUntil("recent playlists shelf renders", 30_000) {
-                                val found = compose.onAllNodes(hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists")))
-                                    .fetchSemanticsNodes().isNotEmpty()
-                                // Revisit upper shelves if their live answer arrived after the
-                                // remote passed them. A one-way sweep can finish at Random while
-                                // the wanted lazy row is no longer composed.
-                                val now = android.os.SystemClock.elapsedRealtime()
-                                if (!found && isTelevision() && now - lastMove >= 500) {
-                                    val before = focusedTag()
-                                    if (direction == KeyEvent.KEYCODE_DPAD_UP && before == "listenNow.refresh") {
-                                        direction = KeyEvent.KEYCODE_DPAD_DOWN
-                                    }
-                                    remote(direction)
-                                    val after = focusedTag()
-                                    if (before == after) direction = if (direction == KeyEvent.KEYCODE_DPAD_DOWN)
-                                        KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN
-                                    lastMove = android.os.SystemClock.elapsedRealtime()
-                                }
-                                found
+                                compose.onAllNodes(recentPlaylist).fetchSemanticsNodes().isNotEmpty()
                             }
-                        } catch (failure: Throwable) {
-                            println(compose.onRoot(useUnmergedTree = true).printToString())
-                            throw failure
+                            activate(compose.onNode(recentPlaylist))
                         }
-                        activate(compose.onNode(hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists"))))
                         // TV renders the tagged title before its asynchronous playlist read finishes.
                         compose.waitUntil("Home opens the expected playlist", 30_000) {
                             compose.onAllNodes(hasTestTag("playlist.title") and hasText(name))
@@ -192,11 +173,6 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
             throw failure
         }
     }
-
-    private fun focusedTag(): String = compose.onAllNodes(
-        SemanticsMatcher.expectValue(SemanticsProperties.Focused, true), useUnmergedTree = true,
-    ).fetchSemanticsNodes().mapNotNull { it.config.getOrElse(SemanticsProperties.TestTag) { "" }.takeIf(String::isNotEmpty) }
-        .joinToString(",")
 
     private fun remote(key: Int) {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(key)

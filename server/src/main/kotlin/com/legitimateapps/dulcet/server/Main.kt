@@ -121,7 +121,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val listenBrainz = com.legitimateapps.dulcet.server.discover.ListenBrainzClient(discoverHttp,discoverCache,config.discover)
     val discoverArtwork = com.legitimateapps.dulcet.server.discover.CoverArtClient(discoverHttp,discoverCache,config.discover,testingOverride={config.testMode && testing.discoverArtworkAllowLoopback})
     val wishlist = com.legitimateapps.dulcet.server.wishlist.WishlistService(this)
-    val discoverMatcher = com.legitimateapps.dulcet.server.discover.DiscoverMatcher(db,access) { user,item,pair -> wishlist.isRejected(user,com.legitimateapps.dulcet.server.wishlist.ExternalTarget(item.kind,item.externalIds),pair) }
+    val discoverMatcher = com.legitimateapps.dulcet.server.discover.DiscoverMatcher(db,access,rejectedForUser=wishlist::rejectionLookup)
     val wishFulfilment = com.legitimateapps.dulcet.server.wishlist.WishFulfilment(this)
     val discover = com.legitimateapps.dulcet.server.discover.DiscoverService(this)
     val apiWishlist = com.legitimateapps.dulcet.server.v1.ApiWishlist(this)
