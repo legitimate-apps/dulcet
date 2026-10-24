@@ -7924,12 +7924,18 @@ argue against the recorded rationale — not as filling in a blank.
 Android phone and TV library queues accept tracks with a known duration regardless of whether
 there is a title, matching the Apple reader adapter. Missing, empty and whitespace-only titles
 use the localized Android `playback_untitled` string, "Untitled", in the queue, Now Playing,
-Media3 session and notification. Cached, fresh and downloaded metadata follow the same policy.
+Media3 session and notification. Reader and search rows apply the same localized display fallback
+at presentation; cached and fresh records preserve the server title. A later real title updates
+the active Media3 item without restarting playback. New Android queue admissions require a known
+duration, including raw-ID selections after metadata resolution. Existing and restored queue
+entries remain playable when duration is absent; the admission rule does not invalidate saved plays.
+Durationless reader and search rows show why playback is unavailable, and an explicit filtered
+selection never substitutes another track.
 Play and Shuffle use the exact `playableTracks` list that starts playback; Play Next, Add to
 Queue, playlists and system media browsing use the same duration and offline availability
 requirements. Android continues to exclude tracks unavailable offline from a new queue, while
-Apple's adapter labels them `metadataOnly` for its queue's offline policy. Apple's existing
-nil/empty title fallback is retained; Android also treats whitespace as absent display text.
+Apple's adapter labels them `metadataOnly` for its queue's offline policy. Apple reader and search use their shared localized `reader.untitled` value, with English
+"Untitled". Both platforms treat whitespace-only titles as absent display text.
 
 
 **2026-10-23 — Retain Android Play across a chosen connection's transient validation loss.**

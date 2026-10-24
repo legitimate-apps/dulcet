@@ -376,7 +376,7 @@ private let readerAccount = DulcetLibraryReaderAccount(
 private func item(
     _ kind: String = "track",
     _ rawID: String,
-    title: String = "Title",
+    title: String? = "Title",
     favourite: Bool? = nil,
     rating: Int? = nil,
     playability: String? = "streamable",
@@ -498,6 +498,17 @@ func queriesNameTheFacadeRequestKinds() {
     #expect(DulcetLibraryQuery.homeRow(.recentlyPlayed).request.listType == "recent")
     #expect(DulcetLibraryQuery.songsByGenre("Jazz").request.genre == "Jazz")
     #expect(DulcetLibraryQuery.album(rawID: "al-1").request.rawID == "al-1")
+}
+
+@Test
+func readerTitlesUseTheSameLocalizedFallbackAsSearch() {
+    for title: String? in [nil, "", "  ", "\t\n", "A real title"] {
+        let track = item("track", "untitled", title: title)
+        let expected = title == "A real title" ? "A real title" : DulcetStrings.readerUntitled
+        #expect(track.displayTitle == expected)
+        #expect(track.playableTrack?.title == expected)
+        #expect(item("track", "unknown-duration", title: title, duration: nil).playableTrack == nil)
+    }
 }
 
 @Test
