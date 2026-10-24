@@ -558,7 +558,7 @@ background picker rows still show their capped choices. An offscreen picker, a d
 Original match, and an option merely awaiting layout were not established by this evidence;
 the discrepancy between event targeting and the snapshots remains unexplained.
 
-The test helper now queries the native menu collection's exact-label button, excludes both
+The 2026-10-22 helper change queries the native menu collection's exact-label button, excludes both
 background picker identifiers, and requires existence, finite positive bounds and live
 hittability within its existing single five-second option budget. It still performs the
 ordinary tap and reads the chosen picker value back. No production behavior, deadline or
@@ -569,6 +569,34 @@ playback against the server's 96 kbps transcoded stream from the higher-bitrate 
 and restores both choices to Original. The complete iOS UI-test target builds. This checks
 the stronger target preconditions and retained end-to-end behavior; it does not establish
 the underlying activation-point cause. Final-head full CI remains required.
+
+OBSERVED in the follow-up iPhone leg of full Apple run `40058182881` on `9c00fdd7`:
+the same case failed the readiness check while restoring the first Original, after its
+capped-stream assertions. One predicate evaluation is logged: existence at test time
+229.27 seconds, frame lookup at 230.14 and the next lookup at 232.23, before failure
+snapshotting at 233.42. The snapshot again shows Original at finite 250-by-42 bounds.
+ASSUMED: the five-second budget leaves too few complete readiness evaluations when
+individual queries take one to four seconds. The snapshot does not establish a hittable
+activation target or the underlying reason that this presentation remained unusable.
+
+The 2026-10-24 helper gives each native menu presentation a 30-second readiness budget,
+with at most two presentations. If the first never becomes usable, it taps the navigation
+bar outside the menu, requires the option to disappear within ten seconds, and reopens
+the same picker once. It preserves exact-label targeting, the finite positive bounds and
+live-hittability checks, the ordinary option tap, chosen-value readback, and every capped
+playback and server-stream assertion. No production app behavior changes.
+
+OBSERVED locally on an iPhone 17 Pro / iOS 26.5 simulator with disposable Navidrome
+0.63.2: the exact case passes one test with zero failures in 130.433 seconds. It observes
+the 123 kbps source transcoded as MP3 at 96 kbps and restores both choices to Original.
+A second local run temporarily forces the first readiness predicate to remain false for
+all four selections, using a 0.3-second first-presentation budget and the final 30-second
+budget on the reopened menu. All four dismiss-and-reopen paths execute; the exact case
+passes one test with zero failures in 148.714 seconds, again recording MP3 at 96 kbps
+and restoring both Original values. The fault injection is removed from the final source.
+Both result bundles pass the named-method execution guard. This proves the retained
+end-to-end assertions and bounded recovery path; it does not identify the original native
+activation-point defect or reproduce hosted query latency on demand.
 
 ### Account connection after a timed-out retry (2026-10-22)
 

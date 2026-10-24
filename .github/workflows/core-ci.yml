@@ -277,7 +277,10 @@ jobs:
   # Results reach the required core-ci job, which fails unless both legs passed.
   android-emulator:
     name: android-emulator (${{ matrix.surface }}${{ matrix.rep != 1 && format(' rep {0}', matrix.rep) || '' }})
-    runs-on: ubuntu-latest
+    # Pinned for the same reason as core-build: the disposable server's media tools step installs
+    # Ubuntu Noble's exact FFmpeg and checks the release first, so on the Ubuntu 26 image that
+    # ubuntu-latest moves to, this leg would fail before the emulator boots.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     # One attempt output PER SURFACE, because a matrix combines its members' outputs into one set:
     # a single `attempt` would hold whichever member finished last, which after a partial re-run is
