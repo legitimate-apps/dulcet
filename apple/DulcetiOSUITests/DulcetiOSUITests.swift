@@ -869,9 +869,9 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The \(tabTitle) tab must become selected: " + app.debugDescription)
             return false
         }
-        // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
-        // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
-        let row = app.staticTexts[sidebarIdentifier].firstMatch
+        // The explicit sidebar button owns the destination identifier. Its child label carries
+        // only the visible title, so resolve the actionable control rather than a text child.
+        let row = app.buttons[sidebarIdentifier].firstMatch
         guard row.waitForExistence(timeout: 5), row.isHittable else {
             XCTFail("The \(tabTitle) row must be visible in the sidebar: " + app.debugDescription)
             return false
