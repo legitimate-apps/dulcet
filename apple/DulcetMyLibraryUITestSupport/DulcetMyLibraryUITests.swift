@@ -126,11 +126,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch()
 #endif
         try select("library")
+        // The compact root's destination rows precede its lazy Recently Added grid.
+        // Relaunch resets its scroll position; reveal the actual tile before observing it.
+        revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
         app.terminate()
         try launch(connect: false)
         try select("library")
+        revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
         let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
