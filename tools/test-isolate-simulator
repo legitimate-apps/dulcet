@@ -143,6 +143,11 @@ import textwrap
 step_name = 'Confirm booted iPad remains an Xcode destination'
 assert '      - name: ' + step_name in workflow, 'missing post-boot Xcode destination acknowledgment'
 confirmation = workflow.split('      - name: ' + step_name, 1)[1].split('      - name: ', 1)[0]
+# The hosted failure spent 63 seconds starting its shell before the resolver's own
+# 120-second budget. Preserve time to emit that resolver's terminal diagnostic as well.
+import re
+confirmation_seconds = int(re.search(r'timeout-minutes: (\d+)', confirmation).group(1)) * 60
+assert confirmation_seconds >= 120 + 65 + 30, 'post-boot confirmation cap omits observed shell startup and diagnostic overhead'
 assert workflow.index('      - name: Boot iPadOS simulator before the layout launch') < workflow.index('      - name: ' + step_name) < workflow.index('      - name: Launch iPadOS shell and prove layout plus stored Keychain attributes')
 assert 'IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}' in confirmation
 confirmation_code = textwrap.dedent(confirmation.split('        run: |\n', 1)[1])

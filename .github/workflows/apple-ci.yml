@@ -538,7 +538,9 @@ jobs:
           # this prerequisite can never reject a destination that would in fact have run the test.
           echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true app-launched=false"
       - name: Confirm booted iPad remains an Xcode destination
-        timeout-minutes: 3
+        # The resolver owns one 120-second inventory/discovery deadline. Run 40083176763
+        # also spent 63 seconds starting this shell; leave room for its terminal diagnostic.
+        timeout-minutes: 4
         env:
           IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
         run: |
