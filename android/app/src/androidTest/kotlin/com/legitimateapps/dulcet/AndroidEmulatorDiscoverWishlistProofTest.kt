@@ -80,8 +80,21 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             fixture.effect(delayed,"searchDulcetDiscover",responsePayload="new")
             fixture.effect(delayed,"searchDulcetDiscover",responsePayload="old")
             compose.waitForIdle()
+            var obsoleteObserved=false
+            var transitionRecorded=false
+            await("positive new-query artist after both response acknowledgements") {
+                val visible=allVisibleText()
+                obsoleteObserved=obsoleteObserved || visible.contains("Obsolete old query")
+                if (!exists("discover.item.artist.0") && !transitionRecorded) {
+                    transitionRecorded=true
+                    val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
+                    File(directory,"query-transition-semantics.txt").writeText(compose.onRoot(useUnmergedTree=true).printToString())
+                }
+                exists("discover.search.field") && text("discover.search.field").contains("new") &&
+                    exists("discover.item.artist.0") && text("discover.item.artist.0").contains("Fixture Artist")
+            }
+            check(!obsoleteObserved && !allVisibleText().contains("Obsolete old query")) {"An acknowledged old response replaced the new query rows"}
             check(text("discover.search.field").contains("new"))
-            check(!allVisibleText().contains("Obsolete old query")) {"An acknowledged old response replaced the new query rows"}
             check(text("discover.item.artist.0").contains("Fixture Artist")) {"No positive new-query artist row"}
             val beforeRecreation=fixture.cursor()
             activity.recreate()
