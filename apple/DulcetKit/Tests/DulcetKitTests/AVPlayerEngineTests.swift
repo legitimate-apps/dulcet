@@ -2530,13 +2530,22 @@ struct AVPlayerEngineTests {
 
         engine.setEventListener { events.append($0) }
 
-        #expect(events.snapshot.count == 1)
-        guard case let .observationResynced(attemptID, snapshot) = events.snapshot[0] else {
+        // The resync is delivered inside the call. The attempt is still preparing, so its own
+        // progress may follow before the events are read (run 40042810849 read two); exactly one
+        // event is not the contract, the resync first and only once is.
+        let received = events.snapshot
+        try #require(!received.isEmpty, "the resync must arrive before setEventListener returns")
+        guard case let .observationResynced(attemptID, snapshot) = received[0] else {
             Issue.record("late listener did not receive ObservationResynced first")
             return
         }
         #expect(attemptID == playbackPlan.attemptID)
         #expect(snapshot.status == .preparing || snapshot.status == .ready)
+        let resyncs = received.filter { event in
+            if case .observationResynced = event { return true }
+            return false
+        }
+        #expect(resyncs.count == 1, "one attach resynchronizes once: \(received)")
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 

@@ -2179,14 +2179,15 @@ final class DulcetiOSUITests: XCTestCase {
         print("DULCET DRAG FROM MENU before=\(before) after=\(after) drags=\(attempts) menu-left-open-after=\(menuLeftOpen)")
     }
 
-    /// Opens the album from its tile and plays its last track, so the bar is there to drop onto
-    /// and Up Next holds nothing of the album yet. Answers the bar.
+    /// Plays the album's last track, then restores that saved selection paused so a short
+    /// fixture cannot finish while a drag is counted. Answers the restored bar.
     @MainActor
     private func startPlayingTheAlbumsLastTrack(
         album: String,
         last: String,
         tile: XCUIElement,
-        in app: XCUIApplication
+        in app: XCUIApplication,
+        compact: Bool
     ) -> XCUIElement? {
         tile.tap()
         let row = app.buttons.matching(identifier: "dulcet.reader.track")
@@ -2196,27 +2197,49 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         row.tap()
-        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
-        guard bar.waitForExistence(timeout: 15) else {
-            XCTFail("Playing a track must show the now-playing bar: " + app.debugDescription)
+        // The loading bar exists before playback starts. In run 39938927349 its label
+        // was still Play at the conditional Pause check, so no toggle touch was sent; it
+        // became Pause while the helper waited for Play. Prove the selected track is playing
+        // before terminating, then use the same paused restoration as the track-menu proof.
+        guard waitForMiniPlayer(track: last, playing: true, in: app, timeout: 15) else {
+            XCTFail("The album's last track must actually start before its queue is restored paused: " + app.debugDescription)
             return nil
         }
-        // Paused, so the queue stays as it is: the corpus's tracks last about thirty seconds, and
-        // a track that ends while the proof is still working ends the queue, after which a drop
-        // starts playing what it carries and the count of what Up Next holds is no longer the
-        // drop's (OBSERVED on a loaded host: the canary ended, the first album became the playing
-        // track and the second drag's tracks followed it).
-        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
-        guard playPause.waitForExistence(timeout: 10) else {
-            XCTFail("The bar must offer play/pause: " + app.debugDescription)
+        app.terminate()
+        app.launch()
+        guard awaitLiveAccountConnection(in: app, compact: compact) else {
+            XCTFail("The restored queue's account must reconnect before reading its album")
             return nil
         }
-        if playPause.label == "Pause" { playPause.tap() }
-        guard waitForLabel("Play", of: playPause, timeout: 10) else {
-            XCTFail("Pause on the bar must reach playback; label stayed \(playPause.label)")
+        guard openLibraryAlbum(album, in: app, compact: compact) else { return nil }
+        // Reading the album supplies the catalog needed to resolve the saved queue selection.
+        guard waitForMiniPlayer(track: last, playing: false, in: app, timeout: 10) else {
+            XCTFail("The saved queue must restore the album's last track paused before a drag: " + app.debugDescription)
             return nil
         }
-        return bar
+        print("DULCET ALBUM DRAG PRECONDITION track=\(last) started=true restored-paused=true")
+        return app.buttons.matching(identifier: "dulcet.mini-player.open").element(boundBy: 0)
+    }
+
+    /// The title and transport must describe the same publication. A loading bar or an older
+    /// restored selection cannot supply the playing or paused precondition of a drag proof.
+    @MainActor
+    private func waitForMiniPlayer(track: String, playing: Bool, in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        repeat {
+            if let window = try? app.windows.element(boundBy: 0).snapshot() {
+                let elements = snapshotElements(in: window)
+                let bars = elements.filter { $0.elementType == .button && $0.identifier == "dulcet.mini-player.open" }
+                let controls = elements.filter { $0.elementType == .button && $0.identifier == "dulcet.mini-player.play-pause" }
+                if bars.count == 1, controls.count == 1,
+                   bars[0].label.contains(track), controls[0].isEnabled,
+                   controls[0].label == (playing ? "Pause" : "Play") {
+                    return true
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return false
     }
 
     /// A playlist row dragged out of its open context menu onto the bar adds every track of the
@@ -2263,7 +2286,7 @@ final class DulcetiOSUITests: XCTestCase {
         let tile = { app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch }
         guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
-              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app),
+              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: compact),
               openLibraryPlaylistsFromAnywhere(in: app, compact: compact) else { return }
         let row = { app.buttons.matching(identifier: "dulcet.library.playlist")
             .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch }
@@ -2301,7 +2324,7 @@ final class DulcetiOSUITests: XCTestCase {
         let tile = { app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch }
         guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
-              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app),
+              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: true),
               openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
         let field = app.textFields["dulcet.search.field"].firstMatch
         guard field.waitForExistence(timeout: 10) else {
@@ -2549,22 +2572,33 @@ final class DulcetiOSUITests: XCTestCase {
     /// element it opened from. A fixed point is not clear on iPad, where the menu opens beside
     /// its row wherever the row is: there the tap pressed a menu item (INFERRED from two CI runs,
     /// in which the playlist row proof's Up Next read exactly as the playlist's Play and then its
-    /// Shuffle leave it, and playback ran under the count).
+    /// Shuffle leave it, and playback ran under the count). On iPhone the menu's column covers
+    /// every fixed point, and tapping the first one anyway chose the album's Shuffle: the album
+    /// drag proof then read Up Next as Shuffle leaves it and the bar as playing (run 40030838091).
+    /// The middle of the wider gap beside the column is outside it; with no clear point the proof
+    /// fails here rather than pressing a menu item.
     @MainActor
     private func closeContextMenu(marker menuMarker: String, openedFrom source: CGRect, in app: XCUIApplication) {
         let window = app.frame
         let item = app.buttons[menuMarker].firstMatch
         let column = item.exists ? item.frame.insetBy(dx: -24, dy: 0) : .null
         let lifted = source.insetBy(dx: -24, dy: -24)
-        let candidates = [
-            CGVector(dx: 0.92, dy: 0.25), CGVector(dx: 0.92, dy: 0.6), CGVector(dx: 0.6, dy: 0.25),
-            CGVector(dx: 0.6, dy: 0.6), CGVector(dx: 0.4, dy: 0.25), CGVector(dx: 0.4, dy: 0.6),
-        ]
+        var across: [CGFloat] = [0.92, 0.6, 0.4]
+        if !column.isNull {
+            let left = column.minX - window.minX, right = window.maxX - column.maxX
+            let gap = left > right ? window.minX + left / 2 : column.maxX + right / 2
+            across.append((gap - window.minX) / window.width)
+        }
+        let candidates = across.flatMap { dx in [CGVector(dx: dx, dy: 0.25), CGVector(dx: dx, dy: 0.6)] }
         let clear = candidates.first { offset in
             let point = CGPoint(x: window.minX + window.width * offset.dx, y: window.minY + window.height * offset.dy)
             return (column.isNull || point.x < column.minX || point.x > column.maxX) && !lifted.contains(point)
         }
-        app.coordinate(withNormalizedOffset: clear ?? candidates[0]).tap()
+        guard let clear else {
+            XCTFail("No point beside the open menu (\(menuMarker)) is clear of it and of its source: " + app.debugDescription)
+            return
+        }
+        app.coordinate(withNormalizedOffset: clear).tap()
     }
 
     /// Opens `element`'s context menu, requires `menuMarker` in it, and closes it with a tap
@@ -2616,11 +2650,14 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("Library must show \(album): " + app.debugDescription)
             return
         }
-        guard requireContextMenu(on: tile(), marker: "Add to Playlist\u{2026}", in: app) else { return }
-
-        guard let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app) else { return }
+        guard let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: compact) else { return }
+        // The menu is proved in the process that drags, after the helper's relaunch, as the
+        // playlist row proof does. Proved only before the relaunch, the drag was that process's
+        // first long press, and on iPad it opened the menu without lifting the tile (run
+        // 39991469062, both attempts: drags=2 menu-left-open-after=1).
         guard openAlphabeticalAlbumGrid(in: app, compact: compact),
               tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
+              requireContextMenu(on: tile(), marker: "Add to Playlist\u{2026}", in: app),
               let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: compact) else { return }
         var nativeMenuReady = 0
         let prepareSource: ((Int) -> XCUIElement?)? = compact ? { attempt in
@@ -2892,19 +2929,29 @@ final class DulcetiOSUITests: XCTestCase {
                 return
             }
             guard openLibraryPlaylists(in: app, compact: expectedCompact), openPlaylistRow(known, in: app) else { return }
-            guard let heldRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 15, until: { $0.held >= 1 }) else {
+            guard let heldRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 15, until: { $0.isPending }) else {
                 XCTFail("The page must have asked for the playlist, and the proxy must be holding that read")
                 return
             }
             guard openRenamePrompt(in: app) else { return }
+            // A historical arrival does not prove that the read is still waiting. Run
+            // 39728604012 exhausted its hold during a slow Rename lookup. Refuse to call that
+            // the known-gone order, and retain the proxy's original safety limit.
+            guard let pending = playlistHoldObservations(proxyRequest("GET",
+                "/__dulcet/playlist-observations?playlist=\(knownID)", proxy: proxy)), pending.isPending else {
+                XCTFail("The playlist read must still be pending under the open Rename prompt")
+                return
+            }
             guard restCall("deletePlaylist", [URLQueryItem(name: "id", value: knownID)], configuration: configuration) != nil,
                   awaitServerPlaylistAbsent(knownID, configuration: configuration) else {
                 XCTFail("The other client's delete must reach the server before the held read")
                 return
             }
             guard proxyPlaylistHold(knownID, on: false, proxy: proxy) != nil,
-                  let releasedRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 10, until: { $0.released >= 1 }) else {
-                XCTFail("The held read must be released to the server")
+                  let releasedRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 10, until: {
+                      !$0.holding && $0.held > 0 && $0.released == $0.held && $0.timedOut == 0
+                  }) else {
+                XCTFail("Every held read must reach the server by explicit release, with none timing out")
                 return
             }
             // The page says the playlist is gone before the rename is confirmed: the order is met,
@@ -3128,23 +3175,69 @@ final class DulcetiOSUITests: XCTestCase {
     /// Rename… from the playlist page's menu, leaving its prompt open.
     @MainActor
     private func openRenamePrompt(in app: XCUIApplication) -> Bool {
-        let more = app.buttons["dulcet.playlist.more"].firstMatch
+        let more = app.buttons.matching(identifier: "dulcet.playlist.more").element(boundBy: 0)
         guard more.waitForExistence(timeout: 10) else {
             XCTFail("The person's own playlist must offer its menu: " + app.debugDescription)
             return false
         }
         more.tap()
-        let rename = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Rename")).firstMatch
-        guard rename.waitForExistence(timeout: 5) else {
-            XCTFail("The menu must offer Rename: " + app.debugDescription)
+        // Resolve the menu action itself, with an indexed query. A broad label firstMatch
+        // spent 25 seconds resolving this action in run 39728604012, consuming the held read.
+        let rename = app.buttons.matching(identifier: "dulcet.playlist.rename").element(boundBy: 0)
+        guard waitForStableButton(rename, identifier: "dulcet.playlist.rename", in: app, timeout: 5) else {
+            XCTFail("The menu must offer a settled Rename action: " + app.debugDescription)
             return false
         }
         rename.tap()
-        guard app.alerts.firstMatch.waitForExistence(timeout: 5) else {
+        let prompt = app.alerts.matching(identifier: "Rename").element(boundBy: 0)
+        guard prompt.waitForExistence(timeout: 5), prompt.textFields.element(boundBy: 0).exists else {
             XCTFail("Rename… must open its prompt: " + app.debugDescription)
             return false
         }
         return true
+    }
+
+    /// Flatten one immutable observation; querying each descendant separately can span a
+    /// presentation handoff and combine elements which were never on screen together.
+    private func snapshotElements(in root: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+        var pending = [root]
+        var elements: [XCUIElementSnapshot] = []
+        while let element = pending.popLast() {
+            elements.append(element)
+            pending.append(contentsOf: element.children.reversed())
+        }
+        return elements
+    }
+
+    @MainActor
+    private func waitForStableButton(
+        _ button: XCUIElement, identifier: String, in app: XCUIApplication, timeout: TimeInterval
+    ) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        var previous: CGRect?
+        var stableSince = ProcessInfo.processInfo.systemUptime
+        repeat {
+            if let window = try? app.windows.element(boundBy: 0).snapshot() {
+                let matches = snapshotElements(in: window).filter {
+                    $0.elementType == .button && $0.identifier == identifier && $0.isEnabled
+                        && !$0.frame.isEmpty && window.frame.contains($0.frame)
+                }
+                let now = ProcessInfo.processInfo.systemUptime
+                if matches.count == 1, let match = matches.first {
+                    if match.frame != previous {
+                        previous = match.frame
+                        stableSince = now
+                    } else if now - stableSince >= 0.4, button.isHittable {
+                        return true
+                    }
+                } else {
+                    previous = nil
+                    stableSince = now
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return false
     }
 
     /// Delete Playlist from the page's menu, confirmed; the page closes.
@@ -4344,6 +4437,7 @@ final class DulcetiOSUITests: XCTestCase {
         let held: Int
         let released: Int
         let timedOut: Int
+        var isPending: Bool { holding && held > 0 && released == 0 && timedOut == 0 }
     }
 
     /// Holds, or releases, every read of `playlist` at the proxy.
