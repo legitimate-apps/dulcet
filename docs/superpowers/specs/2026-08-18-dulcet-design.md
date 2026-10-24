@@ -7933,13 +7933,20 @@ Transport failures and busy replies stop the candidate chain immediately, includ
 partial result. The shells wait at least five seconds before retrying, or the server's longer
 `Retry-After`, on a monotonic clock. Repeated publications cannot bypass this quiet period.
 This chooses recovery without a queue edit while giving an unavailable server time to recover.
-Apple presents a credentials refusal through the account state and waits for new credentials.
+Apple presents invalid credentials through the account state and waits for new credentials.
+A permission refusal retains its Forbidden subtype: Library presents access refused, while
+AutoPlay stays quiet until explicit accepted account configuration without closing remote playback.
+Android credential refresh services the released request after installing the account; the existing
+retry deadline still applies.
 
 Queue entries persist the album id and duration supplied when queued (schema 13), so restoration
 keeps same-album joins gapless and retains the short-track overlap rule before the engine reports
 Ready. Migration backfills existing entries from the account's pinned track cache where available;
 absent metadata stays unknown and retains the existing album-source fallback. Metadata belongs to
-the entry and leaves with its removal. Album-track copies retain their album id on both shells.
+the entry and leaves with its removal. Album-track and search-result copies retain their album id on both shells, including server
+`albumId` values and cached search rows. Android selected-song and system-media adapters retain
+the same context. A stop point spent by a queue edit clears its timer before starting the paused
+successor, just as a playback-event transition does.
 The directly exported sleep countdown clamps negative fades to zero and nonpositive lengths to
 an immediate deadline; arithmetic saturates at the clock range instead of throwing or wrapping.
 

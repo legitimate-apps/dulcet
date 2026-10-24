@@ -96,7 +96,9 @@ internal enum class PlaybackStopPoint {
 /**
  * The queue wants AutoPlay entries (§14.8). The owner fetches up to [count] tracks like [seed],
  * none of them in [excludedRawIds], and answers with [PlaybackQueueController.appendAutoplay]
- * under the same [key] -- with an empty list when it found nothing or the fetch failed.
+ * under the same [key]. A successful search that found nothing answers with an empty list.
+ * Cancellation or a transient failure releases that exact key with [PlaybackQueueController.releaseAutoplayRequest];
+ * a retry receives a fresh key, so stale completions cannot answer its replacement.
  */
 internal data class PlaybackAutoplayRequest(
     val key: String,

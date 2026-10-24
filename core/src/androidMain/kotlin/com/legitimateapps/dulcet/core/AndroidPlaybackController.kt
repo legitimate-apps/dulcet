@@ -610,7 +610,8 @@ public class AndroidPlaybackController internal constructor(
         if (providerInstanceId != account.providerInstanceId || rawId.isBlank()) {
             failure = DomainError.Auth.Forbidden; publish(); return
         }
-        playQueue(listOf(AndroidTrack(providerInstanceId, rawId, displayTitle)), 0, AndroidQueueSource.Search, "Search")
+        val known = metadata[ProviderItemId(providerInstanceId, rawId)]
+        playQueue(listOf(known ?: AndroidTrack(providerInstanceId, rawId, displayTitle)), 0, AndroidQueueSource.Search, "Search")
     }
 
     /**
@@ -661,8 +662,11 @@ public class AndroidPlaybackController internal constructor(
             val transition = queue.replaceAndStart(PlaybackQueueRequest(
                 tracks.map { track ->
                     val id = ProviderItemId(track.providerInstanceId, track.rawId)
-                    PlaybackQueueItem(id, if (track.rawId == chosen.rawId && song != null) song.duration
-                        else track.durationMilliseconds?.milliseconds, track.albumRawId ?: if (source == AndroidQueueSource.Album) sourceRawId else null)
+                    val selected = song?.takeIf { track.rawId == chosen.rawId }
+                    val kept = metadata[id]
+                    PlaybackQueueItem(id, selected?.duration ?: track.durationMilliseconds?.milliseconds
+                        ?: kept?.durationMilliseconds?.milliseconds, track.albumRawId ?: selected?.track?.albumRawId
+                        ?: kept?.albumRawId ?: if (source == AndroidQueueSource.Album) sourceRawId else null)
                 },
                 QueueSourceContext(kind, sourceRawId?.let { ProviderItemId(account.providerInstanceId, it) },
                     sourceName.ifBlank { source.name }),
@@ -728,6 +732,8 @@ public class AndroidPlaybackController internal constructor(
                     dropHeldAdditions(); wantsPlay = false; needsReconnect = true; publish()
                     return@launch
                 }
+                if (downloaded) localTrack(chosen.rawId)?.let(::remember)
+                if (generation != requestGeneration || closed) return@launch
                 val directive = replaceSelection(song) ?: run {
                     wantsPlay = false; failure = DomainError.Transport.Unreachable; publish()
                     return@launch
@@ -1078,6 +1084,10 @@ public class AndroidPlaybackController internal constructor(
     }
 
     private fun captureEdit(result: PlaybackQueueTransition) {
+        if (result.stopPointReached) {
+            wantsPlay = false
+            clearSleepTimer()
+        }
         result.discardedPreloadAttemptId?.let(::discardOverlap)
         capture(result.effects)
         result.startDirective?.let(::start)
@@ -1385,6 +1395,7 @@ public class AndroidPlaybackController internal constructor(
         knownSong: Song? = null,
         authorization: Long? = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId),
     ) {
+        if (!directive.shouldAutoPlay) wantsPlay = false
         // The last line of defence: nothing is requested for another account's song.
         if (directive.itemId.providerInstanceId != account.providerInstanceId) {
             failure = DomainError.Auth.Forbidden; publish(); return
@@ -1779,6 +1790,7 @@ public class AndroidPlaybackController internal constructor(
             expected.normalizedBaseUrl, expected.username, expected.password, expected.allowLocalHttp), "playback.scrobble")
         sender.invalidateCapabilities()
         if (boundaries == null) artwork = AndroidArtworkRepository(playbackContext, expected)
+        answerAutoplay()
         return true
     }
 

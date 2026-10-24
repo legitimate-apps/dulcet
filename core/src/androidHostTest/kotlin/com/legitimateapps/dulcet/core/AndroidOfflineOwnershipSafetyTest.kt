@@ -61,7 +61,7 @@ class AndroidOfflineOwnershipSafetyTest {
             var selectedFileSurvivedClear = false
             val source = object : AndroidLocalPlaybackSource {
                 override fun isLocallyPlayable(rawId: String) = downloads.isLocallyPlayable(rawId)
-                override suspend fun localTrack(rawId: String) = AndroidTrack(PROVIDER, rawId, "Local song", null, null, 6_000, null)
+                override suspend fun localTrack(rawId: String) = AndroidTrack(PROVIDER, rawId, "Local song", null, null, 6_000, null, "album:downloaded")
                 override suspend fun localPlan(rawId: String): LocalPlaybackPlan? {
                     val plan = downloads.localPlan(rawId) ?: return null
                     downloads.clearStreamCache() // legacy controller uses this unleased path
@@ -94,6 +94,9 @@ class AndroidOfflineOwnershipSafetyTest {
                 assertTrue(selectedFileSurvivedClear, "Clear Cache deleted the selected file in the resolution-to-Prepare gap")
                 eventually { preparations == 1 }
                 assertEquals(1, clearsAtResolution)
+                val queued = PersistentQueueStore(store.database).load(ServerId(PROVIDER)).entries.single()
+                assertEquals("album:downloaded", queued.albumRawId, "The local adapter must fill durable context before queue insertion")
+                assertEquals(6_000L, queued.duration?.inWholeMilliseconds)
                 assertTrue(File(local.absolutePath).exists())
                 player.stop()
                 downloads.clearStreamCache()

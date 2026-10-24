@@ -673,7 +673,8 @@ final class DulcetCoreServerSearch: DulcetServerSearching {
             ),
             discNumber: result.discNumber?.intValue,
             trackNumber: result.trackNumber?.intValue,
-            sourceContainer: result.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:))
+            sourceContainer: result.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:)),
+            albumID: result.albumRawId.map { DulcetProviderItemID(providerInstanceID: result.providerInstanceId, rawID: $0) }
         )
     }
 

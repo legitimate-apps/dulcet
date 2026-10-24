@@ -66,6 +66,27 @@ class AndroidMedia3ListeningSessionTest {
         }
     }
 
+    @Test fun endOfTrackEditSpendsAHeldNaturalEndBeforeStartingTheSuccessor() {
+        Fixture().use { f ->
+            f.controller.setAutoplay(false)
+            f.play("one", "two")
+            // Hold the natural end in the real queue core. The edit below, rather than an
+            // engine callback, must spend the stop point and deliver its paused directive.
+            val field = AndroidPlaybackController::class.java.getDeclaredField("queue").apply { isAccessible = true }
+            val queue = field.get(f.controller) as PlaybackQueueController
+            val session = assertNotNull(queue.snapshot().currentSession)
+            assertNotNull(queue.preloadNext(session.playbackSessionId).preloadDirective)
+            val attempt = assertNotNull(session.currentAttempt).attemptId
+            assertNull(queue.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(attempt, 40.seconds)).startDirective)
+            assertEquals(0, queue.snapshot().currentIndex, "Control: end is held for the registered preload")
+            f.controller.setSleepTimer(SleepTimerChoice.EndOfTrack)
+            assertEquals(1, f.controller.state.value.currentIndex)
+            assertNull(f.controller.state.value.sleepTimer, "The edit spent the stop point")
+            assertFalse(f.controller.state.value.playWhenReady)
+            assertFalse(f.probe.requested, "A paused successor must not receive Play")
+        }
+    }
+
     @Test fun endOfQueuePlaysUserEntriesThenStopsBeforeAutoplay() {
         Fixture(candidates = { _, _, _ -> listOf(track("auto")) }).use { f ->
             f.play("one", "two")
@@ -131,7 +152,6 @@ class AndroidMedia3ListeningSessionTest {
         }).use { f ->
             f.play("one")
             assertTrue(f.controller.refreshAccount(PlaybackEndpointAccount("provider", "http://127.0.0.1:4533", "fixture", "new-password", true)))
-            f.controller.rememberTracks(listOf(track("known")))
             assertEquals(1, calls, "Refreshing the same server cannot bypass its quiet period")
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(16_999))
             assertEquals(1, calls)
@@ -169,7 +189,6 @@ class AndroidMedia3ListeningSessionTest {
             f.play("one")
             assertEquals(1, calls)
             assertTrue(f.controller.refreshAccount(PlaybackEndpointAccount("provider", "http://127.0.0.1:4533", "fixture", "new-password", true)))
-            f.controller.rememberTracks(listOf(track("known")))
             assertEquals(2, calls, "New credentials own the second request")
             oldReply.resumeWith(Result.failure(LibraryRequestFailure(DomainError.Auth.InvalidCredentials)))
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(5))
@@ -190,6 +209,27 @@ class AndroidMedia3ListeningSessionTest {
             f.controller.setNetworkAvailable(true)
             assertEquals(1, calls, "Connectivity itself services the waiting request")
             assertEquals(listOf("one", "auto", "tail"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
+    @Test fun selectedSongAdapterPersistsAlbumAndDurationFromTheWire() {
+        Fixture().use { f ->
+            f.controller.setAutoplay(false)
+            f.controller.playSong("provider", "selected", "Selected")
+            val entry = PersistentQueueStore(f.store.database).load(ServerId("provider")).entries.single()
+            assertEquals("album:wire", entry.albumRawId)
+            assertEquals(40.seconds, entry.duration)
+        }
+    }
+
+    @Test fun selectedSongAdapterKeepsAlreadyKnownAlbumAndDuration() {
+        Fixture().use { f ->
+            f.controller.setAutoplay(false)
+            f.controller.rememberTracks(listOf(track("selected").copy(albumRawId = "album:known")))
+            f.controller.playSong("provider", "selected", "Selected")
+            val entry = PersistentQueueStore(f.store.database).load(ServerId("provider")).entries.single()
+            assertEquals("album:known", entry.albumRawId)
+            assertEquals(40.seconds, entry.duration)
         }
     }
 
@@ -314,7 +354,7 @@ class AndroidMedia3ListeningSessionTest {
         val prepared = mutableListOf<RemotePlaybackWirePlan>()
         private val context = RuntimeEnvironment.getApplication()
         private val name = "listening-${java.util.UUID.randomUUID()}.db"
-        private val store = DulcetDatabaseStore.open(DulcetDriverFactory(context, name).createDriver())
+        val store = DulcetDatabaseStore.open(DulcetDriverFactory(context, name).createDriver())
         val controller = AndroidPlaybackController(context, PlaybackEndpointAccount("provider", "http://127.0.0.1:4533", "fixture", "fixture", true),
             AndroidPlaybackControllerBoundaries(store, probe.player, { prepared += it }, { id -> song(id) },
                 resolve = { r -> PlaybackResolutionResult.Resolved(RemotePlaybackWirePlan(r.playbackSessionId, r.attemptId,
@@ -332,7 +372,7 @@ class AndroidMedia3ListeningSessionTest {
     companion object {
         private fun track(id: String) = AndroidTrack("provider", id, "Song $id", durationMilliseconds = 40_000)
         private fun song(id: String) = AuthenticatedEndpointResponse(200,
-            """{"subsonic-response":{"status":"ok","song":{"id":"$id","title":"Song $id","duration":40,"suffix":"wav"}}}""".toByteArray(),
+            """{"subsonic-response":{"status":"ok","song":{"id":"$id","title":"Song $id","albumId":"album:wire","duration":40,"suffix":"wav"}}}""".toByteArray(),
             "<redacted-url>", AuthenticatedEndpointResponseHeaders("application/json", null, null, null, null),
             RequestTrace.observed("getSong", "GET", "<redacted-url>", AuthenticationLocation.None,
                 emptySet(), emptySet(), emptySet(), AccountConnectionContract.protocolVersion, null))

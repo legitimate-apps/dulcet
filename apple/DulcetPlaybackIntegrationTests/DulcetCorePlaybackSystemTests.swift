@@ -1317,6 +1317,49 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertTrue(fixture.controller.currentPresentation.nowPlaying?.isPlaying == true)
     }
 
+    func testAutoplayForbiddenStaysQuietWithoutClosingRemoteAccessOrChangingCredentials() async throws {
+        let fixture = makeFixture(tracks: ["only"])
+        var completions: [(DulcetCorePlaybackController.AutoplayAnswer) -> Void] = []
+        fixture.controller.startAutoplayCandidates = { _, _, _, _, callback in
+            completions.append(callback)
+            return HeldAutoplayOperation()
+        }
+        var credentialFailures = 0
+        fixture.controller.setAuthenticationFailureHandler { credentialFailures += 1 }
+        enableAutoplay(fixture)
+        try await beginAutoplayPlayback(fixture)
+        try XCTUnwrap(completions.first)(.init(tracks: nil, errorKind: "forbidden", retryAfterMilliseconds: nil))
+        fixture.controller.setServerAvailable(true)
+        fixture.controller.setNetworkAvailable(true)
+        XCTAssertEqual(credentialFailures, 0)
+        XCTAssertEqual(completions.count, 1, "Permission refusal stays quiet across publications")
+        XCTAssertTrue(fixture.controller.currentPresentation.nowPlaying?.isPlaying == true)
+        fixture.controller.configure(account: account(provider))
+        XCTAssertEqual(completions.count, 2, "Explicit accepted configuration can retry without closing remote access")
+    }
+
+    func testStaleAutoplayRefusalCannotCloseAReplacementAccountsRemoteAccess() async throws {
+        for kind in ["authentication", "forbidden"] {
+            let fixture = makeFixture(tracks: ["only"])
+            var completion: ((DulcetCorePlaybackController.AutoplayAnswer) -> Void)?
+            fixture.controller.startAutoplayCandidates = { _, _, _, _, callback in
+                completion = callback
+                return HeldAutoplayOperation()
+            }
+            var credentialFailures = 0
+            fixture.controller.setAuthenticationFailureHandler { credentialFailures += 1 }
+            enableAutoplay(fixture)
+            try await beginAutoplayPlayback(fixture)
+            let stale = try XCTUnwrap(completion)
+            fixture.controller.configure(account: account("replacement-\(provider)"))
+            let stops = fixture.engine.count("stop")
+            stale(.init(tracks: nil, errorKind: kind, retryAfterMilliseconds: nil))
+            XCTAssertEqual(credentialFailures, 0)
+            XCTAssertEqual(fixture.engine.count("stop"), stops)
+            XCTAssertTrue(fixture.controller.autoplayLog.isEmpty)
+        }
+    }
+
     func testAutoplayBusyWaitsThenRetriesTheSameTail() async throws {
         try await proveAutoplayRetry(kind: "serverBusy")
     }

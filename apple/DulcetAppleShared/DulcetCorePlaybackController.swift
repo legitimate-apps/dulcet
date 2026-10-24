@@ -123,6 +123,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private var autoplayOperation: (any AppleLibraryBrowseOperation)?
     private var autoplayToken: UUID?
     private var autoplayKey: String?
+    private var autoplayAccessRefused = false
     private var autoplaySuppressedUntil: ContinuousClock.Instant?
     private var autoplayRetry: Task<Void, Never>?
     /// The boundary can complete synchronously or deliver after cancellation.
@@ -374,6 +375,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         ) else { return }
         let sameBinding = hasSameMediaBinding(as: presentationAccount)
         cancelAutoplay(clearRetry: !sameBinding)
+        autoplayAccessRefused = false
         identityRejected = false // Only explicit accepted account configuration opens a new lifetime.
         accountIdentityAccess = AppleServerIdentityAccess(databaseName: identityDatabaseName,
             providerInstanceId: presentationAccount.providerInstanceID)
@@ -1111,7 +1113,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// Answers the queue's AutoPlay request, if it has one: similar music from the person's own
     /// server, never anywhere else. Offline there is nothing to ask, and the request waits.
     private func serviceAutoplay() {
-        guard autoplayToken == nil, networkAvailable, wireClient != nil, let account,
+        guard !autoplayAccessRefused, autoplayToken == nil, networkAvailable, wireClient != nil, let account,
               autoplaySuppressedUntil.map({ clock.now >= $0 }) != false,
               let request = queueClient.takeAutoplayRequest() else { return }
         let key = request.key
@@ -1178,6 +1180,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         if let errorKind = outcome.errorKind {
             autoplayLog.append("failed")
             queueClient.releaseAutoplayRequest(key: key)
+            if errorKind == "forbidden" {
+                autoplayAccessRefused = true
+                return
+            }
             if errorKind == "authentication" {
                 wireAccessEnabled = false
                 serverAvailable = false
