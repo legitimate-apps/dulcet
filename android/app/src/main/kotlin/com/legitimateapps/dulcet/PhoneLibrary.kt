@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -930,7 +931,7 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
                         modifier = Modifier.testTag("genre.count"))
                     Spacer(Modifier.height(12.dp))
                     val playable = current?.itemsState == AndroidLibraryItemsState.Present &&
-                        tracks.any { it.playability != AndroidLibraryPlayability.UnavailableOffline }
+                        tracks.any { it.canBeQueued() }
                     PlayShuffleButtons(
                         onPlay = { note = null; actions.playTracksFrom(tracks, null, name, false) },
                         onShuffle = { note = null; actions.playTracksFrom(tracks, null, name, true) },

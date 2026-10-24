@@ -1596,7 +1596,7 @@ private fun TvPlaylistScreen(
                         }
                         if (current != null && playlist != null) {
                             val playable = current.itemsState == AndroidLibraryItemsState.Present && current.items.any {
-                                it is AndroidLibraryItem.Track && !it.metadataMissing && it.playability != AndroidLibraryPlayability.UnavailableOffline
+                                it is AndroidLibraryItem.Track && it.canBeQueued()
                             }
                             if (playable || playlist.editable) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 if (playable) {
@@ -1725,7 +1725,7 @@ private fun TvGenreScreen(
                 if (count != null && count > 0) TvStatement(resources.getQuantityString(SharedR.plurals.library_count_tracks,
                     count, count.toString()), "genre.count")
                 val playable = current?.itemsState == AndroidLibraryItemsState.Present &&
-                    tracks.any { !it.metadataMissing && it.playability != AndroidLibraryPlayability.UnavailableOffline }
+                    tracks.any { it.canBeQueued() }
                 if (playable) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     TvAction(stringResource(R.string.tv_play), "genre.play", icon = DulcetIcons.Play, default = true) { play(null, false) }
                     TvAction(stringResource(R.string.tv_shuffle), "genre.shuffle", icon = DulcetIcons.Shuffle) { play(null, true) }
