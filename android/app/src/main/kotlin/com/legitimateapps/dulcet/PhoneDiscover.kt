@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -120,25 +121,29 @@ internal fun DiscoverItemRow(session: DiscoverWishlistSession, item: DiscoverIte
     }
     val wish = publication?.wishes?.firstOrNull { (it.wish?.target ?: it.pendingAdd?.target) == knownTarget && knownTarget != null }
     var saveError by remember(session, item.id) { mutableStateOf<DiscoverFailure?>(null) }
+    val largeText = LocalDensity.current.fontScale >= 1.5f
+    val actions: @Composable () -> Unit = {
+        DiscoverItemActions(session, item, index, source, wish, access, openLibrary) { saveError = it }
+    }
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         PhoneMediaRow(
             title = item.title,
             supporting = {
                 listOfNotNull(discoverKindTitle(item.kind), item.artist,
                     item.releaseDate ?: item.year?.toString()).joinToString(" · ").takeIf { it.isNotBlank() }?.let {
-                    Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(it, maxLines = if (largeText) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis)
                 }
             },
             leading = {
                 if (item.kind == "artist") Monogram(item.title, 48.dp)
                 else DiscoverArtwork(session, item.artworkId, item.title, 48.dp)
             },
-            trailing = {
-                DiscoverItemActions(session, item, index, source, wish, access, openLibrary) { saveError = it }
-            },
+            trailing = if (largeText) null else actions,
             modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
             onClick = open,
+            titleMaxLines = if (largeText) Int.MAX_VALUE else 1,
         )
+        if (largeText) Row(Modifier.padding(start = 72.dp)) { actions() }
         DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index",
             modifier = Modifier.padding(start = 72.dp, bottom = 4.dp))
         if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
@@ -173,7 +178,9 @@ internal fun DiscoverAvailabilityText(value: DiscoverAvailability, tag: String? 
     Surface(modifier = modifier.then(tag?.let { Modifier.testTag(it) } ?: Modifier).semantics { text = AnnotatedString(label) },
         shape = RoundedCornerShape(50), color = container) {
         Text(label, modifier = Modifier.clearAndSetSemantics { }.padding(horizontal = 10.dp, vertical = 3.dp),
-            color = content, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            color = content, style = MaterialTheme.typography.labelMedium,
+            maxLines = if (LocalDensity.current.fontScale >= 1.5f) Int.MAX_VALUE else 1,
+            overflow = TextOverflow.Ellipsis)
     }
 }
 

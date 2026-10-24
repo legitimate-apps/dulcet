@@ -269,6 +269,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     val requests=fixture.requests(cursor).filter {it.getString("channel")=="navidrome"}
                     check(requests.any {it.getString("endpoint")=="getAlbumList2"}) {"Absence requires actual healthy app browse"}
                     check(requests.none {it.getString("endpoint").contains("DulcetDiscover") || it.getString("endpoint").contains("DulcetWish")}) {"Navidrome received unsupported feature requests"}
+                    capture("navidrome")
                     println("DISCOVER PHONE navidrome-positive-browse=true feature-requests=0")
                 }
             }
@@ -467,6 +468,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     }
     private fun capture(screen:String) {
         instrumentation.waitForIdleSync()
+        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5)
+        var foreground=instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()
+        while(foreground!=context.packageName && System.nanoTime()<deadline) {
+            Thread.sleep(100)
+            foreground=instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()
+        }
         val image=checkNotNull(instrumentation.uiAutomation.takeScreenshot())
         val scale=minOf(1f,800f/maxOf(image.width,image.height))
         val small=if(scale<1f)Bitmap.createScaledBitmap(image,(image.width*scale).toInt(),(image.height*scale).toInt(),true) else image
@@ -474,6 +481,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
         File(directory,"$label-$screen.jpg").outputStream().use {check(small.compress(Bitmap.CompressFormat.JPEG,50,it))}
         if(small!==image)small.recycle();image.recycle()
+        File(directory,"$label-$screen.window.json").writeText(JSONObject()
+            .put("foregroundPackage",foreground ?: JSONObject.NULL).put("appPackage",context.packageName).toString())
+        check(foreground==context.packageName) {"Proof is obscured by foreground package $foreground"}
     }
     private fun required(name:String)=checkNotNull(args.getString(name)){"Missing disposable runner argument: $name"}
     private fun mbid(n:Int)="%08x-1111-4111-8111-111111111111".format(n)

@@ -57,6 +57,17 @@ def phases(method,red):
     if method==METHODS[4]:return [('light','light','1.0')] if red else [('light','light','1.0'),('dark','dark','1.0'),('largest','dark','2.0')]
     return [('normal','light','1.0')]
 
+def capture_window_cause(directory,label):
+    images=list(directory.rglob(label+'-*.jpg'))
+    if not images:return 'capture-window: no native JPEGs for '+label
+    for image in images:
+        receipt=image.with_suffix('.window.json')
+        if not receipt.is_file():return 'capture-window: missing receipt for '+image.name
+        try:foreground=json.loads(receipt.read_text())['foregroundPackage']
+        except (ValueError,KeyError):return 'capture-window: invalid receipt for '+image.name
+        if foreground!=PACKAGE:return 'capture-window: obscured by '+str(foreground)
+    return None
+
 def self_test():
     def sample(code=0,name=METHODS[0]):return f'INSTRUMENTATION_STATUS: class={CLASS}\nINSTRUMENTATION_STATUS: test={name}\nINSTRUMENTATION_STATUS_CODE: {code}\nINSTRUMENTATION_CODE: -1\n'
     assert parse_status(sample(),METHODS[0])[0]=='passed'
@@ -70,7 +81,18 @@ def self_test():
     assert sum(len(phases(method,True)) for method in METHODS)==5
     assert default_output({},1)!=default_output({},2)
     assert default_output({'DULCET_DISCOVER_ANDROID_OUTPUT':'/tmp/owned-discover-output'},1)==Path('/tmp/owned-discover-output')
-    print('Discover Android runner self-test: seven parser controls, exact phase inventory and unique/environment output controls passed')
+    import tempfile
+    with tempfile.TemporaryDirectory() as temporary:
+        folder=Path(temporary);image=folder/'proof-search.jpg'
+        assert capture_window_cause(folder,'proof') is not None
+        image.write_bytes(bytes.fromhex('ffd8'))
+        assert 'missing receipt' in capture_window_cause(folder,'proof')
+        receipt=image.with_suffix('.window.json')
+        receipt.write_text(json.dumps({'foregroundPackage':'android'}))
+        assert 'obscured' in capture_window_cause(folder,'proof')
+        receipt.write_text(json.dumps({'foregroundPackage':PACKAGE}))
+        assert capture_window_cause(folder,'proof') is None
+    print('Discover Android runner self-test: four foreground capture controls; seven parser controls, exact phase inventory and unique/environment output controls passed')
 
 class Runner:
     def __init__(self,args):
@@ -135,6 +157,10 @@ class Runner:
             (report/'reset.json').write_text(json.dumps(reset,indent=2))
         self.shell('settings','put','system','font_scale',scale)
         self.shell('cmd','uimode','night','yes' if theme=='dark' else 'no')
+        # Font/theme changes can wake the emulator launcher. Stop only that known
+        # system app on the verified disposable emulator, before Dulcet launches.
+        self.shell('am','force-stop','com.google.android.apps.nexuslauncher')
+        (report/'launcher-reset.json').write_text(json.dumps({'package':'com.google.android.apps.nexuslauncher','beforeInstrumentation':True}))
         app_args={'class':CLASS+'#'+method,'dulcetDiscoverPhase':phase,'dulcetDiscoverServerUrl':self.server,'dulcetDiscoverControlUrl':self.control,'dulcetDiscoverNavidromeUrl':self.nav,
                   'dulcetDiscoverUsername':os.environ['DULCET_DISCOVER_USERNAME'],'dulcetDiscoverOtherUsername':os.environ['DULCET_DISCOVER_OTHER_USERNAME'],
                   'dulcetDiscoverPassword':os.environ['DULCET_DISCOVER_PASSWORD'],'dulcetDiscoverDisposable':'true','dulcetDiscoverTheme':theme,'dulcetDiscoverFontScale':scale,'dulcetDiscoverCaptureLabel':label}
@@ -158,6 +184,10 @@ class Runner:
             (report/'reader-receipts.log').write_text(receipts.stdout if receipts.returncode==0 else 'reachability receipts unavailable\n')
         except (OSError,subprocess.TimeoutExpired):
             (report/'reader-receipts.log').write_text('reachability receipts unavailable\n')
+        self.adb_run('pull',f'/sdcard/Android/data/{PACKAGE}/files/discover-wishlist-proof',str(report/'captures'),check=False,capture_output=True,text=True)
+        if result=='passed':
+            cause=capture_window_cause(report/'captures',label)
+            if cause:result,detail='error',cause
         junit(report/'TEST-DiscoverWishlist.xml',method,phase,result,detail,time.monotonic()-started)
         root=ET.parse(report/'TEST-DiscoverWishlist.xml').getroot()
         counts={key:int(root.get(key,'0')) for key in ('tests','failures','errors','skipped')}
@@ -173,7 +203,6 @@ class Runner:
             self.stop_owned_app()
             if str(pid) in self.shell('pidof',PACKAGE,check=False).split():raise RuntimeError('old app PID survived process death')
             (self.out/'process-death.json').write_text(json.dumps({'beforePid':pid,'aliveBeforeExplicitStop':was_alive,'oldPidAbsentAfterStop':True,'durablePendingWitnessed':True},indent=2))
-        self.adb_run('pull',f'/sdcard/Android/data/{PACKAGE}/files/discover-wishlist-proof',str(report/'captures'),check=False,capture_output=True,text=True)
         return result=='passed'
     def finish(self):
         # Read totals from the emitted per-invocation JUnit XML rather than assume five methods ran.

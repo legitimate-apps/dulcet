@@ -172,6 +172,26 @@ class PhoneDiscoverTest {
         compose.waitForIdle()
         assertEquals("album",opened)
     }
+    @Test
+    @Config(sdk=[35],qualifiers="w411dp-h891dp-port",fontScale=2f)
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun largestTextTrackKeepsItsFullTitleBesideLibraryAndWishActions() {
+        val title="A long recording title that must remain readable"
+        val local=DiscoverLibraryRef("provider:test","song","local-song")
+        val held=source.item("song").copy(title=title,
+            availability=DiscoverAvailability("held","known",null,null,null,null,listOf(local)))
+        compose.setContent { MaterialTheme {
+            DiscoverItemRow(session,held,0,WishSource("search",null),{},{},{})
+        } }
+        val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNodeWithText(title,useUnmergedTree=true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        assertEquals(2f,layouts.single().layoutInput.density.fontScale)
+        assertTrue(layouts.single().size.width>20,"Positive native text measurement")
+        assertFalse(layouts.single().hasVisualOverflow,"Largest text must not ellipsize the recording title: ${layouts.single()}")
+        compose.onNodeWithTag("discover.openLibrary.song.0").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithTag("discover.wish.song.0").assertIsDisplayed().assertHasClickAction()
+    }
     @Test fun albumCardKeepsArtCleanAndMovesActionsIntoItsMenu() {
         val local=DiscoverLibraryRef("provider:test","album","local-album")
         val held=source.item("album").copy(availability=DiscoverAvailability("held","known",null,12,12,null,listOf(local)))

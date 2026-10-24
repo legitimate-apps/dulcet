@@ -17,9 +17,10 @@ internal fun PhoneMediaRow(
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    titleMaxLines: Int = 1,
 ) {
     ListItem(
-        headlineContent = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        headlineContent = { Text(title, maxLines = titleMaxLines, overflow = TextOverflow.Ellipsis) },
         supportingContent = supporting,
         leadingContent = leading,
         trailingContent = trailing,
