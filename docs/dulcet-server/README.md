@@ -211,9 +211,13 @@ require reads during adoption.
 `chmod`, `chown` and hard-link changes can advance ctime without changing audio. Each affected
 catalog path is conservatively re-probed once; the new identity then becomes its baseline.
 Reads, atime updates and edits to a different sidecar do not change the audio inode's ctime.
-A bulk permission/ownership operation can therefore require a library-wide re-read. Providers
-without Unix ctime use the existing content-digest fallback, which reads whole source files;
-check mount behavior before relying on metadata-only scan cost.
+A bulk permission/ownership operation can therefore require a library-wide re-read. When Unix ctime is unavailable, track detection falls back to the previous size, millisecond
+mtime, sidecar and missing-fingerprint predicate. A metadata-only stamp is retained for artwork
+source invalidation, but that untrusted identity never forces a tag probe or hashes audio during
+scanning. Same-size, preserved-mtime edits can remain undetected on these providers. Gaining
+ctime later adopts the stronger baseline without a library-wide probe. Standalone artwork files
+keep their content-digest fallback; on-demand embedded artwork extraction also keeps its existing
+cache identity behavior.
 
 Scanner logs include aggregate `tracks`, `tags_read` and `identities_adopted` work counts.
 Listen Now warms selected originals with four shared permits before serial resource rendering.

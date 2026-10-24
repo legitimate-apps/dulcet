@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet.server.scan
 
 import com.legitimateapps.dulcet.server.db.Db
 import com.legitimateapps.dulcet.server.media.artworkFileIdentity
+import com.legitimateapps.dulcet.server.media.trackFileIdentity
 import com.legitimateapps.dulcet.server.fold
 import com.legitimateapps.dulcet.server.sortName
 import kotlinx.serialization.json.JsonObject
@@ -129,14 +130,22 @@ class Scanner(
             query("SELECT path,identity FROM track_file_identity_v1") { it.string("path") to it.string("identity") }.toMap()
         }
         val identities = HashMap<String, String>()
+        val withoutChangeTime = HashSet<String>()
         fun identity(relative: String): String = identities.getOrPut(relative) {
-            com.legitimateapps.dulcet.server.musicFile(root, root.resolve(relative))?.let(::artworkFileIdentity) ?: "missing"
+            com.legitimateapps.dulcet.server.musicFile(root, root.resolve(relative))?.let { file ->
+                // Embedded artwork source maps use the same metadata-only audio stamp: routing
+                // them through the image digest fallback would still read every embedded track.
+                if (relative in present) trackFileIdentity(file).also {
+                    if (!it.hasChangeTime) withoutChangeTime.add(relative)
+                }.stamp else artworkFileIdentity(file)
+            } ?: "missing"
         }
         val changed = files.filter { file ->
             val old = existing[file.relative]
             val currentIdentity = identity(file.relative)
             old == null || file.relative in missingFingerprints || old.mtime != file.mtime || old.size != file.size || old.sidecar != file.sidecar ||
-                previousIdentities[file.relative]?.let { it != currentIdentity } == true
+                (file.relative !in withoutChangeTime && previousIdentities[file.relative]
+                    ?.takeUnless { it.startsWith("metadata-only:") }?.let { it != currentIdentity } == true)
         }
         val unchanged = files.size - changed.size
         val changedPaths = changed.map { it.relative }.toSet()
@@ -155,7 +164,7 @@ class Scanner(
                 sourceStamps(ARTIST_ART_SOURCES) != artistArtSources(root, ::identity)
         }
         if (!force && !artworkChanged && !artChanged && changed.isEmpty() && removed.isEmpty()) {
-            if (files.any { it.relative !in previousIdentities }) db.write { saveIdentities(emptySet()) }
+            if (files.any { previousIdentities[it.relative] != identities.getValue(it.relative) }) db.write { saveIdentities(emptySet()) }
             log.info("scan unchanged in {} ms: tracks={} tags_read=0 identities_adopted={}", clock()-started, unchanged, files.count { it.relative !in previousIdentities })
             return ScanResult(added = 0, updated = 0, removed = 0, unchanged = unchanged, failed = 0)
         }
