@@ -21,7 +21,7 @@ that swaps names what held the memory (`HOST PRESSURE TOP`), and the same sample
 the CPU (`HOST PRESSURE CPU`, from the phase's highest-load sample), so a load of hundreds on three
 cores is attributed to a process rather than guessed at. Two consecutive readings at >=90%
 for the same Dulcet app process trigger a three-second stack sample, with a ten-second timeout
-and at most three captures per job (one per process launch). A phase's
+and at most three captures per job, with 30 seconds between captures of the same launch. A phase's
 pressure is the DELTA of the counters between its mark and the next one, so the sampler can run
 for the whole job without any phase needing to know about it. Stdlib only.
 """
@@ -116,13 +116,15 @@ class HotAppCapture:
         self.limit = limit
         self.count = 0
         self.previous: set[tuple] = set()
-        self.captured: set[tuple] = set()
+        self.captured: dict[tuple, float] = {}
         self.worker = None
 
     def observe(self, processes: list[dict]) -> None:
         hot = {(p["pid"], p["started"]) for p in processes
                if p["name"] in ("Dulcet", "Dulcet DEV") and p["cpu"] >= 90.0}
-        eligible = (hot & self.previous) - self.captured
+        now = time.monotonic()
+        eligible = {identity for identity in hot & self.previous
+                    if identity not in self.captured or now - self.captured[identity] >= 30}
         self.previous = hot
         if self.worker is not None:
             if self.worker.poll() is None:
@@ -132,7 +134,7 @@ class HotAppCapture:
             return
         pid, started = sorted(eligible)[0]
         self.count += 1
-        self.captured.add((pid, started))
+        self.captured[pid, started] = now
         output = str(Path(self.path).with_name(f"dulcet-hot-app-{self.count}-pid-{pid}.log"))
         try:
             self.worker = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
@@ -159,7 +161,7 @@ def capture_stack(pid: int, started: str, output: str, pressure: str,
         status = "complete" if result.returncode == 0 else "error"
     except subprocess.TimeoutExpired:
         status = "timeout"
-    except OSError:
+    except (OSError, subprocess.CalledProcessError):
         status = "unavailable"
     append(pressure, dict(event="stack-capture-end", pid=pid, status=status,
                           output=os.path.basename(output)))

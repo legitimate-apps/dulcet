@@ -12,6 +12,7 @@
 import json
 import runpy
 from unittest.mock import patch
+from types import SimpleNamespace
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,8 @@ with tempfile.TemporaryDirectory() as tmp:
         dict(event="sample", wallTimeMillis=3000, pageouts=640, swapouts=1280,
              **{**base, "swapUsedMb": 512.0, "load1": 9.5},
              top=[["Simulator", 900]], cpuTop=[["mdworker_shared", 180.5], ["Dulcet", 20.0]]),
+        dict(event="stack-capture-end", wallTimeMillis=3100, pid=123, status="complete",
+             output="dulcet-hot-app-1-pid-123.log"),
         dict(event="sample", wallTimeMillis=3200, pageouts=640, swapouts=1280,
              **{**base, "swapUsedMb": 100.0, "load1": 2.0},
              top=[["Simulator", 800]], cpuTop=[["quiet", 1.0]]),
@@ -47,6 +50,7 @@ with tempfile.TemporaryDirectory() as tmp:
     fixture.write_text("".join(json.dumps(r) + "\n" for r in rows))
     result = run("summarize", str(fixture))
     assert result.returncode == 0, result
+    assert 'HOST PRESSURE STACK ' in result.stdout and 'dulcet-hot-app-1-pid-123.log' in result.stdout
     lines = {line.split("phase=")[1].split()[0]: line for line in result.stdout.splitlines()
              if line.startswith("HOST PRESSURE phase=")}
     assert "pageouts_mb=0 " in lines["quiet"] and "booted_simulators=1" in lines["quiet"], result.stdout
@@ -106,45 +110,47 @@ class Worker:
 with tempfile.TemporaryDirectory() as tmp:
     pressure = str(Path(tmp) / 'pressure.log')
     worker = Worker()
-    with patch.dict(HotAppCapture.observe.__globals__, subprocess=__import__('subprocess')):
-        with patch('subprocess.Popen', return_value=worker) as launch:
-            trigger = HotAppCapture(pressure)
-            trigger.observe([app(cpu=89.9)])
-            trigger.observe([app()])
-            assert launch.call_count == 0, 'a single hot reading must not capture'
-            trigger.observe([app()])
-            assert launch.call_count == 1
-            assert launch.call_args.args[0][-2].endswith('dulcet-hot-app-1-pid-123.log')
-            # The next launch is hot but a capture is still in flight: no blocking or overlap.
-            trigger.observe([app(pid=124)])
-            trigger.observe([app(pid=124)])
-            assert launch.call_count == 1
-            worker.done = True
-            trigger.observe([app(pid=124)])
-            assert launch.call_count == 2
-            trigger.observe([app(pid=125)])
-            trigger.observe([app(pid=125)])
-            assert launch.call_count == 3
-            trigger.observe([app(pid=126)])
-            trigger.observe([app(pid=126)])
-            assert launch.call_count == 3, 'job limit must bound captures'
-            launch.reset_mock()
-            trigger = HotAppCapture(pressure)
-            trigger.observe([app(cpu=50), app(pid=124, cpu=50)])
-            trigger.observe([app(cpu=50), app(pid=124, cpu=50)])
-            trigger.observe([app(name='DulcetiOSUITests-Runner')])
-            trigger.observe([app(name='DulcetiOSUITests-Runner')])
-            assert launch.call_count == 0, 'summed CPU or test runners must not trigger'
-            trigger.observe([app()])
-            trigger.observe([])
-            trigger.observe([app()])
-            assert launch.call_count == 0, 'a missing reading resets the streak'
+    with patch('subprocess.Popen', return_value=worker) as launch:
+        trigger = HotAppCapture(pressure)
+        trigger.observe([app(cpu=89.9)])
+        trigger.observe([app()])
+        assert launch.call_count == 0, 'a single hot reading must not capture'
+        trigger.observe([app()])
+        assert launch.call_count == 1
+        assert launch.call_args.args[0][-2].endswith('dulcet-hot-app-1-pid-123.log')
+        # The next launch is hot but a capture is still in flight: no blocking or overlap.
+        trigger.observe([app(pid=124)])
+        trigger.observe([app(pid=124)])
+        assert launch.call_count == 1
+        worker.done = True
+        trigger.observe([app(pid=124)])
+        assert launch.call_count == 2
+        trigger.observe([app(pid=125)])
+        trigger.observe([app(pid=125)])
+        assert launch.call_count == 3
+        trigger.observe([app(pid=126)])
+        trigger.observe([app(pid=126)])
+        assert launch.call_count == 3, 'job limit must bound captures'
+        launch.reset_mock()
+        trigger = HotAppCapture(pressure)
+        trigger.observe([app(cpu=50), app(pid=124, cpu=50)])
+        trigger.observe([app(cpu=50), app(pid=124, cpu=50)])
+        trigger.observe([app(name='DulcetiOSUITests-Runner')])
+        trigger.observe([app(name='DulcetiOSUITests-Runner')])
+        assert launch.call_count == 0, 'summed CPU or test runners must not trigger'
+        trigger.observe([app()])
+        trigger.observe([])
+        trigger.observe([app()])
+        assert launch.call_count == 0, 'a missing reading resets the streak'
+        trigger.observe([app(started='another launch')])
+        assert launch.call_count == 0, 'PID reuse must reset the streak'
+        trigger.observe([app(started='another launch')])
+        assert launch.call_count == 1
+        trigger.observe([app(started='another launch')])
+        assert launch.call_count == 1, 'cooldown prevents repeated immediate captures'
+        with patch('time.monotonic', return_value=time.monotonic() + 31):
             trigger.observe([app(started='another launch')])
-            assert launch.call_count == 0, 'PID reuse must reset the streak'
-            trigger.observe([app(started='another launch')])
-            assert launch.call_count == 1
-            trigger.observe([app(started='another launch')])
-            assert launch.call_count == 1, 'capture only once per process launch'
+        assert launch.call_count == 2, 'a persistent hot process can be sampled again after cooldown'
     print('STACK TRIGGER CONTROL PASS threshold, consecutive PID identity, reset, exclusion, overlap, job cap')
 
     # Run an actual hanging executable under the same subprocess timeout as sample. This must
@@ -165,7 +171,6 @@ with tempfile.TemporaryDirectory() as tmp:
     print('STACK WORKER CONTROL PASS actual child timed out and exited PID refused')
 
 # ps uses a five-field lstart and can return executable names containing spaces. Preserve both.
-from types import SimpleNamespace
 snapshot = module['process_snapshot']
 with patch('subprocess.run', return_value=SimpleNamespace(stdout=(
         '123 4096 91.2 Fri Oct 23 20:00:00 2026 /tmp/Dulcet DEV\n'
