@@ -73,7 +73,8 @@ public class LibraryShuffleState internal constructor(
                         else -> false
                     }
                 }
-                if (answer.items.isNotEmpty()) play(answer.items) else failed = true
+                if (answer.items.any { it is com.legitimateapps.dulcet.core.AndroidLibraryItem.Track && it.canBeQueued() })
+                    play(answer.items) else failed = true
             } finally {
                 surface.close()
                 busy = false

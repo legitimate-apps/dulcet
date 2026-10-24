@@ -1,5 +1,7 @@
 package com.legitimateapps.dulcet
 
+import com.legitimateapps.dulcet.library.trackDisplayTitle
+import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -679,8 +681,7 @@ internal fun AlbumScreen(
         val current = publication ?: return@Column
         val album = current.header as? AndroidLibraryItem.Album
         val tracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()
-        val anyPlayable = current.itemsState == AndroidLibraryItemsState.Present &&
-            tracks.any { it.playability != AndroidLibraryPlayability.UnavailableOffline }
+        val anyPlayable = current.playableTracks(account.providerInstanceId).isNotEmpty()
         LazyColumn(Modifier.fillMaxSize()) {
             item {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -931,7 +932,7 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
                         modifier = Modifier.testTag("genre.count"))
                     Spacer(Modifier.height(12.dp))
                     val playable = current?.itemsState == AndroidLibraryItemsState.Present &&
-                        tracks.any { it.playability != AndroidLibraryPlayability.UnavailableOffline }
+                        tracks.any { it.canBeQueued() }
                     PlayShuffleButtons(
                         onPlay = { note = null; actions.playTracksFrom(tracks, null, name, false) },
                         onShuffle = { note = null; actions.playTracksFrom(tracks, null, name, true) },
@@ -1095,20 +1096,22 @@ internal fun TrackRow(
     rowTagOverride: String? = null,
     onClick: () -> Unit,
 ) {
+    val durationUnknown = track.durationMilliseconds == null
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val accent = when {
         playing -> MaterialTheme.colorScheme.primary
-        unavailable -> MaterialTheme.colorScheme.onSurfaceVariant
+        unavailable || durationUnknown -> MaterialTheme.colorScheme.onSurfaceVariant
         else -> MaterialTheme.colorScheme.onSurface
     }
     val resources = libraryResources()
     val downloadLine = download?.status?.takeIf { !it.playsOffline }?.let { LocalContext.current.resources.downloadLine(it) }
     val supporting = if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
+        else if (durationUnknown) resources.getString(SharedR.string.library_duration_required)
         else downloadLine ?: track.artistName
     val rowTag = rowTagOverride ?: favouriteTag?.removeSuffix(".favourite")
     ListItem(
         headlineContent = {
-            Text(track.title ?: stringResource(R.string.unknown_title), maxLines = 1, overflow = TextOverflow.Ellipsis, color = accent)
+            Text(resources.trackDisplayTitle(track.title), maxLines = 1, overflow = TextOverflow.Ellipsis, color = accent)
         },
         supportingContent = supporting?.let { text -> { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
         leadingContent = {
@@ -1135,7 +1138,7 @@ internal fun TrackRow(
                 }
             }
         },
-        modifier = modifier.clickable { if (unavailable) onUnavailable() else onClick() },
+        modifier = modifier.clickable(enabled = !durationUnknown) { if (unavailable) onUnavailable() else onClick() },
     )
 }
 

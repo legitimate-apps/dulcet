@@ -125,7 +125,7 @@ class AndroidPlaybackControllerTest {
             }).use { f ->
                 kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
                 AndroidPlaybackController.notifyServerAvailable(owner, false)
-                fun select(id: String) = f.controller.playQueue(listOf(AndroidTrack(owner, id, id)),
+                fun select(id: String) = f.controller.playQueue(listOf(AndroidTrack(owner, id, id, durationMilliseconds = 40_000)),
                     0, AndroidQueueSource.Album, "Album", "album")
                 select("held")
                 assertTrue(waiterEntered && !reopenedWaiterParked,
@@ -168,7 +168,7 @@ class AndroidPlaybackControllerTest {
                     kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
                     AndroidPlaybackController.notifyServerAvailable(owner, false)
                     assertFalse(contact.isOpen(), "Control: the chosen account is unverified while the OS network stays available")
-                    fun tracks(vararg ids: String) = ids.map { AndroidTrack(owner, it, "Title $it") }
+                    fun tracks(vararg ids: String) = ids.map { AndroidTrack(owner, it, "Title $it", durationMilliseconds = 40_000) }
                     if (supersedesHeld) {
                         f.controller.playQueue(tracks("net"), 0, AndroidQueueSource.Library, "Library")
                         assertEquals(listOf("net"), f.controller.state.value.queue.map { it.track.rawId })
@@ -211,7 +211,7 @@ class AndroidPlaybackControllerTest {
                 Fixture(accountOwner = owner, serverContact = contact, localPlans = source).use { f ->
                     kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
                     AndroidPlaybackController.notifyServerAvailable(owner, false)
-                    f.controller.playQueue(listOf("first", "second").map { AndroidTrack(owner, it, "Title $it") },
+                    f.controller.playQueue(listOf("first", "second").map { AndroidTrack(owner, it, "Title $it", durationMilliseconds = 40_000) },
                         0, AndroidQueueSource.Library, "Library")
                     assertTrue(acquiring && f.controller.state.value.needsReconnect,
                         "Control: the queue is held and its actual local-file acquisition is suspended")
@@ -1280,6 +1280,106 @@ class AndroidPlaybackControllerTest {
             }
         } finally {
             file.delete()
+        }
+    }
+
+    @Test fun rawIdSelectionsRetainPlayUntilDurationCanBeResolvedAfterContactRecovery() {
+        for (closesDuringRead in listOf(false, true)) {
+            val owner = "provider:raw-recovery:${java.util.UUID.randomUUID()}"
+            kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+            val contact = object : AndroidServerContact {
+                override fun isChosen() = true
+                override fun isOpen() = AndroidServerIdentity.isVerified(owner)
+                override suspend fun awaitValidation() { AndroidServerIdentity.awaitValidation(owner) }
+                override suspend fun awaitOpen() { AndroidServerIdentity.verified.first { owner in it } }
+            }
+            var reads = 0
+            try {
+                Fixture(accountOwner = owner, serverContact = contact, localPlans = { null }, loadSong = {
+                    reads++
+                    if (closesDuringRead && reads == 1) {
+                        kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                        AndroidPlaybackController.notifyServerAvailable(owner, false)
+                    }
+                    song(it)
+                }).use { f ->
+                    if (!closesDuringRead) {
+                        kotlinx.coroutines.runBlocking { AndroidServerIdentity.validate(owner) { DomainError.Transport.Unreachable } }
+                        AndroidPlaybackController.notifyServerAvailable(owner, false)
+                    }
+                    f.controller.playSong(owner, "selected", "")
+                    settle(3)
+                    assertTrue(f.controller.state.value.queue.isEmpty(), "No new entry is admitted before duration is known")
+                    assertTrue(f.controller.state.value.needsReconnect)
+                    kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
+                    settle(5)
+                    assertEquals(listOf("selected"), f.controller.state.value.queue.map { it.track.rawId })
+                    assertEquals(listOf("selected"), f.prepared.map { it.itemId.rawId })
+                    assertTrue(f.probe.requested)
+                    assertFalse(f.controller.state.value.needsReconnect)
+                    assertEquals(if (closesDuringRead) 2 else 1, reads)
+                }
+            } finally { AndroidServerIdentity.requireValidation(owner) }
+        }
+    }
+
+    @Test fun newQueueAdmissionsRequireDurationWithoutReplacingTheExistingQueue() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("kept"), 0, AndroidQueueSource.Search, "Search")
+            shadowOf(Looper.getMainLooper()).idle()
+            val before = f.controller.state.value.queue.map { it.track.rawId }
+            val unknown = album("unknown").single().copy(durationMilliseconds = null)
+            f.controller.playQueue(listOf(unknown), 0, AndroidQueueSource.Search, "Search")
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(before, f.controller.state.value.queue.map { it.track.rawId })
+            assertFalse(f.controller.addToQueue(listOf(unknown), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Search, "Search"))
+        }
+    }
+
+    @Test fun rawIdSelectionRequiresResolvedDurationWhileRestoredUnknownEntriesStillPlay() {
+        val missingDuration: suspend (String) -> AuthenticatedEndpointResponse = { id ->
+            val response = song(id)
+            response.copy(body = response.body.decodeToString().replace(",\"duration\":40", "").toByteArray())
+        }
+        Fixture(loadSong = missingDuration).use { f ->
+            f.controller.playSong(OWNER, "unknown", "")
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(f.controller.state.value.queue.isEmpty())
+            assertTrue(f.prepared.isEmpty())
+            assertEquals(DomainError.Playback.NoPlayableSource, f.controller.state.value.error)
+        }
+        Fixture(savedOwner = OWNER, savedSongs = listOf("saved-song", "next"), savedDuration = null, loadSong = missingDuration).use { f ->
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf("saved-song"), f.prepared.map { it.itemId.rawId })
+            f.controller.next()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf("saved-song", "next"), f.prepared.map { it.itemId.rawId })
+        }
+    }
+
+    @Test fun restoredUntitledDownloadsAndRememberedRowsUseTheLocalizedTitle() {
+        val context = RuntimeEnvironment.getApplication()
+        val title = context.getString(R.string.playback_untitled)
+        for (blank in listOf("", "   ")) {
+            val file = java.io.File.createTempFile("dulcet-untitled-local", ".wav")
+            val downloads = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = if (rawId != "down") null else LocalPlaybackPlan(
+                    DownloadId("download:down"), DownloadIdentity(OWNER, "down", DownloadIdentity.ORIGINAL_PROFILE),
+                    AudioContainer.Wav, 44, file.path)
+                override suspend fun localTrack(rawId: String) = if (rawId != "down") null else
+                    AndroidTrack(OWNER, "down", blank, "Artist", "Album", 40_000)
+            }
+            try {
+                Fixture(savedOwner = OWNER, savedSongs = listOf("down", "remembered"), localPlans = downloads,
+                    loadSong = { throw AndroidPlaybackIOException(DomainError.Transport.Unreachable) }).use { f ->
+                    shadowOf(Looper.getMainLooper()).idle()
+                    assertEquals(listOf("down"), f.preparedLocal.map { it.itemId.rawId })
+                    assertEquals(title, f.controller.state.value.title)
+                    assertEquals(title, f.controller.state.value.queue.first().track.title)
+                    f.controller.rememberTracks(listOf(AndroidTrack(OWNER, "remembered", blank, durationMilliseconds = 40_000)))
+                    assertEquals(listOf(title, title), f.controller.state.value.queue.map { it.track.title })
+                }
+            } finally { file.delete() }
         }
     }
 
@@ -2819,6 +2919,7 @@ class AndroidPlaybackControllerTest {
 
     private class Fixture(
         savedOwner: String? = null,
+        savedDuration: kotlin.time.Duration? = 40.seconds,
         savedSongs: List<String> = listOf("saved-song"),
         loadSong: suspend (String) -> AuthenticatedEndpointResponse = { song(it) },
         resolve: (suspend (PlaybackResolveRequest) -> PlaybackResolutionResult)? = null,
@@ -2847,7 +2948,7 @@ class AndroidPlaybackControllerTest {
             if (savedOwner != null) {
                 PlaybackQueueController(PersistentQueueStore(store.database), PersistentResumePositionStore(store.database),
                     PlaybackIdentitySource { "$it:${java.util.UUID.randomUUID()}" }).replaceAndStart(PlaybackQueueRequest(
-                    savedSongs.map { PlaybackQueueItem(ProviderItemId(savedOwner, it), 40.seconds) },
+                    savedSongs.map { PlaybackQueueItem(ProviderItemId(savedOwner, it), savedDuration) },
                     QueueSourceContext(QueueSourceKind.Search, null, "Search"), 0, false))
             }
             val outbox = PersistentScrobbleOutbox(store.database, OutboxWallClock { System.currentTimeMillis() })
