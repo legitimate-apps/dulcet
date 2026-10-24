@@ -84,9 +84,9 @@ public struct DulcetWishlistView: View {
             }
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 if let note = presentation.note { Text(verbatim: note).fixedSize(horizontal: false, vertical: true) }
-                if let noteAt = row.wish?.noteAt { LabeledContent(DulcetStrings.wishlistNoteUpdated) { Text(noteAt, format: .dateTime) }.font(.caption) }
-                if let date = row.wish?.addedAt ?? row.pendingAdd?.actionTime { LabeledContent(DulcetStrings.wishlistAdded) { Text(date, format: .dateTime) }.font(.caption) }
-                if let updated = row.wish?.updatedAt, updated != row.wish?.addedAt { LabeledContent(DulcetStrings.wishlistUpdated) { Text(updated, format: .dateTime) }.font(.caption) }
+                if let noteAt = row.wish?.noteAt { timestamp(DulcetStrings.wishlistNoteUpdated, noteAt) }
+                if let date = row.wish?.addedAt ?? row.pendingAdd?.actionTime { timestamp(DulcetStrings.wishlistAdded, date) }
+                if let wish = row.wish, wish.updatedAt.formatted(.dateTime) != wish.addedAt.formatted(.dateTime) { timestamp(DulcetStrings.wishlistUpdated, wish.updatedAt) }
                 if let pending = presentation.pendingText { Text(pending).accessibilityIdentifier("wishlist.pending") }
                 if let error = presentation.errorText { Text(error).accessibilityIdentifier("wishlist.error") }
                 if let ref = presentation.arrival {
@@ -102,6 +102,18 @@ public struct DulcetWishlistView: View {
                 remove(row)
             }.padding(.leading, 48 + DulcetSpacing.sm)
         }.padding(.vertical, DulcetSpacing.xs)
+    }
+    private func timestamp(_ label: String, _ date: Date) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
+                Text(label)
+                Text(date, format: .dateTime)
+            }
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                Text(label)
+                Text(date, format: .dateTime)
+            }
+        }.font(.caption).accessibilityElement(children: .combine)
     }
     private func remove(_ row: DulcetWishRow) -> some View {
         Button(DulcetStrings.discoverRemoveWish, systemImage: "bookmark.slash") { model.remove(row.key) }
