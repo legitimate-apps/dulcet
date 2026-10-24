@@ -81,7 +81,7 @@ Search caches for 1 hour, entity metadata and playlist contents for 24 hours, tr
 for 6 hours, similarities for 7 days and thumbnails for 30 days. Negative results cache for 24 hours.
 Valid stale data can be served for up to 90 days when a source fails; its age remains visible. A
 failure never replaces a last good cache entry. An uncached failure is unavailable, not an empty
-success. Artwork not found uses the server placeholder. Signature or size failures are never served.
+success. Artwork not found uses the server placeholder. Signature, structure or size failures are never cached or served; a later request retries the source.
 
 Cursors bind caller, query, kind, selection and cache generation. Keep the same parameters on
 continuation, except size. An invalid or foreign cursor fails; a refreshed or evicted generation
@@ -90,8 +90,12 @@ Upstream search pages are pinned as consumed; an upstream does not offer a trans
 The server refuses a changed cached page generation rather than mixing it silently. No public offset.
 
 `getDulcetDiscoverCoverArt` returns the already sized `front-250` thumbnail bytes without decoding
-or resizing. It requires JPEG, PNG, GIF or WebP magic and at most 5 MiB. The proxy follows at most
-five safe redirects, refuses HTTPS downgrades, strips credentials and pins checked DNS addresses.
+or resizing. It requires JPEG, PNG, GIF or WebP magic and at most 5 MiB. Structural checks require
+JPEG SOI/EOI boundaries, a PNG IHDR first and zero-length IEND last with complete chunks and image
+data, a GIF trailer last, and a WebP RIFF length matching the body with complete padded chunks and
+image data. A malformed body is a temporary upstream failure: a last good cached image can still
+be used; without one the ordinary failure envelope is returned. The proxy follows at most five
+safe redirects, refuses HTTPS downgrades, strips credentials and pins checked DNS addresses.
 Use this method with the opaque artwork id. Never request a Cover Art Archive URL from a device.
 
 ## Examples

@@ -10,7 +10,7 @@ import kotlin.test.*
 class DiscoverArtworkTest {
     private val id="11111111-1111-4111-8111-111111111111"
     private val path="/release-group/$id/front-250"
-    private val png=byteArrayOf(137.toByte(),80,78,71,13,10,26,10,1,2,3)
+    private val png=artworkFixture("png")
     private class Clock:DiscoverClock {
         var now=1_000_000L
         override fun wallMillis()=now
@@ -91,7 +91,7 @@ class DiscoverArtworkTest {
             h.configureOrigin(f.baseUrl,0); val clock=Clock()
             val c=CoverArtClient(h,DiscoverCache(db,clock),DiscoverSettings(coverArtArchiveUrl=f.baseUrl),testingOverride={true})
             f.respond(path,body=png); val first=c.thumbnail(id)
-            clock.now+=30*DiscoverCache.DAY; f.json(path,"{bad image}")
+            clock.now+=30*DiscoverCache.DAY; f.respond(path,body=png.dropLast(12).toByteArray())
             val stale=c.thumbnail(id); assertTrue(stale.age.stale); assertContentEquals(first.bytes,stale.bytes)
             f.json("/release-group/22222222-2222-4222-8222-222222222222/front-250","",404)
             assertTrue(c.thumbnail("22222222-2222-4222-8222-222222222222").placeholder)
@@ -104,9 +104,9 @@ class DiscoverArtworkTest {
             for(body in listOf("{}".toByteArray(),byteArrayOf(0),png+ByteArray(5*1024*1024))) {
                 f.respond(path,body=body); assertFailsWith<UpstreamUnavailable> { c.thumbnail(id) }
             }
-            assertEquals("image/jpeg",CoverArtClient.imageType(byteArrayOf(255.toByte(),216.toByte(),255.toByte(),0)))
-            assertEquals("image/gif",CoverArtClient.imageType("GIF89a".toByteArray()))
-            assertEquals("image/webp",CoverArtClient.imageType("RIFF0000WEBP".toByteArray()))
+            assertFailsWith<UpstreamUnavailable> { CoverArtClient.imageType(byteArrayOf(255.toByte(),216.toByte(),255.toByte(),0)) }
+            assertFailsWith<UpstreamUnavailable> { CoverArtClient.imageType("GIF89a".toByteArray()) }
+            assertFailsWith<UpstreamUnavailable> { CoverArtClient.imageType("RIFF0000WEBP".toByteArray()) }
         } } }
     }
 }

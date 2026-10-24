@@ -4889,7 +4889,11 @@ paths:
       description: Optional dulcet.discover version 1. Requires catalog:read. Data from MusicBrainz and ListenBrainz.
         Availability uses only the caller's visible library and remembered rejected pairs. No preview playback
         or acquisition. Returns image bytes, never a redirect to an upstream host. Static SVG is used only for
-        a missing-art placeholder.
+        a missing-art placeholder. Thumbnails require positive JPEG/PNG/GIF/WebP signatures and structural
+        validation without decoding pixels or resizing (JPEG SOI/EOI, PNG IHDR first and IEND last with complete
+        chunks and image data, GIF final trailer, WebP matching RIFF length and complete padded chunks with
+        image data), within 5 MiB. Malformed bytes are never cached or served. Later requests retry; a last
+        good cached image survives, otherwise the existing 503 upstream-unavailable response applies.
       security:
       - oauth2:
         - catalog:read
