@@ -2382,16 +2382,14 @@ final class DulcetiOSUITests: XCTestCase {
     /// proofs count what the drag adds to them.
     @MainActor
     private func awaitSettledUpNext(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool) -> [String]? {
-        let deadline = Date().addingTimeInterval(45)
-        var previous: [String]?
-        repeat {
-            guard let read = upNextLabels(openingFrom: bar, in: app, compact: compact) else { return nil }
-            if read == previous { return read }
-            previous = read
-            RunLoop.current.run(until: Date().addingTimeInterval(1.5))
-        } while Date() < deadline
-        XCTFail("Up Next must settle before a drag is counted; it last read \(previous ?? [])")
-        return nil
+        var labels: [String]?
+        // A hosted open/read/dismiss cycle took the entire settling window and produced only
+        // one sample. Keep the player open while comparing actual queue snapshots, then close
+        // it once. The 45-second stability window starts with its first positively read list.
+        withoutIdleWaits(app) {
+            labels = self.readUpNextLabels(openingFrom: bar, in: app, compact: compact, requireStable: true)
+        }
+        return labels
     }
 
     /// Up Next's entries, read from the player opened from the bar, which is then closed again.
@@ -2408,7 +2406,9 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func readUpNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool) -> [String]? {
+    private func readUpNextLabels(
+        openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool, requireStable: Bool = false
+    ) -> [String]? {
         bar.tap()
         if compact {
             let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
@@ -2426,30 +2426,29 @@ final class DulcetiOSUITests: XCTestCase {
             format: "identifier == %@ OR identifier BEGINSWITH %@",
             "dulcet.upNext.empty", "dulcet.upNext.row."
         )).firstMatch
-        // Presenting the regular-width player can publish its list after the transition.
-        // A hosted failure's next snapshot already contained the expected empty state;
-        // give this positive content check the same bound as opening and closing the player.
-        guard contents.waitForExistence(timeout: 10) else {
-            XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
-            return nil
-        }
         // Read through snapshots, which throw when a row has gone, instead of recording a failure
         // as a bare `.label` does: the queue can change between counting its rows and reading them
         // (OBSERVED: a restored queue replaced under the read, "No matches found for Element at
         // index 1"), and a read that raced is taken again.
-        var labels: [String] = []
-        var attempts = 0
-        while true {
-            attempts += 1
-            if let read = try? rows.allElementsBoundByIndex.map({ try $0.snapshot().label }) {
-                labels = read
-                break
-            }
-            guard attempts < 4 else {
-                XCTFail("Up Next's rows kept changing under the read: " + app.debugDescription)
+        guard var labels = currentUpNextLabels(rows, contents: contents, in: app) else { return nil }
+        if requireStable {
+            let deadline = Date().addingTimeInterval(45)
+            var stable = false
+            print("DULCET UP NEXT stability sample=\(labels)")
+            repeat {
+                RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+                guard let next = currentUpNextLabels(rows, contents: contents, in: app) else { return nil }
+                print("DULCET UP NEXT stability sample=\(next)")
+                if next == labels {
+                    stable = true
+                    break
+                }
+                labels = next
+            } while Date() < deadline
+            guard stable else {
+                XCTFail("Up Next must settle before a drag is counted; it last read \(labels)")
                 return nil
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(1))
         }
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
@@ -2469,6 +2468,27 @@ final class DulcetiOSUITests: XCTestCase {
         }
         print("DULCET UP NEXT read=\(labels)")
         return labels
+    }
+
+    @MainActor
+    private func currentUpNextLabels(
+        _ rows: XCUIElementQuery, contents: XCUIElement, in app: XCUIApplication
+    ) -> [String]? {
+        // Require a rendered empty state or row for every sample, including the second
+        // stability read. A missing list must never count as an agreeing empty queue.
+        guard contents.waitForExistence(timeout: 10) else {
+            XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
+            return nil
+        }
+        for attempt in 1...4 {
+            if let labels = try? rows.allElementsBoundByIndex.map({ try $0.snapshot().label }) {
+                return labels
+            }
+            guard attempt < 4 else { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        XCTFail("Up Next's rows kept changing under the read: " + app.debugDescription)
+        return nil
     }
 
     /// Drags `source` onto the now-playing bar until Up Next holds `count` more entries than
