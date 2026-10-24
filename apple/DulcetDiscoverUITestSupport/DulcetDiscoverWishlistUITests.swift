@@ -275,10 +275,10 @@ import UIKit
 #endif
         XCTAssertTrue(later.waitForExistence(timeout: 10)); activate(later)
         for _ in 0..<30 {
-            if edition.value as? String == "00000190-1111-4111-8111-111111111111" { break }
+            if edition.value as? String == "2026-02-01 · 12 tracks" { break }
             Thread.sleep(forTimeInterval: 0.2)
         }
-        XCTAssertEqual(edition.value as? String, "00000190-1111-4111-8111-111111111111")
+        XCTAssertEqual(edition.value as? String, "2026-02-01 · 12 tracks")
         try capture("Album")
         let open = app.buttons["discover.openLibrary"].firstMatch
         reveal(open); XCTAssertTrue(open.exists); activate(open)
@@ -492,9 +492,9 @@ import UIKit
                 reveal(edition); XCTAssertTrue(edition.isHittable); activate(edition)
                 let later = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "2026-02-01")).firstMatch
                 XCTAssertTrue(later.waitForExistence(timeout: 10)); activate(later)
-                let selectedEdition = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "00000190-1111-4111-8111-111111111111"), object: edition)
+                let selectedEdition = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "2026-02-01 · 12 tracks"), object: edition)
                 XCTAssertEqual(XCTWaiter.wait(for: [selectedEdition], timeout: 30), .completed,
-                               "The accessible edition menu must select the requested release")
+                               "The accessible edition menu must describe the selected release with its date and track count")
                 print("DISCOVER_LARGEST_EDITION selected=true frame=\(edition.frame)")
                 reveal(wish)
             }

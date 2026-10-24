@@ -156,7 +156,7 @@ struct DulcetDiscoverDetailView: View {
                     if !album.editions.isEmpty {
                         editionControl(album)
                             .accessibilityIdentifier("discover.edition")
-                            .accessibilityValue(album.selectedReleaseId ?? DulcetStrings.discoverUnknownDate)
+                            .accessibilityValue(editionTitle(album, releaseId: album.selectedReleaseId))
                     }
                     DulcetDiscoverStatusView(status: .init(age: album.tracks.age, error: detail.error, connection: model.publication?.connection ?? "online")) { detail.load(destination) }
                     if detail.requestedReleaseId == nil || album.selectedReleaseId == detail.requestedReleaseId {
@@ -188,7 +188,7 @@ struct DulcetDiscoverDetailView: View {
                 editionPicker(album).pickerStyle(.inline)
             } label: {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(editionTitle(album))
+                    Text(editionTitle(album, releaseId: detail.requestedReleaseId ?? album.selectedReleaseId))
                         .fixedSize(horizontal: false, vertical: true)
                     Image(systemName: "chevron.up.chevron.down")
                         .accessibilityHidden(true)
@@ -205,9 +205,8 @@ struct DulcetDiscoverDetailView: View {
 #endif
     }
 
-    private func editionTitle(_ album: DulcetDiscoverAlbum) -> String {
-        let selected = detail.requestedReleaseId ?? album.selectedReleaseId
-        guard let edition = album.editions.first(where: { $0.releaseId == selected }) else {
+    private func editionTitle(_ album: DulcetDiscoverAlbum, releaseId: String?) -> String {
+        guard let edition = album.editions.first(where: { $0.releaseId == releaseId }) else {
             return DulcetStrings.discoverUnknownDate
         }
         return DulcetStrings.discoverEditionTitle(edition.releaseDate ?? DulcetStrings.discoverUnknownDate, edition.trackCount)
