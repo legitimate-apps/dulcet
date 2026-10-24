@@ -158,6 +158,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         defer { lock.unlock() }
         if let initializedSession { return initializedSession }
         let configuration = sessionConfiguration
+        DulcetMediaTransport.requireCompleteHTTPBodies(in: configuration)
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil
@@ -202,7 +203,11 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
             case let .failure(error):
                 completion(.failed(error: error, refreshReason: nil))
             case let .success(authorized):
-                let task = self.sessionForLoading().dataTask(with: authorized.request)
+                var mediaRequest = authorized.request
+                mediaRequest.allowsCellularAccess = mediaRequest.allowsCellularAccess && self.sessionConfiguration.allowsCellularAccess
+                mediaRequest.allowsExpensiveNetworkAccess = mediaRequest.allowsExpensiveNetworkAccess && self.sessionConfiguration.allowsExpensiveNetworkAccess
+                mediaRequest.allowsConstrainedNetworkAccess = mediaRequest.allowsConstrainedNetworkAccess && self.sessionConfiguration.allowsConstrainedNetworkAccess
+                let task = self.sessionForLoading().dataTask(with: mediaRequest)
                 self.setTaskCompletion(taskIdentifier: task.taskIdentifier, cancellation: {
                     completion(.cancelled)
                 }) { [weak self, weak operation] data, response, error in
