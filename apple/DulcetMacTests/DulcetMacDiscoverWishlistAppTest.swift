@@ -122,7 +122,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
                     let frame = try app.frame(element)
                     if app.contentScreenFrame.contains(NSPoint(x: frame.midX, y: frame.midY)) { return element }
                 }
-                try app.scrollDetail(by: delta)
+                try await app.scrollDetail(by: delta)
                 try await Task.sleep(for: .milliseconds(150))
             }
         }

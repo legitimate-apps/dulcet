@@ -518,12 +518,21 @@ final class HostedApp {
 
     /// Deliver the same wheel event the detail's native scroll view receives from a person.
     /// Lazy SwiftUI groups do not enter the accessibility tree until they approach the viewport.
-    func scrollDetail(by pixels: Int32) throws {
+    func scrollDetail(by pixels: Int32) async throws {
         let content = try XCTUnwrap(window.contentView)
         let point = NSPoint(x: content.bounds.minX + content.bounds.width * 0.75, y: content.bounds.midY)
+        func detailScrollView() -> NSScrollView? {
+            sequence(first: content.hitTest(point), next: { $0?.superview })
+                .lazy.compactMap { $0 as? NSScrollView }.first
+        }
+        // A destination's toolbar can be accessible before its asynchronously loaded body.
+        // Keep the native hit-test requirement, but let the actual scroll view register before
+        // delivering a wheel event. A loading hosting container cannot receive that event.
+        try await waitUntil(timeout: .seconds(10), "The visible detail must register its native scroll view") {
+            detailScrollView() != nil
+        }
         let hit = content.hitTest(point)
-        let scroll = try XCTUnwrap(sequence(first: hit, next: { $0?.superview })
-            .lazy.compactMap { $0 as? NSScrollView }.first,
+        let scroll = try XCTUnwrap(detailScrollView(),
             "The visible detail must hit a scroll view; hit \(hit.map { String(describing: type(of: $0)) } ?? "nil")")
         let before = scroll.contentView.bounds.origin
         let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
