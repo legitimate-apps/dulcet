@@ -1131,8 +1131,7 @@ private fun TvAlbumScreen(
                             }
                         }
                         if (current != null && album != null) {
-                            val playable = current.itemsState == AndroidLibraryItemsState.Present &&
-                                current.items.any { (it as? AndroidLibraryItem.Track)?.playability != AndroidLibraryPlayability.UnavailableOffline }
+                            val playable = current.playableTracks(provider).isNotEmpty()
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 if (playable) {
                                     TvAction(stringResource(R.string.tv_play), "album.play", icon = DulcetIcons.Play, default = true) {

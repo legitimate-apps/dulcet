@@ -35,6 +35,9 @@ class LoopbackLibraryServer : AutoCloseable {
         "Ambient" to listOf("ambient-song-1" to "Drift"),
     )
 
+    /** Titles returned by getAlbum, including absent and blank metadata. */
+    @Volatile var albumSongTitles: List<String?> = listOf("Opening")
+
     /** Optional complete song catalog for library-depth UI proofs. */
     @Volatile var librarySongs: List<Pair<String, String>>? = null
 
@@ -214,9 +217,13 @@ class LoopbackLibraryServer : AutoCloseable {
             "getAlbum" -> {
                 val id = parameters["id"].orEmpty()
                 val title = quote(albumTitle(id.substringBeforeLast('-'), id.substringAfterLast('-').toIntOrNull() ?: 1))
-                """"album":{"id":${quote(id)},"name":$title,"artist":"Fixture Artist","artistId":"artist-1","songCount":1${flagAlbum(id)},""" +
-                    """"song":[{"id":${quote("$id-song-1")},"title":"Opening","album":$title,"albumId":${quote(id)},""" +
-                    """"artist":"Fixture Artist","track":1,"duration":120,"suffix":"mp3","contentType":"audio/mpeg"${flagSong("$id-song-1")}}]}"""
+                val songs = albumSongTitles.mapIndexed { index, songTitle ->
+                    val songId = "$id-song-${index + 1}"
+                    val titleField = songTitle?.let { "\"title\":${quote(it)}," }.orEmpty()
+                    """{"id":${quote(songId)},${titleField}"album":$title,"albumId":${quote(id)},""" +
+                        """"artist":"Fixture Artist","track":${index + 1},"duration":120,"suffix":"mp3","contentType":"audio/mpeg"${flagSong(songId)}}"""
+                }
+                """"album":{"id":${quote(id)},"name":$title,"artist":"Fixture Artist","artistId":"artist-1","songCount":${songs.size}${flagAlbum(id)},"song":[${songs.joinToString(",")}] }"""
             }
             "getSongsByGenre" -> {
                 val offset = parameters["offset"]?.toIntOrNull() ?: 0

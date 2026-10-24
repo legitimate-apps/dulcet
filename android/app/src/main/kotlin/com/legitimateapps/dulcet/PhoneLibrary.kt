@@ -679,8 +679,7 @@ internal fun AlbumScreen(
         val current = publication ?: return@Column
         val album = current.header as? AndroidLibraryItem.Album
         val tracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()
-        val anyPlayable = current.itemsState == AndroidLibraryItemsState.Present &&
-            tracks.any { it.playability != AndroidLibraryPlayability.UnavailableOffline }
+        val anyPlayable = current.playableTracks(account.providerInstanceId).isNotEmpty()
         LazyColumn(Modifier.fillMaxSize()) {
             item {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
