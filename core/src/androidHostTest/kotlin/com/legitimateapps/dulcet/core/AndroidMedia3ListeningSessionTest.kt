@@ -104,6 +104,95 @@ class AndroidMedia3ListeningSessionTest {
         Fixture().use { f -> assertFalse(f.controller.state.value.autoplayEnabled, "Device preference survives recreation") }
     }
 
+    @Test fun transientAutoplayFailureRetriesAfterQuietTimeInsteadOfConsumingTheTail() {
+        var calls = 0
+        Fixture(candidates = { _, _, _ ->
+            calls++
+            if (calls == 1) throw LibraryRequestFailure(DomainError.Transport.Timeout)
+            listOf(track("recovered"), track("tail"))
+        }).use { f ->
+            f.play("one")
+            assertEquals(1, calls)
+            repeat(3) { f.controller.rememberTracks(listOf(track("known$it"))) }
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(4_999))
+            assertEquals(1, calls, "Publication and timers must respect retry quiet time")
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1))
+            assertEquals(2, calls, "The same queue tail can recover without a user edit")
+            assertEquals(listOf("one", "recovered", "tail"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
+    @Test fun busyAutoplayHonorsRetryAfterBeforeRetryingTheQueueTail() {
+        var calls = 0
+        Fixture(candidates = { _, _, _ ->
+            calls++
+            if (calls == 1) throw LibraryRequestFailure(DomainError.Server.Busy(17.seconds))
+            listOf(track("recovered"), track("tail"))
+        }).use { f ->
+            f.play("one")
+            assertTrue(f.controller.refreshAccount(PlaybackEndpointAccount("provider", "http://127.0.0.1:4533", "fixture", "new-password", true)))
+            f.controller.rememberTracks(listOf(track("known")))
+            assertEquals(1, calls, "Refreshing the same server cannot bypass its quiet period")
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(16_999))
+            assertEquals(1, calls)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1))
+            assertEquals(2, calls)
+            assertEquals(listOf("one", "recovered", "tail"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
+    @Test fun cancelledAutoplayRetriesTheSameTail() {
+        var calls = 0
+        Fixture(candidates = { _, _, _ ->
+            calls++
+            if (calls == 1) throw CancellationException("fixture cancelled request")
+            listOf(track("new"), track("tail"))
+        }).use { f ->
+            f.play("one")
+            assertEquals(1, calls)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(5))
+            assertEquals(2, calls)
+            assertEquals(listOf("one", "new", "tail"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
+    @Test fun cancelledOldCredentialsCannotChangeANewerAutoplayRetryDeadline() {
+        lateinit var oldReply: kotlin.coroutines.Continuation<List<AndroidTrack>>
+        var calls = 0
+        Fixture(candidates = { _, _, _ ->
+            when (++calls) {
+                1 -> kotlin.coroutines.suspendCoroutine { oldReply = it }
+                2 -> throw LibraryRequestFailure(DomainError.Transport.Timeout)
+                else -> listOf(track("recovered"), track("tail"))
+            }
+        }).use { f ->
+            f.play("one")
+            assertEquals(1, calls)
+            assertTrue(f.controller.refreshAccount(PlaybackEndpointAccount("provider", "http://127.0.0.1:4533", "fixture", "new-password", true)))
+            f.controller.rememberTracks(listOf(track("known")))
+            assertEquals(2, calls, "New credentials own the second request")
+            oldReply.resumeWith(Result.failure(LibraryRequestFailure(DomainError.Auth.InvalidCredentials)))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(5))
+            assertEquals(3, calls, "An old refusal cannot postpone the replacement's retry")
+            assertEquals(listOf("one", "recovered", "tail"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
+    @Test fun autoplayWaitingOfflineResumesOnConnectivityWithoutAPlayerEvent() {
+        var calls = 0
+        Fixture(candidates = { _, _, _ -> calls++; listOf(track("auto"), track("tail")) }).use { f ->
+            f.controller.setAutoplay(false)
+            f.play("one")
+            assertEquals(listOf("one"), f.controller.state.value.queue.map { it.track.rawId }, "Control: a queue is already selected")
+            f.controller.setNetworkAvailable(false)
+            f.controller.setAutoplay(true)
+            assertEquals(0, calls)
+            f.controller.setNetworkAvailable(true)
+            assertEquals(1, calls, "Connectivity itself services the waiting request")
+            assertEquals(listOf("one", "auto", "tail"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
     @Test fun confirmationsFollowAppliedEditsAndEmptyPlayerOnlyStartsPlayback() {
         Fixture().use { f ->
             f.controller.setAutoplay(false)

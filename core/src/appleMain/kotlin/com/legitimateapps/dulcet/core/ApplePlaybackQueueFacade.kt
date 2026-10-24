@@ -460,6 +460,15 @@ public class ApplePlaybackQueueClient private constructor(
         null
     }
 
+    /** Retires an unanswered operation; a retry is issued under a fresh key. */
+    public fun releaseAutoplayRequest(key: String) {
+        try {
+            controllerOrThrow().releaseAutoplayRequest(key)
+        } catch (_: Throwable) {
+            // A closed facade has no request to retry. No exception crosses Objective-C.
+        }
+    }
+
     /** Answers AutoPlay request [key]; an empty list says nothing was found. */
     public fun appendAutoplay(
         key: String,

@@ -215,6 +215,10 @@ public class AndroidPlaybackController internal constructor(
     private var queueConfirmation: AndroidQueueConfirmation? = null
     private var confirmationSequence = 0L
     private var autoplayJob: Job? = null
+    private var autoplayKey: String? = null
+    private var autoplayRetryAt = 0L
+    private var autoplayAuthenticationRefused = false
+    private val autoplayRetry = Runnable { answerAutoplay() }
     private var autoplayTransport: KtorLibraryEndpointTransport? = null
     private val retiredNetworkClients = mutableListOf<() -> Unit>()
     private val timerTick = object : Runnable {
@@ -592,6 +596,7 @@ public class AndroidPlaybackController internal constructor(
             if (closed) return@launch
             if (available) sender.invalidateCapabilities()
             networkAvailable = available
+            if (available) answerAutoplay()
         }
     }
 
@@ -1136,11 +1141,17 @@ public class AndroidPlaybackController internal constructor(
     }
 
     private fun answerAutoplay() {
-        if (closed || !ownsActiveQueue() || !contactOpen() || autoplayJob?.isActive == true) return
+        if (closed || !ownsActiveQueue() || !contactOpen() || !networkAvailable || autoplayAuthenticationRefused || autoplayJob != null) return
+        val remaining = autoplayRetryAt - android.os.SystemClock.elapsedRealtime()
+        if (remaining > 0) {
+            timerHandler.removeCallbacks(autoplayRetry)
+            timerHandler.postDelayed(autoplayRetry, remaining)
+            return
+        }
+        val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId) ?: return
         val request = queue.takeAutoplayRequest() ?: return
         // Start dispatched: publication must finish before an immediate fake transport answers.
-        val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId) ?: return
-        autoplayJob = scope.launch(start = CoroutineStart.LAZY) {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             val tracks = try {
                 boundaries?.autoplayCandidates?.invoke(request.seed.rawId, request.excludedRawIds, request.count)
                     ?: run {
@@ -1159,19 +1170,42 @@ public class AndroidPlaybackController internal constructor(
                                     track.duration.inWholeMilliseconds, track.artworkKey, track.albumRawId)
                             }
                     }
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { emptyList() }
-            if (closed || !contactOpen() ||
-                authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return@launch
+            } catch (failure: Exception) {
+                // Retired operations cannot change a replacement's quiet period or credentials state.
+                if (closed || autoplayJob !== coroutineContext[Job]) return@launch
+                val error = failure.asLibraryError()
+                val delay = maxOf(5_000L, (error as? DomainError.Server.Busy)?.retryAfter?.inWholeMilliseconds ?: 0)
+                autoplayRetryAt = android.os.SystemClock.elapsedRealtime().let { now ->
+                    if (now > Long.MAX_VALUE - delay) Long.MAX_VALUE else now + delay
+                }
+                // A refusal waits for credentials to change; transient errors get a timed retry.
+                if (error is DomainError.Auth) autoplayAuthenticationRefused = true
+                if (!closed) queue.releaseAutoplayRequest(request.key)
+                if (failure is CancellationException) throw failure
+                return@launch
+            }
+            if (closed || autoplayJob !== coroutineContext[Job] || !networkAvailable || !contactOpen() ||
+                authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) {
+                if (!closed) queue.releaseAutoplayRequest(request.key)
+                return@launch
+            }
             tracks.forEach(::remember)
             captureEdit(queue.appendAutoplay(request.key, tracks.map {
                 PlaybackQueueItem(ProviderItemId(it.providerInstanceId, it.rawId), it.durationMilliseconds?.milliseconds, it.albumRawId)
             }))
             publish()
-        }.also { job -> job.invokeOnCompletion {
-            autoplayJob = null
-            timerHandler.post { if (!closed) answerAutoplay() }
-        }; job.start() }
+        }
+        autoplayJob = job
+        autoplayKey = request.key
+        job.invokeOnCompletion {
+            if (!closed) queue.releaseAutoplayRequest(request.key)
+            if (autoplayJob === job) {
+                autoplayJob = null
+                autoplayKey = null
+                if (!closed) timerHandler.post(autoplayRetry)
+            }
+        }
+        job.start()
     }
 
     public fun setShuffle(enabled: Boolean) {
@@ -1718,6 +1752,8 @@ public class AndroidPlaybackController internal constructor(
         if (closed || !MediaBindingIdentity.isValidAccount(expected) || !AndroidMediaBindingIdentity.sameAccount(store, account, expected)) return false
         if (account == expected) {
             sender.invalidateCapabilities()
+            autoplayAuthenticationRefused = false
+            answerAutoplay()
             return true
         }
         val oldWire = wire
@@ -1728,6 +1764,11 @@ public class AndroidPlaybackController internal constructor(
         retiredNetworkClients += oldScrobbles::close
         autoplayTransport?.let { old -> retiredNetworkClients += old::close }
         autoplayTransport = null
+        val retiredAutoplay = autoplayJob
+        autoplayJob = null
+        autoplayKey?.let(queue::releaseAutoplayRequest); autoplayKey = null
+        retiredAutoplay?.cancel()
+        autoplayAuthenticationRefused = false
         account = expected
         wire = PlaybackWireClient(expected,
             KtorPlaybackEndpointTransport(expected, null, null, systemHostResolver()),
@@ -1756,6 +1797,8 @@ public class AndroidPlaybackController internal constructor(
         mutableState.value = mutableState.value.copy(skipNotice = null, droppedAdditions = null, queueConfirmation = null)
         resolution?.cancel(); startJob?.cancel(); retryDelivery.cancel(); artworkJob?.cancel(); metadataFill?.cancel()
         timerHandler.removeCallbacks(timerTick)
+        timerHandler.removeCallbacks(autoplayRetry)
+        autoplayJob?.cancel(); autoplayJob = null
         deliveries.close(); scope.cancel()
         autoplayTransport?.close()
         retiredNetworkClients.forEach { it() }

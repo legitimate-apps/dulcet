@@ -26,6 +26,8 @@ CREATE TABLE queue_entry (
   ),
   original_position INTEGER NOT NULL CHECK (original_position >= 0),
   playback_position INTEGER NOT NULL CHECK (playback_position >= 0),
+  duration_milliseconds INTEGER,
+  album_raw_id TEXT,
   PRIMARY KEY (server_id, queue_entry_id),
   UNIQUE (server_id, original_position),
   UNIQUE (server_id, playback_position),
@@ -69,9 +71,11 @@ INSERT INTO queue_entry(
   source_context_display_name,
   added_by,
   original_position,
-  playback_position
+  playback_position,
+  duration_milliseconds,
+  album_raw_id
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectQueueEntriesByOriginalPosition:
 SELECT
@@ -82,7 +86,9 @@ SELECT
   source_context_display_name,
   added_by,
   original_position,
-  playback_position
+  playback_position,
+  duration_milliseconds,
+  album_raw_id
 FROM queue_entry
 WHERE server_id = ?
 ORDER BY original_position;
@@ -96,7 +102,9 @@ SELECT
   source_context_display_name,
   added_by,
   original_position,
-  playback_position
+  playback_position,
+  duration_milliseconds,
+  album_raw_id
 FROM queue_entry
 WHERE server_id = ?
 ORDER BY playback_position;
