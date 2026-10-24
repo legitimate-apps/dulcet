@@ -419,6 +419,11 @@ jobs:
               output.write(f"udid={udid}\n")
           print(f"PLATFORM IPHONE STARTUP PASS udid={udid} settled=true isolated=true app-launched=false")
           PY
+      - name: Settle iPhone host pressure before the first platform test
+        timeout-minutes: 16
+        run: |
+          python3 tools/ci/host-pressure settle --phase platform-native-iphone \
+            --output "$DULCET_HOST_PRESSURE_LOG"
       - name: Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone
         timeout-minutes: 17
         env:
@@ -539,6 +544,26 @@ jobs:
           # a different launch path regardless. So app.launch() provides the launch evidence, and
           # this prerequisite can never reject a destination that would in fact have run the test.
           echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true app-launched=false"
+      # Destination inventory uses the same starved host as accessibility. In run 40083176763
+      # its post-boot confirmation timed out before any proof could start. Absorb the paging
+      # burst before that query as well; neither step launches the product or touches its state.
+      - name: Settle iPadOS host pressure before destination confirmation
+        timeout-minutes: 16
+        run: |
+          python3 tools/ci/host-pressure settle --phase platform-ipad-destination \
+            --output "$DULCET_HOST_PRESSURE_LOG"
+      - name: Confirm booted iPad remains an Xcode destination
+        timeout-minutes: 4
+        env:
+          IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
+        run: |
+          set -euo pipefail
+          CONFIRMED_IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
+          if [[ "$CONFIRMED_IPAD_UDID" != "$IPAD_UDID" ]]; then
+            echo "::error::Post-boot Xcode destination differs from the acknowledged iPad"
+            exit 1
+          fi
+          echo "IPADOS XCODE DESTINATION PASS udid=$IPAD_UDID same-device=true"
       - name: Launch iPadOS shell and prove layout plus stored Keychain attributes
         timeout-minutes: 23
         env:

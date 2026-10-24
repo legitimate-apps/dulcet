@@ -482,7 +482,9 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     iPad/iPhone jobs in the 2026-10-20..24 census include five failures of the first My Library
     test, four at the first connected query; load alone does not separate passes from failures.
     `run-my-library-proofs` now requires `--settle-pressure` after service stability, before the
-    first iPhone/iPad proof and the booted iPad destination confirmation. The sampler's kernel
+    first iPhone/iPad proof and the booted iPad destination confirmation. The platform leg also
+    waits before its first iPhone native test and before its booted iPad destination confirmation
+    (the latter query timed out in [run 40083176763](https://github.com/legitimate-apps/dulcet/actions/runs/40083176763)). The sampler's kernel
     counters must show a full minute with every interval at <=20 MiB/s page-ins, <=1 MiB/s combined
     swap I/O, and load <=120 without a renewed rise (>10% across the window). A missing, reset or
     stale reading cannot establish readiness. The 900-second cap logs `settled=false` and fails

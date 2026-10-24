@@ -5,7 +5,9 @@ These controls launch no simulator. They prove a mere attempt to boot/settle can
 satisfy the prerequisite, and the native/UI tests use the device that did satisfy it.
 """
 import os
+import json
 from pathlib import Path
+import runpy
 import shlex
 import subprocess
 import sys
@@ -85,3 +87,54 @@ for index in range(4):
             raise AssertionError(("destination mutation escaped", index, replacement))
     print(f"PLATFORM IPHONE DESTINATION MUTATION CONTROL PASS invocation={index + 1} wrong/generic/missing rejected")
 print("PLATFORM IPHONE DESTINATION CONTROL PASS native/keychain/full-display/first-run use acknowledged UDID")
+
+# Execute the actual pressure/confirmation steps in workflow order with fake process boundaries.
+# Represent the first proof by a sentinel: failure of a prerequisite must prevent reaching it.
+steps = runpy.run_path(str(root / 'tools/verify_ci_policy.py'))['workflow_run_steps'](workflow)
+groups = {
+    'iphone': {'Settle iPhone host pressure before the first platform test',
+               'Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone'},
+    'ipad': {'Settle iPadOS host pressure before destination confirmation',
+             'Confirm booted iPad remains an Xcode destination',
+             'Launch iPadOS shell and prove layout plus stored Keychain attributes'},
+}
+with tempfile.TemporaryDirectory() as directory:
+    tmp = Path(directory)
+    fake = tmp / 'python3'
+    fake.write_text('''#!PYTHON
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ['CALLS'], 'a') as f: f.write(json.dumps(args) + '\\n')
+if args[0].endswith('host-pressure'):
+    sys.exit(1 if os.environ['SCENARIO'] == 'pressure-failure' else 0)
+if args[0].endswith('resolve-ipad-destination'):
+    if os.environ['SCENARIO'] == 'destination-failure': sys.exit(1)
+    print('OTHER' if os.environ['SCENARIO'] == 'destination-mismatch' else 'IPAD')
+    sys.exit(0)
+raise AssertionError(args)
+'''.replace('PYTHON', sys.executable, 1))
+    fake.chmod(0o755)
+    sentinel = tmp / 'xcodebuild'
+    sentinel.write_text('#!/bin/bash\necho \'["proof"]\' >> "$CALLS"\n')
+    sentinel.chmod(0o755)
+    for mode, names in groups.items():
+        selected = [s for s in steps if s.get('name') in names]
+        for scenario in ['positive', 'pressure-failure'] + ([] if mode == 'iphone' else
+                                                           ['destination-failure', 'destination-mismatch']):
+            calls = tmp / 'calls'
+            calls.write_text('')
+            env = dict(os.environ, PATH=str(tmp) + ':' + os.environ['PATH'], CALLS=str(calls),
+                       SCENARIO=scenario, IPAD_UDID='IPAD', DULCET_HOST_PRESSURE_LOG=str(tmp / 'pressure'))
+            for step in selected:
+                proof = step['name'].startswith(('Build iOS shell', 'Launch iPadOS shell'))
+                result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c',
+                                         'xcodebuild' if proof else textwrap.dedent(step['run'])],
+                                        env=env, capture_output=True, text=True, timeout=10)
+                if result.returncode:
+                    break
+            invoked = [json.loads(line) for line in calls.read_text().splitlines()]
+            reached = ['proof'] in invoked
+            assert reached == (scenario == 'positive'), (mode, scenario, invoked)
+            if scenario == 'pressure-failure':
+                assert not any('resolve-ipad-destination' in row[0] for row in invoked), invoked
+            print(f'PLATFORM PRESSURE ADMISSION CONTROL PASS {mode} {scenario} reached_proof={reached}')
