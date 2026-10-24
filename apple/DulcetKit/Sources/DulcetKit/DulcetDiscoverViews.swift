@@ -116,6 +116,7 @@ struct DulcetDiscoverDetailView: View {
     @State private var model: DulcetDiscoverModel
     @State private var detail: DulcetDiscoverDetailModel
     @Environment(\.openURL) private var openURL
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let destination: DulcetDiscoverDestination
     let openLibrary: (DulcetDiscoverLibraryRef) -> Void
     let openMetadata: ((DulcetDiscoverDestination) -> Void)?
@@ -153,15 +154,9 @@ struct DulcetDiscoverDetailView: View {
                 }
                 if let album = detail.album {
                     if !album.editions.isEmpty {
-                        Picker(DulcetStrings.discoverEdition, selection: Binding(get: { detail.requestedReleaseId ?? album.selectedReleaseId ?? "" }, set: { releaseId in
-                            if case let .album(mbid, _) = destination { detail.loadAlbum(mbid, releaseId: releaseId) }
-                        })) {
-                            ForEach(album.editions, id: \.releaseId) { edition in
-                                Text(DulcetStrings.discoverEditionTitle(edition.releaseDate ?? DulcetStrings.discoverUnknownDate, edition.trackCount)).tag(edition.releaseId)
-                            }
-                        }
-                        .accessibilityIdentifier("discover.edition")
-                        .accessibilityValue(album.selectedReleaseId ?? DulcetStrings.discoverUnknownDate)
+                        editionControl(album)
+                            .accessibilityIdentifier("discover.edition")
+                            .accessibilityValue(album.selectedReleaseId ?? DulcetStrings.discoverUnknownDate)
                     }
                     DulcetDiscoverStatusView(status: .init(age: album.tracks.age, error: detail.error, connection: model.publication?.connection ?? "online")) { detail.load(destination) }
                     if detail.requestedReleaseId == nil || album.selectedReleaseId == detail.requestedReleaseId {
@@ -183,6 +178,53 @@ struct DulcetDiscoverDetailView: View {
         .onAppear { model.open(); detail.load(destination) }
         .onDisappear { model.close(); detail.close() }
     }
+    @ViewBuilder
+    private func editionControl(_ album: DulcetDiscoverAlbum) -> some View {
+#if os(iOS)
+        if dynamicTypeSize.isAccessibilitySize {
+            // The system menu picker's fixed-height label clips wrapped accessibility text.
+            // Keep its selection semantics in the menu and let the visible label grow vertically.
+            Menu {
+                editionPicker(album).pickerStyle(.inline)
+            } label: {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(editionTitle(album))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .accessibilityHidden(true)
+                }
+                .frame(minHeight: 44, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(DulcetStrings.discoverEdition)
+        } else {
+            editionPicker(album)
+        }
+#else
+        editionPicker(album)
+#endif
+    }
+
+    private func editionTitle(_ album: DulcetDiscoverAlbum) -> String {
+        let selected = detail.requestedReleaseId ?? album.selectedReleaseId
+        guard let edition = album.editions.first(where: { $0.releaseId == selected }) else {
+            return DulcetStrings.discoverUnknownDate
+        }
+        return DulcetStrings.discoverEditionTitle(edition.releaseDate ?? DulcetStrings.discoverUnknownDate, edition.trackCount)
+    }
+
+    private func editionPicker(_ album: DulcetDiscoverAlbum) -> some View {
+        Picker(DulcetStrings.discoverEdition, selection: Binding(get: {
+            detail.requestedReleaseId ?? album.selectedReleaseId ?? ""
+        }, set: { releaseId in
+            if case let .album(mbid, _) = destination { detail.loadAlbum(mbid, releaseId: releaseId) }
+        })) {
+            ForEach(album.editions, id: \.releaseId) { edition in
+                Text(DulcetStrings.discoverEditionTitle(edition.releaseDate ?? DulcetStrings.discoverUnknownDate, edition.trackCount)).tag(edition.releaseId)
+            }
+        }
+    }
+
     private var sourceType: String {
         switch destination { case .artist: "artist"; case .album: "album"; case let .item(_, source): source.type }
     }

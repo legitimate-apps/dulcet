@@ -423,6 +423,16 @@ private struct DulcetIOSShell: View {
                 }
             }
         }
+#if DEBUG
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { recordShellGeometry(geometry.size) }
+                    .onChange(of: geometry.size) { _, size in recordShellGeometry(size) }
+                    .onChange(of: horizontalSizeClass) { _, _ in recordShellGeometry(geometry.size) }
+            }
+        }
+#endif
         .environment(\.dulcetPlayerTransition, playerTransition)
         .background {
             DulcetPlayerPresenter(
@@ -444,6 +454,10 @@ private struct DulcetIOSShell: View {
         .background {
             DulcetKeyboardShortcuts(store: store, onShowNowPlaying: openPlayer)
         }
+    }
+
+    private func recordShellGeometry(_ size: CGSize) {
+        DulcetUIProofMarkers.record("SHELL|width=\(size.width)|height=\(size.height)|compact=\(compact)")
     }
 
     private func openPlayer() { playerPresented = true }

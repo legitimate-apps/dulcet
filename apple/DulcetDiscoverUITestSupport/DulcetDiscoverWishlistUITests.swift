@@ -487,6 +487,17 @@ import UIKit
             reveal(wish)
             XCTAssertTrue(wish.waitForExistence(timeout: 30)); XCTAssertTrue(wish.isHittable)
             XCTAssertFalse(wish.label.isEmpty)
+            if variant == "largest" {
+                let edition = app.descendants(matching: .any)["discover.edition"].firstMatch
+                reveal(edition); XCTAssertTrue(edition.isHittable); activate(edition)
+                let later = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "2026-02-01")).firstMatch
+                XCTAssertTrue(later.waitForExistence(timeout: 10)); activate(later)
+                let selectedEdition = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "00000190-1111-4111-8111-111111111111"), object: edition)
+                XCTAssertEqual(XCTWaiter.wait(for: [selectedEdition], timeout: 30), .completed,
+                               "The accessible edition menu must select the requested release")
+                print("DISCOVER_LARGEST_EDITION selected=true frame=\(edition.frame)")
+                reveal(wish)
+            }
             try capture("Album-" + variant)
             _ = try scenario("offline"); activate(wish)
             XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
@@ -547,6 +558,12 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         XCTAssertEqual(XCTWaiter.wait(for: [compactWindow], timeout: 30), .completed,
                        "Native compact-window resize must finish before checking retained content")
         XCTAssertLessThanOrEqual(window.frame.width, 600, "Native compact-window resize must occur")
+        let compactShell = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.app.tabBars.firstMatch.exists
+        }, object: app)
+        let shellResult = XCTWaiter.wait(for: [compactShell], timeout: 30)
+        print("DISCOVER_COMPACT_SHELL window=\(window.frame) tabs=\(app.tabBars.firstMatch.exists) markers=\(app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label)")
+        XCTAssertEqual(shellResult, .completed, "The resized window must finish presenting its compact tab shell: " + app.debugDescription)
         XCTAssertTrue(album.exists)
         XCTAssertEqual(album.label, "Fixture Album 00")
         try capture("iPad-Compact-Album")
