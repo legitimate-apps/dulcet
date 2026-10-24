@@ -25,7 +25,8 @@ complete control also sends `0\r\n\r\n` and checks the exact returned or stored 
 Core tests cover `/rest/stream`, `/rest/download` and the shared framing transport used by
 `getTranscodeStream`. Explicit original-file downloads use `stream?format=raw`. Android
 measurements run under Robolectric with the host JDK's `HttpURLConnection`; they do not claim
-physical Android network-stack or decoder evidence. Darwin baseline measurements run on macOS.
+physical Android network-stack or decoder evidence. Darwin core baseline measurements run on macOS. Swift URLSession baseline measurements run on
+macOS 27.0.1 and iOS 26.5 (23F77): both accept the boundary cut and reject the mid-chunk cut.
 Apple shells share the resource and download implementations. An equivalent-baseline controller
 mutant that bypasses the new replacement guard promoted the boundary-cut file and exposed an
 offline asset; complete and mid-chunk controls passed. A separate loader mutant that disables strict
