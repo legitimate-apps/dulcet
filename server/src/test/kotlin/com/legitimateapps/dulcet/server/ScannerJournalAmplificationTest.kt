@@ -209,12 +209,12 @@ class ScannerJournalAmplificationTest {
             val artist=id(c,"artist","Artist 1");val album=id(c,"album","Album 1")
             val beforeImage=c.ctx.artwork.image("ar-$artist",null)!!.bytes
             val beforeRevision=revisions(c).getValue("artist" to artist)
-            val stamp=c.ctx.db.read {string("SELECT value FROM meta WHERE key='folder_art_stamp'")}
+            val stamp=assertNotNull(c.ctx.db.read {string("SELECT value FROM meta WHERE key='folder_art_stamp_v2'")})
             val track=c.ctx.db.read {string("SELECT id FROM track WHERE path='album-1/song.flac'")!!}
             val head=c.ctx.journal.head()
             Files.move(c.files[0],c.files[1].resolveSibling("moved.flac"))
             c.ctx.scanner.scan(force=false)
-            assertEquals(stamp,c.ctx.db.read {string("SELECT value FROM meta WHERE key='folder_art_stamp'")},"Both directories and their artwork files remain unchanged")
+            assertEquals(stamp,c.ctx.db.read {string("SELECT value FROM meta WHERE key='folder_art_stamp_v2'")},"Both directories and their artwork files remain unchanged")
             assertEquals(track,c.ctx.db.read {string("SELECT id FROM track WHERE path='album-2/moved.flac'")},"Move must preserve track identity")
             assertEquals("album-2/cover.jpg",c.ctx.db.read {string("SELECT folder_art FROM album WHERE id=?",album)})
             assertFalse(beforeImage.contentEquals(c.ctx.artwork.image("ar-$artist",null)!!.bytes),"Artist inherits a different existing cover")
@@ -236,7 +236,7 @@ class ScannerJournalAmplificationTest {
             val artist=id(c,"artist","Artist 1")
             val beforeImage=c.ctx.artwork.image("ar-$artist",null)!!.bytes
             val before=revisions(c);val head=c.ctx.journal.head()
-            val albumStamp=c.ctx.db.read {string("SELECT value FROM meta WHERE key='folder_art_stamp'")}
+            val albumStamp=assertNotNull(c.ctx.db.read {string("SELECT value FROM meta WHERE key='folder_art_stamp_v2'")})
             val columns=c.ctx.db.read {query("PRAGMA table_info(track)") {it.string("name")}}
             fun tracks()=c.ctx.db.read {query("SELECT * FROM track ORDER BY id") {row->columns.map(row::stringOrNull)}}
             val beforeTracks=tracks()
@@ -244,7 +244,7 @@ class ScannerJournalAmplificationTest {
             Files.setLastModifiedTime(picture,FileTime.fromMillis(System.currentTimeMillis()+5_000))
             val scan=c.ctx.scanner.scan(force=true)!!
             assertEquals(3,scan.unchanged);assertEquals(0,scan.updated)
-            assertEquals(albumStamp,c.ctx.db.read {string("SELECT value FROM meta WHERE key='folder_art_stamp'")})
+            assertEquals(albumStamp,c.ctx.db.read {string("SELECT value FROM meta WHERE key='folder_art_stamp_v2'")})
             assertEquals(beforeTracks,tracks(),"Standalone image replacement must preserve all track metadata")
             assertFalse(beforeImage.contentEquals(c.ctx.artwork.image("ar-$artist",null)!!.bytes),"Standalone artist image bytes must change")
             val changed=changes(c,head,"standalone-artist-art-replaced")

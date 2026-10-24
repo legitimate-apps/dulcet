@@ -136,10 +136,10 @@ class Scanner(
         val artStamp = folderArt.toSortedMap().entries.joinToString("\n") { (dir,name) ->
             "$dir/$name:${if (name.isEmpty()) "none" else identity(if (dir.isEmpty()) name else "$dir/$name")}"
         }.let { java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { byte -> "%02x".format(byte) } }
-        val artChanged = db.read { string("SELECT value FROM meta WHERE key='folder_art_stamp'") } != artStamp
+        val artChanged = db.read { string("SELECT value FROM meta WHERE key=?",FOLDER_ART_STAMP) } != artStamp
         val artworkChanged = db.read {
-            sourceStamps("embedded_art_sources") != embeddedArtSources(::identity) ||
-                sourceStamps("artist_art_sources") != artistArtSources(root, ::identity)
+            sourceStamps(EMBEDDED_ART_SOURCES) != embeddedArtSources(::identity) ||
+                sourceStamps(ARTIST_ART_SOURCES) != artistArtSources(root, ::identity)
         }
         if (!force && !artworkChanged && !artChanged && changed.isEmpty() && removed.isEmpty()) {
             return ScanResult(added = 0, updated = 0, removed = 0, unchanged = unchanged, failed = 0)
@@ -323,7 +323,7 @@ class Scanner(
             execute("INSERT INTO meta(key,value) VALUES('discover_scan_stamp',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",scanId)
             execute("INSERT INTO meta(key, value) VALUES('last_scan', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", Instant.ofEpochMilli(now).toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_count', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", folderArt.size.toString())
-            execute("INSERT INTO meta(key, value) VALUES('folder_art_stamp', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", artStamp)
+            execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",FOLDER_ART_STAMP,artStamp)
         }
         delta?.let { runCatching { afterCatalogCommit(it) }.onFailure { log.warn("wish fulfilment wakeup deferred") } }
         val result = ScanResult(added = probed.count { existing[it.path] == null }, updated = probed.count { existing[it.path] != null }, removed = removed.size, unchanged = unchanged, failed = failed)
@@ -481,8 +481,8 @@ class Scanner(
                 "ON CONFLICT(id) DO UPDATE SET ${fields.joinToString { "$it=excluded.$it" }} " +
                 "WHERE ${fields.joinToString(" OR ") { "$table.$it IS NOT excluded.$it" }}", *values.toTypedArray()) > 0
         }
-        val sourceStampsBeforeEmbedded = sourceStamps("embedded_art_sources")
-        val sourceStampsBeforeArtist = sourceStamps("artist_art_sources")
+        val sourceStampsBeforeEmbedded = sourceStamps(EMBEDDED_ART_SOURCES)
+        val sourceStampsBeforeArtist = sourceStamps(ARTIST_ART_SOURCES)
         val changedAlbums = mutableSetOf<String>()
         val changedArtists = mutableSetOf<String>()
         data class AlbumAcc(
@@ -560,8 +560,8 @@ class Scanner(
         // changing the tag reread policy. Folder invalidation below already covers these tracks.
         if (!artChanged) for (id in changedEmbedded)
             execute("INSERT INTO api_journal(type,id,op,at) VALUES('track',?,'upsert',?)",id,now)
-        saveSourceStamps("embedded_art_sources", embeddedSources)
-        saveSourceStamps("artist_art_sources", artistSources)
+        saveSourceStamps(EMBEDDED_ART_SOURCES, embeddedSources)
+        saveSourceStamps(ARTIST_ART_SOURCES, artistSources)
         val current = aggregateRelationships()
         // Scalar upserts already journal themselves. Membership-only changes and the existing
         // conservative artwork invalidation still need one upsert, without synthetic tombstones.
@@ -609,6 +609,11 @@ class Scanner(
     private data class AggregateChanges(val type:String,val ids:Set<String>,val previous:Map<String,Set<List<String?>>>,val next:Map<String,Set<List<String?>>>,val written:Set<String>)
 
     companion object {
+        // Keep format-specific baselines separate from keys an older scanner can overwrite
+        // during an image rollback. Bump these versions when their identity format changes.
+        private const val FOLDER_ART_STAMP = "folder_art_stamp_v2"
+        private const val EMBEDDED_ART_SOURCES = "embedded_art_sources_v1"
+        private const val ARTIST_ART_SOURCES = "artist_art_sources_v1"
         private val PROBE_THREADS = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
         val ART_NAMES = listOf("cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.jpeg", "folder.png", "front.jpg", "front.jpeg", "front.png", "album.jpg", "album.png", "albumart.jpg", "albumart.png")
         val LYRICS_SIDECARS = listOf("lrc", "txt")
