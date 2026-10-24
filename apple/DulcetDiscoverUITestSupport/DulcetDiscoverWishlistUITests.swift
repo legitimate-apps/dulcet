@@ -134,8 +134,10 @@ import UIKit
         activate(row)
     }
     func selectSavedServer(_ button: XCUIElement) {
+        XCTAssertTrue(button.waitForExistence(timeout: 30), "Saved account must appear before checking whether it is enabled: " + app.debugDescription)
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 30), .completed)
+        print("DISCOVER_SAVED_ACCOUNT identifier=\(button.identifier) exists=true enabled=true")
         activate(button)
         // Connecting a saved account returns the real app to Listen Now. Reopen Connection
         // before checking its current-account label; the departing button cannot stay visible.

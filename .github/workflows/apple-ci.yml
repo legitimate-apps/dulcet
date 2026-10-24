@@ -2956,8 +2956,9 @@ jobs:
         timeout-minutes: 20
         run: tools/ci/run-discover-wishlist-proofs ipad --build-for-testing
       - name: Drive Discover and Wishlist through the native ipad app
-        # Includes cold simulator startup and the five measured multi-launch UI proofs.
-        timeout-minutes: 45
+        # Startup took nine minutes and the first four cases took 33 on a hosted iPad.
+        # Leave time for the fifth case and finalization without changing assertion deadlines.
+        timeout-minutes: 60
         env:
           DULCET_DISCOVER_PREBUILT: "true"
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-ipad/fixture" -- tools/ci/run-discover-wishlist-proofs ipad
