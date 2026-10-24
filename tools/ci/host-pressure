@@ -13,15 +13,18 @@ so that reading was ASSUMED. This tool turns it into a measurement.
 Subcommands:
   sample  --output FILE [--interval SECONDS]   append one JSON sample per interval until killed
   mark    FILE NAME                            append a phase boundary (with booted-simulator count)
+  stop    FILE                                 stop sampling and bound worker cleanup before upload
   summarize FILE                               print one line per phase: deltas and peaks
 
 Samples are cumulative kernel counters (vm_stat) plus swap use and load average; every
 sample also lists the largest processes by resident memory, summed by command name, so a phase
 that swaps names what held the memory (`HOST PRESSURE TOP`), and the same sample names what held
 the CPU (`HOST PRESSURE CPU`, from the phase's highest-load sample), so a load of hundreds on three
-cores is attributed to a process rather than guessed at. Two consecutive readings at >=90%
-for the same Dulcet app process trigger a three-second stack sample, with a ten-second timeout
-and at most three captures per job, with 30 seconds between captures of the same launch. A phase's
+cores is attributed to a process rather than guessed at. Consecutive readings at >=90% for
+at least 15 seconds trigger a three-second stack sample. One detached worker allows up to 180
+seconds for symbol processing. At most three captures start in any ten-minute window, with 60
+seconds between captures of the same launch; only the latest three call trees are retained.
+The stop command cuts off unfinished workers before diagnostics upload, recording why. A phase's
 pressure is the DELTA of the counters between its mark and the next one, so the sampler can run
 for the whole job without any phase needing to know about it. Stdlib only.
 """
@@ -29,6 +32,7 @@ import json
 from pathlib import Path
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -105,65 +109,82 @@ def top_processes(processes: list[dict], limit: int = 8) -> tuple[list[list], li
 
 
 class HotAppCapture:
-    """One worker at a time, at most three captures in this job, never wait in the sample loop.
-
-    Each worker has its own timeout even if the parent sampler is stopped. PID plus process start
-    time prevents two different launches (or two sub-threshold processes' summed CPU) triggering.
-    Stack logs sit beside the pressure log, in the existing failure-diagnostics upload glob.
-    """
+    """Bound attachment cost and disk use without spending the whole budget early in a long leg."""
     def __init__(self, path: str, limit: int = 3):
         self.path = path
         self.limit = limit
         self.count = 0
-        self.previous: set[tuple] = set()
+        self.previous: dict[tuple, float] = {}
         self.captured: dict[tuple, float] = {}
+        self.recent: list[float] = []
+        self.outputs: list[Path] = []
         self.worker = None
 
     def observe(self, processes: list[dict]) -> None:
         hot = {(p["pid"], p["started"]) for p in processes
                if p["name"] in ("Dulcet", "Dulcet DEV") and p["cpu"] >= 90.0}
         now = time.monotonic()
-        eligible = {identity for identity in hot & self.previous
-                    if identity not in self.captured or now - self.captured[identity] >= 30}
-        self.previous = hot
+        eligible = {identity for identity in hot & self.previous.keys()
+                    if now - self.previous[identity] >= 15 and
+                    (identity not in self.captured or now - self.captured[identity] >= 60)}
+        self.previous = {identity: self.previous.get(identity, now) for identity in hot}
+        self.recent = [start for start in self.recent if now - start < 600]
         if self.worker is not None:
             if self.worker.poll() is None:
                 return
             self.worker = None
-        if self.count >= self.limit or not eligible:
+        if len(self.recent) >= self.limit or not eligible or Path(self.path + ".stop").exists():
             return
         pid, started = sorted(eligible)[0]
         self.count += 1
         self.captured[pid, started] = now
-        output = str(Path(self.path).with_name(f"dulcet-hot-app-{self.count}-pid-{pid}.log"))
+        self.recent.append(now)
+        output = Path(self.path).with_name(f"dulcet-hot-app-{self.count}-pid-{pid}.log")
         try:
             self.worker = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
-                "capture", str(pid), started, output, self.path],
+                "capture", str(pid), started, str(output), self.path],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            append(self.path, dict(event="stack-capture-start", pid=pid, started=started,
-                                   output=os.path.basename(output), capture=self.count))
+            append(self.path, dict(event="stack-capture-dispatch", pid=pid, started=started,
+                                   workerPid=self.worker.pid, output=output.name, capture=self.count))
+            self.outputs.append(output)
+            while len(self.outputs) > self.limit:
+                old = self.outputs.pop(0)
+                old.unlink(missing_ok=True)
+                Path(str(old) + ".stderr.log").unlink(missing_ok=True)
         except OSError as error:
-            append(self.path, dict(event="stack-capture-error", pid=pid, error=type(error).__name__))
+            append(self.path, dict(event="stack-capture-error", pid=pid, output=output.name,
+                                   error=type(error).__name__))
 
 
 def capture_stack(pid: int, started: str, output: str, pressure: str,
-                  command: str = "/usr/bin/sample", timeout: float = 10) -> int:
+                  command: str = "/usr/bin/sample", timeout: float = 180) -> int:
     # Recheck in the worker before attaching: launches can exit while this worker starts.
+    # Register in the worker before checking the stop sentinel. If cleanup races with Popen,
+    # either stop sees this registration or this worker sees the sentinel before attaching.
+    append(pressure, dict(event="stack-capture-start", pid=pid, started=started,
+                          workerPid=os.getpid(), output=os.path.basename(output)))
+    if Path(pressure + ".stop").exists():
+        append(pressure, dict(event="stack-capture-end", pid=pid, status="job-end-before-sampling",
+                              output=os.path.basename(output)))
+        return 0
+    began = time.monotonic()
     status = "error"
     try:
         if not any(p["pid"] == pid and p["started"] == started and
                    p["name"] in ("Dulcet", "Dulcet DEV") for p in process_snapshot()):
-            append(pressure, dict(event="stack-capture-exited", pid=pid))
+            append(pressure, dict(event="stack-capture-exited", pid=pid, output=os.path.basename(output)))
             return 0
         with open(output + ".stderr.log", "w", encoding="utf-8") as log:
             result = subprocess.run([command, str(pid), "3", "-file", output],
                                     stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
-        status = "complete" if result.returncode == 0 else "error"
+        written = Path(output).is_file() and Path(output).stat().st_size > 0
+        status = "complete" if result.returncode == 0 and written else "error"
     except subprocess.TimeoutExpired:
         status = "timeout"
     except (OSError, subprocess.CalledProcessError):
         status = "unavailable"
     append(pressure, dict(event="stack-capture-end", pid=pid, status=status,
+                          elapsedSeconds=round(time.monotonic() - began, 3), timeoutSeconds=timeout,
                           output=os.path.basename(output)))
     return 0
 
@@ -175,12 +196,15 @@ def append(path: str, record: dict) -> None:
 
 
 def sample(path: str, interval: float) -> int:
-    append(path, {"event": "sampler-start", "pid": os.getpid(), "intervalSeconds": interval,
+    append(path, {"event": "sampler-start", "pid": os.getpid(), "intervalSeconds": interval, "arguments": sys.argv[1:],
                   "memBytes": int(subprocess.run(["sysctl", "-n", "hw.memsize"],
                                                  capture_output=True, text=True).stdout or 0),
                   "cpus": os.cpu_count()})
     captures = HotAppCapture(path)
-    while True:
+    def interrupted(_signum, _frame):
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, interrupted)
+    while not Path(path + ".stop").exists():
         try:
             record = {"event": "sample", **vm_stat(), "swapUsedMb": swap_used_mb(),
                       "load1": os.getloadavg()[0]}
@@ -192,6 +216,75 @@ def sample(path: str, interval: float) -> int:
             captures.previous.clear()
             append(path, {"event": "sample-error", "error": type(error).__name__})
         time.sleep(interval)
+    return 0
+
+
+def process_matches(pid: int, suffix: str) -> bool:
+    """Check the recorded PID still runs this job's exact command before sending a signal."""
+    try:
+        command = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True,
+                                 text=True, timeout=1, check=True).stdout.strip()
+        return command.endswith(suffix)
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def stop(path: str, grace: float = 2) -> int:
+    if not path:
+        print("HOST PRESSURE STOP unavailable: sampler was not started")
+        return 0
+    # The sentinel also closes the race with observe() starting another worker during cleanup.
+    Path(path + ".stop").touch()
+    if not Path(path).is_file():
+        return 0
+    def records():
+        # A concurrent append can leave the last line incomplete until the next read.
+        result = []
+        for line in Path(path).read_text().splitlines():
+            try:
+                result.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+        return result
+    rows = records()
+    sampler = next((r for r in reversed(rows) if r.get("event") == "sampler-start"), {})
+    pid = sampler.get("pid")
+    if pid and sampler.get("arguments") and process_matches(pid, " " + " ".join(sampler["arguments"])):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    def active():
+        rows = records()
+        ended = {r.get("output") for r in rows if r.get("event") in
+                 ("stack-capture-end", "stack-capture-exited", "stack-capture-error")}
+        return [r for r in rows if r.get("event") == "stack-capture-start" and r["output"] not in ended]
+    cleanup_deadline = time.monotonic() + grace + 3
+    deadline = time.monotonic() + grace
+    while active() and time.monotonic() < deadline:
+        time.sleep(.1)
+    for capture in reversed(active()):
+        worker = capture.get("workerPid")
+        output = str(Path(path).with_name(capture["output"]))
+        suffix = f" capture {capture['pid']} {capture['started']} {output} {path}"
+        status = "job-end-worker-unavailable"
+        if time.monotonic() >= cleanup_deadline:
+            status = "job-end-cleanup-budget"
+        elif worker and process_matches(worker, suffix):
+            try:
+                # The worker is a session leader. Its sample child shares this group, so neither
+                # symbol processing nor a timed-out worker can outlive this job's cleanup.
+                if os.getpgid(worker) == worker:
+                    os.killpg(worker, signal.SIGKILL)
+                    status = "job-end-cutoff"
+                else:
+                    status = "job-end-group-unavailable"
+            except OSError:
+                status = "job-end-signal-unavailable"
+        append(path, dict(event="stack-capture-end", pid=capture["pid"], status=status,
+                          output=capture["output"]))
+    append(path, dict(event="sampler-stop"))
+    return 0
 
 
 def mark(path: str, name: str) -> int:
@@ -264,6 +357,8 @@ def main(argv: list[str]) -> int:
         return sample(output, interval)
     if len(argv) == 3 and argv[0] == "mark":
         return mark(argv[1], argv[2])
+    if len(argv) == 2 and argv[0] == "stop":
+        return stop(argv[1])
     if len(argv) == 2 and argv[0] == "summarize":
         return summarize(argv[1])
     print(__doc__, file=sys.stderr)
