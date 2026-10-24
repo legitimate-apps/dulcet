@@ -10,6 +10,11 @@
    live sampling records a CPU list on this host.
 """
 import json
+import runpy
+import os
+import signal
+from unittest.mock import patch
+from types import SimpleNamespace
 import subprocess
 import sys
 import tempfile
@@ -38,6 +43,8 @@ with tempfile.TemporaryDirectory() as tmp:
         dict(event="sample", wallTimeMillis=3000, pageouts=640, swapouts=1280,
              **{**base, "swapUsedMb": 512.0, "load1": 9.5},
              top=[["Simulator", 900]], cpuTop=[["mdworker_shared", 180.5], ["Dulcet", 20.0]]),
+        dict(event="stack-capture-end", wallTimeMillis=3100, pid=123, status="complete",
+             output="dulcet-hot-app-1-pid-123.log"),
         dict(event="sample", wallTimeMillis=3200, pageouts=640, swapouts=1280,
              **{**base, "swapUsedMb": 100.0, "load1": 2.0},
              top=[["Simulator", 800]], cpuTop=[["quiet", 1.0]]),
@@ -45,6 +52,7 @@ with tempfile.TemporaryDirectory() as tmp:
     fixture.write_text("".join(json.dumps(r) + "\n" for r in rows))
     result = run("summarize", str(fixture))
     assert result.returncode == 0, result
+    assert 'HOST PRESSURE STACK ' in result.stdout and 'dulcet-hot-app-1-pid-123.log' in result.stdout
     lines = {line.split("phase=")[1].split()[0]: line for line in result.stdout.splitlines()
              if line.startswith("HOST PRESSURE phase=")}
     assert "pageouts_mb=0 " in lines["quiet"] and "booted_simulators=1" in lines["quiet"], result.stdout
@@ -67,9 +75,15 @@ with tempfile.TemporaryDirectory() as tmp:
     sampler = subprocess.Popen([sys.executable, TOOL, "sample", "--output", str(live),
                                 "--interval", "0.5"])
     try:
-        time.sleep(2.5)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if live.exists() and live.read_text().count('"event":"sample"') >= 3:
+                break
+            assert sampler.poll() is None, 'live sampler exited before recording three samples'
+            time.sleep(.1)
     finally:
-        sampler.terminate()
+        result = run("stop", str(live))
+        assert result.returncode == 0, result
         sampler.wait(timeout=10)
     samples = [json.loads(line) for line in live.read_text().splitlines()
                if '"event":"sample"' in line]
@@ -81,3 +95,191 @@ with tempfile.TemporaryDirectory() as tmp:
     assert listed and listed[0]["cpuTop"] and all(len(entry) == 2 for entry in listed[0]["cpuTop"]), samples[0]
     print(f"LIVE CONTROL PASS samples={len(samples)} page_bytes={samples[0]['page_bytes']} "
           f"pageins={samples[-1]['pageins']}")
+
+# Behavioral controls for the hot-app trigger. A worker is real subprocess ownership in production;
+# this fake keeps observation deterministic and proves that an unfinished capture never blocks it.
+module = runpy.run_path(TOOL)
+HotAppCapture = module['HotAppCapture']
+capture_stack = module['capture_stack']
+
+def app(pid=123, cpu=90.0, started='Fri Oct 23 20:00:00 2026', name='Dulcet DEV'):
+    return dict(pid=pid, cpu=cpu, started=started, name=name, rss=1024)
+
+class Worker:
+    pid = 987654
+    done = False
+    def poll(self):
+        return 0 if self.done else None
+
+with tempfile.TemporaryDirectory() as tmp:
+    pressure = str(Path(tmp) / 'pressure.log')
+    worker = Worker()
+    with patch('subprocess.Popen', return_value=worker) as launch, patch('time.monotonic') as clock:
+        clock.return_value = 0
+        trigger = HotAppCapture(pressure)
+        trigger.observe([app(cpu=89.9)])
+        trigger.observe([app()])
+        clock.return_value = 5
+        trigger.observe([app()])
+        assert launch.call_count == 0, 'short hot work must preserve the budget'
+        clock.return_value = 15
+        trigger.observe([app()])
+        assert launch.call_count == 1
+        assert launch.call_args.args[0][-2].endswith('dulcet-hot-app-1-pid-123.log')
+        # A capture that is still resolving symbols never blocks observation or overlaps.
+        clock.return_value = 80
+        before = time.perf_counter()
+        trigger.observe([app()])
+        assert time.perf_counter() - before < .1 and launch.call_count == 1
+        worker.done = True
+        trigger.observe([app()])
+        assert launch.call_count == 2
+        clock.return_value = 140
+        trigger.observe([app()])
+        assert launch.call_count == 3
+        # Seed old files: starting the fourth capture must remove these, keeping three pairs.
+        trigger.outputs[0].write_text('old call tree')
+        Path(str(trigger.outputs[0]) + '.stderr.log').write_text('old stderr')
+        old = trigger.outputs[0]
+        clock.return_value = 200
+        trigger.observe([app()])
+        assert launch.call_count == 3, 'ten-minute window bounds attachment cost'
+        clock.return_value = 615
+        trigger.observe([app()])
+        assert launch.call_count == 4, 'early work must not exhaust the rest of a long job'
+        assert len(trigger.outputs) == 3 and not old.exists()
+        assert not Path(str(old) + '.stderr.log').exists(), 'rotation must bound both trees and stderr'
+        trigger.observe([app()])
+        assert launch.call_count == 4, 'same-launch cooldown prevents immediate recapture'
+        launch.reset_mock()
+        trigger = HotAppCapture(pressure)
+        clock.return_value = 1000
+        trigger.observe([app(cpu=50), app(pid=124, cpu=50)])
+        clock.return_value = 1015
+        trigger.observe([app(cpu=50), app(pid=124, cpu=50)])
+        trigger.observe([app(name='DulcetiOSUITests-Runner')])
+        clock.return_value = 1030
+        trigger.observe([app(name='DulcetiOSUITests-Runner')])
+        assert launch.call_count == 0, 'summed CPU or test runners must not trigger'
+        trigger.observe([app()])
+        trigger.observe([])
+        clock.return_value = 1045
+        trigger.observe([app()])
+        assert launch.call_count == 0, 'a missing reading resets the streak'
+        clock.return_value = 1060
+        trigger.observe([app(started='another launch')])
+        assert launch.call_count == 0, 'PID reuse must reset the streak'
+        clock.return_value = 1075
+        trigger.observe([app(started='another launch')])
+        assert launch.call_count == 1
+        Path(pressure + '.stop').touch()
+        clock.return_value = 1140
+        trigger.observe([app(started='another launch')])
+        assert launch.call_count == 1, 'job-end sentinel must prevent new workers'
+    print('STACK TRIGGER CONTROL PASS duration, PID identity, reset, exclusion, overlap, rolling budget, retention, stop')
+
+    Path(pressure + ".stop").unlink()
+
+    # Run an actual hanging executable under the same subprocess timeout as sample. This must
+    # return promptly, kill/reap the child and leave a timeout receipt while the sampler continues.
+    hanging = Path(tmp) / 'hanging-sample'
+    hanging.write_text('#!/usr/bin/env python3\nwhile True: pass\n')
+    hanging.chmod(0o755)
+    output = str(Path(tmp) / 'stack.log')
+    before = time.monotonic()
+    with patch.dict(capture_stack.__globals__, process_snapshot=lambda: [app()]):
+        capture_stack(123, app()['started'], output, pressure, str(hanging), timeout=.15)
+    assert time.monotonic() - before < 2, 'capture timeout must bound elapsed time'
+    receipts = [json.loads(line) for line in Path(pressure).read_text().splitlines()]
+    assert receipts[-1]['event'] == 'stack-capture-end' and receipts[-1]['status'] == 'timeout'
+    with patch.dict(capture_stack.__globals__, process_snapshot=lambda: []):
+        capture_stack(123, app()['started'], output, pressure, str(hanging), timeout=.15)
+    assert json.loads(Path(pressure).read_text().splitlines()[-1])['event'] == 'stack-capture-exited'
+    Path(pressure + '.stop').touch()
+    with patch.dict(capture_stack.__globals__, process_snapshot=lambda: (_ for _ in ()).throw(AssertionError('must not attach'))):
+        capture_stack(123, app()['started'], output, pressure, str(hanging), timeout=.15)
+    assert json.loads(Path(pressure).read_text().splitlines()[-1])['status'] == 'job-end-before-sampling'
+    assert run('stop', '').returncode == 0
+    print('STACK WORKER CONTROL PASS actual timeout, exited PID refused, worker starting during stop refused')
+
+# ps uses a five-field lstart and can return executable names containing spaces. Preserve both.
+snapshot = module['process_snapshot']
+with patch('subprocess.run', return_value=SimpleNamespace(stdout=(
+        '123 4096 91.2 Fri Oct 23 20:00:00 2026 /tmp/Dulcet DEV\n'
+        '124 2048 50,5 Fri Oct 23 20:00:01 2026 /tmp/Dulcet\n'))):
+    parsed = snapshot()
+assert parsed == [dict(pid=123, rss=4096, cpu=91.2, started=app()['started'], name='Dulcet DEV'),
+                  dict(pid=124, rss=2048, cpu=50.5, started='Fri Oct 23 20:00:01 2026', name='Dulcet')]
+print('PS CONTROL PASS PID, launch identity, locale decimal and executable name with spaces')
+
+with tempfile.TemporaryDirectory() as tmp:
+    pressure = str(Path(tmp) / 'pressure.log')
+    output = str(Path(tmp) / 'stack.log')
+    writer = Path(tmp) / 'successful-sample'
+    writer.write_text('#!/usr/bin/env python3\nimport sys, time\n'
+                      'print("Sampling completed, processing symbols...", flush=True)\n'
+                      'time.sleep(10.5)\n'
+                      'assert sys.argv[1:4] == ["123", "3", "-file"]\n'
+                      'open(sys.argv[4], "w").write("Call graph: control-main-frame\\n")\n')
+    writer.chmod(0o755)
+    before = time.monotonic()
+    with patch.dict(capture_stack.__globals__, process_snapshot=lambda: [app()]):
+        # Exercise CLI argument dispatch too, using the real worker implementation.
+        original = module['main'].__globals__['capture_stack']
+        def control_capture(pid, started, stack, log):
+            return original(pid, started, stack, log, str(writer))
+        with patch.dict(module['main'].__globals__, capture_stack=control_capture):
+            assert module['main'](['capture', '123', app()['started'], output, pressure]) == 0
+    assert time.monotonic() - before > 10, "fake symbol processing must outlast the old timeout"
+    assert Path(output).read_text() == 'Call graph: control-main-frame\n'
+    assert json.loads(Path(pressure).read_text().splitlines()[-1])['status'] == 'complete'
+    print('STACK SUCCESS CONTROL PASS symbol processing past old ten-second timeout writes complete call tree')
+
+# A real detached worker and child represent symbol processing at job end. Stop must kill their
+# group, record the cutoff before returning, and never signal a reused/unrelated PID.
+with tempfile.TemporaryDirectory() as tmp:
+    pressure = str(Path(tmp) / 'pressure.log')
+    output = str(Path(tmp) / 'stack.log')
+    child_file = str(Path(tmp) / 'child.pid')
+    code = ('import subprocess,time; '
+            'p=subprocess.Popen(["sleep","60"]); '
+            f'open({child_file!r},"w").write(str(p.pid)); time.sleep(60)')
+    argv = [sys.executable, '-c', code, 'capture', '123', app()['started'], output, pressure]
+    worker = subprocess.Popen(argv, start_new_session=True)
+    child_pid = None
+    try:
+        deadline = time.monotonic() + 5
+        while not Path(child_file).exists() and time.monotonic() < deadline:
+            time.sleep(.05)
+        child_pid = int(Path(child_file).read_text())
+        module['append'](pressure, dict(event='stack-capture-start', pid=123,
+            started=app()['started'], workerPid=worker.pid, output='stack.log'))
+        before = time.monotonic()
+        assert module['stop'](pressure, grace=.1) == 0
+        assert time.monotonic() - before < 3, 'cleanup must stay bounded'
+        worker.wait(timeout=2)
+        rows = [json.loads(line) for line in Path(pressure).read_text().splitlines()]
+        assert rows[-2]['status'] == 'job-end-cutoff' and rows[-1]['event'] == 'sampler-stop', rows
+        state = subprocess.run(['ps', '-p', str(child_pid), '-o', 'state='], capture_output=True, text=True).stdout
+        assert not state.strip() or state.strip().startswith('Z'), 'sample child must not survive cleanup'
+        assert not module['process_matches'](os.getpid(), ' capture an-unrelated-job'), 'PID identity must be checked'
+        result = run('stop', pressure)
+        assert result.returncode == 0
+        rows = [json.loads(line) for line in Path(pressure).read_text().splitlines()]
+        assert sum(r.get('status') == 'job-end-cutoff' for r in rows) == 1, 'stop must be idempotent'
+    finally:
+        if worker.poll() is None:
+            os.killpg(worker.pid, signal.SIGKILL)
+        worker.wait(timeout=2)
+    unrelated = subprocess.Popen(['sleep', '30'], start_new_session=True)
+    try:
+        module['append'](pressure, dict(event='stack-capture-start', pid=123,
+            started=app()['started'], workerPid=unrelated.pid, output='unrelated.log'))
+        module['stop'](pressure, grace=0)
+        assert unrelated.poll() is None, 'a recorded PID with a different command must not be signaled'
+        rows = [json.loads(line) for line in Path(pressure).read_text().splitlines()]
+        assert rows[-2]['status'] == 'job-end-worker-unavailable'
+    finally:
+        unrelated.terminate()
+        unrelated.wait(timeout=2)
+    print('STACK CLEANUP CONTROL PASS real worker and child cutoff, bounded receipt, unrelated PID spared, repeated stop')
