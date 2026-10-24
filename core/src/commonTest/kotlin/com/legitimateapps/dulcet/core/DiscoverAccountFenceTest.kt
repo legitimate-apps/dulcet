@@ -87,6 +87,27 @@ class DiscoverAccountFenceTest {
         assertTrue(wire.requests.contains("getOpenSubsonicExtensions"));assertFalse(pubs.last().access.discoverAvailable)
         assertTrue(wire.requests.none {it.contains("Dulcet")});c.close()
     }
+    @Test fun knownUnsupportedWishlistAddsNoDiscoveryRequestToReconnect()=readerTest {env ->
+        val wire=DiscoverSessionWire().apply {advertised=false}
+        val parent=open(env,wire);val client=parent.openDiscoverClient()
+        val values=mutableListOf<DiscoverPublication>();client.observe {values+=it}
+        // The Apple session requests the initial capability answer through this refresh.
+        client.refreshWishlist(WishFilter());runCurrent()
+        assertEquals(1,wire.requests.count {it=="getOpenSubsonicExtensions"})
+        assertEquals("known",values.last().access.detection)
+        assertFalse(values.last().access.wishlistAvailable)
+        parent.setOnline(false);runCurrent()
+        val before=wire.requests.size
+        assertIs<ReaderConnectionOutcome.Read>(parent.reader.reconnect());runCurrent()
+        assertFalse(wire.requests.drop(before).contains("getOpenSubsonicExtensions"),wire.requests.drop(before).toString())
+        assertTrue(wire.requests.none {it.contains("Dulcet")})
+        // An explicit refresh can discover support added since that definitive answer.
+        wire.advertised=true;client.refreshWishlist(WishFilter());runCurrent()
+        assertTrue(values.last().access.canReadWishlist)
+        assertEquals(2,wire.requests.count {it=="getOpenSubsonicExtensions"})
+        assertTrue(wire.requests.contains("getDulcetWishlist"))
+        client.close()
+    }
     @Test fun heldSearchAcrossRejectionCannotCacheReplacementRows()=readerTest {env ->
         val wire=DiscoverSessionWire();var epoch:Long?=0
         val parent=open(env,wire,{epoch});val c=parent.openDiscoverClient();val pubs=mutableListOf<DiscoverPublication>();c.observe {pubs+=it}

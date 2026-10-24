@@ -164,8 +164,12 @@ internal class DiscoverAccount(
         fun revalidate(){
             if(closed)return
             if(reader.online && active()){
-                if(query.isNotEmpty())search.revalidate()
-                if(visibleWishlist)refreshWishlist(filter)
+                // A definitive absence is not a visible feature to revalidate. As with My
+                // Library, ordinary reconnects on an unsupported server must add no probe.
+                // Explicit requests still redetect; unresolved answers still retry here.
+                val unresolved=access.detection!="known"
+                if(query.isNotEmpty() && (unresolved || access.discoverAvailable))search.revalidate()
+                if(visibleWishlist && (unresolved || access.wishlistAvailable))refreshWishlist(filter)
             }else {
                 if(!active()) {
                     search.close();pages.close()
