@@ -7,7 +7,6 @@ satisfy the prerequisite, and the native/UI tests use the device that did satisf
 import os
 import json
 from pathlib import Path
-import runpy
 import shlex
 import subprocess
 import sys
@@ -90,7 +89,11 @@ print("PLATFORM IPHONE DESTINATION CONTROL PASS native/keychain/full-display/fir
 
 # Execute the actual pressure/confirmation steps in workflow order with fake process boundaries.
 # Represent the first proof by a sentinel: failure of a prerequisite must prevent reaching it.
-steps = runpy.run_path(str(root / 'tools/verify_ci_policy.py'))['workflow_run_steps'](workflow)
+steps = []
+for block in workflow.split('      - name: ')[1:]:
+    if '        run: |\n' in block:
+        steps.append(dict(name=block.splitlines()[0].strip(),
+                          run=textwrap.dedent(block.split('        run: |\n', 1)[1])))
 groups = {
     'iphone': {'Settle iPhone host pressure before the first platform test',
                'Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone'},
