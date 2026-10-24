@@ -305,6 +305,7 @@ public class AndroidPlaybackController internal constructor(
     private var needsReconnect = false
     private var pendingResume: Long? = null
     private var requestGeneration = 0L
+    private var admissionGeneration = 0L
     // Play Next and Add to Queue accepted while a new queue was still resolving; applied, in the order
     // given, the moment that queue is in place. They belong to the resolution in flight and to no
     // other. Every path that cancels or ends that resolution without starting it drops them
@@ -623,6 +624,8 @@ public class AndroidPlaybackController internal constructor(
      * Replaces the queue with [tracks] and starts [startIndex]. Every track must belong to this
      * service's account; a foreign identity is refused rather than played with the wrong credentials.
      * An album, artist or playlist queue names its source by opaque [sourceRawId]; library and search do not.
+     * Duration may come from the supplied track, learned metadata or a local file's metadata.
+     * Unknown-duration neighbors are omitted; an explicit selected unknown-duration track refuses.
      */
     public fun playQueue(
         tracks: List<AndroidTrack>,
@@ -638,6 +641,7 @@ public class AndroidPlaybackController internal constructor(
     private fun selectQueue(
         tracks: List<AndroidTrack>, startIndex: Int, source: AndroidQueueSource, sourceName: String,
         sourceRawId: String? = null, shuffle: Boolean = false, resolveDuration: Boolean = false,
+        resolvedLocalMetadata: Boolean = false,
     ) {
         if (!live()) { android.util.Log.d("DulcetPlayQueue", "refused closed"); return }
         android.util.Log.d("DulcetPlayQueue", "received source=$source tracks=${tracks.size} start=$startIndex contact=${contactOpen()}")
@@ -648,9 +652,36 @@ public class AndroidPlaybackController internal constructor(
             android.util.Log.d("DulcetPlayQueue", "refused invalid-selection")
             failure = DomainError.Auth.Forbidden; publish(); return
         }
-        if (!resolveDuration && tracks.any { it.durationMilliseconds == null }) {
+        val admission = ++admissionGeneration
+        val known = tracks.map(::withKnownDuration)
+        if (!resolveDuration && !resolvedLocalMetadata && localPlans != null && known.any { it.durationMilliseconds == null }) {
+            // Refusing a new selection must leave an earlier pending Play and its additions
+            // intact. Inspect only local metadata before superseding any playback work.
+            val generation = requestGeneration
+            scope.launch {
+                try {
+                    val cached = known.filter { it.durationMilliseconds == null }.mapNotNull { track ->
+                        if (localPlans.isLocallyPlayable(track.rawId)) localTrack(track.rawId) else null
+                    }
+                    if (closed || admission != admissionGeneration || generation != requestGeneration) return@launch
+                    cached.forEach(::remember)
+                    selectQueue(known.map(::withKnownDuration), startIndex, source, sourceName, sourceRawId,
+                        shuffle, resolvedLocalMetadata = true)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    if (!closed && admission == admissionGeneration && generation == requestGeneration) {
+                        failure = DomainError.Playback.NoPlayableSource; publish()
+                    }
+                }
+            }
+            return
+        }
+        if (!resolveDuration && known[startIndex].durationMilliseconds == null) {
             failure = DomainError.Playback.NoPlayableSource; publish(); return
         }
+        val admitted = known.withIndex().filter { resolveDuration || it.value.durationMilliseconds != null }
+        val admittedStartIndex = admitted.indexOfFirst { it.index == startIndex }
+        val admittedTracks = admitted.map { it.value }
         requestGeneration++
         heldQueueAuthorization = null
         val previousWantsPlay = wantsPlay
@@ -661,8 +692,8 @@ public class AndroidPlaybackController internal constructor(
         dropHeldAdditions()
         resolution?.cancel()
         startJob?.cancel()
-        tracks.forEach { remember(it) }
-        val chosen = tracks[startIndex]
+        admittedTracks.forEach { remember(it) }
+        val chosen = admittedTracks[admittedStartIndex]
         fun replaceSelection(song: Song?): PlaybackQueueStartDirective? {
             queueConfirmation = null
             command(PlaybackCommand.Stop(id()))
@@ -675,7 +706,7 @@ public class AndroidPlaybackController internal constructor(
                 AndroidQueueSource.Search -> QueueSourceKind.Search
             }
             val transition = queue.replaceAndStart(PlaybackQueueRequest(
-                tracks.map { track ->
+                admittedTracks.map { track ->
                     val id = ProviderItemId(track.providerInstanceId, track.rawId)
                     PlaybackQueueItem(id, if (track.rawId == chosen.rawId) song?.track?.durationMilliseconds?.milliseconds
                         ?: track.durationMilliseconds?.milliseconds ?: metadata[id]?.durationMilliseconds?.milliseconds
@@ -683,7 +714,7 @@ public class AndroidPlaybackController internal constructor(
                 },
                 QueueSourceContext(kind, sourceRawId?.let { ProviderItemId(account.providerInstanceId, it) },
                     sourceName.ifBlank { source.name }),
-                if (shuffle) null else startIndex, shuffle))
+                if (shuffle) null else admittedStartIndex, shuffle))
             android.util.Log.d("DulcetPlayQueue", "accepted entries=${queue.snapshot().entries.size} directive=${transition.startDirective != null} generation=$generation")
             capture(transition.effects)
             captureEdit(queue.setAutoplay(preferences.getBoolean("autoplay", true)))
@@ -728,6 +759,9 @@ public class AndroidPlaybackController internal constructor(
                 // its protected file in start(); an unleased preflight would leave a gap where
                 // Clear Cache can remove it and also touches LRU for a choice not yet started.
                 val downloaded = localPlans?.isLocallyPlayable(chosen.rawId) == true
+                val localMetadata = if (downloaded) localTrack(chosen.rawId) else null
+                if (generation != requestGeneration || closed) return@launch
+                localMetadata?.let(::remember)
                 // Wait for an in-flight lineage check before resolving this selection. A rejected
                 // probe follows the ordinary Reconnect path below. Local playback never waits.
                 if (!downloaded) {
@@ -773,7 +807,6 @@ public class AndroidPlaybackController internal constructor(
                     dropHeldAdditions(); wantsPlay = false; needsReconnect = true; publish()
                     return@launch
                 }
-                if (resolveDuration && downloaded) localTrack(chosen.rawId)?.let(::remember)
                 if (resolveDuration && (song?.track?.durationMilliseconds
                         ?: metadata[ProviderItemId(chosen.providerInstanceId, chosen.rawId)]?.durationMilliseconds) == null) {
                     dropHeldAdditions(); wantsPlay = previousWantsPlay
@@ -968,7 +1001,7 @@ public class AndroidPlaybackController internal constructor(
      * and [AndroidPlaybackState.droppedAdditions] says so.
      *
      * False, and nothing changed, when refused: a closed controller, no tracks, or a track of another
-     * account.
+     * account, or an unknown duration that the controller has not already learned.
      */
     public fun addToQueue(
         tracks: List<AndroidTrack>,
@@ -980,18 +1013,20 @@ public class AndroidPlaybackController internal constructor(
         if (!live()) return false
         val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist || source == AndroidQueueSource.Playlist
         require(named == !sourceRawId.isNullOrBlank()) { "Album, artist and playlist queues, and only they, name a source" }
-        if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId || it.durationMilliseconds == null }) return false
+        if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId }) return false
+        val admitted = tracks.map(::withKnownDuration)
+        if (admitted.any { it.durationMilliseconds == null }) return false
         if (queueLoading()) {
-            heldAdditions += HeldAddition(tracks.toList(), insertion, source, sourceName, sourceRawId)
+            heldAdditions += HeldAddition(admitted, insertion, source, sourceName, sourceRawId)
             return true
         }
         // The core's queue decides emptiness, not what a surface shows: an entry still resolving
         // shows no title yet, and playing instead would throw away what the person just started.
         if (!ownsActiveQueue() || queue.snapshot().entries.isEmpty()) {
-            playQueue(tracks, 0, source, sourceName, sourceRawId)
+            playQueue(admitted, 0, source, sourceName, sourceRawId)
             return true
         }
-        return enqueue(tracks, insertion, source, sourceName, sourceRawId)
+        return enqueue(admitted, insertion, source, sourceName, sourceRawId)
     }
 
     private class HeldAddition(
@@ -1327,6 +1362,10 @@ public class AndroidPlaybackController internal constructor(
             track.durationMilliseconds ?: known.durationMilliseconds, track.artworkKey ?: known.artworkKey,
             track.albumRawId ?: known.albumRawId)
     }
+
+    private fun withKnownDuration(track: AndroidTrack): AndroidTrack =
+        if (track.durationMilliseconds != null) track else track.copy(durationMilliseconds =
+            metadata[ProviderItemId(track.providerInstanceId, track.rawId)]?.durationMilliseconds)
 
     private fun mediaItem(plan: PlaybackPlan): MediaItem {
         val track = plan.androidItemId?.let { metadata[it] }

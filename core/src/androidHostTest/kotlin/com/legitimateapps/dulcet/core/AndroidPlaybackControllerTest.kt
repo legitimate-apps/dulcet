@@ -1323,6 +1323,113 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun offlineQueueAdmissionUsesLearnedAndCachedDurationWithoutSelectingAnotherTrack() {
+        for (learnedByStreaming in listOf(true, false)) {
+            val file = java.io.File.createTempFile("dulcet-cached-admission", ".wav")
+            var cached = !learnedByStreaming
+            val reads = mutableListOf<String>()
+            val downloads = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = if (!cached || rawId != "cached") null else LocalPlaybackPlan(
+                    DownloadId("download:cached"), DownloadIdentity(OWNER, rawId, DownloadIdentity.ORIGINAL_PROFILE),
+                    AudioContainer.Wav, 44, file.path)
+                override suspend fun localTrack(rawId: String) = if (learnedByStreaming || rawId != "cached") null else
+                    album("cached").single()
+            }
+            try {
+                Fixture(localPlans = downloads, loadSong = { reads += it; song(it) }).use { f ->
+                    if (learnedByStreaming) {
+                        f.controller.playSong(OWNER, "cached", "Cached")
+                        settle(3)
+                        assertEquals(listOf("cached"), f.prepared.map { it.itemId.rawId })
+                        f.controller.stop()
+                        cached = true
+                    }
+                    f.controller.setNetworkAvailable(false)
+                    val beforeReads = reads.toList()
+                    val tracks = listOf(AndroidTrack(OWNER, "unknown", "Unknown"), album("remote").single(),
+                        AndroidTrack(OWNER, "cached", "Cached"))
+                    f.controller.playQueue(tracks, 2, AndroidQueueSource.Library, "Offline My Library")
+                    settle(3)
+                    assertEquals(listOf("cached"), f.controller.state.value.queue.map { it.track.rawId })
+                    assertEquals(40_000, f.controller.state.value.queue.single().track.durationMilliseconds)
+                    assertEquals(listOf("cached"), f.preparedLocal.map { it.itemId.rawId })
+                    assertTrue(f.controller.state.value.playWhenReady)
+                    assertEquals(beforeReads, reads, "Offline admission must not fetch metadata")
+                    assertTrue(f.controller.addToQueue(listOf(AndroidTrack(OWNER, "cached", "Cached")),
+                        AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Library, "Offline My Library"))
+                    assertEquals(listOf("cached", "cached"), f.controller.state.value.queue.map { it.track.rawId })
+                    val session = f.controller.state.value.playbackSessionId
+                    f.controller.playQueue(tracks, 0, AndroidQueueSource.Library, "Offline My Library")
+                    settle(3)
+                    assertEquals(session, f.controller.state.value.playbackSessionId,
+                        "An explicit unknown selection must not fall back to the cached song")
+                    assertEquals(DomainError.Playback.NoPlayableSource, f.controller.state.value.error)
+                }
+            } finally { file.delete() }
+        }
+    }
+
+    @Test fun refusedDurationAdmissionPreservesAPendingPlayAndItsHeldAdditions() {
+        for (localLookup in listOf(false, true)) {
+            val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+            Fixture(localPlans = if (localLookup) AndroidLocalPlaybackSource { null } else null,
+                loadSong = { id -> if (id == "pending") release.await(); song(id) }).use { f ->
+                f.controller.playQueue(album("pending"), 0, AndroidQueueSource.Library, "Library")
+                assertTrue(f.controller.addToQueue(album("held"), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Library, "Library"))
+                f.controller.playQueue(listOf(AndroidTrack(OWNER, "unknown", "Unknown")), 0, AndroidQueueSource.Library, "Library")
+                release.complete(Unit)
+                settle(3)
+                assertEquals(listOf("pending", "held"), f.controller.state.value.queue.map { it.track.rawId })
+                assertEquals(listOf("pending"), f.prepared.map { it.itemId.rawId })
+                assertNull(f.controller.state.value.droppedAdditions)
+            }
+        }
+    }
+
+    @Test fun staleLocalAdmissionCannotPlayOrRememberMetadataAfterAnotherPlaybackCommand() {
+        for (knownDuration in listOf(false, true)) for (action in listOf("queue", "song", "stop", "jump")) {
+            var pending: Continuation<Unit>? = null
+            val file = java.io.File.createTempFile("dulcet-admission-generation", ".wav")
+            var reads = 0
+            val downloads = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = if (rawId != "cached") null else LocalPlaybackPlan(
+                    DownloadId("download:cached"), DownloadIdentity(OWNER, rawId, DownloadIdentity.ORIGINAL_PROFILE),
+                    AudioContainer.Wav, 44, file.path)
+                override suspend fun localTrack(rawId: String): AndroidTrack? {
+                    if (rawId != "cached" || reads++ > 0) return null
+                    // An uncooperative local source can return after its caller was cancelled.
+                    suspendCoroutine<Unit> { pending = it }
+                    return album("cached").single().copy(title = "Stale cache title")
+                }
+            }
+            try {
+                Fixture(localPlans = downloads).use { f ->
+                    f.controller.playQueue(album("first", "second"), 0, AndroidQueueSource.Library, "Library")
+                    f.controller.playQueue(listOf(AndroidTrack(OWNER, "cached", "",
+                        durationMilliseconds = if (knownDuration) 40_000 else null)), 0, AndroidQueueSource.Library, "Library")
+                    assertEquals(1, reads, "The local metadata read must be held")
+                    when (action) {
+                        "queue" -> f.controller.playQueue(album("latest"), 0, AndroidQueueSource.Library, "Library")
+                        "song" -> f.controller.playSong(OWNER, "latest", "Latest")
+                        "stop" -> f.controller.stop()
+                        "jump" -> f.controller.jumpTo(f.controller.state.value.queue[1].queueEntryId)
+                    }
+                    val before = f.controller.state.value
+                    assertNotNull(pending).resume(Unit)
+                    settle(3)
+                    assertEquals(before.playbackSessionId, f.controller.state.value.playbackSessionId, action)
+                    assertEquals(before.queue, f.controller.state.value.queue, action)
+                    assertTrue(f.preparedLocal.isEmpty(), action)
+                    // A stale result must not seed a title for a subsequent valid local play.
+                    f.controller.playQueue(listOf(album("cached").single().copy(title = "")), 0, AndroidQueueSource.Library, "Library")
+                    settle(3)
+                    assertEquals(RuntimeEnvironment.getApplication().getString(R.string.playback_untitled),
+                        f.controller.state.value.title, action)
+                }
+            } finally { file.delete() }
+        }
+    }
+
     @Test fun newQueueAdmissionsRequireDurationWithoutReplacingTheExistingQueue() {
         Fixture().use { f ->
             f.controller.playQueue(album("kept"), 0, AndroidQueueSource.Search, "Search")

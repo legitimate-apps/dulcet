@@ -6521,6 +6521,11 @@ offset and a blank line, a sidecar `.txt`, embedded lyrics in three languages (t
 plain lyrics, and the health probe with none. **No copyrighted audio and no binary blobs in the
 repository.**
 
+Positive playback fixtures have a positive whole-second duration in the server response, checked
+across every `search3` page before conformance runs. Sub-second media is unsuitable here because
+Navidrome truncates its duration to zero and omits the field. Missing-duration admission is covered
+separately by the reader and playback negative controls.
+
 ### 20.3 Three test layers, each with an honest name
 
 Revision 1 claimed a fixture-replay suite proved "transport parity." It does not: an in-process Ktor
@@ -7929,6 +7934,9 @@ at presentation; cached and fresh records preserve the server title. A later rea
 the active Media3 item without restarting playback. New Android queue admissions require a known
 duration, including raw-ID selections after metadata resolution. Existing and restored queue
 entries remain playable when duration is absent; the admission rule does not invalidate saved plays.
+Admission can use duration already learned by playback or retained with a protected local file,
+even when a caller supplies only identity and title. It filters unknown-duration neighbors and
+preserves the selected track's identity; an explicitly selected unknown-duration track is refused.
 Durationless reader and search rows show why playback is unavailable, and an explicit filtered
 selection never substitutes another track.
 Play and Shuffle use the exact `playableTracks` list that starts playback; Play Next, Add to
