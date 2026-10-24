@@ -114,7 +114,7 @@ class Handler(BaseHTTPRequestHandler):
                     with state.lock:return self.reply(200,{'requests':state.requests[since:],'next':len(state.requests)})
                 if target.path=='/control/baseline':return self.reply(200,state.baseline())
                 if target.path=='/control/scenario' and self.command=='POST':return self.reply(200,state.scenario(json.loads(body)['name']))
-                if target.path=='/control/release-detail' and self.command=='POST':
+                if target.path in {'/control/release-detail','/control/release-read'} and self.command=='POST':
                     state.detail_release.set()
                     return self.reply(200,dict(released=True,revision=state.revision))
                 if target.path=='/control/reset'  and self.command=='POST':return self.reply(200,state.scenario('normal',reset=True))
@@ -135,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
                         state.effect(endpoint,revision,name,expired=True)
                         return self.reply(504,{'error':'new query did not release old query'})
                     time.sleep(.75)
-                if name=='held-detail' and endpoint in {'getDulcetDiscoverAlbum','getDulcetDiscoverArtist'}:
+                if (name=='held-detail' and endpoint in {'getDulcetDiscoverAlbum','getDulcetDiscoverArtist'}) or (name=='held-wishlist' and endpoint=='getDulcetWishlist'):
                     with state.lock:release=state.detail_release
                     state.effect(endpoint,revision,name,held=True)
                     released=release.wait(90)

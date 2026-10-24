@@ -59,22 +59,20 @@ class ModuleLoadingTests(unittest.TestCase):
         # The native failure acknowledged a previous positive search as the old hold.
         # Neither that response nor an intermediate keyboard edit may release it.
         for query in ['positive','ol','Fi']:
-            with self.subTest(query=query):
-                handler=SimpleNamespace(path='/rest/searchDulcetDiscover?kind=song&query='+query,
-                    headers={},rfile=io.BytesIO(),command='GET',server=SimpleNamespace(role='proxy',fixture=state),
-                    reply=lambda *args: None)
-                with patch.object(proxy.http.client,'HTTPConnection',return_value=connection):
-                    proxy.Handler.handle_request(handler)
-                self.assertFalse(state.query_release.is_set(),'an unrelated search released the delayed old query')
-                self.assertEqual('other',state.effects[-1]['payload'])
+            handler=SimpleNamespace(path='/rest/searchDulcetDiscover?kind=song&query='+query,
+                headers={},rfile=io.BytesIO(),command='GET',server=SimpleNamespace(role='proxy',fixture=state),
+                reply=lambda *args: None)
+            with patch.object(proxy.http.client,'HTTPConnection',return_value=connection):
+                proxy.Handler.handle_request(handler)
+            self.assertFalse(state.query_release.is_set(),'an unrelated search released the delayed old query')
+            self.assertEqual('other',state.effects[-1]['payload'])
         for query in ['new','Fixture']:
-            with self.subTest(query=query):
-                state.query_release.clear()
-                handler.path='/rest/searchDulcetDiscover?kind=song&query='+query
-                with patch.object(proxy.http.client,'HTTPConnection',return_value=connection):
-                    proxy.Handler.handle_request(handler)
-                self.assertTrue(state.query_release.is_set())
-                self.assertEqual('new',state.effects[-1]['payload'])
+            state.query_release.clear()
+            handler.path='/rest/searchDulcetDiscover?kind=song&query='+query
+            with patch.object(proxy.http.client,'HTTPConnection',return_value=connection):
+                proxy.Handler.handle_request(handler)
+            self.assertTrue(state.query_release.is_set())
+            self.assertEqual('new',state.effects[-1]['payload'])
 
     def test_oldQuerySurvivesSlowNativeEditingUntilNewAnswer(self):
         from types import SimpleNamespace
@@ -106,6 +104,40 @@ class ModuleLoadingTests(unittest.TestCase):
         self.assertLessEqual(waits[0],90,'the fixture hold remains finite')
         self.assertEqual('old',state.effects[-1]['payload'])
         self.assertTrue(json.loads(replies[0][1])['subsonic-response']['dulcetDiscover']['item'][0]['title'].startswith('Obsolete old query'))
+
+    def test_wishlistReadWaitsForAnAcknowledgedExplicitRelease(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import io
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        state=proxy.FixtureProxy({'server':'http://127.0.0.1:1'})
+        self.assertIn('held-wishlist',state.scenarios,'native loading capture has no acknowledged Wishlist hold')
+        revision=state.scenario('held-wishlist')['revision']
+        response=MagicMock(status=200);response.read.return_value=b'{"subsonic-response":{"dulcetWishlist":{"wish":[]}}}'
+        response.getheaders.return_value=[]
+        connection=MagicMock();connection.getresponse.return_value=response
+        replies=[]
+        handler=SimpleNamespace(path='/rest/getDulcetWishlist',headers={},rfile=io.BytesIO(),command='GET',
+            server=SimpleNamespace(role='proxy',fixture=state),reply=lambda *args:replies.append(args))
+        release_replies=[]
+        release=SimpleNamespace(path='/control/release-read',headers={},rfile=io.BytesIO(),command='POST',
+            server=handler.server,reply=lambda *args:release_replies.append(args))
+        with patch.object(proxy.http.client,'HTTPConnection',return_value=connection),concurrent.futures.ThreadPoolExecutor() as pool:
+            pending=pool.submit(proxy.Handler.handle_request,handler)
+            try:
+                deadline=time.monotonic()+2
+                while not state.state()['effects'] and time.monotonic()<deadline:time.sleep(.005)
+                self.assertTrue(any(e.get('held') and e['revision']==revision for e in state.state()['effects']))
+                self.assertFalse(pending.done(),'Wishlist read answered before the loading capture could run')
+                self.assertEqual([],replies)
+                proxy.Handler.handle_request(release)
+                self.assertEqual(200,release_replies[0][0]);self.assertTrue(release_replies[0][1]['released'])
+                pending.result(timeout=2)
+                self.assertEqual(200,replies[0][0])
+                self.assertTrue(any(e.get('released') and e['revision']==revision for e in state.state()['effects']))
+            finally:state.detail_release.set()
 
     def test_lostReceiptReplayWitnessContainsOnlyExactMutationFields(self):
         loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))

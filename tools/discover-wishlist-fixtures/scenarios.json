@@ -11,6 +11,7 @@
     "remove-before-add": "Hold an add until cancellation is observed, bounded to 2 seconds.",
     "identity-replacement": "Restore the documented Testing checkpoint, changing the real server instanceId.",
     "future-metadata": "Expose a future kind/status and a missing-MBID row, both unwishable.",
-    "held-detail": "Hold artist/album detail after recording held=true until POST /control/release-detail; acknowledge released=true, with a 90-second safety expiry."
+    "held-detail": "Hold artist/album detail after recording held=true until POST /control/release-detail; acknowledge released=true, with a 90-second safety expiry.",
+    "held-wishlist": "Hold Wishlist reads after recording held=true until POST /control/release-read; acknowledge released=true, with a 90-second safety expiry."
   }
 }

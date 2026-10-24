@@ -25,7 +25,7 @@ public struct DulcetWishlistView: View {
                 DulcetDiscoverStatusView(status: .init(age: nil, error: publication.access.error ?? publication.wishlistError, connection: publication.connection), retry: refresh)
                     .padding(.horizontal, DulcetSpacing.md)
                 if let error = model.mutationError, error.code != "cancelled" { Text(DulcetStrings.discoverNotSaved).accessibilityIdentifier("wishlist.save-error") }
-                if publication.wishlistLoading { ProgressView().accessibilityLabel(DulcetStrings.wishlistLoading).padding(.horizontal, DulcetSpacing.md) }
+                if publication.wishlistLoading { ProgressView().accessibilityLabel(DulcetStrings.wishlistLoading).accessibilityIdentifier("wishlist.loading").padding(.horizontal, DulcetSpacing.md) }
                 if publication.wishlistSettled && publication.wishlistError == nil && publication.wishes.isEmpty {
                     Text(DulcetStrings.wishlistEmpty).padding(DulcetSpacing.md)
                 }
@@ -40,7 +40,7 @@ public struct DulcetWishlistView: View {
 #endif
                     }
                 }.listStyle(.plain)
-            } else { ProgressView().accessibilityLabel(DulcetStrings.wishlistLoading).padding(.horizontal, DulcetSpacing.md) }
+            } else { ProgressView().accessibilityLabel(DulcetStrings.wishlistLoading).accessibilityIdentifier("wishlist.loading").padding(.horizontal, DulcetSpacing.md) }
         }
         .buttonStyle(.borderless)
         .dulcetForeground(.primaryTextOnWindow)

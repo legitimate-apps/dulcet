@@ -223,3 +223,5 @@ or changing a window; then POST `{}` to `/control/release-detail` and require `r
 same revision. A 90-second safety expiry returns 504 and `released: false`, which is a failed proof.
 The remove-before-add hold is released only after the server acknowledges the remove, rather than
 when its request first reaches the proxy.
+
+`held-wishlist` holds `getDulcetWishlist` after a revision-bound `held: true` effect. The native Mac loading capture waits for that effect and the visible loading control, then uses `POST /control/release-read` and checks `released: true`. The hold has the same 90-second safety expiry as held detail. Ordinary fixture scenarios are unchanged.

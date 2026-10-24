@@ -359,7 +359,14 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             try await capture("Pending-" + variant, variantApp)
             try await wishlist(variantApp)
             _ = try await variantApp.element(identifiedBy: "wishlist.pending", timeout: .seconds(10))
+            let loading = try await scenario("held-wishlist")
+            try await press("wishlist.refresh", in: variantApp)
+            try await effect("held-wishlist", revision: loading, flag: "held")
+            _ = try await variantApp.element(identifiedBy: "wishlist.loading", timeout: .seconds(10))
             try await capture("Wishlist-" + variant, variantApp)
+            let released = try await control("release-read", [:])
+            XCTAssertEqual(released["released"] as? Bool, true)
+            try await effect("held-wishlist", revision: loading, flag: "released")
             try await scenario("normal"); variantApp.close()
         }
     }
