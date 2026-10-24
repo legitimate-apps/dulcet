@@ -95,7 +95,8 @@ shipping transport configuration and the HTTPS-to-HTTP redirect rejection are un
 
 `AndroidCleartextHttpTest` drives real loopback HTTP through the production authenticated
 nonmedia and strict-media clients, plus an explicit OkHttp probe client. It reads the phone, TV and
-conformance manifest inputs and supplies their Android cleartext decision to Robolectric.
+conformance manifest inputs and sets Android’s real framework cleartext policy from those inputs and restores the exact
+original policy after each test.
 **OBSERVED:** before the conformance manifest fix, its production strict request fails with
 `CLEARTEXT communication to 127.0.0.1 not permitted by network security policy`; the phone and
 TV cases pass. An explicit deny control requires the strict client and OkHttp probe to refuse
@@ -116,3 +117,9 @@ Its five existing scenarios now compile and pass with those collaborators repres
 membership scenario additionally requires cancellation of only the removed automatic download's
 framing session while preserving the explicit download's session. The control extracts the real
 targeted cancellation helper; an unexpected replacement transfer fails the harness immediately.
+
+**OBSERVED:** the first isolated Linux soak passed 20/20 repetitions, but the full Linux suite
+exposed a custom-shadow singleton collision in the new host control. The control now calls the
+real Android framework policy setter and restores the original libcore policy after each test.
+It no longer changes the shadow identity of a framework singleton warmed by other test classes.
+The HTTP success and actual denial assertions are retained.

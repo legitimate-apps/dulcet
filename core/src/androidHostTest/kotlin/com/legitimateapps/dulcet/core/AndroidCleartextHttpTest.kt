@@ -6,11 +6,13 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Before
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import org.robolectric.annotation.Implements
-import org.robolectric.annotation.Implementation
+import org.robolectric.util.ReflectionHelpers
+import org.robolectric.util.ReflectionHelpers.ClassParameter
 import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -20,17 +22,36 @@ import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.concurrent.thread
 import kotlin.test.*
 
-/** Android's real cleartext check is in OkHttp; Robolectric supplies its platform policy. */
+/** Real Android cleartext policy and OkHttp requests, using manifest inputs for each APK. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], shadows = [ManifestNetworkSecurityPolicy::class])
+@Config(sdk = [35])
 class AndroidCleartextHttpTest {
+    private lateinit var originalPolicy: Any
+    @Suppress("UNCHECKED_CAST")
+    private val policyClass: Class<Any> get() = Class.forName("libcore.net.NetworkSecurityPolicy") as Class<Any>
+
+    @Before fun rememberPolicy() {
+        originalPolicy = ReflectionHelpers.callStaticMethod(policyClass, "getInstance")
+    }
+
+    @After fun restorePolicy() {
+        ReflectionHelpers.callStaticMethod<Any?>(policyClass, "setInstance", ClassParameter.from(policyClass, originalPolicy))
+    }
+
+    private fun permitCleartext(permitted: Boolean) {
+        // Use Android's real framework setter, not a replacement shadow of its cached singleton.
+        // A singleton first touched by another test can retain that test's shadow identity.
+        ReflectionHelpers.callInstanceMethod<Any?>(NetworkSecurityPolicy.getInstance(), "setCleartextTrafficPermitted",
+            ClassParameter.from(Boolean::class.javaPrimitiveType!!, permitted))
+    }
+
     @Test fun phoneAllowsPlainHttpThroughProductionClients() = permitsHttp("android/app/src/main/AndroidManifest.xml")
     @Test fun tvAllowsPlainHttpThroughProductionClients() = permitsHttp("android/tv/src/main/AndroidManifest.xml")
     @Test fun conformanceAllowsPlainHttpThroughProductionClientsAndOkHttpProbe() =
         permitsHttp("core-conformance/src/androidDeviceTest/AndroidManifest.xml")
 
     @Test fun platformRefusalStopsTheStrictClientAndOkHttpProbeBeforeAnyRequest() = runBlocking {
-        ManifestNetworkSecurityPolicy.permitted = false
+        permitCleartext(false)
         Fixture().use { server ->
             for (client in listOf(createAccountHttpClient(AccountClientTransport.Default(), true) {}, HttpClient(OkHttp))) {
                 try {
@@ -52,7 +73,7 @@ class AndroidCleartextHttpTest {
         val permitted = application?.attributes?.getNamedItemNS(
             "http://schemas.android.com/apk/res/android", "usesCleartextTraffic",
         )?.nodeValue == "true"
-        ManifestNetworkSecurityPolicy.permitted = permitted
+        permitCleartext(permitted)
         Fixture().use { server ->
             val endpoint = AuthenticatedEndpointClient(
                 AuthenticatedEndpointCredentials(server.url, "fixture-user", "fixture-password", true),
@@ -99,12 +120,4 @@ class AndroidCleartextHttpTest {
             check(!worker.isAlive) { "cleartext fixture did not stop" }
         }
     }
-}
-
-// Supply just the platform decision; OkHttp still performs its real refusal and real socket I/O.
-@Implements(NetworkSecurityPolicy::class)
-class ManifestNetworkSecurityPolicy {
-    @Implementation fun isCleartextTrafficPermitted(): Boolean = permitted
-    @Implementation fun isCleartextTrafficPermitted(host: String): Boolean = permitted
-    companion object { var permitted = false }
 }
