@@ -95,7 +95,7 @@ public class AndroidDiscoverClient(private val reader: AndroidLibraryReader) : D
     override fun add(item:DiscoverItem,source:WishSource,completion:(DiscoverResult<WishEnqueued>)->Unit):DiscoverOperation =
         operation(completion) { target,done -> target.add(item,source,done) }
     override fun remove(rowKey:String,completion:(DiscoverResult<WishEnqueued>)->Unit):DiscoverOperation =
-        operation({ result ->
+        operation<WishEnqueued>({ result ->
             proof { "remove-result row=$rowKey result=${when(result) {
                 is DiscoverResult.Value -> "enqueued:${result.value.rowKey}"
                 is DiscoverResult.Failed -> "failed:${result.error.code}:retryable=${result.error.retryable}"
