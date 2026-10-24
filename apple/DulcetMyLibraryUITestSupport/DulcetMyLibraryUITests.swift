@@ -496,7 +496,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }
         app.activate()
         let window = app.windows.firstMatch
-        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        if !window.waitForExistence(timeout: 10) {
+            // The hosted app can expose its menu bar without a window. Start this proof
+            // through the same File > New Window action available to a person.
+            app.menuBars.menuBarItems["File"].click()
+            let newWindow = app.menuItems["New Window"].firstMatch
+            XCTAssertTrue(newWindow.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertTrue(newWindow.isEnabled, "File > New Window must be available")
+            newWindow.click()
+        }
+        XCTAssertTrue(window.waitForExistence(timeout: 10), app.debugDescription)
         let screenWidth = try XCTUnwrap(NSScreen.main?.frame.width)
         let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             window.frame.minX >= 0 && window.frame.maxX <= screenWidth
