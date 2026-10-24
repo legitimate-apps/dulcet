@@ -225,10 +225,9 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
     val lyrics: (@Composable () -> Unit)? = library?.let { session -> { TvLyricsPanel(session, state) } }
     val saved = if (library != null && account != null) {
         val connection by library.connection.collectAsState()
-        (context.resources.savedAccountLine(connection, account) ?: context.resources.connectionLine(connection))?.let { line ->
-            TvPlayerSaved(if (state.needsReconnect) context.getString(SharedR.string.now_playing_needs_reconnect) else line,
-                library::connectSavedAccount)
-        }
+        val line = if (state.needsReconnect) context.getString(SharedR.string.now_playing_needs_reconnect)
+            else context.resources.savedAccountLine(connection, account) ?: context.resources.connectionLine(connection)
+        line?.let { TvPlayerSaved(it, library::connectSavedAccount) }
     } else {
         null
     }

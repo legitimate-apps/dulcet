@@ -116,11 +116,14 @@ public class PlaybackBinding {
     /** Runs [action] on the bound controller now, or holds it, replacing any held, until one binds. */
     public fun play(action: (AndroidPlaybackController) -> Unit) {
         val bound = controller
+        android.util.Log.d("DulcetPlaybackBinding", "play binding=${System.identityHashCode(this)} bound=${bound != null}")
         if (bound != null) { held = null; action(bound) } else held = action
     }
 
     /** The controller now bound, or null; a held Play is applied to the first one that arrives. */
     public fun bind(controller: AndroidPlaybackController?) {
+        if (this.controller !== controller) android.util.Log.d("DulcetPlaybackBinding",
+            "bind binding=${System.identityHashCode(this)} bound=${controller != null} held=${held != null}")
         this.controller = controller
         if (controller == null) return
         val action = held ?: return
