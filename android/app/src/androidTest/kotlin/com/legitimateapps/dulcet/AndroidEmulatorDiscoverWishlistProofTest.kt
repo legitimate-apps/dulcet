@@ -43,6 +43,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Before
+import org.junit.After
 import org.junit.runner.RunWith
 
 /** Real phone app, production account/reader and finite fixture. No live upstream or fake UI source. */
@@ -53,6 +55,17 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private val args get()=InstrumentationRegistry.getArguments()
     private val context get()=instrumentation.targetContext
     private val fixture by lazy { Fixture() }
+    private var previousReaderReceipts: String? = null
+
+    @Before fun enableReaderReceipts() {
+        previousReaderReceipts=System.getProperty("dulcet.proof.readerReceipts")
+        System.setProperty("dulcet.proof.readerReceipts","true")
+    }
+
+    @After fun restoreReaderReceipts() {
+        previousReaderReceipts?.let {System.setProperty("dulcet.proof.readerReceipts",it)}
+            ?: System.clearProperty("dulcet.proof.readerReceipts")
+    }
 
     @Test fun everywherePagesAndHeldRoute() {
         freshAccount()

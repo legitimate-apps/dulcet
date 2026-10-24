@@ -142,6 +142,8 @@ class Runner:
         for key,value in app_args.items():argv+=['-e',key,value]
         argv+=[self.component]
         trace_since=self.control_json('/control/requests')['next']
+        try:self.adb_run('logcat','-c',check=False,capture_output=True,text=True,timeout=15)
+        except (OSError,subprocess.TimeoutExpired):pass
         started=time.monotonic()
         try:
             process=self.adb_run('shell',shlex.join(argv),check=False,capture_output=True,text=True,timeout=300)
@@ -150,6 +152,12 @@ class Runner:
         except subprocess.TimeoutExpired:
             output='instrumentation timed out after 300 seconds';result,detail='error',output
         (report/'instrumentation.log').write_text(output)
+        # Only the existing credential-free reachability tag; never collect unfiltered app logs.
+        try:
+            receipts=self.adb_run('logcat','-d','-v','threadtime','DulcetReachability:I','*:S',check=False,capture_output=True,text=True,timeout=15)
+            (report/'reader-receipts.log').write_text(receipts.stdout if receipts.returncode==0 else 'reachability receipts unavailable\n')
+        except (OSError,subprocess.TimeoutExpired):
+            (report/'reader-receipts.log').write_text('reachability receipts unavailable\n')
         junit(report/'TEST-DiscoverWishlist.xml',method,phase,result,detail,time.monotonic()-started)
         root=ET.parse(report/'TEST-DiscoverWishlist.xml').getroot()
         counts={key:int(root.get(key,'0')) for key in ('tests','failures','errors','skipped')}
