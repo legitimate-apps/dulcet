@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.core
 
+import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -37,6 +38,9 @@ public class AndroidDiscoverClient(private val reader: AndroidLibraryReader) : D
                     !access.canAddWish && !access.canRemoveWish && !access.canRejectMatch
                 val authorized=session.reader.capturePublicationAuthorization(rejected)
                 val copy=publication.copy(generation=++generation)
+                proof { "publication generation=${copy.generation} detection=${access.detection} " +
+                    "remove=${access.canRemoveWish} connection=${copy.connection} " +
+                    "rows=${copy.wishes.take(3).map { "${it.key}:${it.pending}:${it.error?.code}" }}" }
                 reader.onMain {
                     if (!closed.get() && registration.open.get() && authorized()) listener(copy)
                 }
@@ -91,7 +95,23 @@ public class AndroidDiscoverClient(private val reader: AndroidLibraryReader) : D
     override fun add(item:DiscoverItem,source:WishSource,completion:(DiscoverResult<WishEnqueued>)->Unit):DiscoverOperation =
         operation(completion) { target,done -> target.add(item,source,done) }
     override fun remove(rowKey:String,completion:(DiscoverResult<WishEnqueued>)->Unit):DiscoverOperation =
-        operation(completion) { target,done -> target.remove(rowKey,done) }
+        operation({ result ->
+            proof { "remove-result row=$rowKey result=${when(result) {
+                is DiscoverResult.Value -> "enqueued:${result.value.rowKey}"
+                is DiscoverResult.Failed -> "failed:${result.error.code}:retryable=${result.error.retryable}"
+            }}" }
+            completion(result)
+        }) { target,done ->
+            proof { "remove-start row=$rowKey" }
+            target.remove(rowKey,done)
+        }
+
+    /** Opt-in proof receipts omit account labels, media metadata, URLs and credentials. */
+    private inline fun proof(message:()->String) {
+        if(System.getProperty("dulcet.proof.readerReceipts")=="true") {
+            runCatching { Log.i("DulcetReachability", "proof discover=${System.identityHashCode(this)} ${message()}") }
+        }
+    }
     override fun reject(item:DiscoverItem,libraryItem:DiscoverLibraryRef,wishId:String?,completion:(DiscoverResult<WishEnqueued>)->Unit):DiscoverOperation =
         operation(completion) { target,done -> target.reject(item,libraryItem,wishId,done) }
 
