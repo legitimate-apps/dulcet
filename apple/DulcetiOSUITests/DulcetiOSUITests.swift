@@ -2572,22 +2572,33 @@ final class DulcetiOSUITests: XCTestCase {
     /// element it opened from. A fixed point is not clear on iPad, where the menu opens beside
     /// its row wherever the row is: there the tap pressed a menu item (INFERRED from two CI runs,
     /// in which the playlist row proof's Up Next read exactly as the playlist's Play and then its
-    /// Shuffle leave it, and playback ran under the count).
+    /// Shuffle leave it, and playback ran under the count). On iPhone the menu's column covers
+    /// every fixed point, and tapping the first one anyway chose the album's Shuffle: the album
+    /// drag proof then read Up Next as Shuffle leaves it and the bar as playing (run 40030838091).
+    /// The middle of the wider gap beside the column is outside it; with no clear point the proof
+    /// fails here rather than pressing a menu item.
     @MainActor
     private func closeContextMenu(marker menuMarker: String, openedFrom source: CGRect, in app: XCUIApplication) {
         let window = app.frame
         let item = app.buttons[menuMarker].firstMatch
         let column = item.exists ? item.frame.insetBy(dx: -24, dy: 0) : .null
         let lifted = source.insetBy(dx: -24, dy: -24)
-        let candidates = [
-            CGVector(dx: 0.92, dy: 0.25), CGVector(dx: 0.92, dy: 0.6), CGVector(dx: 0.6, dy: 0.25),
-            CGVector(dx: 0.6, dy: 0.6), CGVector(dx: 0.4, dy: 0.25), CGVector(dx: 0.4, dy: 0.6),
-        ]
+        var across: [CGFloat] = [0.92, 0.6, 0.4]
+        if !column.isNull {
+            let left = column.minX - window.minX, right = window.maxX - column.maxX
+            let gap = left > right ? window.minX + left / 2 : column.maxX + right / 2
+            across.append((gap - window.minX) / window.width)
+        }
+        let candidates = across.flatMap { dx in [CGVector(dx: dx, dy: 0.25), CGVector(dx: dx, dy: 0.6)] }
         let clear = candidates.first { offset in
             let point = CGPoint(x: window.minX + window.width * offset.dx, y: window.minY + window.height * offset.dy)
             return (column.isNull || point.x < column.minX || point.x > column.maxX) && !lifted.contains(point)
         }
-        app.coordinate(withNormalizedOffset: clear ?? candidates[0]).tap()
+        guard let clear else {
+            XCTFail("No point beside the open menu (\(menuMarker)) is clear of it and of its source: " + app.debugDescription)
+            return
+        }
+        app.coordinate(withNormalizedOffset: clear).tap()
     }
 
     /// Opens `element`'s context menu, requires `menuMarker` in it, and closes it with a tap
