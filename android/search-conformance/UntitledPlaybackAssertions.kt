@@ -18,8 +18,8 @@ import kotlin.test.assertTrue
 
 /** The real queue, Media3 session and default notification provider must share the localized title. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-fun assertUntitledPlayback(context: Context, controller: AndroidPlaybackController, albumId: String, shuffle: Boolean = false) {
-    val title = context.getString(com.legitimateapps.dulcet.core.R.string.playback_untitled)
+fun assertUntitledPlayback(context: Context, controller: AndroidPlaybackController, albumId: String, shuffle: Boolean = false, expectedTitle: String? = null) {
+    val title = expectedTitle ?: context.getString(com.legitimateapps.dulcet.core.R.string.playback_untitled)
     val state = controller.state.value
     assertEquals((1..3).map { "$albumId-song-$it" }, state.queue.map { it.track.rawId }.let { if (shuffle) it.sorted() else it })
     assertEquals(shuffle, state.shuffle)

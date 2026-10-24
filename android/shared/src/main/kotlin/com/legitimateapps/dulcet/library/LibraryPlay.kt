@@ -36,7 +36,8 @@ public fun playAlbum(
     val album = publication.header as? AndroidLibraryItem.Album ?: return false
     val tracks = publication.playableTracks(providerInstanceId)
     if (tracks.isEmpty()) return false
-    val start = tracks.indexOfFirst { it.rawId == trackRawId }.takeIf { it >= 0 } ?: 0
+    val start = if (trackRawId == null) 0 else tracks.indexOfFirst { it.rawId == trackRawId }
+    if (start < 0) return false
     playback.play { controller ->
         controller.playQueue(tracks, start, AndroidQueueSource.Album, album.title, album.rawId, shuffle)
         started()

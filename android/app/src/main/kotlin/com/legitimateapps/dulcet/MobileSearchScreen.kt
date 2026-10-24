@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import com.legitimateapps.dulcet.library.trackDisplayTitle
 import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -191,7 +192,8 @@ internal fun MobileSearchScreen(
                     val index = indexed.index
                     val row = indexed.value
                     val result = row.item
-                    val playable = row.playability != AndroidLibraryPlayability.UnavailableOffline
+                    val available = row.playability != AndroidLibraryPlayability.UnavailableOffline
+                    val playable = available && result.duration != null
                     MobileSearchResult(
                         result = result,
                         index = index,
@@ -199,7 +201,7 @@ internal fun MobileSearchScreen(
                         // Only beside the server's rows is "on this device" news; the scope line covers the rest.
                         deviceOnly = row.source == AndroidLibrarySearchRowSource.Device &&
                             state.scope == AndroidLibrarySearchScope.ServerAndDevice,
-                        unavailableOffline = !playable,
+                        unavailableOffline = !available,
                         onActivate = { presenter.commitQuery(); onActivate(result) },
                         onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { presenter.commitQuery(); play(result) } },
                         onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable && result.duration != null }
@@ -231,17 +233,18 @@ private fun MobileSearchResult(
     })
     val credits = result.credits.joinToString { it.name }
     ListItem(
-        headlineContent = { Text(result.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        headlineContent = { Text(resources.trackDisplayTitle(result.title), maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             val notes = listOfNotNull(
                 resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
+                resources.getString(SharedR.string.library_duration_required).takeIf { result.type == SearchResultType.Track && result.duration == null },
             )
             Text((listOf(kind, credits) + notes).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         },
         leadingContent = {
-            if (account != null && result.type != SearchResultType.Artist) Artwork(account, result.artworkKey, result.title, 48.dp)
+            if (account != null && result.type != SearchResultType.Artist) Artwork(account, result.artworkKey, resources.trackDisplayTitle(result.title), 48.dp)
             else Icon(if (result.type == SearchResultType.Artist) DulcetIcons.Person else DulcetIcons.MusicNote, null)
         },
         trailingContent = if (onPlay == null && onQueue == null) null else {
@@ -249,7 +252,7 @@ private fun MobileSearchResult(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     onPlay?.let { play ->
                         IconButton(onClick = play, modifier = Modifier.testTag("search.play.$index")) {
-                            Icon(DulcetIcons.Play, stringResource(R.string.action_play_track, result.title))
+                            Icon(DulcetIcons.Play, stringResource(R.string.action_play_track, resources.trackDisplayTitle(result.title)))
                         }
                     }
                     onQueue?.let { queue ->
@@ -258,7 +261,7 @@ private fun MobileSearchResult(
                 }
             }
         },
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onActivate).testTag("search.result.$index"),
+        modifier = Modifier.fillMaxWidth().clickable(enabled = result.type != SearchResultType.Track || (!unavailableOffline && result.duration != null), onClick = onActivate).testTag("search.result.$index"),
     )
 }
 

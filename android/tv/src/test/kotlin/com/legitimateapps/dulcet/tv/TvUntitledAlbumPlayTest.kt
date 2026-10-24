@@ -3,8 +3,10 @@ package com.legitimateapps.dulcet.tv
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.*
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performSemanticsAction
@@ -66,10 +68,14 @@ class TvUntitledAlbumPlayTest {
     @Test fun anAlbumWithOnlyBlankOrMissingTitlesShufflesWithLocalizedUntitledMetadata() = exerciseAlbum(true)
     @Test fun anAlbumWithoutDurationsKeepsPlayAndShuffleHidden() = exerciseAlbum(false, false)
 
-    private fun exerciseAlbum(shuffle: Boolean, knownDuration: Boolean = true) {
+    @Test fun selectingADurationlessRowInAMixedAlbumNeverStartsAnotherSong() = exerciseAlbum(false, rowSelection = true)
+    @Test fun selectingADurationlessRowInAnAlbumWithoutDurationsExplainsWhy() = exerciseAlbum(false, false, rowSelection = true)
+
+    private fun exerciseAlbum(shuffle: Boolean, knownDuration: Boolean = true, rowSelection: Boolean = false, enrich: Boolean = false) {
         seedUntitledAlbum(context, account, server, "newest-1")
         server.albumPlaybackAudio = untitledAlbumAudio()
         if (!knownDuration) server.albumSongDurationSeconds = null
+        else if (rowSelection) server.albumSongDurationsSeconds = listOf(120, null, 120)
         var playerOpen by mutableStateOf(false)
         // Bind playback so a missing queue action cannot pass just because the service is absent.
         controller = AndroidPlaybackController(context,
@@ -94,6 +100,17 @@ class TvUntitledAlbumPlayTest {
         }
         compose.waitForIdle()
         compose.onNodeWithTag("album.title").assertExists()
+        compose.onNodeWithTag("album.track.1").assertTextContains(context.getString(com.legitimateapps.dulcet.core.R.string.playback_untitled))
+        if (rowSelection) {
+            compose.onNodeWithTag("album.track.1").assertTextContains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_duration_required))
+            compose.onNodeWithTag("album.track.1").performSemanticsAction(SemanticsActions.RequestFocus)
+            compose.onNodeWithTag("album.track.1").performKeyInput { pressKey(Key.DirectionCenter) }
+            compose.waitForIdle()
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+            assertTrue(controller!!.state.value.queue.isEmpty(), "An explicit filtered selection must never choose another song")
+            compose.onNodeWithTag("album.track.1").assertIsNotEnabled()
+            return
+        }
         if (!knownDuration) {
             compose.onNodeWithTag("album.play").assertDoesNotExist()
             compose.onNodeWithTag("album.shuffle").assertDoesNotExist()

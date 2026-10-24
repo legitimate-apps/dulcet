@@ -23,6 +23,7 @@ import kotlinx.serialization.json.longOrNull
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -238,7 +239,7 @@ public class AndroidPlaybackController internal constructor(
         PlaybackIdentitySource { "$it:${UUID.randomUUID()}" }, canPlayItem = { item ->
             // An explicit selection may be retained while this chosen connection revalidates.
             // This admits queue identity only; start() still gates every remote request.
-            val reconnecting = !contactOpen() && serverContact?.isChosen() == true &&
+            val reconnecting = serverContact?.isChosen() == true &&
                 heldQueueAuthorization != null &&
                 heldQueueAuthorization == AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
             val remote = networkAvailable && (serverAvailable || localPlans == null || reconnecting)
@@ -573,7 +574,14 @@ public class AndroidPlaybackController internal constructor(
                 remember(track); added = true
             }
         }
-        if (added) publish()
+        if (added) {
+            // Media3 keeps its own metadata snapshot; replacing the same item preserves transport.
+            activePlan?.let { plan ->
+                val player = exo as? ExoPlayer
+                if (player?.mediaItemCount == 1) player.replaceMediaItem(0, mediaItem(plan))
+            }
+            publish()
+        }
     }
 
     /**
@@ -608,7 +616,7 @@ public class AndroidPlaybackController internal constructor(
         if (providerInstanceId != account.providerInstanceId || rawId.isBlank()) {
             failure = DomainError.Auth.Forbidden; publish(); return
         }
-        playQueue(listOf(AndroidTrack(providerInstanceId, rawId, displayTitle)), 0, AndroidQueueSource.Search, "Search")
+        selectQueue(listOf(AndroidTrack(providerInstanceId, rawId, displayTitle)), 0, AndroidQueueSource.Search, "Search", resolveDuration = true)
     }
 
     /**
@@ -624,6 +632,13 @@ public class AndroidPlaybackController internal constructor(
         sourceRawId: String? = null,
         shuffle: Boolean = false,
     ) {
+        selectQueue(tracks, startIndex, source, sourceName, sourceRawId, shuffle)
+    }
+
+    private fun selectQueue(
+        tracks: List<AndroidTrack>, startIndex: Int, source: AndroidQueueSource, sourceName: String,
+        sourceRawId: String? = null, shuffle: Boolean = false, resolveDuration: Boolean = false,
+    ) {
         if (!live()) { android.util.Log.d("DulcetPlayQueue", "refused closed"); return }
         android.util.Log.d("DulcetPlayQueue", "received source=$source tracks=${tracks.size} start=$startIndex contact=${contactOpen()}")
         val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist || source == AndroidQueueSource.Playlist
@@ -632,6 +647,9 @@ public class AndroidPlaybackController internal constructor(
             tracks.any { it.providerInstanceId != account.providerInstanceId }) {
             android.util.Log.d("DulcetPlayQueue", "refused invalid-selection")
             failure = DomainError.Auth.Forbidden; publish(); return
+        }
+        if (!resolveDuration && tracks.any { it.durationMilliseconds == null }) {
+            failure = DomainError.Playback.NoPlayableSource; publish(); return
         }
         requestGeneration++
         heldQueueAuthorization = null
@@ -659,7 +677,8 @@ public class AndroidPlaybackController internal constructor(
             val transition = queue.replaceAndStart(PlaybackQueueRequest(
                 tracks.map { track ->
                     val id = ProviderItemId(track.providerInstanceId, track.rawId)
-                    PlaybackQueueItem(id, if (track.rawId == chosen.rawId && song != null) song.duration
+                    PlaybackQueueItem(id, if (track.rawId == chosen.rawId) song?.track?.durationMilliseconds?.milliseconds
+                        ?: track.durationMilliseconds?.milliseconds ?: metadata[id]?.durationMilliseconds?.milliseconds
                         else track.durationMilliseconds?.milliseconds, track.albumRawId ?: if (source == AndroidQueueSource.Album) sourceRawId else null)
                 },
                 QueueSourceContext(kind, sourceRawId?.let { ProviderItemId(account.providerInstanceId, it) },
@@ -678,12 +697,29 @@ public class AndroidPlaybackController internal constructor(
             // chosen connection may retain Play across a transient loss of verification.
             if (contactOpen() || !contact.isChosen() || authorization == null ||
                 authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return false
+            // An unresolved raw-ID selection cannot enter a new queue before admission.
+            if (resolveDuration && chosen.durationMilliseconds == null) return false
             heldQueueAuthorization = authorization
             val directive = replaceSelection(null) ?: run { heldQueueAuthorization = null; return false }
             needsReconnect = true
             publish()
             if (queue.snapshot().currentSession?.playbackSessionId == directive.playbackSessionId)
                 start(directive, authorization = authorization)
+            return true
+        }
+        var recoveredRawContact = false
+        suspend fun awaitRawContact(): Boolean {
+            val contact = serverContact ?: return false
+            if (!resolveDuration || contactOpen() || !contact.isChosen() || authorization == null ||
+                authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return false
+            needsReconnect = true; publish()
+            do {
+                contact.awaitOpen()
+                coroutineContext.ensureActive()
+                if (generation != requestGeneration || closed ||
+                    authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return false
+            } while (!contactOpen())
+            recoveredRawContact = true
             return true
         }
         resolution = scope.launch {
@@ -699,6 +735,7 @@ public class AndroidPlaybackController internal constructor(
                     serverContact?.awaitValidation()
                     android.util.Log.d("DulcetPlayQueue", "validation-finished contact=${contactOpen()} current=${generation == requestGeneration} generation=$generation")
                 }
+                if (!downloaded) awaitRawContact()
                 if (generation != requestGeneration || closed) return@launch
                 if (!downloaded && !authorizesRemoteReply(authorization) && holdSelectionForContact()) return@launch
                 if (!downloaded && !authorizesRemoteReply(authorization)) {
@@ -710,7 +747,7 @@ public class AndroidPlaybackController internal constructor(
                     }
                     return@launch
                 }
-                val knownOffline = !networkAvailable || (!serverAvailable && localPlans != null)
+                val knownOffline = !networkAvailable || (!serverAvailable && localPlans != null && !recoveredRawContact)
                 if (!downloaded && knownOffline && !shuffle) {
                     android.util.Log.d("DulcetPlayQueue", "refused offline generation=$generation")
                     if (generation == requestGeneration) {
@@ -718,7 +755,17 @@ public class AndroidPlaybackController internal constructor(
                     }
                     return@launch
                 }
-                val song = if (downloaded || knownOffline) null else loadSong(chosen.rawId)
+                val song = if (downloaded || knownOffline) null else {
+                    var resolved: Song? = null
+                    while (resolved == null) {
+                        try { resolved = loadSong(chosen.rawId) }
+                        catch (cancelled: CancellationException) {
+                            coroutineContext.ensureActive()
+                            if (!awaitRawContact()) throw cancelled
+                        }
+                    }
+                    resolved
+                }
                 if (generation != requestGeneration || closed) return@launch
                 if (!downloaded && !authorizesRemoteReply(authorization) && holdSelectionForContact()) return@launch
                 if (!downloaded && !authorizesRemoteReply(authorization)) {
@@ -726,6 +773,15 @@ public class AndroidPlaybackController internal constructor(
                     dropHeldAdditions(); wantsPlay = false; needsReconnect = true; publish()
                     return@launch
                 }
+                if (resolveDuration && downloaded) localTrack(chosen.rawId)?.let(::remember)
+                if (resolveDuration && (song?.track?.durationMilliseconds
+                        ?: metadata[ProviderItemId(chosen.providerInstanceId, chosen.rawId)]?.durationMilliseconds) == null) {
+                    dropHeldAdditions(); wantsPlay = previousWantsPlay
+                    failure = DomainError.Playback.NoPlayableSource; publish(); return@launch
+                }
+                // Carry only this recovered selection through the reader's lagging outage hint.
+                // start() consumes this authorization after local acquisition, as for a held queue.
+                if (recoveredRawContact) heldQueueAuthorization = authorization
                 val directive = replaceSelection(song) ?: run {
                     wantsPlay = false; failure = DomainError.Transport.Unreachable; publish()
                     return@launch
@@ -924,7 +980,7 @@ public class AndroidPlaybackController internal constructor(
         if (!live()) return false
         val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist || source == AndroidQueueSource.Playlist
         require(named == !sourceRawId.isNullOrBlank()) { "Album, artist and playlist queues, and only they, name a source" }
-        if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId }) return false
+        if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId || it.durationMilliseconds == null }) return false
         if (queueLoading()) {
             heldAdditions += HeldAddition(tracks.toList(), insertion, source, sourceName, sourceRawId)
             return true

@@ -39,6 +39,7 @@ class LoopbackLibraryServer : AutoCloseable {
     @Volatile var albumSongTitles: List<String?> = listOf("Opening")
 
     @Volatile var albumSongDurationSeconds: Int? = 120
+    @Volatile var albumSongDurationsSeconds: List<Int?>? = null
     @Volatile var albumPlaybackAudio: ByteArray? = null
 
     /** Optional complete song catalog for library-depth UI proofs. */
@@ -232,7 +233,7 @@ class LoopbackLibraryServer : AutoCloseable {
                 val songs = albumSongTitles.mapIndexed { index, songTitle ->
                     val songId = "$id-song-${index + 1}"
                     val titleField = songTitle?.let { "\"title\":${quote(it)}," }.orEmpty()
-                    val durationField = albumSongDurationSeconds?.let { "\"duration\":$it," }.orEmpty()
+                    val durationField = (if (albumSongDurationsSeconds != null) albumSongDurationsSeconds?.getOrNull(index) else albumSongDurationSeconds)?.let { "\"duration\":$it," }.orEmpty()
                     """{"id":${quote(songId)},${titleField}"album":$title,"albumId":${quote(id)},""" +
                         """"artist":"Fixture Artist","track":${index + 1},${durationField}"suffix":"mp3","contentType":"audio/mpeg"${flagSong(songId)}}"""
                 }
