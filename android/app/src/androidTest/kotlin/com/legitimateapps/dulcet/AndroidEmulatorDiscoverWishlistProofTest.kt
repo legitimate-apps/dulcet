@@ -181,6 +181,19 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     reconnect(activity)
                     val addA=fixture.effect(lost,"addToDulcetWishlist",delivered=true).getJSONObject("replay")
                     val generationA=fixture.awaitWish(mbid(1)).getString("id")
+                    // Delivering the add is only the reconnect's outbox phase. Wait for
+                    // the epoch/read phase before interrupting transport again; otherwise
+                    // Remove can start a capability redetection against the offline proxy.
+                    await("online Wishlist before taking the reconnected server offline") {
+                        compose.onNodeWithTag("wishlist.list").performScrollToIndex(0)
+                        compose.onNodeWithTag("wishlist.row.0").assertIsDisplayed()
+                        !exists("wishlist.offline") &&
+                            SemanticsProperties.Disabled !in nodeConfig("wishlist.refresh")
+                    }
+                    File(proofDirectory,"reconnect-before-offline.json").writeText(JSONObject()
+                        .put("wishlistOnline",true).put("refreshEnabled",true)
+                        .put("positiveVisibleRow",true).toString())
+                    println("DISCOVER PHONE reconnect-complete wishlist-online=true refresh-enabled=true")
                     fixture.arm("offline")
                     openWishlist();row("Fixture Song 01");remove("Fixture Song 01")
                     await("durable removal hides generation A") { !allVisibleText().contains("Fixture Song 01") }
