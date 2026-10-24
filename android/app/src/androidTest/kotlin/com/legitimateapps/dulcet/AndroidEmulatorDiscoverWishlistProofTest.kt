@@ -323,8 +323,17 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         check(kotlin.math.abs(context.resources.configuration.fontScale-expectedScale)<.05f) {"Requested system font scale did not reach app"}
         val expectedDark=required("dulcetDiscoverTheme")=="dark"
         check((context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK==Configuration.UI_MODE_NIGHT_YES)==expectedDark) {"Requested system appearance did not reach app"}
-        launch().use {
+        launch().use { activity ->
             everywhere("accessible")
+            var keyboardVisible=false
+            activity.onActivity { keyboardVisible=it.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime())==true }
+            if (keyboardVisible) {
+                instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                await("keyboard dismissed before full-body capture") {
+                    activity.onActivity { keyboardVisible=it.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime())==true }
+                    !keyboardVisible
+                }
+            }
             navigationControlsRemainLabeled()
             accessible("discover.scope.everywhere");accessible("discover.item.artist.0")
             capture("search")
@@ -333,6 +342,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             clickDisplayed("discover.item.album.0")
             awaitTag("discover.album.surface")
             accessible("discover.album.edition.1");capture("album")
+            accessible("discover.wish.song.0");capture("album-tracks")
             click("discover.back");click("discover.back")
             fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync");visiblePending("discover.list");capture("pending")
             openWishlist();val index=row("Fixture Song 01")
