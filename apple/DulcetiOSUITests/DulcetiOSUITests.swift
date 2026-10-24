@@ -2095,23 +2095,6 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // The row carries a context menu: the condition the drag below has to get out of.
-        var offered = false
-        withoutIdleWaits(app) {
-            let source = dragged.frame
-            dragged.press(forDuration: 1.2)
-            offered = app.buttons["Add to Playlist\u{2026}"].firstMatch.waitForExistence(timeout: 5)
-            self.closeContextMenu(marker: "Add to Playlist\u{2026}", openedFrom: source, in: app)
-        }
-        guard offered else {
-            XCTFail("The row must offer its context menu: " + app.debugDescription)
-            return
-        }
-        guard app.buttons["Add to Playlist\u{2026}"].firstMatch.waitForNonExistence(timeout: 10) else {
-            XCTFail("A tap outside the menu must close it: " + app.debugDescription)
-            return
-        }
-
         // The 31-second canary ended before the Pause touch in run 39301701884:
         // track touch at 141 s, Pause touch at 177 s. Restore its saved queue paused instead.
         // This proof needs a held queue, not a timed Play/Pause race on a busy UI runner.
@@ -2139,44 +2122,58 @@ final class DulcetiOSUITests: XCTestCase {
         }
         print("DULCET DRAG QUEUE PRECONDITION restored-canary=true paused=true")
         guard let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: true) else { return }
-        let queuedBefore = before.filter { $0.hasPrefix("Thirty One Seconds") }.count
-
-        // A second drag only if the first queued nothing: on one local run of ten the lifted
-        // track stayed where it was while the synthesized touch moved, and the menu closed. Under
-        // a custom preview both drags queue nothing, so the retry cannot hide the defect.
-        var after = before
-        var attempts = 0
-        var menuLeftOpen = 0
-        while attempts < 2, after.filter({ $0.hasPrefix("Thirty One Seconds") }).count == queuedBefore {
-            attempts += 1
-            withoutIdleWaits(app) {
-                dragged.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+        // In run 40065138225 both 0.8-second gestures showed the menu near/after scheduled
+        // arrival and never lifted. Open the named row's menu in this process, then lift its actual
+        // system Preview with a second touch, as the album-menu proof does. Each attempt must
+        // positively reach that menu before any drag; a menu action cannot satisfy the oracle.
+        var nativeMenuReady = 0
+        guard let result = dragOntoTheBar(
+            dragged, bar: bar, before: before, adding: 1, menuMarker: "Add to Playlist\u{2026}",
+            in: app, compact: true, prepareSource: { attempt in
+                guard let preview = self.nativeTrackMenuPreview(on: dragged, attempt: attempt, in: app) else { return nil }
+                nativeMenuReady += 1
+                return preview
             }
-            // A drag that never lifted out leaves the menu open where the touch ended (the
-            // defect's shape); close it so Up Next can be read.
-            let menu = app.buttons["Add to Playlist\u{2026}"].firstMatch
-            if menu.waitForExistence(timeout: 2) {
-                menuLeftOpen += 1
-                withoutIdleWaits(app) {
-                    self.closeContextMenu(marker: "Add to Playlist\u{2026}", openedFrom: dragged.frame, in: app)
-                }
-                _ = menu.waitForNonExistence(timeout: 10)
-            }
-            let deadline = Date().addingTimeInterval(10)
-            repeat {
-                RunLoop.current.run(until: Date().addingTimeInterval(1))
-                guard let read = upNextLabels(openingFrom: bar, in: app) else { return }
-                after = read
-            } while after.filter({ $0.hasPrefix("Thirty One Seconds") }).count == queuedBefore && Date() < deadline
-        }
+        ) else { return }
         attachScreenshot(named: "track-dragged-from-its-menu", app: app)
-        XCTAssertEqual(after.filter { $0.hasPrefix("Thirty One Seconds") }.count, queuedBefore + 1,
-                       "The dragged track must join Up Next once; before=\(before) after=\(after) drags=\(attempts)"
-                       + " menu-left-open-after=\(menuLeftOpen)")
+        XCTAssertGreaterThan(nativeMenuReady, 0, "The track's native context menu must actually open")
+        XCTAssertEqual(nativeMenuReady, result.drags, "Every drag must start from the observed open menu's Preview")
+        XCTAssertEqual(result.menuLeftOpen, 0, "Dragging the Preview must lift out of the context menu")
+        XCTAssertEqual(result.after.count, before.count + 1,
+                       "The drag must append exactly one track; before=\(before) after=\(result.after) drags=\(result.drags)"
+                       + " menu-left-open-after=\(result.menuLeftOpen)")
+        XCTAssertEqual(Array(result.after.prefix(before.count)), before, "The preexisting Up Next entries must stay in order")
+        XCTAssertTrue(result.after.last?.hasPrefix("Thirty One Seconds,") == true,
+                      "The appended entry must be the dragged track; after=\(result.after)")
         XCTAssertEqual(playPause.label, "Play", "The queue proof must keep playback paused")
         XCTAssertTrue(bar.label.contains("UI Playback Canary"),
                       "The drag must append to the held canary's queue; bar=\(bar.label)")
-        print("DULCET DRAG FROM MENU before=\(before) after=\(after) drags=\(attempts) menu-left-open-after=\(menuLeftOpen)")
+        print("DULCET DRAG FROM MENU before=\(before) after=\(result.after) drags=\(result.drags)"
+            + " menu-left-open-after=\(result.menuLeftOpen) native-menu-ready=\(nativeMenuReady)")
+    }
+
+    @MainActor
+    private func nativeTrackMenuPreview(on track: XCUIElement, attempt: Int, in app: XCUIApplication) -> XCUIElement? {
+        var ready: XCUIElement?
+        withoutIdleWaits(app) {
+            guard track.exists, track.isHittable else {
+                XCTFail("The named track must be hittable before opening its menu")
+                return
+            }
+            track.press(forDuration: 1.2)
+            let marker = app.buttons["Add to Playlist\u{2026}"].firstMatch
+            let previews = app.otherElements.matching(NSPredicate(format: "label == %@", "Preview"))
+            let preview = previews.element(boundBy: 0)
+            guard marker.waitForExistence(timeout: 10), marker.isHittable,
+                  preview.waitForExistence(timeout: 10), previews.count == 1, preview.isHittable,
+                  !marker.frame.intersects(preview.frame) else {
+                XCTFail("The track's native menu and separate hittable Preview must be open before every drag: " + app.debugDescription)
+                return
+            }
+            print("DULCET TRACK MENU READY attempt=\(attempt) preview=\(preview.frame) marker=\(marker.frame)")
+            ready = preview
+        }
+        return ready
     }
 
     /// Plays the album's last track, then restores that saved selection paused so a short
