@@ -99,7 +99,8 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 - `apple-ci` on a PR runs only `apple-platform`, and only when the PR changes an Apple input
   (`tools/ci/plan-apple-legs`); the conformance jobs, `apple-conformance-core` and the
   `apple-conformance-ipad-iphone` device matrix (check runs `apple-conformance-ipad` and
-  `apple-conformance-iphone`), run in parallel on push to `main` and on dispatch. A release build requires
+  `apple-conformance-iphone`), run in parallel on push to `main` and on dispatch. A dispatch with
+  `conformance_only=true` skips `apple-platform`; plain dispatches run every leg. A release build requires
   every leg and every required check green on its commit (spec §21.6).
 - When several unrelated PRs go red together, check the Darwin conformance environment first: a source
   URL or cache failure in `install-darwin-ffmpeg` fails every run alike (`docs/TRAPS.md` 36).
