@@ -1768,28 +1768,30 @@ to the cold body, byte for byte. `PlaybackContentLength.Estimated` remains a dis
 collapse the two into one numeric "expected length"; nothing in production produces an `Estimated`
 since §28 2026-10-04, and where one is still branched on it is never accepted as the length of a
 body short of it. A network drop part-way through a response that declares a length is therefore
-a failure on every platform, not an early end. A cold transcode now declares none and arrives
-chunked, so a cut-off there is caught only by the chunk framing, and per platform: **OBSERVED
-2026-10-04** (#227 review, real socket; Android under Robolectric with the JDK's
-`HttpURLConnection`, not a device) Android's data source fails both a close mid-chunk and a
-close after a whole chunk with no terminating chunk ("Premature EOF"); the core's JVM client (Ktor
-CIO) fails a close mid-chunk but **loads** a close at a chunk boundary as the whole song, the same as
-before #227. That path is `PlaybackWireClient.load` (CONF-92, the core controls), not a shipping
-player. **ASSUMED, not measured:** that the Apple URLSession loader and the Darwin core client fail
-both kinds of cut-off. The
-core's Ktor read path for estimated bodies and the Darwin delegate's
-end-of-estimate rewrite (§28, 2026-09-30 and 2026-10-01) act only on a request that asks for an
-estimate, so neither acts now. **OBSERVED 2026-10-01 on macOS** (loopback fixture,
-`DarwinEstimatedLengthBodyTest`): when the end of the stream follows body bytes closely, NSURLSession
-discards the ones it has read but not yet handed to its delegate and reports the -1005 without them
--- on an idle host usually the tail after its first 16 KiB read, and under CPU load every byte of a
-23,385-byte body in 65 of 200 reads. **The Apple playback loader is a second client with its own
+a failure on every platform, not an early end. A cold transcode declares no length and arrives
+chunked, so its completeness must be established by the HTTP framing. **OBSERVED 2026-10-24** (#228, real loopback sockets): CIO on
+JVM and Android core, Darwin core on macOS and native URLSession on macOS, iOS and tvOS accepted
+EOF after a whole chunk without a terminating zero chunk. All Apple shells share the playback
+loader; the durable download/cache controller compiles only on macOS and iOS. Mid-chunk cuts failed. Android's
+shipping `HttpURLConnection` player, cache and download paths rejected both cuts under Robolectric.
+Media GETs now use strict framing transports: OkHttp in JVM/Android core, raw Foundation streams
+in Darwin core and Network framework in the Swift resource loader. They require the zero chunk
+and complete trailers. Nonmedia account requests keep their existing transports. The inert Ktor
+estimated-body reader and Darwin end-of-estimate rewrite were removed together. Background Apple
+downloads with chunked or undeclared length discard their OS delivery and promote only a strict
+replacement transfer authorized against the current server identity. See
+[the path inventory and compatibility limits](../../evidence/chunked-media-completeness.md).
+
+**The Apple playback loader is a second client with its own
 session** (`DulcetURLSessionPlaybackResource`), and it sends the plan's request, which never carries
 `estimateContentLength`: a cold transcode answers it with a complete chunked 200 and a cached one
 with 206 and an exact total. It reads each chunk through its delegate and, when a 200 body that
 declared a length ends in the -1005 after at least one byte, hands what arrived to the core
 validator, which treats every declared length as exact and refuses the short body; refused, with no
-byte, or on a 200 that declared no length, the load stays the lost connection. A cold transcode
+byte, or on a 200 that declared no length, the load stays the lost connection. For a chunked 200,
+the session's strict transport is what reports a body whose zero chunk never arrived as that
+-1005 (§28, 2026-10-24). A close-delimited body has no framing to check, so a drop there still
+reads as its end. A cold transcode
 answers the loader's first ranged read with 200 and the whole representation, which the loader
 accepts as the resource only from byte 0 and only at the length the validator measured (§28,
 2026-10-02). `TranscodeDecision.LegacyHint` records that we are on this path so the UI never claims a
@@ -7917,6 +7919,25 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+
+**2026-10-24 - Require complete HTTP chunk framing before media completion (#228).**
+
+Media EOF between whole chunks is a transport failure until the terminating zero chunk and
+trailers have arrived. JVM and Android core use a media-only OkHttp client; Darwin core and Swift
+media sessions keep raw HTTP/1.1 framing through strict socket transports with platform TLS trust.
+Account traffic keeps its prior transports and retry behavior. Apple background downloads with
+no exact length replace the unproved OS file through a strict, currently authorized transfer;
+only that response's bytes and persisted framing proof can be promoted. The inert estimated-body
+reader and Darwin completion rewrite were removed together. The
+[path inventory, baseline socket observations and limitations](../../evidence/chunked-media-completeness.md)
+record the tested boundaries. Existing completed library files are not retroactively repaired.
+
+The Apple playback loader retains a 256 KiB signature probe and caps later ranges at 1 MiB to
+reduce fresh TCP/TLS connections. Later reads stop at the requested end or known resource end;
+the signature probe may outgrow a tiny header request but never a known resource end. A server
+that ignores the initial range can still return the complete validated representation. Strict
+HTTP framing remains required for every response.
 
 
 **2026-10-23 — Retain Android Play across a chosen connection's transient validation loss.**

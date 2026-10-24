@@ -39,7 +39,6 @@ class PlaybackWireLoadingTest {
         assertEquals(DomainError.Protocol.UnexpectedBinary, failed.error)
         val request = transport.requests.single()
         assertEquals(null, request.parameters["estimateContentLength"], "the load asked for an estimate")
-        assertEquals(AuthenticatedEndpointContentLengthKind.Exact, request.options.contentLengthKind)
     }
 
     @Test
