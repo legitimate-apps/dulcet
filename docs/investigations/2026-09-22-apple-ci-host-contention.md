@@ -153,3 +153,37 @@ consistency check, not a rate.
   a genuine host-wide stall, which is its job.
 - **The job was not split.** See spec §21.5 for the analysis and the condition under which it is right.
 - **Nothing moved off the pull-request gate.** See spec §21.5.
+
+
+## 7. Loaded-runner stack capture (2026-10-24)
+
+OBSERVED in the iPhone leg of full Apple run `40058182881`: all three hot-app captures
+reached `Sampling completed, processing symbols...`, then hit the worker's ten-second
+timeout without writing a call tree. They started at 04:35:50, 04:40:07 and 04:50:08 UTC.
+The job-wide cap was exhausted before the streaming-quality picker failure at 05:48.
+During 05:48 the recorded Dulcet CPU peak was 63.1%, below the capture threshold; at
+05:47 its peak was 81.2%. Several diagnosticd readings were near or above 100%. These
+samples do not establish a sustained hot-app stall at that picker failure, and cannot
+exclude activity between pressure samples.
+
+The sampler now requires consecutive readings at or above 90% for at least 15 seconds,
+then collects three seconds of stacks in one detached worker. The worker allows 180 seconds
+for sampling and symbol processing. A rolling cap of three starts per ten minutes and a
+60-second cooldown for the same launch bound attachment cost without spending the rest of
+a long leg's budget early. Only the latest three stack/stderr pairs are retained. Every
+Apple job stops the sampler before summarizing pressure and uploading failure diagnostics:
+a stop sentinel prevents new attachments, workers register before checking that sentinel,
+and cleanup grants two seconds for completion before cutting off a verified worker's process
+group. Cleanup has its own bounded budget and records completion, timeout, cutoff or why
+a worker could not be signaled. The sampler loop never waits for symbol processing.
+
+OBSERVED locally with the real iPhone 17 Pro / iOS 26.5 simulator app and 24 artificial
+CPU-load processes on 12 CPUs: the same capture worker wrote a symbolized call tree in
+7.823 seconds while load1 rose from 132.3 to 149.4. Its Main Thread tree contains 1,830
+samples, including 1,802 through `DulcetiOSApp.$main` and `UIApplicationMain`, and 1,465
+in the Mach-message wait under `__CFRunLoopRun`. The capture names app and system frames;
+it does not reproduce or explain the earlier 30-second iPad stall. The sampler self-test
+passes nine controls, including a fake sample that spends 10.5 seconds processing symbols
+before writing a complete tree, an actual child timeout, rolling-budget replenishment and
+file retention, startup racing with stop, and bounded cleanup of a real detached worker and
+its child while leaving an unrelated PID alive.
