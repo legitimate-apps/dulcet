@@ -151,7 +151,10 @@ class Journal(private val db: Db, dataFolder: Path) {
     private fun recordVisibility(session: Db.Session) = with(session) {
         val recorded = string("SELECT value FROM meta WHERE key='api_visibility_head'")?.toLongOrNull() ?: visibilityHead
         val nextHead = head(this)
-        if (long("SELECT COUNT(*) FROM api_journal WHERE seq>? AND type IN ('track','album','artist','genre','source')",recorded) == 0L) return@with
+        // Most metadata/cache commits append no journal rows. When there is a tail, seek by
+        // sequence: the entity index starts with type and otherwise scans retained history.
+        if (nextHead <= recorded) return@with
+        if (long("SELECT COUNT(*) FROM api_journal NOT INDEXED WHERE seq>? AND type IN ('track','album','artist','genre','source')",recorded) == 0L) return@with
         execute("CREATE TEMP TABLE IF NOT EXISTS api_live_visibility(type TEXT NOT NULL,id TEXT NOT NULL,source_id TEXT NOT NULL,PRIMARY KEY(type,id,source_id))")
         execute("DELETE FROM api_live_visibility")
         execute("INSERT OR IGNORE INTO api_live_visibility $liveVisibility")
@@ -165,9 +168,9 @@ class Journal(private val db: Db, dataFolder: Path) {
         execute("INSERT OR IGNORE INTO api_catalog_visibility SELECT * FROM api_live_visibility")
         execute("""INSERT OR IGNORE INTO api_journal_visibility(seq,source_ids)
             SELECT j.seq,(SELECT json_group_array(source_id) FROM api_catalog_visibility v WHERE v.type=j.type AND v.id=j.id)
-            FROM api_journal j WHERE j.seq>? AND j.type IN ('track','album','artist','genre','source')
+            FROM api_journal j NOT INDEXED WHERE j.seq>? AND j.type IN ('track','album','artist','genre','source')
             AND EXISTS(SELECT 1 FROM api_catalog_visibility v WHERE v.type=j.type AND v.id=j.id)""",recorded)
-        execute("INSERT OR IGNORE INTO api_journal_visibility SELECT seq,json_array(id) FROM api_journal WHERE seq>? AND type='source'",recorded)
+        execute("INSERT OR IGNORE INTO api_journal_visibility SELECT seq,json_array(id) FROM api_journal NOT INDEXED WHERE seq>? AND type='source'",recorded)
         // Use a persisted watermark: updating an in-memory one here would survive a failed commit.
         execute("INSERT INTO meta(key,value) VALUES('api_visibility_head',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",nextHead.toString())
     }

@@ -20,7 +20,8 @@ class Image(val bytes: ByteArray, val contentType: String)
 /**
  * Resolves a cover art id (`al-`, `mf-`, `ar-`, `pl-` or a bare catalog id) to image bytes: a
  * folder image (cover.jpg and friends) or the picture embedded in a file. Resized copies are
- * written once to a disk cache keyed by the source and the size. An item with no picture gets a
+ * written once to a disk cache keyed by the source and the size. Successful original embedded
+ * pictures are cached by validated source path, size and modification time as well. An item with no picture gets a
  * generated placeholder, as other OpenSubsonic servers do, so a client never shows a broken image.
  */
 class Artwork(private val db: Db, private val musicFolder: Path, private val cacheFolder: Path, private val ffmpeg: String, private val access: com.legitimateapps.dulcet.server.auth.AccountAccess) {
@@ -94,7 +95,25 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
 
     private fun load(source: Source): Image? = when (source) {
         is Source.FolderFile -> com.legitimateapps.dulcet.server.musicFile(musicFolder, source.path)?.let(Files::readAllBytes)?.let { Image(it, sniff(it)) }
-        is Source.Embedded -> com.legitimateapps.dulcet.server.musicFile(musicFolder, source.path)?.let(::extractEmbedded)?.let { Image(it, sniff(it)) }
+        is Source.Embedded -> com.legitimateapps.dulcet.server.musicFile(musicFolder, source.path)?.let(::embeddedImage)
+    }
+
+    /** Source resolution and account access run before this cache is consulted. */
+    private fun embeddedImage(file: Path): Image? {
+        val key = artworkFileIdentity(file)
+        val cached = cacheFolder.resolve("art/embedded").resolve(key.take(2)).resolve(key)
+        if (Files.isRegularFile(cached)) return Files.readAllBytes(cached).let { Image(it, sniff(it)) }
+        val bytes = extractEmbedded(file) ?: return null
+        // Do not persist an extraction that raced a retag or file replacement.
+        if (key == artworkFileIdentity(file)) {
+            Files.createDirectories(cached.parent)
+            val temporary = Files.createTempFile(cached.parent, "embedded-", ".tmp")
+            try {
+                Files.write(temporary, bytes)
+                Files.move(temporary, cached, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } finally { Files.deleteIfExists(temporary) }
+        }
+        return Image(bytes, sniff(bytes))
     }
 
     private fun extractEmbedded(file: Path): ByteArray? {
@@ -111,7 +130,7 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
             is Source.FolderFile -> "${source.path}|${runCatching { Files.getLastModifiedTime(source.path).toMillis() }.getOrDefault(0)}"
             is Source.Embedded -> "${source.path}|${runCatching { Files.getLastModifiedTime(source.path).toMillis() }.getOrDefault(0)}|embedded"
         }
-        val key = MessageDigest.getInstance("SHA-256").digest(stamp.toByteArray()).take(16).joinToString("") { "%02x".format(it) }
+        val key = MessageDigest.getInstance("SHA-256").run { update(stamp.toByteArray()); digest(original.bytes) }.take(16).joinToString("") { "%02x".format(it) }
         val cached = cacheFolder.resolve("art").resolve(key.take(2)).resolve("${key}_$clamped.jpg")
         if (Files.isRegularFile(cached)) return Image(Files.readAllBytes(cached), "image/jpeg")
         val decoded = runCatching { ImageIO.read(ByteArrayInputStream(original.bytes)) }.getOrNull() ?: return original
