@@ -10,6 +10,8 @@
    live sampling records a CPU list on this host.
 """
 import json
+import runpy
+from unittest.mock import patch
 import subprocess
 import sys
 import tempfile
@@ -67,7 +69,12 @@ with tempfile.TemporaryDirectory() as tmp:
     sampler = subprocess.Popen([sys.executable, TOOL, "sample", "--output", str(live),
                                 "--interval", "0.5"])
     try:
-        time.sleep(2.5)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if live.exists() and live.read_text().count('"event":"sample"') >= 3:
+                break
+            assert sampler.poll() is None, 'live sampler exited before recording three samples'
+            time.sleep(.1)
     finally:
         sampler.terminate()
         sampler.wait(timeout=10)
@@ -84,9 +91,6 @@ with tempfile.TemporaryDirectory() as tmp:
 
 # Behavioral controls for the hot-app trigger. A worker is real subprocess ownership in production;
 # this fake keeps observation deterministic and proves that an unfinished capture never blocks it.
-import runpy
-from unittest.mock import patch
-
 module = runpy.run_path(TOOL)
 HotAppCapture = module['HotAppCapture']
 capture_stack = module['capture_stack']
@@ -159,3 +163,33 @@ with tempfile.TemporaryDirectory() as tmp:
         capture_stack(123, app()['started'], output, pressure, str(hanging), timeout=.15)
     assert json.loads(Path(pressure).read_text().splitlines()[-1])['event'] == 'stack-capture-exited'
     print('STACK WORKER CONTROL PASS actual child timed out and exited PID refused')
+
+# ps uses a five-field lstart and can return executable names containing spaces. Preserve both.
+from types import SimpleNamespace
+snapshot = module['process_snapshot']
+with patch('subprocess.run', return_value=SimpleNamespace(stdout=(
+        '123 4096 91.2 Fri Oct 23 20:00:00 2026 /tmp/Dulcet DEV\n'
+        '124 2048 50,5 Fri Oct 23 20:00:01 2026 /tmp/Dulcet\n'))):
+    parsed = snapshot()
+assert parsed == [dict(pid=123, rss=4096, cpu=91.2, started=app()['started'], name='Dulcet DEV'),
+                  dict(pid=124, rss=2048, cpu=50.5, started='Fri Oct 23 20:00:01 2026', name='Dulcet')]
+print('PS CONTROL PASS PID, launch identity, locale decimal and executable name with spaces')
+
+with tempfile.TemporaryDirectory() as tmp:
+    pressure = str(Path(tmp) / 'pressure.log')
+    output = str(Path(tmp) / 'stack.log')
+    writer = Path(tmp) / 'successful-sample'
+    writer.write_text('#!/usr/bin/env python3\nimport sys\n'
+                      'assert sys.argv[1:4] == ["123", "3", "-file"]\n'
+                      'open(sys.argv[4], "w").write("Call graph: control-main-frame\\n")\n')
+    writer.chmod(0o755)
+    with patch.dict(capture_stack.__globals__, process_snapshot=lambda: [app()]):
+        # Exercise CLI argument dispatch too, using the real worker implementation.
+        original = module['main'].__globals__['capture_stack']
+        def control_capture(pid, started, stack, log):
+            return original(pid, started, stack, log, str(writer))
+        with patch.dict(module['main'].__globals__, capture_stack=control_capture):
+            assert module['main'](['capture', '123', app()['started'], output, pressure]) == 0
+    assert Path(output).read_text() == 'Call graph: control-main-frame\n'
+    assert json.loads(Path(pressure).read_text().splitlines()[-1])['status'] == 'complete'
+    print('STACK SUCCESS CONTROL PASS CLI dispatch writes call tree and completion receipt')

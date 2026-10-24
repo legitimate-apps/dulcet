@@ -122,7 +122,7 @@ class HotAppCapture:
     def observe(self, processes: list[dict]) -> None:
         hot = {(p["pid"], p["started"]) for p in processes
                if p["name"] in ("Dulcet", "Dulcet DEV") and p["cpu"] >= 90.0}
-        eligible = hot & self.previous - self.captured
+        eligible = (hot & self.previous) - self.captured
         self.previous = hot
         if self.worker is not None:
             if self.worker.poll() is None:
@@ -147,12 +147,12 @@ class HotAppCapture:
 def capture_stack(pid: int, started: str, output: str, pressure: str,
                   command: str = "/usr/bin/sample", timeout: float = 10) -> int:
     # Recheck in the worker before attaching: launches can exit while this worker starts.
-    if not any(p["pid"] == pid and p["started"] == started and
-               p["name"] in ("Dulcet", "Dulcet DEV") for p in process_snapshot()):
-        append(pressure, dict(event="stack-capture-exited", pid=pid))
-        return 0
     status = "error"
     try:
+        if not any(p["pid"] == pid and p["started"] == started and
+                   p["name"] in ("Dulcet", "Dulcet DEV") for p in process_snapshot()):
+            append(pressure, dict(event="stack-capture-exited", pid=pid))
+            return 0
         with open(output + ".stderr.log", "w", encoding="utf-8") as log:
             result = subprocess.run([command, str(pid), "3", "-file", output],
                                     stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
@@ -206,6 +206,10 @@ def summarize(path: str) -> int:
         # A summary with nothing in it must not read as "no pressure".
         print(f"HOST PRESSURE UNAVAILABLE samples={len(samples)} phases={len(phases)}")
         return 1
+    for record in records:
+        if record.get("event") in ("stack-capture-start", "stack-capture-end", "stack-capture-error",
+                                   "stack-capture-exited"):
+            print("HOST PRESSURE STACK " + json.dumps(record, separators=(",", ":")))
     page_mb = (samples[0].get("page_bytes") or 16384) / 1_048_576
     print(f"HOST PRESSURE memBytes={start.get('memBytes')} cpus={start.get('cpus')} "
           f"samples={len(samples)} phases={len(phases)}")
