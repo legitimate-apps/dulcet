@@ -92,7 +92,13 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         return app
     }
     private func press(_ id: String, in app: HostedApp) async throws {
+        try await waitUntil(timeout: .seconds(20), "\(id) must be enabled before native activation") {
+            guard let element = app.firstElement(where: { app.identifier($0) == id }) else { return false }
+            return app.isAccessibilityEnabled(element)
+        }
         let element = try await app.element(identifiedBy: id, timeout: .seconds(20))
+        XCTAssertTrue(app.isAccessibilityEnabled(element))
+        print("DISCOVER_MAC_ACTION identifier=\(id) enabled=\(app.isAccessibilityEnabled(element))")
         try app.press(element, named: id)
     }
     private func search(_ query: String = "Fixture", in app: HostedApp) async throws {
@@ -189,7 +195,19 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         try await capture("Artist", app)
         try await open("Fixture Album 00", in: app)
         _ = try await app.element(identifiedBy: "discover.album.title", timeout: .seconds(20))
+        let editionHold = try await scenario("held-detail")
         try await app.chooseMenuItem("2026-02-01 · 12 tracks", described: "edition") { try await self.press("discover.edition", in: app) }
+        try await effect("held-detail", revision: editionHold, flag: "held")
+        let heldAction = try await app.element(identifiedBy: "discover.openLibrary", timeout: .seconds(10))
+        XCTAssertFalse(app.isAccessibilityEnabled(heldAction), "Edition loading must disable the held library action")
+        print("DISCOVER_MAC_EDITION held=true actionEnabled=\(app.isAccessibilityEnabled(heldAction))")
+        try await capture("Album-Edition-Pending", app)
+        _ = try await control("release-detail", [:])
+        try await effect("held-detail", revision: editionHold, flag: "released")
+        try await waitUntil(timeout: .seconds(20), "Released edition must enable its library action") {
+            guard let action = app.firstElement(where: { app.identifier($0) == "discover.openLibrary" }) else { return false }
+            return app.isAccessibilityEnabled(action)
+        }
         try await capture("Album", app)
         try await press("discover.openLibrary", in: app)
         _ = try await app.element(identifiedBy: "dulcet.album.title", timeout: .seconds(20))
