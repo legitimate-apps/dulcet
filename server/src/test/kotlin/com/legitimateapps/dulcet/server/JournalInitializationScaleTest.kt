@@ -51,4 +51,28 @@ class JournalInitializationScaleTest {
             assertEquals(db.read {long("SELECT MAX(seq) FROM api_journal")},db.read {long("SELECT seq FROM api_revision WHERE type='album' AND id='generated-1'")},"Future trigger updates must continue after legacy backfill")
         }
     }
+    @Test fun missingTriggerBackfillsOlderWriterEventsAndPreservesPrunedRevisions() {
+        Db.inMemory().use { db ->
+            seed(db)
+            val retained=db.read {long("SELECT seq FROM api_revision WHERE id='generated-expired'")}
+            db.write {
+                execute("DELETE FROM api_journal WHERE id='generated-expired'")
+                execute("DROP TRIGGER api_journal_revision")
+                // Characterize an older writer while current-revision bookkeeping is absent.
+                execute("INSERT INTO api_journal(type,id,op,at) VALUES('album','generated-1','upsert',2)")
+                execute("INSERT INTO api_journal(type,id,op,at,reason) VALUES('album','older-writer-deleted','delete',2,'deleted')")
+            }
+            val head=db.read {long("SELECT MAX(seq) FROM api_journal")}
+            Schema.migrate(db)
+            assertEquals(head,db.read {long("SELECT MAX(seq) FROM api_journal")},"Backfill must not append history")
+            assertEquals(retained,db.read {long("SELECT seq FROM api_revision WHERE id='generated-expired'")},"Pruned history must not erase its current revision")
+            assertEquals(0,db.read {long("SELECT COUNT(*) FROM api_revision r WHERE EXISTS(SELECT 1 FROM api_journal j WHERE j.type=r.type AND j.id=r.id AND coalesce(j.user_id,'')=r.user_id) AND r.seq<>(SELECT MAX(j.seq) FROM api_journal j WHERE j.type=r.type AND j.id=r.id AND coalesce(j.user_id,'')=r.user_id)")})
+            assertEquals(head,db.read {long("SELECT seq FROM api_revision WHERE id='older-writer-deleted'")},"Deleted entity written without trigger must be backfilled")
+            db.write {execute("INSERT INTO api_journal(type,id,op,at) VALUES('album','generated-1','upsert',3)")}
+            assertEquals(db.read {long("SELECT MAX(seq) FROM api_journal")},db.read {long("SELECT seq FROM api_revision WHERE type='album' AND id='generated-1'")},"Reinstalled trigger must maintain future writes")
+            val trace=Trace();db.workObserver=trace
+            try {Schema.migrate(db)} finally {db.workObserver=null}
+            assertTrue(trace.rebuilds.isEmpty(),"Repaired installed schema must not backfill on every startup")
+        }
+    }
 }

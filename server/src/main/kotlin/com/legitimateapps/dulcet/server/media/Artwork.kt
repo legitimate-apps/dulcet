@@ -100,15 +100,12 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
 
     /** Source resolution and account access run before this cache is consulted. */
     private fun embeddedImage(file: Path): Image? {
-        val attributes = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes::class.java)
-        val stamp = "$file|${attributes.size()}|${attributes.lastModifiedTime()}"
-        val key = MessageDigest.getInstance("SHA-256").digest(stamp.toByteArray()).joinToString("") { "%02x".format(it) }
+        val key = artworkFileIdentity(file)
         val cached = cacheFolder.resolve("art/embedded").resolve(key.take(2)).resolve(key)
         if (Files.isRegularFile(cached)) return Files.readAllBytes(cached).let { Image(it, sniff(it)) }
         val bytes = extractEmbedded(file) ?: return null
-        val current = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes::class.java)
         // Do not persist an extraction that raced a retag or file replacement.
-        if (attributes.size() == current.size() && attributes.lastModifiedTime() == current.lastModifiedTime()) {
+        if (key == artworkFileIdentity(file)) {
             Files.createDirectories(cached.parent)
             val temporary = Files.createTempFile(cached.parent, "embedded-", ".tmp")
             try {

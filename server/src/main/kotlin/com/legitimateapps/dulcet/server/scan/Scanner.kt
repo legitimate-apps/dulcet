@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.server.scan
 
 import com.legitimateapps.dulcet.server.db.Db
+import com.legitimateapps.dulcet.server.media.artworkFileIdentity
 import com.legitimateapps.dulcet.server.fold
 import com.legitimateapps.dulcet.server.sortName
 import kotlinx.serialization.json.JsonObject
@@ -126,24 +127,21 @@ class Scanner(
             old == null || file.relative in missingFingerprints || old.mtime != file.mtime || old.size != file.size || old.sidecar != file.sidecar
         }
         val unchanged = files.size - changed.size
+        // Cache stat identities within this scan, including shared artist/album sources. No
+        // image decoding or audio probing is needed to detect an artwork-only file replacement.
+        val identities = HashMap<String, String>()
+        fun identity(relative: String): String = identities.getOrPut(relative) {
+            com.legitimateapps.dulcet.server.musicFile(root, root.resolve(relative))?.let(::artworkFileIdentity) ?: "missing"
+        }
         val artStamp = folderArt.toSortedMap().entries.joinToString("\n") { (dir,name) ->
-            val file = if(name.isEmpty()) null else com.legitimateapps.dulcet.server.musicFile(root, root.resolve(dir).resolve(name))
-            val attributes = file?.let { Files.readAttributes(it,java.nio.file.attribute.BasicFileAttributes::class.java) }
-            "$dir/$name:${attributes?.size()}:${attributes?.lastModifiedTime()?.toMillis()}"
+            "$dir/$name:${if (name.isEmpty()) "none" else identity(if (dir.isEmpty()) name else "$dir/$name")}"
         }.let { java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { byte -> "%02x".format(byte) } }
-        // Standalone artist pictures are not album covers. Track their metadata separately
-        // so replacing one invalidates artist references without rewriting the track catalog.
-        val artistArtStamp = folderArt.keys.sorted().flatMap { dir ->
-            listOf("artist.jpg", "artist.png").mapNotNull { name ->
-                com.legitimateapps.dulcet.server.musicFile(root, root.resolve(dir).resolve(name))?.let { file ->
-                    val attributes = Files.readAttributes(file,java.nio.file.attribute.BasicFileAttributes::class.java)
-                    "$dir/$name:${attributes.size()}:${attributes.lastModifiedTime().toMillis()}"
-                }
-            }
-        }.joinToString("\n").let { java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { byte -> "%02x".format(byte) } }
-        val artistArtChanged = db.read { string("SELECT value FROM meta WHERE key='artist_art_stamp'") } != artistArtStamp
         val artChanged = db.read { string("SELECT value FROM meta WHERE key='folder_art_stamp'") } != artStamp
-        if (!force && !artistArtChanged && changed.isEmpty() && removed.isEmpty() && db.read { string("SELECT value FROM meta WHERE key = 'folder_art_stamp'") } == artStamp) {
+        val artworkChanged = db.read {
+            sourceStamps("embedded_art_sources") != embeddedArtSources(::identity) ||
+                sourceStamps("artist_art_sources") != artistArtSources(root, ::identity)
+        }
+        if (!force && !artworkChanged && !artChanged && changed.isEmpty() && removed.isEmpty()) {
             return ScanResult(added = 0, updated = 0, removed = 0, unchanged = unchanged, failed = 0)
         }
         // ffprobe is a process per file; a few in parallel keep a first scan short.
@@ -284,7 +282,7 @@ class Scanner(
                     execute("UPDATE api_group_identity SET id=? WHERE type='artist' AND id=?",oldId,replacement)
                 }
             }
-            regroup(folderArt, oldRelationships, artChanged, artistArtChanged, now)
+            regroup(folderArt, oldRelationships, artChanged, root, ::identity, now)
             // Track artwork can inherit a folder image, so image changes must invalidate the
             // track representation as well as the album and artist representations.
             if(artChanged) execute("INSERT INTO api_journal(type,id,op,at) SELECT 'track',id,'upsert',? FROM track",now)
@@ -326,7 +324,6 @@ class Scanner(
             execute("INSERT INTO meta(key, value) VALUES('last_scan', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", Instant.ofEpochMilli(now).toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_count', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", folderArt.size.toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_art_stamp', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", artStamp)
-            execute("INSERT INTO meta(key,value) VALUES('artist_art_stamp',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",artistArtStamp)
         }
         delta?.let { runCatching { afterCatalogCommit(it) }.onFailure { log.warn("wish fulfilment wakeup deferred") } }
         val result = ScanResult(added = probed.count { existing[it.path] == null }, updated = probed.count { existing[it.path] != null }, removed = removed.size, unchanged = unchanged, failed = failed)
@@ -477,13 +474,15 @@ class Scanner(
     }
 
     /** Reconcile aggregates without deleting/reinserting unchanged identities and their journal. */
-    private fun Db.Session.regroup(folderArt: Map<String, String>, old: AggregateRelationships, artChanged: Boolean, artistArtChanged: Boolean, now: Long) {
+    private fun Db.Session.regroup(folderArt: Map<String, String>, old: AggregateRelationships, artChanged: Boolean, root: Path, identity: (String) -> String, now: Long) {
         fun upsert(table: String, columns: List<String>, values: List<Any?>): Boolean {
             val fields = columns.drop(1)
             return execute("INSERT INTO $table (${columns.joinToString()}) VALUES (${columns.joinToString { "?" }}) " +
                 "ON CONFLICT(id) DO UPDATE SET ${fields.joinToString { "$it=excluded.$it" }} " +
                 "WHERE ${fields.joinToString(" OR ") { "$table.$it IS NOT excluded.$it" }}", *values.toTypedArray()) > 0
         }
+        val sourceStampsBeforeEmbedded = sourceStamps("embedded_art_sources")
+        val sourceStampsBeforeArtist = sourceStamps("artist_art_sources")
         val changedAlbums = mutableSetOf<String>()
         val changedArtists = mutableSetOf<String>()
         data class AlbumAcc(
@@ -547,14 +546,64 @@ class Scanner(
             ))) changedArtists.add(artist.id)
         }
         execute("DELETE FROM artist WHERE id NOT IN (SELECT artist_id FROM track_artist WHERE role IN ('artist','albumartist'))")
+        val embeddedSources = embeddedArtSources(identity)
+        val changedEmbedded = embeddedSources.keys.filter { sourceStampsBeforeEmbedded[it] != embeddedSources[it] }.toSet()
+        val embeddedAlbums = query("SELECT id,album_id FROM track WHERE has_embedded_art=1") {
+            it.string("id") to it.string("album_id")
+        }.filter { it.first in changedEmbedded }.map { it.second }.toSet()
+        val inheritedArtists = query("SELECT artist_id,album_id FROM album_artist") {
+            it.string("artist_id") to it.string("album_id")
+        }.filter { it.second in embeddedAlbums }.map { it.first }.toSet()
+        val artistSources = artistArtSources(root, identity)
+        val changedArtistArt = artistSources.keys.filter { sourceStampsBeforeArtist[it] != artistSources[it] }.toSet()
+        // Embedded edits can retain the track's size and mtime. Notify artwork consumers without
+        // changing the tag reread policy. Folder invalidation below already covers these tracks.
+        if (!artChanged) for (id in changedEmbedded)
+            execute("INSERT INTO api_journal(type,id,op,at) VALUES('track',?,'upsert',?)",id,now)
+        saveSourceStamps("embedded_art_sources", embeddedSources)
+        saveSourceStamps("artist_art_sources", artistSources)
         val current = aggregateRelationships()
         // Scalar upserts already journal themselves. Membership-only changes and the existing
         // conservative artwork invalidation still need one upsert, without synthetic tombstones.
         for ((type, ids, previous, next, written) in listOf(
             AggregateChanges("album",albums.keys,old.albums,current.albums,changedAlbums),
             AggregateChanges("artist",artists.keys,old.artists,current.artists,changedArtists),
-        )) for (id in ids) if (id !in written && (artChanged || type == "artist" && artistArtChanged || previous[id] != next[id]))
+        )) for (id in ids) if (id !in written && (artChanged || type == "album" && id in embeddedAlbums || type == "artist" && (id in changedArtistArt || id in inheritedArtists) || previous[id] != next[id]))
             execute("INSERT INTO api_journal(type,id,op,at) VALUES(?,?,'upsert',?)",type,id,now)
+    }
+
+    private fun Db.Session.sourceStamps(key: String): Map<String, String> = string("SELECT value FROM meta WHERE key=?",key)
+        ?.let { kotlinx.serialization.json.Json.parseToJsonElement(it) as JsonObject }
+        ?.mapValues { (_,value) -> (value as JsonPrimitive).content }.orEmpty()
+
+    private fun Db.Session.saveSourceStamps(key: String, sources: Map<String, String>) {
+        execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            key,JsonObject(sources.mapValues { JsonPrimitive(it.value) }).toString())
+    }
+
+    private fun Db.Session.embeddedArtSources(identity: (String) -> String): Map<String, String> =
+        query("SELECT id,path FROM track WHERE has_embedded_art=1") { it.string("id") to it.string("path") }
+            .associate { (id,path) -> id to identity(path) }
+
+    /** Artwork.artistSource selects the first track by id among the user's visible sources.
+     * The first track per source covers every permission subset without invalidating other artists.
+     * jpg takes precedence over png, just as it does when serving the selected image.
+     */
+    private fun Db.Session.artistArtSources(root: Path, identity: (String) -> String): Map<String, String> {
+        data class Candidate(val artist: String, val source: String, val directory: String)
+        val candidates = query("""SELECT aa.artist_id,t.folder_id,t.parent_dir FROM track t
+            JOIN album_artist aa ON aa.album_id=t.album_id ORDER BY t.id""") {
+            Candidate(it.string("artist_id"),it.string("folder_id"),it.string("parent_dir"))
+        }.distinctBy { it.artist to it.source }
+        return candidates.groupBy { it.artist }.mapValues { (_,tracks) ->
+            tracks.sortedBy { it.source }.joinToString("\n") { track ->
+                val parent = track.directory.takeIf(String::isNotEmpty)?.let { root.resolve(it).parent }
+                val file = parent?.let { dir -> listOf("artist.jpg","artist.png").firstNotNullOfOrNull { name ->
+                    com.legitimateapps.dulcet.server.musicFile(root,dir.resolve(name))
+                } }
+                "${track.source}:${file?.let { identity(root.relativize(it).toString()) } ?: "none"}"
+            }
+        }
     }
 
     private data class AggregateChanges(val type:String,val ids:Set<String>,val previous:Map<String,Set<List<String?>>>,val next:Map<String,Set<List<String?>>>,val written:Set<String>)
