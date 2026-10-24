@@ -77,11 +77,13 @@ kotlin {
         }
         jvmMain.dependencies {
             implementation(libs.ktor.client.cio)
+            implementation(libs.ktor.client.okhttp)
             implementation(libs.sqldelight.sqlite.driver)
         }
         androidMain.dependencies {
             api(libs.media3.exoplayer)
             implementation(libs.ktor.client.cio)
+            implementation(libs.ktor.client.okhttp)
             implementation(libs.sqldelight.android.driver)
         }
         appleMain.dependencies {

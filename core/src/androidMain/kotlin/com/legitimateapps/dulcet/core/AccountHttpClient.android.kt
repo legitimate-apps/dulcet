@@ -4,6 +4,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp
+import okhttp3.Authenticator
+import okhttp3.CookieJar
 import io.ktor.http.Url
 import io.ktor.http.HttpStatusCode
 import io.ktor.client.plugins.api.createClientPlugin
@@ -20,8 +23,32 @@ import kotlinx.coroutines.withContext
 
 internal actual fun createAccountHttpClient(
     transport: AccountClientTransport,
+    strictMediaFraming: Boolean,
     configure: HttpClientConfig<*>.() -> Unit,
-): HttpClient = HttpClient(CIO) {
+): HttpClient = (if (strictMediaFraming) {
+    HttpClient(OkHttp) {
+        engine {
+            // Media GETs need strict chunk framing. Connection-recovery retries, ambient
+            // authentication, cookies and redirects stay disabled in this transport.
+            config {
+                retryOnConnectionFailure(false)
+                followRedirects(false)
+                followSslRedirects(false)
+                authenticator(Authenticator.NONE)
+                proxyAuthenticator(Authenticator.NONE)
+                cookieJar(CookieJar.NO_COOKIES)
+            }
+            proxy = Proxy.NO_PROXY
+            if (transport is AccountClientTransport.ForwardProxy) {
+                proxy = ProxyBuilder.http(
+                    Url("http://${transport.proxy.host}:${transport.proxy.port}/"),
+                )
+            }
+        }
+        installProxyChallengeMarker(transport)
+        configure()
+    }
+} else HttpClient(CIO) {
     engine {
         if (transport is AccountClientTransport.ForwardProxy) {
             // ProxyBuilder.http takes a Url on this Ktor version, not a String.
@@ -30,29 +57,13 @@ internal actual fun createAccountHttpClient(
             )
         }
     }
-    // Mark a proxy challenge the way the Darwin delegate does. Without this the tracker is never
-    // set on Android, `consumeUnsupported()` stays false, and a 407 falls through as a transport
-    // failure -- OBSERVED via CONF-10c, which saw Transport.Unreachable where Darwin reports
-    // Auth.UnsupportedAuthenticationChallenge. That mistranslation is user-visible and wrong: it
-    // tells someone their server is unreachable when a proxy actually demanded credentials they
-    // were never asked for.
-    //
-    // Ktor's CIO engine surfaces the challenge as an ordinary 407 response rather than a delegate
-    // callback, so the hook is a response observer instead. Nothing here answers the challenge:
-    // marking it is what makes the request fail CLOSED with a typed error.
-    install(createClientPlugin("DulcetProxyChallengeMarker") {
-        onResponse { response ->
-            if (response.status == HttpStatusCode.ProxyAuthenticationRequired) {
-                transport.challengeTracker.markUnsupported()
-            }
-        }
-    })
+    installProxyChallengeMarker(transport)
     configure()
-}.also { client ->
+}).also { client ->
     if (transport is AccountClientTransport.ForwardProxy) {
-        // An HTTPS request through the proxy starts with a CONNECT, and CIO turns a 407 to that
-        // CONNECT into `IOException("Can not establish tunnel connection")` with no status, so the
-        // response observer above never sees it — and the same message covers a proxy that is down.
+        // An HTTPS request through the proxy starts with CONNECT. Both engines can fail that
+        // tunnel with an IOException before exposing its status, so the response observer
+        // never sees the 407. A failed connection alone does not prove a challenge.
         // After such a failure, ask the proxy the same CONNECT once, with no credentials, and read its
         // status line: only a proxy that answers 407 is marked, and a dead one stays unreachable.
         client.plugin(HttpSend).intercept { request ->
@@ -68,6 +79,26 @@ internal actual fun createAccountHttpClient(
             }
         }
     }
+}
+
+private fun HttpClientConfig<*>.installProxyChallengeMarker(transport: AccountClientTransport) {
+    // Mark a proxy challenge the way the Darwin delegate does. Without this the tracker is never
+    // set on Android, `consumeUnsupported()` stays false, and a 407 falls through as a transport
+    // failure -- OBSERVED via CONF-10c, which saw Transport.Unreachable where Darwin reports
+    // Auth.UnsupportedAuthenticationChallenge. That mistranslation is user-visible and wrong: it
+    // tells someone their server is unreachable when a proxy actually demanded credentials they
+    // were never asked for.
+    //
+    // A visible HTTP proxy challenge is observed without answering it. Tunnel failures are
+    // checked separately because an engine can fail before exposing a response:
+    // marking it is what makes the request fail CLOSED with a typed error.
+    install(createClientPlugin("DulcetProxyChallengeMarker") {
+        onResponse { response ->
+            if (response.status == HttpStatusCode.ProxyAuthenticationRequired) {
+                transport.challengeTracker.markUnsupported()
+            }
+        }
+    })
 }
 
 /**
