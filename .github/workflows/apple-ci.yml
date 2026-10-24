@@ -2192,8 +2192,11 @@ jobs:
         run: python3 tools/ci/stop-build-daemons
       # Start and positively validate all loopback fixtures before the device's first boot.
       # Cold simulator services compete with the server and proxy startup on this small runner.
-      # run-my-library-proofs then boots and settles this member's one device, exactly once,
-      # before xcodebuild starts any per-test execution allowance. Keep it booted for later proofs.
+      # run-my-library-proofs then boots this member's one device exactly once, requires both
+      # stable services and a quiet memory/CPU window, and confirms the booted iPad destination.
+      # The pressure wait is capped at 15 minutes and logs its own phase; exhaustion fails the
+      # prerequisite. It runs before xcodebuild starts any per-test execution allowance. The app
+      # is still cold and clean for the original proofs. Keep the device booted for later proofs.
       - name: Assert this leg's conformance proofs
         # §21.5 rule 5: 125 = ceil(1.5 x 81.850 / 5) x 5, measured in
         # 39144805540's successful iPad member. Replaces the pre-split projection.

@@ -134,3 +134,15 @@ for did_settle in [True, False]:
         assert tool.main() == (0 if did_settle else 1)
     assert ('bootstatus', 'IPAD', '-b') in calls
     print(f'SETTLE ACK CONTROL PASS observed={did_settle} accepted={did_settle}')
+
+# Pressure admission is mandatory when requested, even if service counts already stabilized.
+for pressure_ok in [True, False]:
+    arguments = [TOOL, '--phase', 'my-library-ipad', '--keep', 'IPAD', '--settle',
+                 '--require-settle', '--settle-pressure', '--require-isolation']
+    with patch.object(sys, 'argv', arguments), patch.object(tool, 'devices', return_value=running), \
+            patch.object(tool, 'simctl', side_effect=fake_simctl), patch.object(tool, 'settle', return_value=True), \
+            patch.object(tool, 'settle_pressure', return_value=pressure_ok) as pressure, \
+            patch.dict(tool.os.environ, {}, clear=True), redirect_stdout(StringIO()):
+        assert tool.main() == (0 if pressure_ok else 1)
+        pressure.assert_called_once_with('my-library-ipad')
+    print(f'PRESSURE ACK CONTROL PASS observed={pressure_ok} accepted={pressure_ok}')

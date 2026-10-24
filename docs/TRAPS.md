@@ -470,3 +470,24 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     Pass the destination through the step's `env` and read `$IPAD_UDID` in the shell instead;
     the accepted replacement [38918766366](https://github.com/legitimate-apps/dulcet/actions/runs/38918766366)
     started its jobs. A passing local CI policy check alone does not prove GitHub accepted a workflow.
+
+56. **Stable simulator service counts do not establish that the post-boot paging burst ended.**
+    OBSERVED 2026-10-24 in [run 40117378423](https://github.com/legitimate-apps/dulcet/actions/runs/40117378423),
+    attempt 2 iPad: after `--settle` succeeded, My Library recorded `pageins_mb=8263`,
+    `swap_used_max_mb=1087.19`, `load1_max=671.4` on a 3-CPU, 7 GiB standard runner. Its first
+    cold launch failed inside XCTest's accessibility snapshot query, before the enclosing
+    `waitForExistence(timeout: 90)` could help. The pressure record names News, Health widgets,
+    poster extensions and SpringBoard; the app's three-second stack capture collected only nine
+    main-thread samples. This supports host starvation, not an app deadlock. The 33 completed
+    iPad/iPhone jobs in the 2026-10-20..24 census include five failures of the first My Library
+    test, four at the first connected query; load alone does not separate passes from failures.
+    `run-my-library-proofs` now requires `--settle-pressure` after service stability, before the
+    first iPhone/iPad proof and the booted iPad destination confirmation. The sampler's kernel
+    counters must show a full minute with every interval at <=20 MiB/s page-ins, <=1 MiB/s combined
+    swap I/O, and load <=120 without a renewed rise (>10% across the window). A missing, reset or
+    stale reading cannot establish readiness. The 900-second cap logs `settled=false` and fails
+    the prerequisite; no proof is skipped, retried or given a larger allowance. Waiting has its
+    own `post-boot-pressure-*` phase, so moving the burst out of the proof stays visible. Free
+    pages and resident swap are logged but do not independently establish active I/O. Threshold
+    effectiveness is ASSUMED until compared with hosted proof pressure; the app remains cold and
+    the disposable account/library state is untouched.
