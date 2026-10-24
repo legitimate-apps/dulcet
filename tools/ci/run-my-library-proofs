@@ -105,7 +105,7 @@ if [ "$mode" = ipad ]; then
         -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
         -parallel-testing-enabled NO \
-        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300 \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 600 \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \

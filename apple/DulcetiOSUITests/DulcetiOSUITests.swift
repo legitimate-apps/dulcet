@@ -2919,29 +2919,36 @@ final class DulcetiOSUITests: XCTestCase {
             XCTAssertFalse((serverPlaylists(configuration: configuration) ?? []).contains { $0.name == doomedRenamed },
                 "The failed rename must not reach the server under any id")
 
-            // 9. A failed edit the page already knows: its read is held until the playlist is gone
-            // from the server and the rename prompt is open, then released.
-            guard let armed = proxyPlaylistHold(knownID, on: true, proxy: proxy), armed.holding else {
-                XCTFail("The fault proxy must hold the playlist's read")
-                return
-            }
+            // 9. A failed edit the page already knows. Prepare the prompt before starting the
+            // held read: a hosted AX query can outlast the production client's 30 s deadline.
+            // Returning to the foreground reconnects the real reader and revalidates its page.
             guard openLibraryPlaylists(in: app, compact: expectedCompact), openPlaylistRow(known, in: app) else { return }
-            guard let heldRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 15, until: { $0.isPending }) else {
-                XCTFail("The page must have asked for the playlist, and the proxy must be holding that read")
+            let knownEdit = app.buttons["dulcet.playlist.edit"].firstMatch
+            guard knownEdit.waitForExistence(timeout: 10), waitForEnabled(knownEdit, timeout: 30) else {
+                XCTFail("The initial playlist read must finish before preparing its foreground reread")
                 return
             }
             guard openRenamePrompt(in: app) else { return }
-            // A historical arrival does not prove that the read is still waiting. Run
-            // 39728604012 exhausted its hold during a slow Rename lookup. Refuse to call that
-            // the known-gone order, and retain the proxy's original safety limit.
-            guard let pending = playlistHoldObservations(proxyRequest("GET",
-                "/__dulcet/playlist-observations?playlist=\(knownID)", proxy: proxy)), pending.isPending else {
-                XCTFail("The playlist read must still be pending under the open Rename prompt")
+            XCUIDevice.shared.press(.home)
+            guard app.wait(for: .runningBackground, timeout: 10) else {
+                XCTFail("The app must be backgrounded before arming its foreground reread")
+                return
+            }
+            guard let armed = proxyPlaylistHold(knownID, on: true, proxy: proxy), armed.holding else {
+                XCTFail("The fault proxy must hold the playlist's read")
                 return
             }
             guard restCall("deletePlaylist", [URLQueryItem(name: "id", value: knownID)], configuration: configuration) != nil,
                   awaitServerPlaylistAbsent(knownID, configuration: configuration) else {
                 XCTFail("The other client's delete must reach the server before the held read")
+                return
+            }
+            let rereadStart = ContinuousClock.now
+            app.activate()
+            // No AX query between this request's arrival and release. Proxy counts alone do
+            // not prove the client consumed an answer; the unavailable page below must do so.
+            guard let heldRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 15, until: { $0.isPending }) else {
+                XCTFail("The foreground page reread must arrive and remain held until explicit release")
                 return
             }
             guard proxyPlaylistHold(knownID, on: false, proxy: proxy) != nil,
@@ -2951,11 +2958,17 @@ final class DulcetiOSUITests: XCTestCase {
                 XCTFail("Every held read must reach the server by explicit release, with none timing out")
                 return
             }
+            print("DULCET PLAYLIST known-gone foreground-to-release=\(rereadStart.duration(to: .now)) held=\(heldRead.held) released=\(releasedRead.released) timed-out=\(releasedRead.timedOut)")
             // The page says the playlist is gone before the rename is confirmed: the order is met,
             // not assumed.
             let statement = app.descendants(matching: .any)["dulcet.reader.unavailable"].firstMatch
             XCTAssertTrue(statement.waitForExistence(timeout: 20),
                 "The released read must tell the page the playlist is gone, under the open prompt: " + app.debugDescription)
+            let prompt = app.alerts.matching(identifier: "Rename").element(boundBy: 0)
+            guard prompt.waitForExistence(timeout: 5), prompt.textFields.element(boundBy: 0).exists else {
+                XCTFail("The original Rename prompt must remain open after the page learns the playlist is gone")
+                return
+            }
             guard submitNamePrompt(knownRenamed, confirm: "Rename", in: app) else { return }
             let knownProblem = app.descendants(matching: .any)["dulcet.playlist.problem"].firstMatch
             XCTAssertTrue(knownProblem.waitForExistence(timeout: 15),

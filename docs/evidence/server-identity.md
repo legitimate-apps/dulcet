@@ -593,6 +593,52 @@ typechecker correctly reports the iOS UI directory uncovered because of AppInten
 the real Xcode build covers it). Hosted-load confirmation remains pending. No product source
 or workflow changes.
 
+### Playlist known-gone ordering under slow prompt queries (2026-10-24)
+
+OBSERVED in attempt 2 of main's full Apple run `40065138225` on `134b9300`, iPhone job
+`120812900260`, artifact `12554527041`, `dulcet-ios-playlist-edits.xcresult`: the playlist
+edit proof fails its still-pending-read assertion after 327.365 seconds. The console and
+exported session diagnostics show the known-gone playlist tapped at test time 229.38 seconds,
+Rename tapped at 249.79 seconds, and its alert lookup beginning at 252.83 seconds. The
+subsequent TextField existence query starts at 266.18 seconds and retries at 297.21 seconds.
+The proxy's 45-second safety hold cannot cover that interval. A historical held-read count
+does not establish that either the proxy or the client is still waiting. The underlying
+accessibility delay's cause is UNKNOWN; this artifact does not establish a product defect.
+
+OBSERVED in the production source: `AppleLibraryReaderClient`'s `productionComposer` creates
+`KtorLibraryEndpointTransport`, which delegates to `AuthenticatedEndpointClient`. Its
+`HttpTimeout` configuration sets request, connect and socket limits to 30,000 milliseconds.
+The Apple implementation uses Ktor's Darwin engine with a preconfigured NSURLSession; this
+playlist page does not use the native download or playback resource loader. The proxy's old
+comment claiming its 45-second hold was shorter than the app timeout was incorrect. Its
+numeric safety bound is unchanged; the comment now distinguishes it from client liveness.
+The configuration is source evidence, not a measured cancellation timestamp for the failed read.
+
+Step 9 now finishes the initial real page read, opens and verifies Rename, and backgrounds the
+app before arming the hold. The other client deletes the playlist and verifies its absence before
+the app returns to the foreground. That ordinary transition invokes the production reader's
+reconnect and visible-page revalidation. The proof requires this reread to arrive held and then
+explicitly releases it, with every held request released and zero hold timeouts. No Rename AX
+query occurs between the reread's arrival and its release. Afterward the page must say it is
+unavailable, the original Rename prompt must still be open, and confirming the edit must produce
+the persistent problem containing "deleted" without creating a renamed playlist. The order is
+still observed before confirmation; a client timeout or a lost prompt cannot satisfy the proof.
+The foreground-to-release interval is logged. Both iPhone and iPad use this same helper.
+
+Local runtime verification of this follow-up remains UNVERIFIED. The initial local phone
+build was interrupted with SIGTERM (exit 143) before any tests executed; its first boot was
+subsequently identified as a simulator boot storm. The replacement verification used a clone
+of the specified booted-once iPad Pro 13-inch (M5), iOS 26.5. Its gentle boot completed in
+11 seconds, but its build-for-testing also exited 143 and the device reported Shutdown.
+Execution stopped without another retry. There is no completed local result bundle and zero
+local XCTest executions for either the shared playlist flow or the five-case My Library suite.
+Local iPhone execution was explicitly deferred to hosted CI. Swift syntax parsing and
+`tools/typecheck-xcuitest-sources` pass for their covered sources; the latter correctly leaves
+these AppIntentsTesting-dependent UI groups to a real build, which did not finish. The proxy
+self-test passes 17 tests, fixture-readiness controls pass, CI policy validates 13 workflows,
+the parity gate validates 44 feature rows, and execution-guard controls pass. These checks do
+not establish runtime success or a hosted-load fix. No product source changed.
+
 OBSERVED in the iPad leg of full Apple run `39779874095` on `a7f5aac4`: 17 XCTest
 executions produce 16 passes and one failure. The album-tile drag case fails before navigation
 or any drag, at the initial global Sign Out query in `awaitLiveAccountConnection`
@@ -767,6 +813,35 @@ relaunch and reconnect assertions. The changed run emits no interaction-helper
 fallback. This single sequential pair establishes preserved local behavior; it
 supplies no local RED, hosted-timeout reproduction or causal speedup claim.
 Final-head full Apple execution remains required.
+
+OBSERVED in attempt 2 of main's full Apple run `40065138225` on `134b9300`, iPad job
+`120812900144`, artifact `12554843595`, `dulcet-ipad-my-library.xcresult`: the apparent
+restart during `testLibraryBrowseAndAlbumInLightDarkAndLargestText` belongs to the preceding
+`testBrowseAddRemoveRelaunchAndOfflineReplay` timeout. Exported
+`Session-DulcetiOSUITests-2026-10-24_090501-HuPOML.log` records an effective 300-second
+allowance at `09:05:46.277 UTC`, the timeout at `09:10:46.374`, and the coordinator entering
+`TestTimedOut` at `09:10:46.588`. The case continues executing and prints passed after
+379.757 seconds. Its final launch includes a 51.794-second native application-quiescence wait;
+the animations-idle reply arrived immediately, while the main-loop-idle reply had not arrived
+when the timeout fired. This is not evidence of an application crash or of an animation hang.
+At `09:12:31.399` the coordinator reports
+`XCTHTestOperationCoordinatorErrorDomain Code=13`, "Test exceeded execution time allowance
+of 5 minutes", after beginning the next case and its app termination. The generic restart
+message follows. The exported diagnostics contain no `.ips` or `.crash` report. The explicit
+coordinator timeout establishes the restart cause; why the main-loop reply was delayed remains
+UNKNOWN.
+
+The xcresult summary retains five tests, four passes, one failure and zero skips, identifying
+the offline/replay case as failed despite its console's later passed line. That run remains a
+failure. The long case performs six real launches in addition to download completion, offline
+native playback, durable add/remove, pending-write and reconnect checks. It now requests a
+finite 600-second execution allowance only on iPad. The iPad command permits that override
+with a 600-second maximum while retaining its 300-second default; every other case and platform
+keeps its previous allowance. All individual UI/server waits, proof assertions, exact execution
+checks and fatal xcodebuild status remain unchanged. ASSUMED: this headroom will accommodate
+similar hosted load; no local passing runtime or causal speedup is claimed. The interrupted
+local verification and passing static/tool controls are recorded in the playlist-ordering section
+above. Final-head hosted execution remains required; no workflow was dispatched for this follow-up.
 
 
 ### Positive empty Up Next readiness (2026-10-22)
