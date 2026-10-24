@@ -15,15 +15,18 @@ Subcommands:
   mark    FILE NAME                            append a phase boundary (with booted-simulator count)
   summarize FILE                               print one line per phase: deltas and peaks
 
-Samples are cumulative kernel counters (vm_stat) plus swap use and load average; every sixth
+Samples are cumulative kernel counters (vm_stat) plus swap use and load average; every
 sample also lists the largest processes by resident memory, summed by command name, so a phase
 that swaps names what held the memory (`HOST PRESSURE TOP`), and the same sample names what held
 the CPU (`HOST PRESSURE CPU`, from the phase's highest-load sample), so a load of hundreds on three
-cores is attributed to a process rather than guessed at. A phase's
+cores is attributed to a process rather than guessed at. Two consecutive readings at >=90%
+for the same Dulcet app process trigger a three-second stack sample, with a ten-second timeout
+and at most three captures per job (one per process launch). A phase's
 pressure is the DELTA of the counters between its mark and the next one, so the sampler can run
 for the whole job without any phase needing to know about it. Stdlib only.
 """
 import json
+from pathlib import Path
 import os
 import re
 import subprocess
@@ -71,26 +74,96 @@ def booted_simulators() -> int | None:
         return None
 
 
-def top_processes(limit: int = 8) -> tuple[list[list], list[list]]:
-    """The largest by resident MB and by CPU percent, each summed across processes of a name:
-    ([[command basename, MB], ...], [[command basename, percent], ...])."""
-    out = subprocess.run(["ps", "-axo", "rss=,%cpu=,comm="], capture_output=True, text=True,
-                         timeout=10).stdout
+def process_snapshot() -> list[dict]:
+    """Keep PID identity and unaggregated CPU for stack triggers, plus names for summaries."""
+    out = subprocess.run(["ps", "-axo", "pid=,rss=,%cpu=,lstart=,comm="],
+                         capture_output=True, text=True, timeout=10, check=True).stdout
+    processes = []
+    for line in out.splitlines():
+        fields = line.strip().split(None, 8)
+        if len(fields) != 9:
+            continue
+        try:
+            processes.append(dict(pid=int(fields[0]), rss=int(fields[1]),
+                                  cpu=float(fields[2].replace(",", ".")),
+                                  started=" ".join(fields[3:8]), name=os.path.basename(fields[8])))
+        except ValueError:
+            continue
+    return processes
+
+
+def top_processes(processes: list[dict], limit: int = 8) -> tuple[list[list], list[list]]:
     memory: dict[str, int] = {}
     cpu: dict[str, float] = {}
-    for line in out.splitlines():
-        fields = line.strip().split(None, 2)
-        if len(fields) != 3 or not fields[0].isdigit():
-            continue
-        name = os.path.basename(fields[2].strip())
-        memory[name] = memory.get(name, 0) + int(fields[0])
-        try:
-            cpu[name] = cpu.get(name, 0.0) + float(fields[1].replace(",", "."))
-        except ValueError:
-            pass
+    for process in processes:
+        name = process["name"]
+        memory[name] = memory.get(name, 0) + process["rss"]
+        cpu[name] = cpu.get(name, 0.0) + process["cpu"]
     by_memory = sorted(memory.items(), key=lambda item: item[1], reverse=True)[:limit]
     by_cpu = sorted(cpu.items(), key=lambda item: item[1], reverse=True)[:limit]
     return [[name, kib // 1024] for name, kib in by_memory], [[name, round(p, 1)] for name, p in by_cpu]
+
+
+class HotAppCapture:
+    """One worker at a time, at most three captures in this job, never wait in the sample loop.
+
+    Each worker has its own timeout even if the parent sampler is stopped. PID plus process start
+    time prevents two different launches (or two sub-threshold processes' summed CPU) triggering.
+    Stack logs sit beside the pressure log, in the existing failure-diagnostics upload glob.
+    """
+    def __init__(self, path: str, limit: int = 3):
+        self.path = path
+        self.limit = limit
+        self.count = 0
+        self.previous: set[tuple] = set()
+        self.captured: set[tuple] = set()
+        self.worker = None
+
+    def observe(self, processes: list[dict]) -> None:
+        hot = {(p["pid"], p["started"]) for p in processes
+               if p["name"] in ("Dulcet", "Dulcet DEV") and p["cpu"] >= 90.0}
+        eligible = hot & self.previous - self.captured
+        self.previous = hot
+        if self.worker is not None:
+            if self.worker.poll() is None:
+                return
+            self.worker = None
+        if self.count >= self.limit or not eligible:
+            return
+        pid, started = sorted(eligible)[0]
+        self.count += 1
+        self.captured.add((pid, started))
+        output = str(Path(self.path).with_name(f"dulcet-hot-app-{self.count}-pid-{pid}.log"))
+        try:
+            self.worker = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
+                "capture", str(pid), started, output, self.path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            append(self.path, dict(event="stack-capture-start", pid=pid, started=started,
+                                   output=os.path.basename(output), capture=self.count))
+        except OSError as error:
+            append(self.path, dict(event="stack-capture-error", pid=pid, error=type(error).__name__))
+
+
+def capture_stack(pid: int, started: str, output: str, pressure: str,
+                  command: str = "/usr/bin/sample", timeout: float = 10) -> int:
+    # Recheck in the worker before attaching: launches can exit while this worker starts.
+    if not any(p["pid"] == pid and p["started"] == started and
+               p["name"] in ("Dulcet", "Dulcet DEV") for p in process_snapshot()):
+        append(pressure, dict(event="stack-capture-exited", pid=pid))
+        return 0
+    status = "error"
+    try:
+        with open(output + ".stderr.log", "w", encoding="utf-8") as log:
+            result = subprocess.run([command, str(pid), "3", "-file", output],
+                                    stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+        status = "complete" if result.returncode == 0 else "error"
+    except subprocess.TimeoutExpired:
+        status = "timeout"
+    except OSError:
+        status = "unavailable"
+    append(pressure, dict(event="stack-capture-end", pid=pid, status=status,
+                          output=os.path.basename(output)))
+    return 0
 
 
 def append(path: str, record: dict) -> None:
@@ -104,16 +177,17 @@ def sample(path: str, interval: float) -> int:
                   "memBytes": int(subprocess.run(["sysctl", "-n", "hw.memsize"],
                                                  capture_output=True, text=True).stdout or 0),
                   "cpus": os.cpu_count()})
-    count = 0
+    captures = HotAppCapture(path)
     while True:
         try:
             record = {"event": "sample", **vm_stat(), "swapUsedMb": swap_used_mb(),
                       "load1": os.getloadavg()[0]}
-            if count % 6 == 0:
-                record["top"], record["cpuTop"] = top_processes()
-            count += 1
+            processes = process_snapshot()
+            record["top"], record["cpuTop"] = top_processes(processes)
             append(path, record)
+            captures.observe(processes)
         except Exception as error:  # noqa: BLE001 -- keep sampling; record why one sample failed
+            captures.previous.clear()
             append(path, {"event": "sample-error", "error": type(error).__name__})
         time.sleep(interval)
 
@@ -176,6 +250,8 @@ def summarize(path: str) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 5 and argv[0] == "capture":
+        return capture_stack(int(argv[1]), argv[2], argv[3], argv[4])
     if len(argv) >= 2 and argv[0] == "sample":
         output = argv[argv.index("--output") + 1]
         interval = float(argv[argv.index("--interval") + 1]) if "--interval" in argv else 5.0

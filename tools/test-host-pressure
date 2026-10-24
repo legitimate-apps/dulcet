@@ -81,3 +81,81 @@ with tempfile.TemporaryDirectory() as tmp:
     assert listed and listed[0]["cpuTop"] and all(len(entry) == 2 for entry in listed[0]["cpuTop"]), samples[0]
     print(f"LIVE CONTROL PASS samples={len(samples)} page_bytes={samples[0]['page_bytes']} "
           f"pageins={samples[-1]['pageins']}")
+
+# Behavioral controls for the hot-app trigger. A worker is real subprocess ownership in production;
+# this fake keeps observation deterministic and proves that an unfinished capture never blocks it.
+import runpy
+from unittest.mock import patch
+
+module = runpy.run_path(TOOL)
+HotAppCapture = module['HotAppCapture']
+capture_stack = module['capture_stack']
+
+def app(pid=123, cpu=90.0, started='Fri Oct 23 20:00:00 2026', name='Dulcet DEV'):
+    return dict(pid=pid, cpu=cpu, started=started, name=name, rss=1024)
+
+class Worker:
+    done = False
+    def poll(self):
+        return 0 if self.done else None
+
+with tempfile.TemporaryDirectory() as tmp:
+    pressure = str(Path(tmp) / 'pressure.log')
+    worker = Worker()
+    with patch.dict(HotAppCapture.observe.__globals__, subprocess=__import__('subprocess')):
+        with patch('subprocess.Popen', return_value=worker) as launch:
+            trigger = HotAppCapture(pressure)
+            trigger.observe([app(cpu=89.9)])
+            trigger.observe([app()])
+            assert launch.call_count == 0, 'a single hot reading must not capture'
+            trigger.observe([app()])
+            assert launch.call_count == 1
+            assert launch.call_args.args[0][-2].endswith('dulcet-hot-app-1-pid-123.log')
+            # The next launch is hot but a capture is still in flight: no blocking or overlap.
+            trigger.observe([app(pid=124)])
+            trigger.observe([app(pid=124)])
+            assert launch.call_count == 1
+            worker.done = True
+            trigger.observe([app(pid=124)])
+            assert launch.call_count == 2
+            trigger.observe([app(pid=125)])
+            trigger.observe([app(pid=125)])
+            assert launch.call_count == 3
+            trigger.observe([app(pid=126)])
+            trigger.observe([app(pid=126)])
+            assert launch.call_count == 3, 'job limit must bound captures'
+            launch.reset_mock()
+            trigger = HotAppCapture(pressure)
+            trigger.observe([app(cpu=50), app(pid=124, cpu=50)])
+            trigger.observe([app(cpu=50), app(pid=124, cpu=50)])
+            trigger.observe([app(name='DulcetiOSUITests-Runner')])
+            trigger.observe([app(name='DulcetiOSUITests-Runner')])
+            assert launch.call_count == 0, 'summed CPU or test runners must not trigger'
+            trigger.observe([app()])
+            trigger.observe([])
+            trigger.observe([app()])
+            assert launch.call_count == 0, 'a missing reading resets the streak'
+            trigger.observe([app(started='another launch')])
+            assert launch.call_count == 0, 'PID reuse must reset the streak'
+            trigger.observe([app(started='another launch')])
+            assert launch.call_count == 1
+            trigger.observe([app(started='another launch')])
+            assert launch.call_count == 1, 'capture only once per process launch'
+    print('STACK TRIGGER CONTROL PASS threshold, consecutive PID identity, reset, exclusion, overlap, job cap')
+
+    # Run an actual hanging executable under the same subprocess timeout as sample. This must
+    # return promptly, kill/reap the child and leave a timeout receipt while the sampler continues.
+    hanging = Path(tmp) / 'hanging-sample'
+    hanging.write_text('#!/usr/bin/env python3\nwhile True: pass\n')
+    hanging.chmod(0o755)
+    output = str(Path(tmp) / 'stack.log')
+    before = time.monotonic()
+    with patch.dict(capture_stack.__globals__, process_snapshot=lambda: [app()]):
+        capture_stack(123, app()['started'], output, pressure, str(hanging), timeout=.15)
+    assert time.monotonic() - before < 2, 'capture timeout must bound elapsed time'
+    receipts = [json.loads(line) for line in Path(pressure).read_text().splitlines()]
+    assert receipts[-1]['event'] == 'stack-capture-end' and receipts[-1]['status'] == 'timeout'
+    with patch.dict(capture_stack.__globals__, process_snapshot=lambda: []):
+        capture_stack(123, app()['started'], output, pressure, str(hanging), timeout=.15)
+    assert json.loads(Path(pressure).read_text().splitlines()[-1])['event'] == 'stack-capture-exited'
+    print('STACK WORKER CONTROL PASS actual child timed out and exited PID refused')
