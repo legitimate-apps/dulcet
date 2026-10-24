@@ -204,7 +204,9 @@ import UIKit
         let bitmap = try XCTUnwrap(app.windows.firstMatch.screenshot().image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
         let data = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.65]))
 #else
-        let data = try XCTUnwrap(app.screenshot().image.jpegData(compressionQuality: 0.65))
+        let image = app.screenshot().image
+        print("DISCOVER_CAPTURE name=\(name) imageSize=\(image.size) windowFrame=\(app.windows.firstMatch.frame) deviceOrientation=\(XCUIDevice.shared.orientation.rawValue)")
+        let data = try XCTUnwrap(image.jpegData(compressionQuality: 0.65))
 #endif
         let ack = try json(required("CAPTURE_UPLOAD_URL"), body: ["name": name, "jpeg": data.base64EncodedString()])
         XCTAssertEqual(ack["stored"] as? Bool, true)
@@ -515,6 +517,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         let detail = app.buttons["wishlist.refresh"].firstMatch
         XCTAssertTrue(sidebar.isSelected, "The sidebar must select Wishlist rather than Library")
         XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
+        XCTAssertTrue(detail.isHittable, "The regular Wishlist must keep Refresh reachable")
         let row = wishRow("Fixture Album 00")
         XCTAssertTrue(row.staticTexts["Waiting to sync"].exists)
         try capture("iPad-Regular-Wishlist")
