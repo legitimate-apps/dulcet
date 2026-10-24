@@ -204,8 +204,14 @@ import UIKit
         let bitmap = try XCTUnwrap(app.windows.firstMatch.screenshot().image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
         let data = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.65]))
 #else
-        let image = app.screenshot().image
-        print("DISCOVER_CAPTURE name=\(name) imageSize=\(image.size) windowFrame=\(app.windows.firstMatch.frame) deviceOrientation=\(XCUIDevice.shared.orientation.rawValue)")
+        let window = app.windows.firstMatch
+        let image = window.screenshot().image
+        let frame = window.frame
+        print("DISCOVER_CAPTURE name=\(name) imageSize=\(image.size) windowFrame=\(frame) imageOrientation=\(image.imageOrientation.rawValue) deviceOrientation=\(XCUIDevice.shared.orientation.rawValue)")
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertGreaterThan(frame.height, 0)
+        XCTAssertEqual(image.size.width / image.size.height, frame.width / frame.height, accuracy: 0.02,
+                       "Capture must match the actual app window, including after rotation or resize")
         let data = try XCTUnwrap(image.jpegData(compressionQuality: 0.65))
 #endif
         let ack = try json(required("CAPTURE_UPLOAD_URL"), body: ["name": name, "jpeg": data.base64EncodedString()])
@@ -532,6 +538,12 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         // from masquerading as a compact-window proof.
         let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -4, dy: -4))
         corner.press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 590, dy: original.height - 20)))
+        let compactWindow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let frame = window.frame
+            return frame.width > 0 && frame.width <= 600 && frame.height > 0
+        }, object: window)
+        XCTAssertEqual(XCTWaiter.wait(for: [compactWindow], timeout: 30), .completed,
+                       "Native compact-window resize must finish before checking retained content")
         XCTAssertLessThanOrEqual(window.frame.width, 600, "Native compact-window resize must occur")
         XCTAssertTrue(album.exists)
         XCTAssertEqual(album.label, "Fixture Album 00")
