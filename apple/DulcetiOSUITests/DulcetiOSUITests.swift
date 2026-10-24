@@ -2403,7 +2403,10 @@ final class DulcetiOSUITests: XCTestCase {
             format: "identifier == %@ OR identifier BEGINSWITH %@",
             "dulcet.upNext.empty", "dulcet.upNext.row."
         )).firstMatch
-        guard contents.waitForExistence(timeout: 2) else {
+        // Presenting the regular-width player can publish its list after the transition.
+        // A hosted failure's next snapshot already contained the expected empty state;
+        // give this positive content check the same bound as opening and closing the player.
+        guard contents.waitForExistence(timeout: 10) else {
             XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
             return nil
         }
