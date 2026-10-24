@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -103,21 +105,25 @@ internal fun DiscoverTrackRow(
         (it.wish?.target ?: it.pendingAdd?.target) == item.target && item.target != null
     }
     var saveError by remember(session, item.id) { mutableStateOf<DiscoverFailure?>(null) }
+    val largeText = LocalDensity.current.fontScale >= 1.5f
+    val actions: @Composable () -> Unit = {
+        DiscoverItemActions(session, item, index, source, wish, publication?.access, openLibrary) { saveError = it }
+    }
     Column(Modifier.fillMaxWidth()) {
         TrackRowVisual(
             title = item.title,
             supporting = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    item.artist?.let { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    item.artist?.let { Text(it, maxLines = if (largeText) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis) }
                     DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index")
                 }
             },
             number = item.position ?: index + 1,
             modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
-            trailing = {
-                DiscoverItemActions(session, item, index, source, wish, publication?.access, openLibrary) { saveError = it }
-            },
+            trailing = if (largeText) null else actions,
+            titleMaxLines = if (largeText) Int.MAX_VALUE else 1,
         )
+        if (largeText) Row(Modifier.padding(start = 60.dp)) { actions() }
         if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
         (saveError ?: wish?.error)?.let { failure ->
             Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),

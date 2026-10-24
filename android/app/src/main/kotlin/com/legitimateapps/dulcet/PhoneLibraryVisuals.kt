@@ -181,6 +181,7 @@ internal fun TrackRowVisual(
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    titleMaxLines: Int = 1,
 ) {
     val accent = when {
         playing -> MaterialTheme.colorScheme.primary
@@ -188,7 +189,7 @@ internal fun TrackRowVisual(
         else -> MaterialTheme.colorScheme.onSurface
     }
     ListItem(
-        headlineContent = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, color = accent) },
+        headlineContent = { Text(title, maxLines = titleMaxLines, overflow = TextOverflow.Ellipsis, color = accent) },
         supportingContent = supporting,
         leadingContent = leading ?: {
             Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
