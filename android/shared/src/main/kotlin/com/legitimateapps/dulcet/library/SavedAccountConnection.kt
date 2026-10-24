@@ -113,6 +113,7 @@ public object SavedAccountConnection {
     /** Playback's view of [accountId]: opens with the saved account's automatic reconnect. */
     public fun contact(accountId: String): AndroidServerContact = object : AndroidServerContact {
         override fun isOpen(): Boolean = isConnected(accountId)
+        override fun isChosen(): Boolean = connectionChosen(accountId)
         override suspend fun awaitValidation() {
             if (connectionChosen(accountId)) com.legitimateapps.dulcet.core.AndroidServerIdentity.awaitValidation(accountId)
         }

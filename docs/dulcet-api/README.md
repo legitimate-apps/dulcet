@@ -1051,7 +1051,12 @@ The [OpenAPI](openapi.yaml) defines every field and response. Discover pages def
 100, carry fetchedAt/ageSeconds/stale and opaque generation-bound cursors. Stale data is usable
 for up to 90 days on source failure. No usable cache means 503 upstream-unavailable, not an empty
 page. A refreshed/evicted generation means 410 cursor-expired. Artwork is a server-only proxy with
-positive image signature, 5 MiB cap and five safe redirects, without decoding or resizing.
+positive image signature, structural validation, a 5 MiB cap and five safe redirects, without
+decoding pixels or resizing. JPEG requires SOI/EOI boundaries; PNG requires IHDR first, IEND last
+and complete chunks containing image data; GIF requires its final trailer; WebP requires a RIFF
+length matching the body and complete padded chunks containing image data. Malformed thumbnails
+are never cached or served. A later request retries; a last good cached image survives, otherwise
+the existing 503 upstream-unavailable response applies.
 
 Wish kinds are artist, album and song, keyed per owner/kind/canonical MusicBrainz UUID. API adds
 supply their own snapshot and perform no outside lookup, including with Discover off. Preserve the

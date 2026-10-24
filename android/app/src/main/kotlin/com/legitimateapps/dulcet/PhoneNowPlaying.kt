@@ -484,8 +484,8 @@ private fun PlayerError(state: AndroidPlaybackState, saved: (@Composable () -> U
 private fun NowPlayingSavedNotice(session: LibrarySession, account: SearchAccount, state: AndroidPlaybackState) {
     val connection by session.connection.collectAsState()
     val resources = libraryResources()
-    val savedLine = resources.savedAccountLine(connection, account) ?: resources.connectionLine(connection) ?: return
-    val line = if (state.needsReconnect) resources.getString(SharedR.string.now_playing_needs_reconnect) else savedLine
+    val line = if (state.needsReconnect) resources.getString(SharedR.string.now_playing_needs_reconnect)
+        else resources.savedAccountLine(connection, account) ?: resources.connectionLine(connection) ?: return
     Card(modifier = Modifier.fillMaxWidth().testTag("player.saved")) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(line, Modifier.weight(1f).testTag(if (state.needsReconnect) "player.needsReconnect" else "player.savedLine"),

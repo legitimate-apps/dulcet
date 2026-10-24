@@ -7918,6 +7918,30 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+
+**2026-10-23 — Retain Android Play across a chosen connection's transient validation loss.**
+
+On Android phone and TV, an explicit queue selection for a connection already chosen by a
+foreground host is retained when a completed transient identity probe has temporarily closed
+contact. The selected queue and a connection explanation appear immediately. Playback observes
+the foreground reader's existing reconnect, without initiating network retries or changing its
+backoff or request limits, and starts once the same server is verified again while the OS network remains available. Pause withdraws
+sound, Stop cancels the wait, and another selection or queue position supersedes the old one.
+The connection explanation clears on Connect/Reconnect, Stop, downloaded playback, or an
+authorized remote start, including automatic recovery and a superseding selection that starts
+before the old contact waiter returns. It cannot remain over that playing selection.
+An identity rejection or explicit replacement consent cannot authorize the old selection.
+A saved account with no connection choice still sends nothing and follows §13.1.
+
+**OBSERVED:** hosted control `AndroidPlaybackControllerTest.aChosenAlbumWaitsVisiblyBetweenFailedAndSuccessfulIdentityProbes`
+in run 40024104895 proves initial verification, a completed failed probe, a retained connection
+choice and the old empty-queue failure. Companion controls cover recovery, transport changes and
+the authorization fence. The native Apple controller already persists a selection before its
+remote gate and presents a transport failure on that entry; Android now retains the same user
+selection and additionally follows its shared reader's automatic recovery. No Apple behavior changes.
+This mechanism's connection to the unlogged original TV failure in run 39991432038 remains
+**ASSUMED**, pending diagnostic receipts from a recurrence.
+
 **2026-10-23 - Android saved-account reconnect after identity rejection (#355).**
 A fresh authenticated negotiation validating the saved server identity clears Android's account
 rejection, including through the existing phone and TV Reconnect action. Pending changes then use
@@ -14523,8 +14547,12 @@ Retry-After/rate headers. No token, user credentials or account identity reaches
 Metadata raw caches are shared across users; visibility, matches and rejected pairs are projected
 locally afterward. Valid stale data survives source failure for at most 90 days, with age/stale
 reported. The cache is bounded at 256 MiB including a bounded 16 MiB cursor snapshot working set.
-Thumbnail bytes pass through without parsing/resizing, with positive JPEG/PNG/GIF/WebP signature,
-5 MiB limit, up to five checked/pinned redirects and no HTTPS downgrade. Artwork stays behind
+Thumbnail bytes pass through without pixel decoding/resizing, with positive JPEG/PNG/GIF/WebP
+signature and structural validation: JPEG SOI/EOI boundaries, PNG IHDR first and IEND last with
+complete chunks and image data, GIF trailer last, and WebP RIFF length matching the body with
+complete padded chunks and image data. Malformed bytes are temporary failures, never cached or
+served; a later request retries and a last good image survives. The 5 MiB limit, up to five
+checked/pinned redirects and no HTTPS downgrade still apply. Artwork stays behind
 an opaque server id. [REST Discover](../../dulcet-server/dulcet-discover-extension.md) gives all
 methods, fields, paging, errors, attribution, TTLs and settings.
 

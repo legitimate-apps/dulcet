@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Looper
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -83,6 +84,30 @@ class TvSavedLaunchNowPlayingTest {
         repeat(6) { if (!focused("tv.player.playpause")) key(Key.DirectionLeft) }
         assertTrue(focused("tv.player.playpause"), "Return to Play")
         await("connected player removes its reconnect notice") { !exists("tv.player.reconnect") }
+    }
+
+    @Test fun aPlaybackContactLossIsExplainedEvenWhenTheLibraryRemainsOnline() {
+        val saved = AndroidAccountCredentialStore(context).save("Fixture", server.url, "u", "p", true)
+        val account = SearchAccount(saved.id, server.url, "u", "p", true)
+        var state by androidx.compose.runtime.mutableStateOf(com.legitimateapps.dulcet.core.AndroidPlaybackState())
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlaying(account, state, null) }
+        }
+        await("control: the library has connected and removed its connection notice") {
+            server.requests("getScanStatus").isNotEmpty() &&
+                com.legitimateapps.dulcet.core.AndroidServerIdentity.isVerified(saved.id) && !exists("tv.player.reconnect")
+        }
+        compose.runOnIdle { state = state.copy(needsReconnect = true) }
+        await("playback's own connection loss is visible independently of the online library") {
+            exists("tv.player.needsReconnect") && exists("tv.player.reconnect")
+        }
+        val notice = compose.onAllNodesWithTag("tv.player.needsReconnect", useUnmergedTree = true)
+            .fetchSemanticsNodes().single()
+        assertTrue(notice.config[SemanticsProperties.Text].any {
+            it.text == context.getString(com.legitimateapps.dulcet.shared.R.string.now_playing_needs_reconnect)
+        })
+        compose.runOnIdle { state = state.copy(needsReconnect = false) }
+        await("recovery removes playback's own connection notice") { !exists("tv.player.reconnect") }
     }
 
     @Test fun aSavedPlayerShowsAuthenticationFailureAndManualReconnect() {
