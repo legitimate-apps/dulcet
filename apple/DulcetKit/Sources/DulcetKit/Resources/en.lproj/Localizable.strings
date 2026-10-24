@@ -528,3 +528,7 @@
 "discover.discoverAgeUnknown" = "%@ · age unavailable";
 "discover.discoverOpenLink" = "Open %@";
 "discover.discoverEditionTitle" = "%@ · %@ tracks";
+
+"discover.wishlistAdded" = "Added";
+"discover.wishlistUpdated" = "Updated";
+"discover.wishlistNoteUpdated" = "Note updated";

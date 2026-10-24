@@ -74,7 +74,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
                         connect: Bool = true, other: Bool = false, nav: Bool = false, variant: String? = nil) async throws -> HostedApp {
         let server = try server(other: other, nav: nav)
         let app = try await HostedApp(serverURL: server.baseURL, username: server.username, password: server.password,
-                                     run: run, credentialStore: credentials, connect: connect,
+                                     run: run, toolbar: true, credentialStore: credentials, connect: connect,
                                      colorScheme: variant == "dark" ? .dark : variant == "light" ? .light : nil,
                                      textSize: variant == "largest" ? .accessibility5 : .large)
         apps.append(app)
@@ -160,7 +160,8 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)
         let data = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.65]))
-        _ = try await request(required("CAPTURE_UPLOAD_URL"), body: ["name": name, "jpeg": data.base64EncodedString()])
+        _ = try await request(required("CAPTURE_UPLOAD_URL"), body: ["name": name, "jpeg": data.base64EncodedString(), "captureKind": "view-render"])
+        print("DISCOVER capture=\(name) kind=view-render vibrant-materials-omitted=true")
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.jpeg")
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }

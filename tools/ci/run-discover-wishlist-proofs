@@ -112,6 +112,7 @@ def apple_proof(mode):
                 data=base64.b64decode(body['jpeg'],validate=True)
                 if not data.startswith(bytes.fromhex('ffd8')): raise ValueError('JPEG required')
                 (captures/(name+'.jpg')).write_bytes(data)
+                if 'captureKind' in body:(captures/(name+'.source.json')).write_text(json.dumps({'captureKind':body['captureKind']},sort_keys=True))
                 self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(b'{"stored":true}')
             except Exception:
                 self.send_response(400); self.end_headers()

@@ -82,23 +82,25 @@ public struct DulcetWishlistView: View {
                 }
                 Spacer(minLength: 0)
             }
-            if let note = presentation.note { Text(verbatim: note).fixedSize(horizontal: false, vertical: true) }
-            if let noteAt = row.wish?.noteAt { Text(noteAt, format: .dateTime).font(.caption) }
-            if let date = row.wish?.addedAt ?? row.pendingAdd?.actionTime { Text(date, format: .dateTime).font(.caption) }
-            if let updated = row.wish?.updatedAt { Text(updated, format: .dateTime).font(.caption) }
-            if let pending = presentation.pendingText { Text(pending).accessibilityIdentifier("wishlist.pending") }
-            if let error = presentation.errorText { Text(error).accessibilityIdentifier("wishlist.error") }
-            if let ref = presentation.arrival {
-                Button(DulcetStrings.wishlistArrived, systemImage: "play.circle") { openLibrary(ref) }
-                    .accessibilityIdentifier("wishlist.arrival")
-            }
-            if model.publication?.access.canRejectMatch == true, let wish = row.wish, wish.target != nil,
-               let item = wish.matchCorrectionItem,
-               let ref = wish.libraryItem ?? wish.availability.libraryItems.first {
-                Button(DulcetStrings.discoverReject) { model.reject(item, ref: ref, wishId: wish.id) }
-                    .accessibilityIdentifier("wishlist.reject")
-            }
-            remove(row)
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                if let note = presentation.note { Text(verbatim: note).fixedSize(horizontal: false, vertical: true) }
+                if let noteAt = row.wish?.noteAt { LabeledContent(DulcetStrings.wishlistNoteUpdated) { Text(noteAt, format: .dateTime) }.font(.caption) }
+                if let date = row.wish?.addedAt ?? row.pendingAdd?.actionTime { LabeledContent(DulcetStrings.wishlistAdded) { Text(date, format: .dateTime) }.font(.caption) }
+                if let updated = row.wish?.updatedAt, updated != row.wish?.addedAt { LabeledContent(DulcetStrings.wishlistUpdated) { Text(updated, format: .dateTime) }.font(.caption) }
+                if let pending = presentation.pendingText { Text(pending).accessibilityIdentifier("wishlist.pending") }
+                if let error = presentation.errorText { Text(error).accessibilityIdentifier("wishlist.error") }
+                if let ref = presentation.arrival {
+                    Button(DulcetStrings.wishlistArrived, systemImage: "play.circle") { openLibrary(ref) }
+                        .accessibilityIdentifier("wishlist.arrival")
+                }
+                if model.publication?.access.canRejectMatch == true, let wish = row.wish, wish.target != nil,
+                   let item = wish.matchCorrectionItem,
+                   let ref = wish.libraryItem ?? wish.availability.libraryItems.first {
+                    Button(DulcetStrings.discoverReject) { model.reject(item, ref: ref, wishId: wish.id) }
+                        .accessibilityIdentifier("wishlist.reject")
+                }
+                remove(row)
+            }.padding(.leading, 48 + DulcetSpacing.sm)
         }.padding(.vertical, DulcetSpacing.xs)
     }
     private func remove(_ row: DulcetWishRow) -> some View {
