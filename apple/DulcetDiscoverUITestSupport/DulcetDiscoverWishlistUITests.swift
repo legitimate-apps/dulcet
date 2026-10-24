@@ -311,7 +311,9 @@ import UIKit
         XCTFail("Server wish count did not settle to \(count) for generated fixture title")
     }
     func wishRow(_ title: String) -> XCUIElement {
-        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "wishlist.row.")).containing(NSPredicate(format: "identifier == %@ AND label == %@", "wishlist.metadata", title)).firstMatch
+        // Artist and album titles can open metadata; a song title is plain text.
+        // Both identify their own row without requiring that optional action.
+        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "wishlist.row.")).containing(NSPredicate(format: "label == %@", title)).firstMatch
         reveal(row)
         return row
     }
