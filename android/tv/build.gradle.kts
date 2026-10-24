@@ -91,7 +91,9 @@ tasks.withType<Test>().configureEach {
 }
 extensions.configure<ApplicationExtension> {
     sourceSets.getByName("test").kotlin.srcDir(rootProject.file("android/search-conformance"))
+    sourceSets.getByName("test").kotlin.srcDir(rootProject.file("android/compose-proof-support"))
     sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("android/emulator-conformance"))
+    sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("android/compose-proof-support"))
 }
 
 // A failing test must say WHY in the console. Gradle's default console format is SHORT, which
