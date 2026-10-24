@@ -629,7 +629,7 @@ final class DulcetDesignTourUITests: XCTestCase {
             if tab == "Library" { button.tap() }
             return true
         }
-        let row = app.staticTexts[sidebar].firstMatch
+        let row = app.buttons[sidebar].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else { return false }
         row.tap()
         return true
