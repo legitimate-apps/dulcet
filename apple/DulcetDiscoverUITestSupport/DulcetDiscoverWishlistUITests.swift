@@ -73,8 +73,7 @@ import UIKit
         app.activate()
 #endif
         if connect {
-            let browse = app.buttons["dulcet.library.album"].firstMatch
-            XCTAssertTrue(browse.waitForExistence(timeout: 90), "Positive app catalog control: " + app.debugDescription)
+            XCTAssertTrue(waitForCatalog(timeout: 90), "Positive app catalog control must expose an album tile")
         }
 #if os(macOS)
         print("DISCOVER_PLATFORM macos productionHost=true")
@@ -83,6 +82,23 @@ import UIKit
         XCTAssertEqual(idiom, try required("EXPECTED_IDIOM"))
         print("DISCOVER_PLATFORM \(idiom) productionHost=true")
 #endif
+    }
+    private func waitForCatalog(timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            // During cold connection and initial Listen Now loading, a live descendant query
+            // can fail its own snapshot request before the readiness deadline. A failed read
+            // is not catalog evidence. Re-read one immutable tree within the same deadline.
+            if let root = try? app.snapshot() {
+                var pending: [XCUIElementSnapshot] = [root]
+                while let node = pending.popLast() {
+                    if node.elementType == .button && node.identifier == "dulcet.library.album" { return true }
+                    pending.append(contentsOf: node.children)
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        return false
     }
     private func prepare() throws {
         continueAfterFailure = false
@@ -154,7 +170,12 @@ import UIKit
 #if os(macOS)
                 app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: direction ? -500 : 500)
 #else
-                if direction { app.scrollViews.firstMatch.swipeUp() } else { app.scrollViews.firstMatch.swipeDown() }
+                // SwiftUI List is a CollectionView; metadata pages use a ScrollView.
+                // Exclude the split-view sidebar so scrolling stays in the presented content.
+                let scroll = app.scrollViews.firstMatch
+                let body = scroll.exists ? scroll : app.collectionViews.matching(NSPredicate(format: "label != %@", "Sidebar")).firstMatch
+                guard body.exists else { return }
+                if direction { body.swipeUp() } else { body.swipeDown() }
 #endif
             }
         }
@@ -290,7 +311,7 @@ import UIKit
         XCTFail("Server wish count did not settle to \(count) for generated fixture title")
     }
     func wishRow(_ title: String) -> XCUIElement {
-        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "wishlist.row.")).containing(.staticText, identifier: title).firstMatch
+        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "wishlist.row.")).containing(NSPredicate(format: "identifier == %@ AND label == %@", "wishlist.metadata", title)).firstMatch
         reveal(row)
         return row
     }
