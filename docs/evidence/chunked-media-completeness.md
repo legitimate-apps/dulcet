@@ -56,6 +56,12 @@ complete trailers. Neither rewrites a lost connection into success. Errors conta
 not request URLs, query credentials or authorization headers. Same-origin redirects retain the
 existing policy; credential handling remains in the account and resource loaders.
 
+The playback loader requests at most 256 KiB while it needs the audio signature, then at most
+1 MiB per later range. Later reads also honor the requested end and the known resource end;
+the signature probe may exceed a tiny header request but stops at a known resource end. This
+reduces fresh connections without changing the framing requirement. Whole-representation
+responses to an ignored initial range remain accepted after validation.
+
 Background URLSession downloads cannot supply this framing proof. A successful OS delivery with
 chunked or undeclared length is discarded and replaced by a strict foreground transfer after
 current server identity and ownership are authorized. Only the replacement response and its bytes

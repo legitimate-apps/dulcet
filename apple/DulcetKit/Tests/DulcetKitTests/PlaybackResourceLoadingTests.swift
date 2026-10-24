@@ -7,6 +7,37 @@ import Testing
 @Suite(.serialized)
 struct PlaybackResourceLoadingTests {
 @Test
+func rangePolicyKeepsSignatureProbeSmallAndBoundsLaterReads() {
+    func range(_ offset: Int64, _ end: Int64, signature: Bool = false,
+               total: Int64? = nil, toEnd: Bool = false) -> DulcetPlaybackByteRange? {
+        DulcetAVAssetResourceLoaderDelegate.nextRange(
+            offset: offset, requestedEndExclusive: end, requestsToEnd: toEnd,
+            requiresAudioSignature: signature, contentLength: total)
+    }
+
+    // AVFoundation can ask for just two header bytes; the validator still needs its probe.
+    #expect(range(0, 2, signature: true) == .init(start: 0, endInclusive: 262_143))
+    #expect(range(0, 10_485_760, signature: true) == .init(start: 0, endInclusive: 262_143))
+    #expect(range(0, 2, signature: true, total: 100) == .init(start: 0, endInclusive: 99))
+    // A later contiguous read and a seek both use at most 1 MiB.
+    #expect(range(262_144, 10_485_760, total: 10_485_760) ==
+        .init(start: 262_144, endInclusive: 1_310_719))
+    #expect(range(7_340_032, 10_485_760, total: 10_485_760) ==
+        .init(start: 7_340_032, endInclusive: 8_388_607))
+    // The requested end wins even when the representation has more bytes.
+    #expect(range(7_340_032, 7_340_132, total: 10_485_760) ==
+        .init(start: 7_340_032, endInclusive: 7_340_131))
+    // The known resource end wins even when the request extends past it.
+    #expect(range(9_699_328, 20_000_000, total: 10_485_760) ==
+        .init(start: 9_699_328, endInclusive: 10_485_759))
+    // All-data-to-end requests use the discovered total after the initial probe.
+    #expect(range(262_144, 2, total: 10_485_760, toEnd: true) ==
+        .init(start: 262_144, endInclusive: 1_310_719))
+    #expect(range(100, 100, total: 1_000) == nil)
+    #expect(range(1_000, 2_000, total: 1_000) == nil)
+}
+
+@Test
 func unusedResourcesReleaseWithoutConstructingADelegateDuringDeinitialization() async {
     for _ in 0..<20 {
         var resource: DulcetURLSessionPlaybackResource? = makeURLSessionResource(

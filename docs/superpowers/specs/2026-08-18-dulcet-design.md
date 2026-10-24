@@ -7933,6 +7933,12 @@ reader and Darwin completion rewrite were removed together. The
 [path inventory, baseline socket observations and limitations](../../evidence/chunked-media-completeness.md)
 record the tested boundaries. Existing completed library files are not retroactively repaired.
 
+The Apple playback loader retains a 256 KiB signature probe and caps later ranges at 1 MiB to
+reduce fresh TCP/TLS connections. Later reads stop at the requested end or known resource end;
+the signature probe may outgrow a tiny header request but never a known resource end. A server
+that ignores the initial range can still return the complete validated representation. Strict
+HTTP framing remains required for every response.
+
 
 **2026-10-23 — Retain Android Play across a chosen connection's transient validation loss.**
 

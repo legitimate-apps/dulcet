@@ -551,7 +551,8 @@ enum DulcetPlaybackResourceLoaderTraceEvent: Sendable {
 public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelegate,
     @unchecked Sendable {
     public static let scheme = "dulcet-stream"
-    public static let maximumChunkLength: Int64 = 256 * 1024
+    static let initialChunkLength: Int64 = 256 * 1024
+    public static let maximumChunkLength: Int64 = 1024 * 1024
 
     private let resource: any DulcetPlaybackResourceLoading
     private let attemptID: DulcetPlaybackAttemptID
@@ -674,29 +675,44 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
         traceHandler?(.cancelled(requestID: context.requestID))
     }
 
+    /// The signature probe can outgrow AVFoundation's tiny initial header request. Once the
+    /// signature is checked, larger bounded reads amortize the strict transport's connections.
+    static func nextRange(
+        offset: Int64,
+        requestedEndExclusive: Int64,
+        requestsToEnd: Bool,
+        requiresAudioSignature: Bool,
+        contentLength: Int64?
+    ) -> DulcetPlaybackByteRange? {
+        let desiredEndExclusive: Int64
+        if let contentLength {
+            desiredEndExclusive = requestsToEnd
+                ? contentLength
+                : min(requestedEndExclusive, contentLength)
+        } else {
+            desiredEndExclusive = requestedEndExclusive
+        }
+        guard offset < desiredEndExclusive else { return nil }
+        let maximumLength = requiresAudioSignature ? initialChunkLength : maximumChunkLength
+        let boundedEndExclusive = requiresAudioSignature
+            ? contentLength ?? Int64.max
+            : desiredEndExclusive
+        let length = min(maximumLength, boundedEndExclusive - offset)
+        return DulcetPlaybackByteRange(start: offset, endInclusive: offset + length - 1)
+    }
+
     private func loadNextChunk(_ context: LoadingContext) {
         guard !context.isCancelled else { return }
-        let desiredEndExclusive: Int64
-        if let contentLength = context.contentInformation?.contentLength {
-            desiredEndExclusive = context.requestsToEnd
-                ? contentLength
-                : min(context.requestedEndExclusive, contentLength)
-        } else {
-            desiredEndExclusive = context.requestedEndExclusive
-        }
-        if context.nextOffset >= desiredEndExclusive {
+        guard let range = Self.nextRange(
+            offset: context.nextOffset,
+            requestedEndExclusive: context.requestedEndExclusive,
+            requestsToEnd: context.requestsToEnd,
+            requiresAudioSignature: context.requiresAudioSignature,
+            contentLength: context.contentInformation?.contentLength
+        ) else {
             complete(context)
             return
         }
-        let chunkEndExclusive = context.nextOffset + Self.maximumChunkLength
-        let fetchEndExclusive = context.requiresAudioSignature
-            ? chunkEndExclusive
-            : min(desiredEndExclusive, chunkEndExclusive)
-        let endInclusive = fetchEndExclusive - 1
-        let range = DulcetPlaybackByteRange(
-            start: context.nextOffset,
-            endInclusive: endInclusive
-        )
         traceHandler?(.rangeRequested(requestID: context.requestID, range: range))
         let operation = resource.load(
             DulcetPlaybackResourceLoadRequest(
