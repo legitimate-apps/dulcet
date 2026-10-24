@@ -131,8 +131,19 @@ class Scanner(
             val attributes = file?.let { Files.readAttributes(it,java.nio.file.attribute.BasicFileAttributes::class.java) }
             "$dir/$name:${attributes?.size()}:${attributes?.lastModifiedTime()?.toMillis()}"
         }.let { java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { byte -> "%02x".format(byte) } }
+        // Standalone artist pictures are not album covers. Track their metadata separately
+        // so replacing one invalidates artist references without rewriting the track catalog.
+        val artistArtStamp = folderArt.keys.sorted().flatMap { dir ->
+            listOf("artist.jpg", "artist.png").mapNotNull { name ->
+                com.legitimateapps.dulcet.server.musicFile(root, root.resolve(dir).resolve(name))?.let { file ->
+                    val attributes = Files.readAttributes(file,java.nio.file.attribute.BasicFileAttributes::class.java)
+                    "$dir/$name:${attributes.size()}:${attributes.lastModifiedTime().toMillis()}"
+                }
+            }
+        }.joinToString("\n").let { java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { byte -> "%02x".format(byte) } }
+        val artistArtChanged = db.read { string("SELECT value FROM meta WHERE key='artist_art_stamp'") } != artistArtStamp
         val artChanged = db.read { string("SELECT value FROM meta WHERE key='folder_art_stamp'") } != artStamp
-        if (!force && changed.isEmpty() && removed.isEmpty() && db.read { string("SELECT value FROM meta WHERE key = 'folder_art_stamp'") } == artStamp) {
+        if (!force && !artistArtChanged && changed.isEmpty() && removed.isEmpty() && db.read { string("SELECT value FROM meta WHERE key = 'folder_art_stamp'") } == artStamp) {
             return ScanResult(added = 0, updated = 0, removed = 0, unchanged = unchanged, failed = 0)
         }
         // ffprobe is a process per file; a few in parallel keep a first scan short.
@@ -175,6 +186,7 @@ class Scanner(
             // Seed legacy group ids unchanged before minting any new random identities.
             query("SELECT id FROM album") { it.string("id") }.forEach { execute("INSERT OR IGNORE INTO api_group_identity VALUES('album',?,?)", it, it) }
             query("SELECT id,name FROM artist") { it.string("id") to it.string("name") }.forEach { (id,name) -> execute("INSERT OR IGNORE INTO api_group_identity VALUES('artist',?,?)", TrackInfo.artistId(name), id) }
+            val oldRelationships = aggregateRelationships()
             val oldGroups = query("SELECT id, album_id, album_artist_id FROM track") { Triple(it.string("id"), it.string("album_id"), it.string("album_artist_id")) }
             data class OldCredit(val track:String,val role:String,val position:Int,val artist:String)
             val oldCredits=query("SELECT track_id,role,position,artist_id FROM track_artist") { OldCredit(it.string("track_id"),it.string("role"),it.int("position"),it.string("artist_id")) }
@@ -272,7 +284,7 @@ class Scanner(
                     execute("UPDATE api_group_identity SET id=? WHERE type='artist' AND id=?",oldId,replacement)
                 }
             }
-            regroup(folderArt)
+            regroup(folderArt, oldRelationships, artChanged, artistArtChanged, now)
             // Track artwork can inherit a folder image, so image changes must invalidate the
             // track representation as well as the album and artist representations.
             if(artChanged) execute("INSERT INTO api_journal(type,id,op,at) SELECT 'track',id,'upsert',? FROM track",now)
@@ -290,6 +302,9 @@ class Scanner(
             for ((oldId,members) in oldArtistMembers) {
                 if (long("SELECT COUNT(*) FROM artist WHERE id=?",oldId)>0) continue
                 val next=artistSuccessors(members)
+                // Composer-only credits have no artist catalog row. Keeping the same credit
+                // is not a merge, and must not remap user state or repeat a self-tombstone.
+                if (next == listOf(oldId)) continue
                 if(next.size == 1) { remapUserItem("artist",oldId,next.single()); recordReplacement("artist",oldId,next,"merged",now) }
                 else if(next.size > 1) recordReplacement("artist",oldId,next,"split",now)
             }
@@ -311,6 +326,7 @@ class Scanner(
             execute("INSERT INTO meta(key, value) VALUES('last_scan', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", Instant.ofEpochMilli(now).toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_count', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", folderArt.size.toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_art_stamp', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", artStamp)
+            execute("INSERT INTO meta(key,value) VALUES('artist_art_stamp',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",artistArtStamp)
         }
         delta?.let { runCatching { afterCatalogCommit(it) }.onFailure { log.warn("wish fulfilment wakeup deferred") } }
         val result = ScanResult(added = probed.count { existing[it.path] == null }, updated = probed.count { existing[it.path] != null }, removed = removed.size, unchanged = unchanged, failed = failed)
@@ -429,11 +445,47 @@ class Scanner(
         t.genres.forEach { execute("INSERT OR IGNORE INTO track_genre VALUES (?,?)", id, it) }
     }
 
-    /** Rebuilds album, album_artist and artist from the tracks. */
-    private fun Db.Session.regroup(folderArt: Map<String, String>) {
-        execute("DELETE FROM album")
-        execute("DELETE FROM album_artist")
-        execute("DELETE FROM artist")
+    private data class AggregateRelationships(
+        val albums: Map<String, Set<List<String?>>>,
+        val artists: Map<String, Set<List<String?>>>,
+    )
+
+    /** Membership affects paging and genres even when aggregate scalar values are identical. */
+    private fun Db.Session.aggregateRelationships(): AggregateRelationships {
+        val albums = query("""SELECT album_id,'track' AS kind,id AS member,CAST(COALESCE(disc_no,1) AS TEXT) AS detail,CAST(track_no AS TEXT) AS position FROM track
+            UNION ALL SELECT t.album_id,'genre',g.genre,NULL,NULL FROM track_genre g JOIN track t ON t.id=g.track_id
+            UNION ALL SELECT album_id,'credit',artist_id,name,CAST(position AS TEXT) FROM album_artist""") {
+            it.string("album_id") to listOf(it.string("kind"),it.stringOrNull("member"),it.stringOrNull("detail"),it.stringOrNull("position"))
+        }
+        val albumArtwork = query("SELECT album_id,id,path,mtime,size,updated FROM track WHERE has_embedded_art=1") {
+            it.string("album_id") to listOf("embedded",it.string("id"),it.string("path"),it.string("mtime"),it.string("size"),it.string("updated"))
+        }
+        val artists = query("""SELECT ta.artist_id,ta.track_id,ta.role,ta.name,ta.position,t.album_id,t.parent_dir
+            FROM track_artist ta JOIN track t ON t.id=ta.track_id WHERE ta.role IN ('artist','albumartist')""") {
+            it.string("artist_id") to listOf(it.string("track_id"),it.string("role"),it.string("name"),it.string("position"),it.string("album_id"),it.string("parent_dir"))
+        }
+        // Artist artwork can inherit any visible album's embedded image. A retagged image
+        // source must invalidate that reference even when counts and memberships stay equal.
+        val artistArtwork = query("""SELECT aa.artist_id,t.album_id,t.id,t.path,t.mtime,t.size,t.updated
+            FROM album_artist aa JOIN track t ON t.album_id=aa.album_id WHERE t.has_embedded_art=1""") {
+            it.string("artist_id") to listOf("embedded",it.string("album_id"),it.string("id"),it.string("path"),it.string("mtime"),it.string("size"),it.string("updated"))
+        }
+        return AggregateRelationships(
+            (albums+albumArtwork).groupBy({it.first},{it.second}).mapValues { it.value.toSet() },
+            (artists+artistArtwork).groupBy({it.first},{it.second}).mapValues { it.value.toSet() },
+        )
+    }
+
+    /** Reconcile aggregates without deleting/reinserting unchanged identities and their journal. */
+    private fun Db.Session.regroup(folderArt: Map<String, String>, old: AggregateRelationships, artChanged: Boolean, artistArtChanged: Boolean, now: Long) {
+        fun upsert(table: String, columns: List<String>, values: List<Any?>): Boolean {
+            val fields = columns.drop(1)
+            return execute("INSERT INTO $table (${columns.joinToString()}) VALUES (${columns.joinToString { "?" }}) " +
+                "ON CONFLICT(id) DO UPDATE SET ${fields.joinToString { "$it=excluded.$it" }} " +
+                "WHERE ${fields.joinToString(" OR ") { "$table.$it IS NOT excluded.$it" }}", *values.toTypedArray()) > 0
+        }
+        val changedAlbums = mutableSetOf<String>()
+        val changedArtists = mutableSetOf<String>()
         data class AlbumAcc(
             val id: String, val name: String, val albumArtist: String, val artistId: String, var year: Int?, var genre: String?,
             var compilation: Boolean, var count: Int, var duration: Double, var size: Long, var created: Long, var mbz: String?,
@@ -460,18 +512,22 @@ class Scanner(
             fun artIn(dir: String): String? = folderArt[dir]?.takeIf(String::isNotEmpty)?.let { if (dir.isEmpty()) it else "$dir/$it" }
             // A multi-disc album keeps its cover one level up ("Album/cover.jpg" over "Album/Disc 1").
             album.folderArt = album.dirs.firstNotNullOfOrNull { dir -> artIn(dir) ?: dir.takeIf { '/' in it }?.let { artIn(it.substringBeforeLast('/')) } }
-            execute(
-                "INSERT INTO album VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            if (upsert("album", listOf("id","name","sort_name","album_artist","artist_id","year","genre","compilation","song_count","duration","size","created","mbz_album_id","art_track_id","folder_art","search"), listOf(
                 album.id, album.name, sortName(album.name), album.albumArtist, album.artistId, album.year, album.genre, album.compilation,
                 album.count, album.duration, album.size, album.created, album.mbz, album.artTrack, album.folderArt,
                 fold("${album.name} ${album.albumArtist}"),
-            )
+            ))) changedAlbums.add(album.id)
         }
-        execute(
-            """INSERT OR IGNORE INTO album_artist(album_id, artist_id, name, position)
-               SELECT t.album_id, ta.artist_id, ta.name, MIN(ta.position) FROM track_artist ta JOIN track t ON t.id = ta.track_id
-               WHERE ta.role = 'albumartist' GROUP BY t.album_id, ta.artist_id""",
-        )
+        execute("CREATE TEMP TABLE IF NOT EXISTS scan_album_artist(album_id TEXT,artist_id TEXT,name TEXT,position INTEGER,PRIMARY KEY(album_id,artist_id))")
+        execute("DELETE FROM scan_album_artist")
+        execute("""INSERT INTO scan_album_artist
+            SELECT t.album_id,ta.artist_id,ta.name,MIN(ta.position) FROM track_artist ta JOIN track t ON t.id=ta.track_id
+            WHERE ta.role='albumartist' GROUP BY t.album_id,ta.artist_id""")
+        execute("DELETE FROM album_artist WHERE NOT EXISTS(SELECT 1 FROM scan_album_artist n WHERE n.album_id=album_artist.album_id AND n.artist_id=album_artist.artist_id)")
+        execute("""INSERT INTO album_artist SELECT * FROM scan_album_artist WHERE 1
+            ON CONFLICT(album_id,artist_id) DO UPDATE SET name=excluded.name,position=excluded.position
+            WHERE album_artist.name IS NOT excluded.name OR album_artist.position IS NOT excluded.position""")
+        execute("DELETE FROM album WHERE id NOT IN (SELECT DISTINCT album_id FROM track)")
         // Artists are everyone credited as an album artist or a track artist.
         data class ArtistAcc(val id: String, var name: String, var mbz: String?, val albums: MutableSet<String>, var songs: Int)
         val artists = LinkedHashMap<String, ArtistAcc>()
@@ -486,12 +542,22 @@ class Scanner(
             }
         }
         for (artist in artists.values) {
-            execute(
-                "INSERT INTO artist VALUES (?,?,?,?,?,?,?)",
+            if (upsert("artist", listOf("id","name","sort_name","mbz_artist_id","album_count","song_count","search"), listOf(
                 artist.id, artist.name, sortName(artist.name), artist.mbz, artist.albums.size, artist.songs, fold(artist.name),
-            )
+            ))) changedArtists.add(artist.id)
         }
+        execute("DELETE FROM artist WHERE id NOT IN (SELECT artist_id FROM track_artist WHERE role IN ('artist','albumartist'))")
+        val current = aggregateRelationships()
+        // Scalar upserts already journal themselves. Membership-only changes and the existing
+        // conservative artwork invalidation still need one upsert, without synthetic tombstones.
+        for ((type, ids, previous, next, written) in listOf(
+            AggregateChanges("album",albums.keys,old.albums,current.albums,changedAlbums),
+            AggregateChanges("artist",artists.keys,old.artists,current.artists,changedArtists),
+        )) for (id in ids) if (id !in written && (artChanged || type == "artist" && artistArtChanged || previous[id] != next[id]))
+            execute("INSERT INTO api_journal(type,id,op,at) VALUES(?,?,'upsert',?)",type,id,now)
     }
+
+    private data class AggregateChanges(val type:String,val ids:Set<String>,val previous:Map<String,Set<List<String?>>>,val next:Map<String,Set<List<String?>>>,val written:Set<String>)
 
     companion object {
         private val PROBE_THREADS = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
