@@ -18,12 +18,50 @@ class CoverArtClient(private val http:PoliteHttp,private val cache:DiscoverCache
         fun imageType(bytes:ByteArray):String {
             fun starts(vararg prefix:Int)=bytes.size>=prefix.size && prefix.indices.all { bytes[it].toInt() and 255==prefix[it] }
             return when {
-                starts(255,216,255)->"image/jpeg"
-                starts(137,80,78,71,13,10,26,10)->"image/png"
-                bytes.size>=6 && bytes.copyOfRange(0,6).decodeToString() in listOf("GIF87a","GIF89a")->"image/gif"
-                bytes.size>=12 && bytes.copyOfRange(0,4).decodeToString()=="RIFF" && bytes.copyOfRange(8,12).decodeToString()=="WEBP"->"image/webp"
+                starts(255,216,255) && bytes.size>=5 && bytes[bytes.size-2]==255.toByte() && bytes.last()==217.toByte()->"image/jpeg"
+                starts(137,80,78,71,13,10,26,10) && wholePng(bytes)->"image/png"
+                bytes.size>=14 && (asciiAt(bytes,0,"GIF87a") || asciiAt(bytes,0,"GIF89a")) && bytes.last()==59.toByte()->"image/gif"
+                bytes.size>=20 && asciiAt(bytes,0,"RIFF") && asciiAt(bytes,8,"WEBP") && wholeWebp(bytes)->"image/webp"
                 else->throw UpstreamUnavailable()
             }
+        }
+        private fun asciiAt(bytes:ByteArray,offset:Int,text:String)=
+            offset>=0 && offset<=bytes.size-text.length && text.indices.all { bytes[offset+it].toInt()==text[it].code }
+        private fun uint32(bytes:ByteArray,offset:Int,littleEndian:Boolean=false):Long {
+            var value=0L
+            for(i in 0..3) value=(value shl 8) or (bytes[offset+if(littleEndian)3-i else i].toLong() and 255)
+            return value
+        }
+        // Walk bounded chunk framing, including CRC space, without decompressing image data.
+        private fun wholePng(bytes:ByteArray):Boolean {
+            var offset=8
+            var imageData=false
+            while(offset<=bytes.size-12) {
+                val length=uint32(bytes,offset)
+                if(length>bytes.size-offset-12L) return false
+                val end=offset+12+length.toInt()
+                if(offset==8 && (!asciiAt(bytes,offset+4,"IHDR") || length!=13L)) return false
+                if(offset!=8 && asciiAt(bytes,offset+4,"IHDR")) return false
+                if(asciiAt(bytes,offset+4,"IDAT") && length>0) imageData=true
+                if(asciiAt(bytes,offset+4,"IEND")) return length==0L && end==bytes.size && imageData
+                offset=end
+            }
+            return false
+        }
+        private fun wholeWebp(bytes:ByteArray):Boolean {
+            if(uint32(bytes,4,true)!=bytes.size-8L) return false
+            var offset=12
+            var imageData=false
+            while(offset<=bytes.size-8) {
+                val length=uint32(bytes,offset+4,true)
+                val paddedLength=length+(length and 1L)
+                if(paddedLength>bytes.size-offset-8L) return false
+                val end=offset+8+paddedLength.toInt()
+                if(length and 1L!=0L && bytes[end-1]!=0.toByte()) return false
+                if(length>0 && (asciiAt(bytes,offset,"VP8 ") || asciiAt(bytes,offset,"VP8L") || asciiAt(bytes,offset,"ANMF"))) imageData=true
+                offset=end
+            }
+            return offset==bytes.size && imageData
         }
         fun publicAddress(address:InetAddress)=WebhookHttpTransport().allowed(address)
         private val placeholder="""<svg xmlns="http://www.w3.org/2000/svg" width="250" height="250" viewBox="0 0 250 250"><rect width="250" height="250" fill="#303036"/><circle cx="125" cy="125" r="64" fill="#62626a"/><circle cx="125" cy="125" r="14" fill="#303036"/></svg>""".toByteArray()

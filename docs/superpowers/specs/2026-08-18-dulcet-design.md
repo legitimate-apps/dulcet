@@ -14535,8 +14535,12 @@ Retry-After/rate headers. No token, user credentials or account identity reaches
 Metadata raw caches are shared across users; visibility, matches and rejected pairs are projected
 locally afterward. Valid stale data survives source failure for at most 90 days, with age/stale
 reported. The cache is bounded at 256 MiB including a bounded 16 MiB cursor snapshot working set.
-Thumbnail bytes pass through without parsing/resizing, with positive JPEG/PNG/GIF/WebP signature,
-5 MiB limit, up to five checked/pinned redirects and no HTTPS downgrade. Artwork stays behind
+Thumbnail bytes pass through without pixel decoding/resizing, with positive JPEG/PNG/GIF/WebP
+signature and structural validation: JPEG SOI/EOI boundaries, PNG IHDR first and IEND last with
+complete chunks and image data, GIF trailer last, and WebP RIFF length matching the body with
+complete padded chunks and image data. Malformed bytes are temporary failures, never cached or
+served; a later request retries and a last good image survives. The 5 MiB limit, up to five
+checked/pinned redirects and no HTTPS downgrade still apply. Artwork stays behind
 an opaque server id. [REST Discover](../../dulcet-server/dulcet-discover-extension.md) gives all
 methods, fields, paging, errors, attribution, TTLs and settings.
 
