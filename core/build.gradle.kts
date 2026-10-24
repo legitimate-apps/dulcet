@@ -113,6 +113,9 @@ licensee {
 // streams, so a green run's log is unchanged. AbstractTestTask, not Test, where Kotlin/Native
 // test tasks exist too (see core-conformance/build.gradle.kts for that trap).
 tasks.withType<AbstractTestTask>().configureEach {
+    if (this is Test && name == "testAndroidHostTest") {
+        systemProperty("dulcet.repositoryRoot", rootProject.projectDir.absolutePath)
+    }
     testLogging {
         events("failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL

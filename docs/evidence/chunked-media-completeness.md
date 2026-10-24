@@ -82,3 +82,37 @@ The selector, permissive reader, platform completion predicates, Darwin completi
 its observer-only test seams were removed together. Every declared response length remains exact.
 The separate `PlaybackContentLength.Estimated` domain type and its existing policy tests remain;
 this change does not reinterpret that type or make a truncated body complete.
+
+## Android cleartext and removal-control regressions
+
+**OBSERVED:** adding the media-only OkHttp dependency also makes the conformance probe's
+unqualified `HttpClient()` select OkHttp on the device classpath. Host discovery can still
+select CIO, so the host regression pins the OkHttp probe engine explicitly. The conformance device APK lacked the
+`usesCleartextTraffic` opt-in already present in the shipping phone and TV APKs. Its independent
+`RestProbe.search3` failed before a response with `UnknownServiceException` in core-ci
+40088063179 on both emulators. The conformance manifest now permits its disposable HTTP fixture;
+shipping transport configuration and the HTTPS-to-HTTP redirect rejection are unchanged.
+
+`AndroidCleartextHttpTest` drives real loopback HTTP through the production authenticated
+nonmedia and strict-media clients, plus an explicit OkHttp probe client. It reads the phone, TV and
+conformance manifest inputs and supplies their Android cleartext decision to Robolectric.
+**OBSERVED:** before the conformance manifest fix, its production strict request fails with
+`CLEARTEXT communication to 127.0.0.1 not permitted by network security policy`; the phone and
+TV cases pass. An explicit deny control requires the strict client and OkHttp probe to refuse
+before sending a request. **ASSUMED:** this host bridge models Android's manifest-derived
+platform policy; device conformance remains the integration proof of the packaged manifest.
+
+**OBSERVED:** the account-removal source-extraction control also failed to compile because it
+lifted `removeAccountData` without its new `cancelFramingVerifications` collaborator. It now
+extracts that production helper too and observes cancellation of old verification sessions and
+preservation of new-account sessions. Its `--self-test` requires both stale-generation and
+cancelled-task mutants to compile and then fail the intended stale-cleanup assertion. A compile
+failure cannot satisfy the mutant proof. Apple CI runs this self-test with the six positive
+removal/recovery scenarios.
+
+**OBSERVED:** the next inbox-recovery control had the same extraction drift: missing targeted
+framing cancellation, response metadata and the updated secured-file collaborator signature.
+Its five existing scenarios now compile and pass with those collaborators represented. The
+membership scenario additionally requires cancellation of only the removed automatic download's
+framing session while preserving the explicit download's session. The control extracts the real
+targeted cancellation helper; an unexpected replacement transfer fails the harness immediately.
