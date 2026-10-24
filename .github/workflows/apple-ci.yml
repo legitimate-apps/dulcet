@@ -2777,6 +2777,8 @@ jobs:
           tools/ci/run-discover-wishlist-proofs --self-test
           python3 tools/ci/test_discover_process_owner.py
           python3 tools/ci/test_discover_simulator_health.py
+      - name: Enable native keyboard traversal for the hosted proof
+        run: defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
       - name: Select the macos evidence directory
         run: echo "DULCET_DISCOVER_PROOF_OUTPUT=$RUNNER_TEMP/discover-macos/native" >> "$GITHUB_ENV"
       - name: Drive Discover and Wishlist through the native macos app
