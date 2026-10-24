@@ -509,6 +509,136 @@ not fail-before evidence or a demonstrated cause of either intermittent CI failu
 full Apple execution remains required; no product code, gesture, oracle, timeout or workflow
 changes here.
 
+OBSERVED 2026-10-24 in main's full Apple run `40065138225` on `134b9300`, iPad artifact
+`12551362888`, `dulcet-ipados-account-states.xcresult`: the session diagnostic log, unlike the
+console activity list, identifies the work consuming the readiness budget. The outer 15-second
+wait starts at `06:56:19.938 UTC`. Window existence takes 1.031 seconds and finding the window
+takes 0.629 seconds. A subsequent, separately requested live AX frame/display/context attribute
+fetch starts at `06:56:22.614` with its own 30-second timeout. At `06:56:35.210`, the outer
+waiter's watchdog interrupts it after 12.596 seconds. XCTest logs an interrupted frame fetch
+and `{{inf, inf}, {0, 0}}`, then fails the outer wait. This is an interrupted attribute reply,
+not an observed compact layout. The underlying AX delay's cause remains UNKNOWN.
+
+The account-state proof now captures one indexed window snapshot per attempt and reads that
+snapshot's frame, avoiding a separate existence check and live attribute fetch. An explicit
+monotonic 60-second polling budget permits a full slow query and another attempt, with a
+0.25-second interval after unsuccessful queries. Each attempt logs query duration, elapsed time
+and the captured frame. Queries retain XCTest's own bounds; the loop does not interrupt an
+in-flight query at its polling deadline. Classification, logging and wrong-layout rejection
+still use the same real finite, positive-size frame and the unchanged 700-point threshold.
+OBSERVED in a local macOS control using the actual old and revised source blocks with a simulated
+16-second nested XCTest frame reply: the original wait interrupts the reply and rejects it;
+the revised block accepts the regular `1032 × 1376` frame after 16.024 seconds. Further controls
+reject an infinite/zero frame before accepting a later valid frame, and preserve compact
+classification of a finite `393 × 852` frame, which the iPad proof rejects. These controls test
+waiter behavior and geometry validation; they do not reproduce hosted AX latency.
+
+The first local iPad execution captured the regular frame in 0.363 seconds, then failed the
+initial empty-account form assertion at 39.802 seconds. Its hierarchy says the saved account
+could not be opened because Keychain did not return its details: the cloned simulator inherited
+account state and this first execution used an unsigned app. That failed Test Case is retained
+as a fixture-setup failure, not counted as a pass of the revised proof. The app and keychain were cleared on that disposable clone before
+the clean-state execution; no test or product source was changed for that setup correction.
+A subsequent clean-state run using an unsigned local build failed later at 277.902 seconds:
+the server accepted the account, but Keychain refused its save. That run is also retained as
+a setup failure. The target was then rebuilt with normal simulator signing, rather than
+`CODE_SIGNING_ALLOWED=NO`, for the real persistence proof. Neither failure is evidence of the
+hosted frame defect or a product-code regression.
+OBSERVED on the normally signed build with an iPad Pro 13-inch (M5) simulator, iOS 26.5,
+Xcode 27.0 and disposable Navidrome 0.63.2: the complete account-state proof has one Passed
+Test Case, zero failures, in 260.589 seconds; xcodebuild exits 0. It captures a real
+`1032 × 1376` frame in 0.666 seconds on its first attempt and completes connected, saved
+auto-connect, offline recovery and real-Keychain persistence coverage. This confirms preserved
+local behavior; the historical hosted AX delay was not reproduced on the simulator.
+
+OBSERVED in that run's iPhone artifact `12552045868`, `dulcet-ios-drag-from-menu.xcresult`:
+both synthesized-event archives press at `(163, 628.333)` in source bounds
+`(16, 606.333, 294, 44)`, start movement at offset 0.8 seconds, reach `(147, 753)` in the
+mini-player's `(20, 733, 254, 40)` bounds at offset 1.428 seconds, and release at 2.428 seconds.
+The session diagnostics place local synthesis at `06:56:19.047–21.716 UTC` and
+`06:56:57.219–59.893 UTC`. The recording shows the pressed row growing into its preview,
+then the menu appearing at approximately movie 321.11 and 359.11 seconds. In both gestures
+the preview remains over the source row, the mini-player shows no drop response, the menu
+stays open until the test dismisses it, and Up Next stays empty. An independent visual review
+agrees. Relative to the archived schedule and synthesis windows, the first menu appears after
+the scheduled arrival; the second appears near arrival, with at most about 0.13 seconds of
+movement remaining. Exact input-processing times are not recorded, and sparse video frames
+limit timing precision. **ASSUMED mechanism:** the fixed 0.8-second hold starts moving before
+menu presentation/lift readiness under load. The artifact establishes the missed lift and
+late visible presentation; it does not identify a UIKit processing defect or establish a
+product-code fault. The earlier menu preflight occurred before the test's app relaunch.
+
+The track proof now opens the named row's context menu in the current process before every
+attempt, requires its visible menu action and unique, hittable, separate system Preview, and
+drags that actual Preview by coordinates to the previously captured hittable bar. This is the
+second-touch path already used by the iPhone album-menu proof, so readiness no longer depends
+on a fixed press duration. The existing two-attempt ceiling remains. The oracle now also
+requires exactly one total appended entry, the named track at the tail, unchanged preceding
+queue order, a ready native menu for each drag, and no menu left open. The original paused
+`UI Playback Canary` must remain selected with Play displayed. No menu action substitutes for
+a drag. OBSERVED local baseline control on the initial unsigned build: one Passed Test Case
+in 98.546 seconds, one drag,
+one exact append and no open menu. That passing unchanged control establishes fixture/path
+health, not a reproduced hosted failure. OBSERVED with the revised source on an iPhone 17 Pro
+simulator, iOS 26.5 and Xcode 27.0, against disposable Navidrome 0.63.2: three Passed Repetition
+nodes on the initial unsigned build,
+zero failures, in 102.160, 100.047 and 99.453 seconds; xcodebuild exits 0. Each records
+`native-menu-ready=1 drags=1 menu-left-open-after=0`, empty Up Next becoming exactly
+`["Thirty One Seconds, Dulcet Fixtures"]`, and passing paused-canary assertions. The normally
+signed final build additionally passes one Test Case in 100.463 seconds, zero failures,
+xcodebuild exit 0, with the same one-menu/one-drag/exact-append and paused-canary receipts.
+Both final signed device runs use the same build. The full iOS
+UI-test target builds; the UI-source typecheck self-test and CI policy check pass (the standalone
+typechecker correctly reports the iOS UI directory uncovered because of AppIntentsTesting;
+the real Xcode build covers it). Hosted-load confirmation remains pending. No product source
+or workflow changes.
+
+### Playlist known-gone ordering under slow prompt queries (2026-10-24)
+
+OBSERVED in attempt 2 of main's full Apple run `40065138225` on `134b9300`, iPhone job
+`120812900260`, artifact `12554527041`, `dulcet-ios-playlist-edits.xcresult`: the playlist
+edit proof fails its still-pending-read assertion after 327.365 seconds. The console and
+exported session diagnostics show the known-gone playlist tapped at test time 229.38 seconds,
+Rename tapped at 249.79 seconds, and its alert lookup beginning at 252.83 seconds. The
+subsequent TextField existence query starts at 266.18 seconds and retries at 297.21 seconds.
+The proxy's 45-second safety hold cannot cover that interval. A historical held-read count
+does not establish that either the proxy or the client is still waiting. The underlying
+accessibility delay's cause is UNKNOWN; this artifact does not establish a product defect.
+
+OBSERVED in the production source: `AppleLibraryReaderClient`'s `productionComposer` creates
+`KtorLibraryEndpointTransport`, which delegates to `AuthenticatedEndpointClient`. Its
+`HttpTimeout` configuration sets request, connect and socket limits to 30,000 milliseconds.
+The Apple implementation uses Ktor's Darwin engine with a preconfigured NSURLSession; this
+playlist page does not use the native download or playback resource loader. The proxy's old
+comment claiming its 45-second hold was shorter than the app timeout was incorrect. Its
+numeric safety bound is unchanged; the comment now distinguishes it from client liveness.
+The configuration is source evidence, not a measured cancellation timestamp for the failed read.
+
+Step 9 now finishes the initial real page read, opens and verifies Rename, and backgrounds the
+app before arming the hold. The other client deletes the playlist and verifies its absence before
+the app returns to the foreground. That ordinary transition invokes the production reader's
+reconnect and visible-page revalidation. The proof requires this reread to arrive held and then
+explicitly releases it, with every held request released and zero hold timeouts. No Rename AX
+query occurs between the reread's arrival and its release. Afterward the page must say it is
+unavailable, the original Rename prompt must still be open, and confirming the edit must produce
+the persistent problem containing "deleted" without creating a renamed playlist. The order is
+still observed before confirmation; a client timeout or a lost prompt cannot satisfy the proof.
+The foreground-to-release interval is logged. Both iPhone and iPad use this same helper.
+
+Local runtime verification of this follow-up remains UNVERIFIED. The initial local phone
+build was interrupted with SIGTERM (exit 143) before any tests executed; its first boot was
+subsequently identified as a simulator boot storm. The replacement verification used a clone
+of the specified booted-once iPad Pro 13-inch (M5), iOS 26.5. Its gentle boot completed in
+11 seconds, but its build-for-testing also exited 143 and the device reported Shutdown.
+Execution stopped without another retry. There is no completed local result bundle and zero
+local XCTest executions for either the shared playlist flow or the five-case My Library suite.
+Local iPhone execution was explicitly deferred to hosted CI. Swift syntax parsing and
+`tools/typecheck-xcuitest-sources` pass for their covered sources; the latter correctly leaves
+these AppIntentsTesting-dependent UI groups to a real build, which did not finish. The proxy
+self-test passes 17 tests, fixture-readiness controls pass, CI policy validates 13 workflows,
+the parity gate validates 44 feature rows, and execution-guard controls pass. These checks do
+not establish runtime success or a hosted-load fix. No product source changed.
+
 OBSERVED in the iPad leg of full Apple run `39779874095` on `a7f5aac4`: 17 XCTest
 executions produce 16 passes and one failure. The album-tile drag case fails before navigation
 or any drag, at the initial global Sign Out query in `awaitLiveAccountConnection`
@@ -683,6 +813,35 @@ relaunch and reconnect assertions. The changed run emits no interaction-helper
 fallback. This single sequential pair establishes preserved local behavior; it
 supplies no local RED, hosted-timeout reproduction or causal speedup claim.
 Final-head full Apple execution remains required.
+
+OBSERVED in attempt 2 of main's full Apple run `40065138225` on `134b9300`, iPad job
+`120812900144`, artifact `12554843595`, `dulcet-ipad-my-library.xcresult`: the apparent
+restart during `testLibraryBrowseAndAlbumInLightDarkAndLargestText` belongs to the preceding
+`testBrowseAddRemoveRelaunchAndOfflineReplay` timeout. Exported
+`Session-DulcetiOSUITests-2026-10-24_090501-HuPOML.log` records an effective 300-second
+allowance at `09:05:46.277 UTC`, the timeout at `09:10:46.374`, and the coordinator entering
+`TestTimedOut` at `09:10:46.588`. The case continues executing and prints passed after
+379.757 seconds. Its final launch includes a 51.794-second native application-quiescence wait;
+the animations-idle reply arrived immediately, while the main-loop-idle reply had not arrived
+when the timeout fired. This is not evidence of an application crash or of an animation hang.
+At `09:12:31.399` the coordinator reports
+`XCTHTestOperationCoordinatorErrorDomain Code=13`, "Test exceeded execution time allowance
+of 5 minutes", after beginning the next case and its app termination. The generic restart
+message follows. The exported diagnostics contain no `.ips` or `.crash` report. The explicit
+coordinator timeout establishes the restart cause; why the main-loop reply was delayed remains
+UNKNOWN.
+
+The xcresult summary retains five tests, four passes, one failure and zero skips, identifying
+the offline/replay case as failed despite its console's later passed line. That run remains a
+failure. The long case performs six real launches in addition to download completion, offline
+native playback, durable add/remove, pending-write and reconnect checks. It now requests a
+finite 600-second execution allowance only on iPad. The iPad command permits that override
+with a 600-second maximum while retaining its 300-second default; every other case and platform
+keeps its previous allowance. All individual UI/server waits, proof assertions, exact execution
+checks and fatal xcodebuild status remain unchanged. ASSUMED: this headroom will accommodate
+similar hosted load; no local passing runtime or causal speedup is claimed. The interrupted
+local verification and passing static/tool controls are recorded in the playlist-ordering section
+above. Final-head hosted execution remains required; no workflow was dispatched for this follow-up.
 
 
 ### Positive empty Up Next readiness (2026-10-22)
