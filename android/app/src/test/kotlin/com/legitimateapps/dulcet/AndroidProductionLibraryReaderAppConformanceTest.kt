@@ -73,7 +73,7 @@ class AndroidProductionLibraryReaderAppConformanceTest {
                 compose.onNodeWithTag("library.albums").performScrollToIndex(index + 1)
                 compose.waitForIdle()
             }
-        }, platform = "android", reconnectCapabilityReads = listOf("getOpenSubsonicExtensions"))
+        }, platform = "android")
     }
 
     @Test fun conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline() =
