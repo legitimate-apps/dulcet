@@ -230,7 +230,9 @@ class DulcetApi(private val ctx: ServerContext) {
                 val p = call.principal(ctx, "catalog:read", "user:read")
                 val limit = call.request.queryParameters["limit"]?.let { it.toIntOrNull() ?: throw ApiProblem(400,"invalid-request") } ?: 20
                 if (limit !in 1..50) throw ApiProblem(400,"invalid-request")
-                val shelves = ctx.home.shelves(p.user.id, limit).map { shelf ->
+                val selected = ctx.home.shelves(p.user.id, limit)
+                ctx.apiMedia.warmArtwork(selected.flatMap { shelf -> shelf.ids.map { if(shelf.type=="playlist") "pl-$it" else it } }, p)
+                val shelves = selected.map { shelf ->
                     j("id" to shelf.id, "title" to shelf.title, "reason" to shelf.reason,
                         "items" to shelf.ids.mapNotNull { if (shelf.type=="playlist") ctx.apiUserData.resource("playlist",it,p) else ctx.apiCatalog.resource(shelf.type,it,p) })
                 }

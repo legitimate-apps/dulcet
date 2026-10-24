@@ -26,10 +26,10 @@ object SystemDiscoverClock : DiscoverClock {
     override suspend fun sleepMillis(millis: Long) = delay(millis)
 }
 data class UpstreamResponse(val status: Int, val headers: Map<String,List<String>>, val body: ByteArray)
-class UpstreamUnavailable(val retryAfterMillis: Long? = null) : RuntimeException("Discovery source unavailable")
+class UpstreamUnavailable(val retryAfterMillis: Long? = null, val reason: UpstreamFailure = UpstreamFailure.Unavailable) : RuntimeException("Discovery source unavailable")
 
 /** A single shared instance owns every client's origin queue. No caller headers are accepted. */
-class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private val userAgent: String = USER_AGENT) : AutoCloseable {
+class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private val userAgent: String = USER_AGENT, private val diagnostics: DiscoverDiagnostics = DiscoverDiagnostics.shared) : AutoCloseable {
     private class Gate {
         val mutex = Mutex(); val waiting = AtomicInteger()
         var lastStart: Long? = null; var blockedUntil = 0L; var gapMillis = 1000L
@@ -55,14 +55,23 @@ class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private
         return request(uri,maxBytes)
     }
     internal suspend fun request(uri: URI, maxBytes: Int, pinned: java.net.InetAddress? = null): UpstreamResponse {
+        val started=clock.monotonicNanos()
+        var status: Int?=null
+        var outcome: UpstreamFailure?=null
+        var appliedBackoff=false
+        var sent=false
         val g=gate(uri)
-        if(g.waiting.incrementAndGet()>65) { g.waiting.decrementAndGet(); throw UpstreamUnavailable() }
+        if(g.waiting.incrementAndGet()>65) {
+            g.waiting.decrementAndGet()
+            diagnostics.http(uri,clock.monotonicNanos()-started,null,UpstreamFailure.WaitingCap,false,false)
+            throw UpstreamUnavailable(reason=UpstreamFailure.WaitingCap)
+        }
         try {
             return g.mutex.withLock {
-                if(closed) throw UpstreamUnavailable()
+                if(closed) throw UpstreamUnavailable(reason=UpstreamFailure.Closed)
                 fun checkBackoff() {
                     val remaining=g.blockedUntil-clock.monotonicNanos()
-                    if(remaining>0) throw UpstreamUnavailable((remaining+999_999)/1_000_000)
+                    if(remaining>0) throw UpstreamUnavailable((remaining+999_999)/1_000_000,UpstreamFailure.Backoff)
                 }
                 checkBackoff()
                 g.lastStart?.let { start ->
@@ -70,11 +79,11 @@ class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private
                     if(remaining>0) clock.sleepMillis((remaining+999_999)/1_000_000)
                 }
                 currentCoroutineContext().ensureActive(); checkBackoff()
-                g.lastStart=clock.monotonicNanos(); onRequest?.invoke()
+                g.lastStart=clock.monotonicNanos(); sent=true; onRequest?.invoke()
                 try {
                     val response=if(pinned!=null) PinnedImageHttp.get(uri,pinned,maxBytes,userAgent) else withContext(Dispatchers.IO) {
                         val req=HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).header("User-Agent",userAgent).header("Accept","application/json, image/*").GET().build()
-                        val sending=client.sendAsync(req,HttpResponse.BodyHandler { BoundedBody(maxBytes) })
+                        val sending=client.sendAsync(req,HttpResponse.BodyHandler { info -> status=info.statusCode(); BoundedBody(maxBytes) })
                         val future=sending.copy().orTimeout(10,java.util.concurrent.TimeUnit.SECONDS)
                         val received=suspendCancellableCoroutine<HttpResponse<ByteArray>> { continuation ->
                             continuation.invokeOnCancellation { sending.cancel(true) }
@@ -85,18 +94,32 @@ class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private
                         }
                         UpstreamResponse(received.statusCode(),received.headers().map().mapKeys { it.key.lowercase() },received.body())
                     }
+                    status=response.status
                     val headers=response.headers
                     val delay=backoff(response.status,headers)
-                    if(delay!=null) g.blockedUntil=maxOf(g.blockedUntil,clock.monotonicNanos()+delay*1_000_000)
-                    if(response.status==429 || response.status==503) throw UpstreamUnavailable(delay)
+                    if(delay!=null) {
+                        g.blockedUntil=maxOf(g.blockedUntil,clock.monotonicNanos()+delay*1_000_000)
+                        appliedBackoff=delay>0
+                    }
+                    if(response.status==429 || response.status==503) throw UpstreamUnavailable(delay,UpstreamFailure.HttpStatus)
                     val length=headers["content-length"]?.firstOrNull()?.toLongOrNull()
-                    if(response.body.size>maxBytes || (length!=null && length!=response.body.size.toLong())) throw UpstreamUnavailable()
+                    if(response.body.size>maxBytes || (length!=null && length!=response.body.size.toLong())) throw UpstreamUnavailable(reason=UpstreamFailure.Body)
                     response
                 } catch(e: CancellationException) { throw e }
                   catch(e: UpstreamUnavailable) { throw e }
-                  catch(_: Exception) { throw UpstreamUnavailable() }
+                  catch(e: Exception) {
+                      val cause=generateSequence(e as Throwable) { it.cause }.take(8).last()
+                      val timeout=cause is java.net.http.HttpTimeoutException || cause is java.util.concurrent.TimeoutException || cause is java.net.SocketTimeoutException
+                      throw UpstreamUnavailable(reason=(cause as? UpstreamUnavailable)?.reason ?: if(timeout) UpstreamFailure.Timeout else UpstreamFailure.Transport)
+                  }
             }
-        } finally { g.waiting.decrementAndGet() }
+        } catch(e:CancellationException) { outcome=UpstreamFailure.Cancelled; throw e }
+          catch(e:UpstreamUnavailable) { outcome=e.reason; throw e }
+          finally {
+              g.waiting.decrementAndGet()
+              // Cancellation is classified separately, including whether a wire request started.
+              diagnostics.http(uri,clock.monotonicNanos()-started,status,outcome,appliedBackoff,sent)
+          }
     }
     private fun backoff(status: Int, headers: Map<String,List<String>>): Long? {
         fun seconds(name:String)=headers[name]?.firstOrNull()?.toLongOrNull()?.coerceAtLeast(0)?.coerceAtMost(7*86400)?.times(1000)
@@ -117,7 +140,7 @@ class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private
         override fun onSubscribe(value:java.util.concurrent.Flow.Subscription) { subscription=value; value.request(1) }
         override fun onNext(chunks:List<java.nio.ByteBuffer>) {
             if(chunks.sumOf { it.remaining().toLong() }+output.size()>maxBytes) {
-                subscription.cancel(); result.completeExceptionally(UpstreamUnavailable()); return
+                subscription.cancel(); result.completeExceptionally(UpstreamUnavailable(reason=UpstreamFailure.Body)); return
             }
             chunks.forEach { chunk -> val bytes=ByteArray(chunk.remaining()); chunk.get(bytes); output.write(bytes) }
             subscription.request(1)

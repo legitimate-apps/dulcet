@@ -21,7 +21,7 @@ data class ScanResult(val added: Int, val updated: Int, val removed: Int, val un
 
 /**
  * Walks the music folder and keeps the catalog in step with it. A file is probed only when it is
- * new or its size or modification time changed; a vanished file's row goes. Albums and artists are
+ * new or its metadata identity changed; a vanished file's row goes. Albums and artists are
  * then regrouped from the tracks, which is cheap and keeps grouping rules in one place.
  */
 class Scanner(
@@ -31,7 +31,7 @@ class Scanner(
     private val clock: () -> Long = System::currentTimeMillis,
     private val afterCatalogCommit:(ScanDelta)->Unit = {},
 ) {
-    init { db.write { execute("CREATE TABLE IF NOT EXISTS wishlist_scan_pending(id TEXT PRIMARY KEY,scan_id TEXT NOT NULL,track_ids TEXT NOT NULL,album_ids TEXT NOT NULL,artist_ids TEXT NOT NULL,next_attempt INTEGER NOT NULL DEFAULT 0)") } }
+    init { db.write { execute("CREATE TABLE IF NOT EXISTS track_file_identity_v1(path TEXT PRIMARY KEY,identity TEXT NOT NULL)"); execute("CREATE TABLE IF NOT EXISTS wishlist_scan_pending(id TEXT PRIMARY KEY,scan_id TEXT NOT NULL,track_ids TEXT NOT NULL,album_ids TEXT NOT NULL,artist_ids TEXT NOT NULL,next_attempt INTEGER NOT NULL DEFAULT 0)") } }
     private val log = LoggerFactory.getLogger(Scanner::class.java)
     private val running = AtomicBoolean(false)
     private val progress = AtomicInteger(0)
@@ -122,16 +122,29 @@ class Scanner(
         val removed = existing.keys.filter { it !in present }
         // Migration seeds old ids without fingerprints; fill them before an unchanged file moves.
         val missingFingerprints = db.read { query("SELECT path FROM track_identity WHERE fingerprint IS NULL OR fingerprint NOT LIKE 'packet-sha256:%'") { it.string("path") }.toSet() }
-        val changed = files.filter { file ->
-            val old = existing[file.relative]
-            old == null || file.relative in missingFingerprints || old.mtime != file.mtime || old.size != file.size || old.sidecar != file.sidecar
+        // Versioned and separate from track rows: older scanners cannot overwrite the baseline.
+        // Adopt an existing unchanged file without probing on upgrade. Edits hidden by the old
+        // size/mtime predicate before adoption remain undetectable until its next identity change.
+        val previousIdentities = db.read {
+            query("SELECT path,identity FROM track_file_identity_v1") { it.string("path") to it.string("identity") }.toMap()
         }
-        val unchanged = files.size - changed.size
-        // Cache stat identities within this scan, including shared artist/album sources. No
-        // image decoding or audio probing is needed to detect an artwork-only file replacement.
         val identities = HashMap<String, String>()
         fun identity(relative: String): String = identities.getOrPut(relative) {
             com.legitimateapps.dulcet.server.musicFile(root, root.resolve(relative))?.let(::artworkFileIdentity) ?: "missing"
+        }
+        val changed = files.filter { file ->
+            val old = existing[file.relative]
+            val currentIdentity = identity(file.relative)
+            old == null || file.relative in missingFingerprints || old.mtime != file.mtime || old.size != file.size || old.sidecar != file.sidecar ||
+                previousIdentities[file.relative]?.let { it != currentIdentity } == true
+        }
+        val unchanged = files.size - changed.size
+        val changedPaths = changed.map { it.relative }.toSet()
+        fun Db.Session.saveIdentities(successful: Set<String>) {
+            val eligible = files.filter { it.relative !in changedPaths || it.relative in successful }
+            batch("INSERT INTO track_file_identity_v1(path,identity) VALUES(?,?) ON CONFLICT(path) DO UPDATE SET identity=excluded.identity",
+                eligible.filter { previousIdentities[it.relative] != identities.getValue(it.relative) }.map { listOf(it.relative,identities.getValue(it.relative)) })
+            removed.forEach { execute("DELETE FROM track_file_identity_v1 WHERE path=?",it) }
         }
         val artStamp = folderArt.toSortedMap().entries.joinToString("\n") { (dir,name) ->
             "$dir/$name:${if (name.isEmpty()) "none" else identity(if (dir.isEmpty()) name else "$dir/$name")}"
@@ -142,6 +155,8 @@ class Scanner(
                 sourceStamps(ARTIST_ART_SOURCES) != artistArtSources(root, ::identity)
         }
         if (!force && !artworkChanged && !artChanged && changed.isEmpty() && removed.isEmpty()) {
+            if (files.any { it.relative !in previousIdentities }) db.write { saveIdentities(emptySet()) }
+            log.info("scan unchanged in {} ms: tracks={} tags_read=0 identities_adopted={}", clock()-started, unchanged, files.count { it.relative !in previousIdentities })
             return ScanResult(added = 0, updated = 0, removed = 0, unchanged = unchanged, failed = 0)
         }
         // ffprobe is a process per file; a few in parallel keep a first scan short.
@@ -177,6 +192,8 @@ class Scanner(
         val now = clock()
         var delta:ScanDelta?=null
         db.write {
+            // Persist only successful probes and unchanged adoptions. Failed reads must retry.
+            saveIdentities(probed.map { it.path }.toSet())
             // Issuance order must outlive journal retention and cannot be inferred from UUID order.
             execute("CREATE TABLE IF NOT EXISTS api_album_issued (ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE)")
             execute("INSERT OR IGNORE INTO api_album_issued(id) SELECT id FROM album ORDER BY created,rowid")
@@ -327,6 +344,7 @@ class Scanner(
         }
         delta?.let { runCatching { afterCatalogCommit(it) }.onFailure { log.warn("wish fulfilment wakeup deferred") } }
         val result = ScanResult(added = probed.count { existing[it.path] == null }, updated = probed.count { existing[it.path] != null }, removed = removed.size, unchanged = unchanged, failed = failed)
+        log.info("scan work: tracks={} tags_read={} identities_adopted={}", files.size, changed.size, files.count { it.relative !in previousIdentities })
         log.info("scan finished in {} ms: {}", clock() - started, result)
         return result
     }
