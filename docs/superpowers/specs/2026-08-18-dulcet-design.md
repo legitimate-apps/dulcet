@@ -7945,8 +7945,11 @@ Ready. Migration backfills existing entries from the account's pinned track cach
 absent metadata stays unknown and retains the existing album-source fallback. Metadata belongs to
 the entry and leaves with its removal. Album-track and search-result copies retain their album id on both shells, including server
 `albumId` values and cached search rows. Android selected-song and system-media adapters retain
-the same context. A stop point spent by a queue edit clears its timer before starting the paused
-successor, just as a playback-event transition does.
+the same context. Downloaded selections read the album id through the production download-cache
+adapter before queue insertion; both album id and duration survive a cold controller restore
+without a server metadata request. The legacy library enumeration and committed-snapshot adapters
+also retain the album id inside each playable track. A stop point spent by a queue edit clears
+its timer before starting the paused successor, just as a playback-event transition does.
 The directly exported sleep countdown clamps negative fades to zero and nonpositive lengths to
 an immediate deadline; arithmetic saturates at the clock range instead of throwing or wrapping.
 
