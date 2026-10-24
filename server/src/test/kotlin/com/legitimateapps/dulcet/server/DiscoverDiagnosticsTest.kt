@@ -96,6 +96,24 @@ class DiscoverDiagnosticsTest {
             }
         }
     }
+    @Test fun disabledArtworkAndListenBrainzDoNotInventUpstreamFailures() = runBlocking {
+        Db.inMemory().use { db ->
+            val lines=mutableListOf<String>(); val diagnostics=DiscoverDiagnostics { lines+=it }
+            val cache=DiscoverCache(db,diagnostics=diagnostics)
+            PoliteHttp(diagnostics=diagnostics).use { http ->
+                val settings=DiscoverSettings(enabled=false)
+                var resolved=false
+                val art=CoverArtClient(http,cache,settings,resolver={ resolved=true; error("disabled artwork must not resolve upstream") })
+                val image=art.thumbnail("11111111-1111-4111-8111-111111111111")
+                assertEquals("image/svg+xml",image.contentType,"A disabled missing artwork lookup must retain the existing placeholder behavior")
+                assertFalse(resolved,"The cache-only condition must actually avoid DNS and HTTP")
+                val failure=assertFailsWith<UpstreamUnavailable> { ListenBrainzClient(http,cache,settings).freshReleases() }
+                assertEquals(UpstreamFailure.CacheOnly,failure.reason)
+                assertTrue(lines.isEmpty(),"Neither deliberately disabled provider is an upstream refresh failure")
+                assertTrue(diagnostics.snapshot().isEmpty())
+            }
+        }
+    }
     @Test fun resolverTimeoutWithoutCachedValueIsObservable() = runBlocking {
         Db.inMemory().use { db ->
             val lines=mutableListOf<String>(); val diagnostics=DiscoverDiagnostics { lines+=it }
