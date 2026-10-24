@@ -21,8 +21,9 @@ import com.legitimateapps.dulcet.playback.PlaybackBinding
 
 /**
  * The album in [publication] queued from the track with [trackRawId], or from its first playable
- * track when that one cannot play or is null. False, and nothing played, when [publication] is not
- * an album or when nothing in it can play. Pressed before the playback service is bound, the play is
+ * track when [trackRawId] is null. False, and nothing played, when [publication] is not an album,
+ * when nothing in it can play, or when the track with [trackRawId] cannot play: a chosen track that
+ * cannot play never starts a different one. Pressed before the playback service is bound, the play is
  * held by [playback] and made once it binds; [started] runs when the queue is handed to the controller.
  */
 public fun playAlbum(
