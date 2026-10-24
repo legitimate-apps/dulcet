@@ -2812,7 +2812,7 @@ jobs:
     needs: [apple-plan, apple-conformance-ipad-iphone]
     if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 75
+    timeout-minutes: 95
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -2851,7 +2851,8 @@ jobs:
         timeout-minutes: 20
         run: tools/ci/run-discover-wishlist-proofs iphone --build-for-testing
       - name: Drive Discover and Wishlist through the native iphone app
-        timeout-minutes: 30
+        # Includes cold simulator startup and the five measured multi-launch UI proofs.
+        timeout-minutes: 45
         env:
           DULCET_DISCOVER_PREBUILT: "true"
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-iphone/fixture" -- tools/ci/run-discover-wishlist-proofs iphone
@@ -2885,7 +2886,7 @@ jobs:
     needs: [apple-plan, apple-conformance-ipad-iphone]
     if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 75
+    timeout-minutes: 95
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -2924,7 +2925,8 @@ jobs:
         timeout-minutes: 20
         run: tools/ci/run-discover-wishlist-proofs ipad --build-for-testing
       - name: Drive Discover and Wishlist through the native ipad app
-        timeout-minutes: 30
+        # Includes cold simulator startup and the five measured multi-launch UI proofs.
+        timeout-minutes: 45
         env:
           DULCET_DISCOVER_PREBUILT: "true"
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-ipad/fixture" -- tools/ci/run-discover-wishlist-proofs ipad
