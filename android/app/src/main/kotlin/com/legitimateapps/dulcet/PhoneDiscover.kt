@@ -64,8 +64,13 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
     openArtist: (String) -> Unit, openAlbum: (String) -> Unit, embedded: Boolean = false) {
     val publication by session.publication.collectAsState()
     val state = publication ?: return
-    LaunchedEffect(session) { session.refreshWishlist(WishFilter()) }
     var query by rememberSaveable(session) { mutableStateOf(state.query) }
+    LaunchedEffect(session) {
+        // Saved UI state can outlive its reader after activity recreation. Restore the
+        // request too, so a populated field cannot sit above an empty replacement session.
+        if (query != state.query) session.setQuery(query)
+        session.refreshWishlist(WishFilter())
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).testTag("discover.search.surface")) {
         if (!embedded) Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         OutlinedTextField(query, { query = it; session.setQuery(it) }, label = { Text(stringResource(R.string.discover_search_hint)) },

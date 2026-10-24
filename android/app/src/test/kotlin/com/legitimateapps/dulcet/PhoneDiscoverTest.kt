@@ -2,11 +2,14 @@ package com.legitimateapps.dulcet
 
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.search.conformance.FakeDiscoverWishlistSource
@@ -46,6 +49,26 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.item.artist.0").assertIsDisplayed()
         compose.onNodeWithTag("discover.group.album").assertExists()
         assertEquals("new",source.queries.last())
+    }
+    @Test fun aRestoredQueryIsSubmittedToTheReplacementReaderSession() {
+        val sources=mutableListOf<FakeDiscoverWishlistSource>()
+        val restoration=StateRestorationTester(compose)
+        restoration.setContent {
+            val restoredSession=remember {
+                DiscoverWishlistSession(FakeDiscoverWishlistSource().also { sources+=it })
+            }
+            DisposableEffect(restoredSession) { onDispose { restoredSession.close() } }
+            MaterialTheme { PhoneDiscoverSearch(restoredSession,{}, {}, {}) }
+        }
+        compose.onNodeWithTag("discover.search.field").performTextInput("new")
+        assertEquals("new",sources.single().queries.last())
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("discover.search.field").assertTextContains("new")
+        compose.runOnIdle {
+            assertEquals(2,sources.size)
+            assertEquals("new",sources.last().queries.lastOrNull(),
+                "A restored field must drive the new reader, rather than showing a query with no results")
+        }
     }
     @Test fun busyStaleAndOfflineKeepRowsVisible() {
         source.state=source.state.copy(connection="offline",query="music",groups=listOf(DiscoverGroup("album",source.page(listOf(source.item("album")),stale=true),false,DiscoverFailure("rate-limited",System.currentTimeMillis()+120_000,true))))

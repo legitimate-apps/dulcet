@@ -69,7 +69,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
 
     @Test fun everywherePagesAndHeldRoute() {
         freshAccount()
-        launch().use {
+        launch().use { activity ->
             everywhere("positive")
             requireText("Data from MusicBrainz and ListenBrainz")
             val delayed=fixture.arm("delayed-old-query")
@@ -83,6 +83,13 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(text("discover.search.field").contains("new"))
             check(!allVisibleText().contains("Obsolete old query")) {"An acknowledged old response replaced the new query rows"}
             check(text("discover.item.artist.0").contains("Fixture Artist")) {"No positive new-query artist row"}
+            val beforeRecreation=fixture.cursor()
+            activity.recreate()
+            await("restored query and rows after reader replacement") {
+                exists("discover.search.field") && text("discover.search.field").contains("new") &&
+                    exists("discover.item.artist.0") && text("discover.item.artist.0").contains("Fixture Artist")
+            }
+            fixture.awaitRequest("searchDulcetDiscover",beforeRecreation)
             click("discover.more.artist")
             awaitTag("discover.item.artist.20")
             click("discover.item.artist.0")
