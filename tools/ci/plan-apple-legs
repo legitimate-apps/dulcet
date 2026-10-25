@@ -4,11 +4,12 @@
 spec §21.6. A pull request runs `apple-platform` only when it changes something an Apple build can
 read, and never runs the two conformance jobs, `apple-conformance-core` and
 `apple-conformance-ipad-iphone`; a push to `main` and a plain dispatch run every leg. A dispatch
-with --conformance-only true runs only the conformance jobs. The
+with --conformance-only true runs only the conformance and Discover jobs. A dispatch
+with --discover-only true runs the three Discover jobs and skips the baseline jobs. The
 required `apple-ci` job always runs, because a check that never reports blocks a merge forever.
 
-  plan-apple-legs plan --event EVENT [--changed-files FILE] [--conformance-only true|false]
-      Prints `platform=true|false` and `conformance=true|false` as step outputs on stdout, and the
+  plan-apple-legs plan --event EVENT [--changed-files FILE] [--conformance-only true|false] [--discover-only true|false]
+      Prints `platform=true|false`, `conformance=true|false` and `discover=true|false` as step outputs on stdout, and the
       reason on stderr. On a pull request the changed paths come from FILE (one per line) or, when
       it is omitted, from `git diff --name-only HEAD^1 HEAD` on the merge commit Actions checks out.
       Unknown events plan every leg. An unreadable or empty PR diff plans the platform leg.
@@ -115,8 +116,10 @@ def apple_affecting(path: str) -> bool:
     return not any(fnmatch.fnmatchcase(path, pattern) for pattern in NOT_APPLE)
 
 
-def plan(event: str, changed: list[str] | None, conformance_only: bool = False) -> tuple[bool, bool, str]:
+def plan(event: str, changed: list[str] | None, conformance_only: bool = False, discover_only: bool = False) -> tuple[bool, bool, str]:
     """(platform, conformance, reason). `changed` is None when the diff could not be read."""
+    if event == "workflow_dispatch" and discover_only:
+        return False, False, "manual dispatch requested Discover proofs only (not a full release run)"
     if event == "workflow_dispatch" and conformance_only:
         return False, True, "manual dispatch requested conformance only (not a full release run)"
     if event != "pull_request":
@@ -154,6 +157,7 @@ def main() -> int:
     plan_parser.add_argument("--event", required=True)
     plan_parser.add_argument("--changed-files")
     plan_parser.add_argument("--conformance-only", choices=("true", "false"), default="false")
+    plan_parser.add_argument("--discover-only", choices=("true", "false"), default="false")
     require = commands.add_parser("require-leg")
     require.add_argument("planned")
     require.add_argument("result")
@@ -176,11 +180,13 @@ def main() -> int:
                 changed = [line.strip() for line in handle if line.strip()]
         else:
             changed = merge_diff()
-    platform, conformance, reason = plan(arguments.event, changed, arguments.conformance_only == "true")
+    platform, conformance, reason = plan(arguments.event, changed, arguments.conformance_only == "true", arguments.discover_only == "true")
     print(f"APPLE LEG PLAN platform={str(platform).lower()} "
           f"conformance={str(conformance).lower()}: {reason}", file=sys.stderr)
     print(f"platform={str(platform).lower()}")
     print(f"conformance={str(conformance).lower()}")
+    discover = conformance or (arguments.event == "workflow_dispatch" and arguments.discover_only == "true")
+    print(f"discover={str(discover).lower()}")
     return 0
 
 

@@ -103,6 +103,14 @@ for changed in (["core/X.kt"], ["docs/a.md"], None, []):
     expect(planner.plan("pull_request", changed, True) == planner.plan("pull_request", changed),
            "conformance-only cannot change a pull request's plan")
 
+# A Discover-only dispatch is diagnostic. Automatic events cannot use it to reduce their plan.
+expect(planner.plan("workflow_dispatch", None, discover_only=True)[:2] == (False, False),
+       "Discover-only dispatch skips baseline jobs")
+for event in ("push", "pull_request", "schedule", "merge_group", ""):
+    expect(planner.plan(event, ["apple/project.yml"], discover_only=True) ==
+           planner.plan(event, ["apple/project.yml"]),
+           f"Discover-only input cannot suppress automatic event {event!r}")
+
 # --- require-leg: exactly two accepted pairs, everything else refused.
 ACCEPTED = {("true", "success"), ("false", "skipped")}
 for planned in ("true", "false", "", "TRUE", "1", "True"):
@@ -122,6 +130,9 @@ with tempfile.TemporaryDirectory() as directory:
         ("plain dispatch", "workflow_dispatch", "", [], True, True),
         ("explicit full dispatch", "workflow_dispatch", "", ["--conformance-only", "false"], True, True),
         ("conformance-only dispatch", "workflow_dispatch", "", ["--conformance-only", "true"], False, True),
+        ("Discover-only dispatch", "workflow_dispatch", "", ["--discover-only", "true"], False, False),
+        ("push ignores Discover-only", "push", "", ["--discover-only", "true"], True, True),
+        ("PR ignores Discover-only", "pull_request", "apple/project.yml\n", ["--discover-only", "true"], True, False),
         ("push ignores dispatch input", "push", "", ["--conformance-only", "true"], True, True),
     )
     for label, event, changed, options, platform, conformance in cases:
@@ -129,13 +140,16 @@ with tempfile.TemporaryDirectory() as directory:
         result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", event,
                                  "--changed-files", str(listing), *options],
                                 capture_output=True, text=True, check=True)
-        expected = f"platform={str(platform).lower()}\nconformance={str(conformance).lower()}\n"
+        discover = conformance or (event == "workflow_dispatch" and options == ["--discover-only", "true"])
+        expected = f"platform={str(platform).lower()}\nconformance={str(conformance).lower()}\ndiscover={str(discover).lower()}\n"
         expect(result.stdout == expected, f"{label} outputs: {result.stdout!r}")
         print(f"CLI EXECUTED {label}: {result.stdout.strip().replace(chr(10), ' ')}")
-    for value in ("TRUE", "1", "yes", ""):
-        result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "workflow_dispatch",
-                                 "--conformance-only", value], capture_output=True, text=True)
-        expect(result.returncode != 0 and not result.stdout, f"invalid input {value!r} must fail closed")
+    for option in ("--conformance-only", "--discover-only"):
+        for value in ("TRUE", "1", "yes", ""):
+            result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "workflow_dispatch",
+                                     option, value], capture_output=True, text=True)
+            expect(result.returncode != 0 and not result.stdout,
+                   f"invalid {option} input {value!r} must fail closed")
 
 # --- The diff read from a real merge commit, and the fail-safe on a checkout that is not one.
 with tempfile.TemporaryDirectory() as directory:
@@ -153,7 +167,7 @@ with tempfile.TemporaryDirectory() as directory:
     (Path(directory) / "README.md").write_text("base\n")
     git("add", ".")
     git("commit", "-q", "-m", "base")
-    expect(plan_here() == "platform=true\nconformance=false\n",
+    expect(plan_here() == "platform=true\nconformance=false\ndiscover=false\n",
            "a checkout that is not a merge commit must run the platform leg")
     git("checkout", "-q", "-b", "topic")
     (Path(directory) / "docs").mkdir()
@@ -166,7 +180,7 @@ with tempfile.TemporaryDirectory() as directory:
     git("commit", "-q", "-m", "main moved")
     git("merge", "-q", "--no-ff", "-m", "merge", "topic")
     expect(planner.merge_diff is not None, "merge_diff exists")
-    expect(plan_here() == "platform=false\nconformance=false\n",
+    expect(plan_here() == "platform=false\nconformance=false\ndiscover=false\n",
            "a docs-only merge commit runs no Apple leg")
     (Path(directory) / "core").mkdir()
     (Path(directory) / "core" / "X.kt").write_text("x\n")
@@ -175,7 +189,7 @@ with tempfile.TemporaryDirectory() as directory:
     git("commit", "-q", "-m", "core")
     git("checkout", "-q", "main")
     git("merge", "-q", "--no-ff", "-m", "merge 2", "topic")
-    expect(plan_here() == "platform=true\nconformance=false\n",
+    expect(plan_here() == "platform=true\nconformance=false\ndiscover=false\n",
            "a merge commit carrying a core change runs the platform leg")
 
 # --- Closure: no excluded tool is named by anything the Apple legs read. An excluded tool that an

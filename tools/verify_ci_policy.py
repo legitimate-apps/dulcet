@@ -1117,7 +1117,7 @@ def discover_native_condition_errors(lines: list[str]) -> list[str]:
     The aggregate still requires every leg to succeed. Cancellation stops all remaining work.
     """
     result = []
-    expected = "${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}"
+    expected = "${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}"
     for name, start, end in job_spans(lines):
         if name in {"discover-wishlist-iphone", "discover-wishlist-ipad", "discover-wishlist-macos"}:
             if job_properties(lines, start, end).get("if") != expected:
