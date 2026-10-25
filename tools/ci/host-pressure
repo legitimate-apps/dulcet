@@ -15,6 +15,7 @@ Subcommands:
   mark    FILE NAME                            append a phase boundary (with booted-simulator count)
   stop    FILE                                 stop sampling and bound worker cleanup before upload
   summarize FILE                               print one line per phase: deltas and peaks
+  settle --phase NAME [--output FILE]           require a quiet post-boot pressure window
 
 Samples are cumulative kernel counters (vm_stat) plus swap use and load average; every
 sample also lists the largest processes by resident memory, summed by command name, so a phase
@@ -28,6 +29,7 @@ The stop command cuts off unfinished workers before diagnostics upload, recordin
 pressure is the DELTA of the counters between its mark and the next one, so the sampler can run
 for the whole job without any phase needing to know about it. Stdlib only.
 """
+import argparse
 import json
 from pathlib import Path
 import os
@@ -50,8 +52,9 @@ COUNTERS = {
 CUMULATIVE = ("pageins", "pageouts", "swapins", "swapouts", "compressions", "decompressions")
 
 
-def vm_stat() -> dict:
-    out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=10).stdout
+def vm_stat(timeout: float = 10) -> dict:
+    out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=timeout,
+                         check=True).stdout
     page = re.search(r"page size of (\d+) bytes", out)
     values = {"page_bytes": int(page.group(1)) if page else 0}
     for line in out.splitlines():
@@ -62,9 +65,9 @@ def vm_stat() -> dict:
     return values
 
 
-def swap_used_mb() -> float | None:
+def swap_used_mb(timeout: float = 10) -> float | None:
     out = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True,
-                         timeout=10).stdout
+                         timeout=timeout, check=True).stdout
     match = re.search(r"used = ([0-9.]+)M", out)
     return float(match.group(1)) if match else None
 
@@ -292,6 +295,91 @@ def mark(path: str, name: str) -> int:
     return 0
 
 
+# Service counts stabilize while already-running widgets are still paging. These are initial
+# admission thresholds, not a classifier of test failures: see #343 and docs/TRAPS.md. A full
+# minute must stay below all three limits, without a renewed load rise. Swap occupancy can stay
+# high after I/O stops; free pages alone also exclude reclaimable memory. Log both, gate on work.
+PRESSURE_WINDOW_SECONDS = 60
+PRESSURE_TIMEOUT_SECONDS = 900
+PRESSURE_POLL_SECONDS = 10
+
+
+def pressure_window(readings: list[dict]) -> dict:
+    """Evaluate consecutive fresh kernel readings; unknown/reset counters cannot mean quiet."""
+    unknown = dict(quiet=False, reason="insufficient-window")
+    if len(readings) < 2:
+        return unknown
+    recent = [readings[-1]]
+    for row in reversed(readings[:-1]):
+        recent.insert(0, row)
+        if recent[-1]["seconds"] - row["seconds"] >= PRESSURE_WINDOW_SECONDS:
+            break
+    if recent[-1]["seconds"] - recent[0]["seconds"] < PRESSURE_WINDOW_SECONDS:
+        return unknown
+    rates, swaps = [], []
+    for a, b in zip(recent, recent[1:]):
+        dt = b["seconds"] - a["seconds"]
+        keys = ("pageins", "swapins", "swapouts", "page_bytes", "free_pages", "load1", "swapUsedMb")
+        if (not 0 < dt <= 2 * PRESSURE_POLL_SECONDS or
+                any(r.get(k) is None for r in (a, b) for k in keys) or
+                a["page_bytes"] <= 0 or a["page_bytes"] != b["page_bytes"]):
+            return dict(quiet=False, reason="unknown-or-stale-reading")
+        deltas = {k: b[k] - a[k] for k in ("pageins", "swapins", "swapouts")}
+        if min(deltas.values()) < 0:
+            return dict(quiet=False, reason="counter-reset")
+        unit = b["page_bytes"] / 1_048_576 / dt
+        rates.append(deltas["pageins"] * unit)
+        swaps.append((deltas["swapins"] + deltas["swapouts"]) * unit)
+    load = max(r["load1"] for r in recent)
+    quiet = (max(rates) <= 20 and max(swaps) <= 1 and load <= 120 and
+             recent[-1]["load1"] <= recent[0]["load1"] * 1.1)
+    return dict(quiet=quiet, reason="quiet" if quiet else "busy",
+                pageins_max_mb_s=round(max(rates), 2), swapio_max_mb_s=round(max(swaps), 2),
+                load1_max=round(load, 1), free_min_mb=round(min(
+                    r["free_pages"] * r["page_bytes"] / 1_048_576 for r in recent), 1),
+                swap_used_max_mb=max(r["swapUsedMb"] for r in recent))
+
+
+def settle_pressure(phase: str, output: str | None = None,
+                    timeout: float = PRESSURE_TIMEOUT_SECONDS) -> int:
+    """Bound the admission wait, fail closed, and keep its paging out of the proof's phase."""
+    started = time.monotonic()
+    deadline = started + timeout
+    if output:
+        mark(output, "post-boot-pressure-" + phase)
+    readings = []
+    verdict = dict(quiet=False, reason="no-reading")
+    while time.monotonic() < deadline:
+        try:
+            memory = vm_stat(timeout=min(10, deadline - time.monotonic()))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            swap = swap_used_mb(timeout=min(10, remaining))
+            readings.append(dict(seconds=time.monotonic() - started, **memory,
+                                 swapUsedMb=swap, load1=os.getloadavg()[0]))
+            verdict = pressure_window(readings)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            readings.clear()
+            verdict = dict(quiet=False, reason=type(error).__name__)
+        elapsed = time.monotonic() - started
+        accepted = verdict["quiet"] and time.monotonic() < deadline
+        record = dict(event="pressure-settle", phase=phase, elapsedSeconds=round(elapsed, 1),
+                      settled=accepted, **verdict)
+        print("HOST PRESSURE SETTLE " + json.dumps(record, separators=(",", ":")), flush=True)
+        if output:
+            append(output, record)
+        if accepted:
+            return 0
+        time.sleep(max(0, min(PRESSURE_POLL_SECONDS, deadline - time.monotonic())))
+    record = dict(event="pressure-settle-result", phase=phase, settled=False, reason="deadline",
+                  elapsedSeconds=round(time.monotonic() - started, 1), last=verdict)
+    print("HOST PRESSURE SETTLE " + json.dumps(record, separators=(",", ":")), flush=True)
+    if output:
+        append(output, record)
+    return 1
+
+
 def summarize(path: str) -> int:
     records = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
     samples = [r for r in records if r.get("event") == "sample"]
@@ -349,6 +437,12 @@ def summarize(path: str) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if argv and argv[0] == "settle":
+        parser = argparse.ArgumentParser(description="Wait for a full quiet post-boot pressure window")
+        parser.add_argument("--phase", required=True)
+        parser.add_argument("--output")
+        args = parser.parse_args(argv[1:])
+        return settle_pressure(args.phase, args.output)
     if len(argv) == 5 and argv[0] == "capture":
         return capture_stack(int(argv[1]), argv[2], argv[3], argv[4])
     if len(argv) >= 2 and argv[0] == "sample":

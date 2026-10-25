@@ -135,6 +135,71 @@ for did_settle in [True, False]:
     assert ('bootstatus', 'IPAD', '-b') in calls
     print(f'SETTLE ACK CONTROL PASS observed={did_settle} accepted={did_settle}')
 
+# Pressure admission is mandatory when requested, even if service counts already stabilized.
+for pressure_ok in [True, False]:
+    arguments = [TOOL, '--phase', 'my-library-ipad', '--keep', 'IPAD', '--settle',
+                 '--require-settle', '--settle-pressure', '--require-isolation']
+    with patch.object(sys, 'argv', arguments), patch.object(tool, 'devices', return_value=running), \
+            patch.object(tool, 'simctl', side_effect=fake_simctl), patch.object(tool, 'settle', return_value=True), \
+            patch.object(tool, 'settle_pressure', return_value=pressure_ok) as pressure, \
+            patch.dict(tool.os.environ, {}, clear=True), redirect_stdout(StringIO()):
+        assert tool.main() == (0 if pressure_ok else 1)
+        pressure.assert_called_once_with('my-library-ipad')
+    print(f'PRESSURE ACK CONTROL PASS observed={pressure_ok} accepted={pressure_ok}')
+
+# The sacrificial first launch pays installation/render work before admission, never connects
+# an account, and must be gone before proof execution. Failures cannot authorize a proof.
+import plistlib
+with tempfile.TemporaryDirectory() as directory:
+    app = Path(directory) / 'Dulcet DEV.app'
+    app.mkdir()
+    (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'com.legitimateapps.dulcet.dev'}))
+    for scenario in ['positive', 'install-failure', 'launch-failure', 'launch-timeout',
+                     'pressure-failure', 'terminate-failure', 'pressure-timeout']:
+        operations = []
+        def fake_warm_simctl(*arguments, **kwargs):
+            operations.append(arguments)
+            if scenario == 'launch-timeout' and arguments[0] == 'launch':
+                raise subprocess.TimeoutExpired(arguments, 120)
+            failed = scenario == arguments[0] + '-failure'
+            return subprocess.CompletedProcess(arguments, int(failed), '', '')
+        def fake_pressure(phase):
+            operations.append(('pressure', phase))
+            if scenario == 'pressure-timeout':
+                raise subprocess.TimeoutExpired(['pressure'], 930)
+            return scenario != 'pressure-failure'
+        with patch.object(tool, 'simctl', side_effect=fake_warm_simctl), \
+                patch.object(tool, 'settle_pressure', side_effect=fake_pressure), redirect_stdout(StringIO()):
+            assert tool.warm_first_launch('my-library-ipad', 'IPAD', str(app)) == (scenario == 'positive')
+        assert operations[0] == ('install', 'IPAD', str(app)), operations
+        if scenario == 'install-failure':
+            assert len(operations) == 1, operations
+        else:
+            assert operations[1] == ('launch', '--terminate-running-process', 'IPAD',
+                                     'com.legitimateapps.dulcet.dev', '-dulcet-account-connect-layout-fixture'), operations
+            assert operations[-1] == ('terminate', 'IPAD', 'com.legitimateapps.dulcet.dev'), operations
+            assert any(op[0] == 'pressure' for op in operations) == (not scenario.startswith('launch-')), operations
+        print(f'WARMUP CONTROL PASS {scenario} proof_allowed={scenario == "positive"}')
+    (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'other.app'}))
+    with patch.object(tool, 'simctl') as sim, redirect_stdout(StringIO()):
+        assert not tool.warm_first_launch('my-library-ipad', 'IPAD', str(app))
+        sim.assert_not_called()
+    print('WARMUP CONTROL PASS wrong app rejected without simulator commands')
+
+# The main path must choose warm-up plus admission, rather than silently ignoring the argument.
+arguments = [TOOL, '--phase', 'my-library-ipad', '--keep', 'IPAD', '--settle',
+             '--require-settle', '--settle-pressure', '--require-isolation', '--warmup-app', '/built.app']
+for warm_ok in [True, False]:
+    with patch.object(sys, 'argv', arguments), patch.object(tool, 'devices', return_value=running), \
+            patch.object(tool, 'simctl', side_effect=fake_simctl), patch.object(tool, 'settle', return_value=True), \
+            patch.object(tool, 'warm_first_launch', return_value=warm_ok) as warm, \
+            patch.object(tool, 'settle_pressure') as pressure, \
+            patch.dict(tool.os.environ, {}, clear=True), redirect_stdout(StringIO()):
+        assert tool.main() == (0 if warm_ok else 1)
+        warm.assert_called_once_with('my-library-ipad', 'IPAD', '/built.app')
+        pressure.assert_not_called()
+print('WARMUP ACK CONTROLS PASS 2/2')
+
 # Boot completion does not establish that Xcode still offers the selected device. The platform
 # red listed only placeholders after a successful boot. Exercise the actual post-boot gate with
 # a controlled resolver, retaining the selected UDID and refusing failed or substituted results.
@@ -154,6 +219,9 @@ confirmation_code = textwrap.dedent(confirmation.split('        run: |\n', 1)[1]
 with tempfile.TemporaryDirectory() as directory:
     resolver = Path(directory) / 'python3'
     resolver.write_text('#!' + sys.executable + '\n' + '''import os, sys
+if sys.argv[1:3] == ['tools/ci/host-pressure', 'mark']:
+    assert sys.argv[2:] == ['mark', os.environ['DULCET_HOST_PRESSURE_LOG'], 'platform-ipad-destination'], sys.argv
+    sys.exit(0)
 assert sys.argv[1:] == ['tools/resolve-ipad-destination', '--print', 'udid'], sys.argv
 print(os.environ['CONTROL_RESOLVED'])
 sys.exit(int(os.environ['CONTROL_EXIT']))
@@ -167,7 +235,8 @@ sys.exit(int(os.environ['CONTROL_EXIT']))
     ]:
         result = subprocess.run(['bash', '-c', confirmation_code], capture_output=True, text=True,
                                 env={**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
-                                     'IPAD_UDID': 'IPAD-SELECTED', 'CONTROL_RESOLVED': resolved,
+                                     'IPAD_UDID': 'IPAD-SELECTED', 'DULCET_HOST_PRESSURE_LOG': str(Path(directory) / 'pressure.jsonl'),
+                                     'CONTROL_RESOLVED': resolved,
                                      'CONTROL_EXIT': str(exit_status)}, timeout=5)
         assert (result.returncode == 0) is accepted, (label, result.stdout, result.stderr)
         assert ('IPADOS XCODE DESTINATION PASS' in result.stdout) is accepted, (label, result.stdout)
