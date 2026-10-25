@@ -128,7 +128,7 @@ class AndroidDownloadControllerTest {
             // Offline: the network clients are closed and the server is gone.
             controller.closeNetworkAccess()
             server.close()
-            assertEquals(AndroidTrack(SERVER_ID, RAW_ID, TITLE, "Canary Artist", "Canary Album", 3_000, "cover:opaque"),
+            assertEquals(AndroidTrack(SERVER_ID, RAW_ID, TITLE, "Canary Artist", "Canary Album", 3_000, "cover:opaque", "album:opaque"),
                 controller.localTrack(RAW_ID))
             assertNull(controller.localTrack("song:never-downloaded"), "only a downloaded track is answered")
         }

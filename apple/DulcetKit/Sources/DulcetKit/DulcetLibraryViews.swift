@@ -186,6 +186,7 @@ struct DulcetLibraryErrorView: View {
         switch failure?.kind {
         case .timeout: DulcetStrings.libraryErrorTimeout
         case .authentication: DulcetStrings.libraryErrorAuthentication
+        case .forbidden: DulcetStrings.readerErrorAccessRefused
         case .tlsUntrusted, .security: DulcetStrings.libraryErrorSecurity
         case .protocol, .server: DulcetStrings.libraryErrorProtocol
         case .unreachable, .input, .capability, .unrecognized, nil: DulcetStrings.libraryErrorGeneric

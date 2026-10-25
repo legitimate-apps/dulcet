@@ -152,7 +152,7 @@ internal class SystemMediaLibrary(
                 if (publication.query == query && publication.scope !is AndroidLibrarySearchScope.DeviceWhileServerPending) {
                     val tracks = publication.rows.filter { it.item.type == SearchResultType.Track }.map { row ->
                         val result = row.item
-                        val track = AndroidLibraryItem.Track(result.id.rawId, result.title, null, result.albumTitle,
+                        val track = AndroidLibraryItem.Track(result.id.rawId, result.title, result.albumRawId, result.albumTitle,
                             result.credits.firstOrNull()?.name, null, null, null, result.duration?.inWholeMilliseconds,
                             null, result.artworkKey, row.favourite, row.rating, null,
                             row.playability ?: AndroidLibraryPlayability.Streamable, false)
@@ -174,7 +174,7 @@ internal class SystemMediaLibrary(
             .setIsBrowsable(item !is AndroidLibraryItem.Track).setIsPlayable(item is AndroidLibraryItem.Track && item.canBeQueued())
             .setMediaType(if (item is AndroidLibraryItem.Track) MediaMetadata.MEDIA_TYPE_MUSIC else MediaMetadata.MEDIA_TYPE_FOLDER_MIXED).build()).build()
     }
-    private fun AndroidLibraryItem.Track.toTrack(provider: String): AndroidTrack? =
+    internal fun AndroidLibraryItem.Track.toTrack(provider: String): AndroidTrack? =
         if (!canBeQueued()) null else libraryTrack(provider)
 
     private fun <T> future(block: suspend () -> T): ListenableFuture<T> {

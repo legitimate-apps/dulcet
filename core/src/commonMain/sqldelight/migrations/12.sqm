@@ -1,0 +1,14 @@
+-- Queue policy must survive a relaunch even without another library read.
+ALTER TABLE queue_entry ADD COLUMN duration_milliseconds INTEGER;
+ALTER TABLE queue_entry ADD COLUMN album_raw_id TEXT;
+
+-- Existing queue entries pin their cached track metadata. Preserve what the device already knows;
+-- placeholder rows intentionally leave an unknown value unknown.
+UPDATE queue_entry
+SET duration_milliseconds = (
+  SELECT duration_milliseconds FROM cache_track
+  WHERE cache_track.server_id = queue_entry.server_id AND cache_track.raw_id = queue_entry.raw_id
+), album_raw_id = (
+  SELECT album_raw_id FROM cache_track
+  WHERE cache_track.server_id = queue_entry.server_id AND cache_track.raw_id = queue_entry.raw_id
+);

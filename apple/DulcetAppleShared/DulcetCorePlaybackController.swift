@@ -121,6 +121,25 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// AutoPlay's track search (spec §14.8), one at a time.
     private lazy var autoplayClient = AppleAutoplayClient(databaseName: identityDatabaseName)
     private var autoplayOperation: (any AppleLibraryBrowseOperation)?
+    private var autoplayToken: UUID?
+    private var autoplayKey: String?
+    private var autoplayAccessRefused = false
+    private var autoplaySuppressedUntil: ContinuousClock.Instant?
+    private var autoplayRetry: Task<Void, Never>?
+    /// The boundary can complete synchronously or deliver after cancellation.
+    struct AutoplayAnswer {
+        let tracks: [DulcetTrack]?
+        let errorKind: String?
+        let retryAfterMilliseconds: Int64?
+    }
+    var startAutoplayCandidates: ((AppleLibraryBrowseRequest, String, [String], Int32,
+        @escaping (AutoplayAnswer) -> Void) -> any AppleLibraryBrowseOperation)?
+    private var authenticationFailureHandler: (@MainActor () -> Void)?
+
+    func setAuthenticationFailureHandler(_ handler: @escaping @MainActor () -> Void) {
+        authenticationFailureHandler = handler
+    }
+
     /// The crossfade last told to the engine, per attempt (spec §12.8). Nothing is sent while
     /// every boundary is gapless, so an engine that never crossfades sees no new command.
     private var sentCrossfade: (attemptID: String, milliseconds: Int64)?
@@ -219,8 +238,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         resolveOperation = nil
         abandonPreload(reason: "media-binding")
         cancelArtwork()
-        autoplayOperation?.cancel()
-        autoplayOperation = nil
+        cancelAutoplay(clearRetry: true)
         pendingStarts = [:]
         activeDirectiveIdentity = nil
         currentRemoteAttemptID = nil
@@ -265,8 +283,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// off and every boundary is gapless.
     var listeningSettings: DulcetCoreListeningSettings? {
         didSet {
-            listeningSettings?.onChange = { [weak self] in self?.applyListeningPreference(publishing: true) }
-            applyListeningPreference(publishing: account != nil)
+            listeningSettings?.onChange = { [weak self] in self?.applyListeningPreference() }
+            applyListeningPreference()
         }
     }
 
@@ -356,6 +374,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             username: presentationAccount.username
         ) else { return }
         let sameBinding = hasSameMediaBinding(as: presentationAccount)
+        cancelAutoplay(clearRetry: !sameBinding)
+        autoplayAccessRefused = false
         identityRejected = false // Only explicit accepted account configuration opens a new lifetime.
         accountIdentityAccess = AppleServerIdentityAccess(databaseName: identityDatabaseName,
             providerInstanceId: presentationAccount.providerInstanceID)
@@ -425,22 +445,22 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 return
             }
         }
-        autoplayOperation?.cancel()
-        autoplayOperation = nil
         if !sameBinding { sentCrossfade = nil }
         refreshQueueAvailability()
-        applyListeningPreference(publishing: false)
+        applyListeningPreference()
         publish(queueClient.snapshot())
     }
 
     func setNetworkAvailable(_ available: Bool) {
         networkAvailable = available
         refreshQueueAvailability()
+        if available { serviceAutoplay() }
     }
     func setServerAvailable(_ available: Bool) {
         guard hasIdentityAuthority else { return }
         serverAvailable = available
         refreshQueueAvailability()
+        if available { serviceAutoplay() }
     }
 
     func rejectServerIdentity() {
@@ -464,8 +484,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         if let preload, preload.resolve != nil || preload.corePlan != nil {
             discardPreload(preload, reason: "server-identity", startsHeldEnd: false)
         }
-        autoplayOperation?.cancel()
-        autoplayOperation = nil
+        cancelAutoplay(clearRetry: true)
         wireSource?.revoke()
         refreshQueueAvailability()
     }
@@ -791,19 +810,19 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         )))
     }
 
-    /// An edit never starts or stops anything; it republishes the queue and re-checks the
-    /// preload, because the entry that plays next may have changed.
+    /// Publishes the whole edit, including a spent stop point, then resumes a held end when
+    /// its discarded preload can no longer take over.
     @discardableResult
     private func applyEdit(_ transition: ApplePlaybackQueueTransitionDto) -> Bool {
         guard transition.errorKind == nil else { return false }
         handleDiscardedPreload(transition.discardedPreloadAttemptId)
+        publish(transition)
         if let directive = transition.startDirective {
             // The edit discarded a preload the core had held a natural end for: the next entry
             // starts now, or nothing ever would.
             start(directive)
             return true
         }
-        publish(transition)
         requestPreloadIfNeeded()
         return true
     }
@@ -1053,15 +1072,19 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
 
     /// Hands the settings to the queue. AutoPlay switched off removes what it queued; the
     /// crossfade length applies from the next boundary.
-    private func applyListeningPreference(publishing: Bool) {
+    private func applyListeningPreference() {
         let preference = listeningSettings?.listeningPreference
         let autoplay = queueClient.setAutoplay(enabled: preference?.autoplayEnabled ?? false)
         let crossfade = queueClient.setCrossfadeSeconds(seconds: Int32(preference?.crossfadeSeconds ?? 0))
-        handleDiscardedPreload(autoplay.discardedPreloadAttemptId)
-        handleDiscardedPreload(crossfade.discardedPreloadAttemptId)
-        guard publishing, account != nil else { return }
-        publish(queueClient.snapshot())
-        requestPreloadIfNeeded()
+        if preference?.autoplayEnabled != true { cancelAutoplay(clearRetry: false) }
+        if account != nil {
+            // Keep the transition's directive and stop-point acknowledgement together.
+            applyEdit(autoplay)
+            applyEdit(crossfade)
+        } else {
+            handleDiscardedPreload(autoplay.discardedPreloadAttemptId)
+            handleDiscardedPreload(crossfade.discardedPreloadAttemptId)
+        }
     }
 
     private func afterPublishing(_ snapshot: ApplePlaybackQueueSnapshotDto) {
@@ -1090,41 +1113,100 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// Answers the queue's AutoPlay request, if it has one: similar music from the person's own
     /// server, never anywhere else. Offline there is nothing to ask, and the request waits.
     private func serviceAutoplay() {
-        guard autoplayOperation == nil, wireClient != nil, let account,
+        guard !autoplayAccessRefused, autoplayToken == nil, networkAvailable, wireClient != nil, let account,
+              autoplaySuppressedUntil.map({ clock.now >= $0 }) != false,
               let request = queueClient.takeAutoplayRequest() else { return }
         let key = request.key
+        let token = UUID()
+        autoplayToken = token
+        autoplayKey = key
         let identityAccess = accountIdentityAccess
         let generation = mediaBindingGeneration
-        autoplayOperation = autoplayClient.startCandidates(
-            request: AppleLibraryBrowseRequest(
-                providerInstanceId: account.providerInstanceId,
-                normalizedBaseUrl: account.normalizedBaseUrl,
-                username: account.username,
-                password: account.password,
-                allowLocalHttp: account.allowLocalHttp
-            ),
-            seedRawId: request.seedRawId,
-            excludedRawIds: request.excludedRawIds,
-            count: request.count
-        ) { [weak self] outcome in
+        let completion: (AutoplayAnswer) -> Void = { [weak self] outcome in
             if Thread.isMainThread {
                 MainActor.assumeIsolated {
                     guard let self, !self.identityRejected, identityAccess?.authorized != false, generation == self.mediaBindingGeneration else { return }
-                    self.receiveAutoplay(key: key, outcome)
+                    self.receiveAutoplay(key: key, token: token, outcome)
                 }
             } else {
                 DispatchQueue.main.async {
                     guard let self, !self.identityRejected, identityAccess?.authorized != false, generation == self.mediaBindingGeneration else { return }
-                    self.receiveAutoplay(key: key, outcome)
+                    self.receiveAutoplay(key: key, token: token, outcome)
                 }
             }
         }
+        let browseRequest = AppleLibraryBrowseRequest(
+            providerInstanceId: account.providerInstanceId,
+            normalizedBaseUrl: account.normalizedBaseUrl,
+            username: account.username,
+            password: account.password,
+            allowLocalHttp: account.allowLocalHttp
+        )
+        let operation: any AppleLibraryBrowseOperation
+        if let startAutoplayCandidates {
+            operation = startAutoplayCandidates(browseRequest, request.seedRawId,
+                request.excludedRawIds, request.count, completion)
+        } else {
+            operation = autoplayClient.startCandidates(request: browseRequest,
+                seedRawId: request.seedRawId, excludedRawIds: request.excludedRawIds, count: request.count) { outcome in
+                completion(AutoplayAnswer(tracks: outcome.tracks?.map { DulcetCoreLibraryTrackCopy.track($0) },
+                    errorKind: outcome.error?.kind, retryAfterMilliseconds: outcome.retryAfterMilliseconds?.int64Value))
+            }
+        }
+        // A synchronous completion may already have finished or started another operation.
+        if autoplayToken == token { autoplayOperation = operation }
     }
 
-    private func receiveAutoplay(key: String, _ outcome: AppleAutoplayOutcome) {
-        guard hasIdentityAuthority, autoplayOperation != nil else { return } // cancelled by configure, rejection or disconnect
+    private func cancelAutoplay(clearRetry: Bool) {
+        let operation = autoplayOperation
+        let key = autoplayKey
+        autoplayToken = nil
+        autoplayKey = nil
         autoplayOperation = nil
-        let tracks = (outcome.tracks ?? []).map { DulcetCoreLibraryTrackCopy.track($0) }
+        if let key { queueClient.releaseAutoplayRequest(key: key) }
+        operation?.cancel()
+        if clearRetry {
+            autoplayRetry?.cancel()
+            autoplayRetry = nil
+            autoplaySuppressedUntil = nil
+        }
+    }
+
+    private func receiveAutoplay(key: String, token: UUID, _ outcome: AutoplayAnswer) {
+        guard hasIdentityAuthority, autoplayToken == token, autoplayKey == key else { return }
+        autoplayToken = nil
+        autoplayKey = nil
+        autoplayOperation = nil
+        if let errorKind = outcome.errorKind {
+            autoplayLog.append("failed")
+            queueClient.releaseAutoplayRequest(key: key)
+            if errorKind == "forbidden" {
+                autoplayAccessRefused = true
+                return
+            }
+            if errorKind == "authentication" {
+                wireAccessEnabled = false
+                serverAvailable = false
+                _ = configureOfflineDelivery()
+                refreshQueueAvailability()
+                authenticationFailureHandler?()
+                return
+            }
+            // A transient failure leaves the request unanswered. Wait on the monotonic clock;
+            // regular playback publications and credential refresh cannot bypass this deadline.
+            let wait = max(5_000, outcome.retryAfterMilliseconds ?? 5_000)
+            let deadline = clock.now.advanced(by: .milliseconds(wait))
+            autoplaySuppressedUntil = deadline
+            autoplayRetry?.cancel()
+            autoplayRetry = Task { @MainActor [weak self] in
+                do { try await ContinuousClock().sleep(until: deadline) } catch { return }
+                guard let self else { return }
+                self.autoplayRetry = nil
+                self.serviceAutoplay()
+            }
+            return
+        }
+        let tracks = outcome.tracks ?? []
         autoplayLog.append(outcome.tracks == nil ? "failed" : "answered:\(tracks.count)")
         catalog.merge(
             Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest }),

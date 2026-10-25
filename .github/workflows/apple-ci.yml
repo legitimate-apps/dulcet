@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      conformance_only:
+        description: Run conformance legs only (not a full run for release)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,7 +21,8 @@ concurrency:
 jobs:
   # spec §21.6: which legs this run needs. A pull request runs apple-platform only when it changes
   # something an Apple build reads, and never runs the two conformance jobs (`conformance=true`
-  # plans both); a push to main and a manual dispatch run every leg. The legs are skipped by a job condition, never by a workflow `paths:` filter:
+  # plans both); a push to main and a plain dispatch run every leg. A dispatch with
+  # conformance_only=true skips apple-platform. The legs are skipped by a job condition, never by a workflow `paths:` filter:
   # a workflow that does not run leaves its required check pending forever, while a job skipped by
   # a condition reports, and the required apple-ci job below always runs and decides. Anything the
   # planner cannot establish plans MORE work (tools/ci/plan-apple-legs).
@@ -37,7 +43,8 @@ jobs:
         id: plan
         env:
           EVENT: ${{ github.event_name }}
-        run: python3 tools/ci/plan-apple-legs plan --event "$EVENT" >> "$GITHUB_OUTPUT"
+          CONFORMANCE_ONLY: ${{ inputs.conformance_only || false }}
+        run: python3 tools/ci/plan-apple-legs plan --event "$EVENT" --conformance-only "$CONFORMANCE_ONLY" >> "$GITHUB_OUTPUT"
 
   # spec §21.5: two parallel legs on the standard hosted image behind the required `apple-ci`
   # job below. This leg is the platform half -- the macOS presentation and captures, then the
@@ -2770,7 +2777,7 @@ jobs:
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_CORE_RESULT"
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
           echo "APPLE CI LEGS PASS apple-platform=$APPLE_PLATFORM_RESULT apple-conformance-core=$APPLE_CONFORMANCE_CORE_RESULT apple-conformance-ipad-iphone=$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
-      # Evidence is resolved only on a run that planned every leg: push to main, a manual dispatch,
+      # Evidence is resolved only on a run that planned every leg: push to main, a plain dispatch,
       # and so before any release (release.yml requires this run green on the commit it ships). A
       # pull request runs no conformance job, so its FEATURES.yml citations are resolved after merge.
       - name: Report whether this run resolves evidence

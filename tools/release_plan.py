@@ -177,15 +177,26 @@ def prod_gate(marketing: str, tags_at_head: list[str], check_runs: list[dict[str
 # live-server conformance ran. What a build ships must: every required check AND every Apple leg --
 # the platform leg and both conformance jobs -- green on the exact commit. A skipped leg reports
 # `skipped`, never `success`, so a run that planned less than everything cannot satisfy this.
+# All Apple checks must belong to the same check suite as the latest apple-ci aggregator;
+# a PR's platform success cannot fill in for a conformance-only dispatch's skipped platform.
 # The iPad/iPhone job is a matrix whose check runs carry its members' names, one per device.
 FULL_RUN_JOBS = {"apple-platform", "apple-conformance-core", "apple-conformance-ipad",
                  "apple-conformance-iphone"}
 
 
-def require_green(check_runs: list[dict[str, str]], names: set[str], reason: str) -> None:
+def latest_actions_checks(check_runs: list[dict]) -> dict[str, dict]:
+    # The API can return several suites for the same commit. Use check IDs, not response order,
+    # to select the latest attempt of each name; filter=latest applies within each check suite.
+    latest = {}
+    for run in sorted(check_runs, key=lambda run: run.get("id", 0)):
+        if run.get("app") == "github-actions":
+            latest[run["name"]] = run
+    return latest
+
+
+def require_green(check_runs: list[dict], names: set[str], reason: str) -> None:
     # Only GitHub Actions' own runs count: a third-party app can post a check run with any name.
-    latest = {run["name"]: run.get("conclusion") for run in check_runs
-              if run.get("app") == "github-actions"}
+    latest = {name: run.get("conclusion") for name, run in latest_actions_checks(check_runs).items()}
     missing = sorted(name for name in names if latest.get(name) != "success")
     if missing:
         raise PlanError(
@@ -194,7 +205,7 @@ def require_green(check_runs: list[dict[str, str]], names: set[str], reason: str
         )
 
 
-def full_run_gate(upload: str, waive: str, check_runs: list[dict[str, str]] | None,
+def full_run_gate(upload: str, waive: str, check_runs: list[dict] | None,
                   required: set[str]) -> str:
     """Refuse to archive a commit whose full CI run is not green, unless a DRY run waives it.
 
@@ -212,12 +223,19 @@ def full_run_gate(upload: str, waive: str, check_runs: list[dict[str, str]] | No
         return "FULL RUN GATE WAIVED for this dry run: nothing will be uploaded"
     require_green(check_runs or [], required | FULL_RUN_JOBS,
                   "a release build needs the full CI run green on this commit (spec §21.6)")
+    suite = latest_actions_checks(check_runs or []).get("apple-ci", {}).get("check_suite_id")
+    if not suite:
+        raise PlanError("the latest apple-ci check has no check suite identity; cannot prove a full run")
+    require_green([run for run in check_runs or [] if run.get("check_suite_id") == suite],
+                  FULL_RUN_JOBS | {"apple-ci"},
+                  "a release build needs every Apple leg green in the latest apple-ci check suite")
     return ("FULL RUN GATE passed: " + ", ".join(sorted(required | FULL_RUN_JOBS))
             + " green on this commit")
 
 
-def fetch_check_runs(repository: str, sha: str, token: str) -> list[dict[str, str]]:
-    # filter=latest drops superseded runs of the same name, which would otherwise read as red.
+def fetch_check_runs(repository: str, sha: str, token: str) -> list[dict]:
+    # filter=latest drops superseded attempts within each suite. Keep IDs and suite identity so
+    # the gate can select the latest checks and cannot combine legs from different workflow runs.
     url = f"https://api.github.com/repos/{repository}/commits/{sha}/check-runs?filter=latest&per_page=100"
     request = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {token}",
@@ -228,7 +246,8 @@ def fetch_check_runs(repository: str, sha: str, token: str) -> list[dict[str, st
             document = json.load(response)
     except (urllib.error.URLError, TimeoutError, ValueError) as error:
         raise PlanError(f"could not read this commit's check runs: {error}") from None
-    return [{"name": run["name"], "conclusion": run.get("conclusion"),
+    return [{"name": run["name"], "conclusion": run.get("conclusion"), "id": run["id"],
+             "check_suite_id": (run.get("check_suite") or {}).get("id"),
              "app": (run.get("app") or {}).get("slug")}
             for run in document.get("check_runs", [])]
 

@@ -99,7 +99,8 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 - `apple-ci` on a PR runs only `apple-platform`, and only when the PR changes an Apple input
   (`tools/ci/plan-apple-legs`); the conformance jobs, `apple-conformance-core` and the
   `apple-conformance-ipad-iphone` device matrix (check runs `apple-conformance-ipad` and
-  `apple-conformance-iphone`), run in parallel on push to `main` and on dispatch. A release build requires
+  `apple-conformance-iphone`), run in parallel on push to `main` and on dispatch. A dispatch with
+  `conformance_only=true` skips `apple-platform`; plain dispatches run every leg. A release build requires
   every leg and every required check green on its commit (spec §21.6).
 - When several unrelated PRs go red together, check the Darwin conformance environment first: a source
   URL or cache failure in `install-darwin-ffmpeg` fails every run alike (`docs/TRAPS.md` 36).
@@ -117,6 +118,7 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 ./gradlew :core:compileTestKotlinIosSimulatorArm64   # commonTest compiled for native (the JVM run does not)
 ./gradlew :core:macosArm64Test                       # native RUN: different SQLite driver, shared in-memory DBs
 python3 tools/parity_gate.py
+python3 tools/migration_gate.py
 python3 tools/verify_ci_policy.py
 python3 tools/verify_os_floors.py --configuration-only
 python3 tools/verify_release_policy.py

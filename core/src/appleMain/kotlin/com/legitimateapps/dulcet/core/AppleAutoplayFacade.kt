@@ -7,6 +7,7 @@ import kotlinx.coroutines.MainScope
 public class AppleAutoplayOutcome internal constructor(
     public val tracks: List<AppleLibraryTrackDto>?,
     public val error: AppleLibraryBrowseErrorDto?,
+    public val retryAfterMilliseconds: Long? = null,
 )
 
 /** Objective-C-compatible completion-handler facade for AutoPlay's track search (§14.8). */
@@ -50,5 +51,6 @@ public class AppleAutoplayClient(private val databaseName: String) {
         return operation
     }
 
-    private fun failed(error: DomainError) = AppleAutoplayOutcome(null, AppleLibraryBrowseErrorDto(error.appleLibraryKind()))
+    private fun failed(error: DomainError) = AppleAutoplayOutcome(null, AppleLibraryBrowseErrorDto(error.appleLibraryKind()),
+        (error as? DomainError.Server.Busy)?.retryAfter?.inWholeMilliseconds)
 }

@@ -602,6 +602,7 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
     public let kind: DulcetSearchResultKind
     public let credits: [DulcetCredit]
     public let albumTitle: String?
+    public let albumID: DulcetProviderItemID?
     public let year: Int?
     public let duration: Duration?
     public let discNumber: Int?
@@ -622,13 +623,15 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
         artwork: DulcetArtwork,
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
-        sourceContainer: DulcetAudioContainer? = nil
+        sourceContainer: DulcetAudioContainer? = nil,
+        albumID: DulcetProviderItemID? = nil
     ) {
         self.id = id
         self.title = title
         self.kind = kind
         self.credits = credits
         self.albumTitle = albumTitle
+        self.albumID = albumID
         self.year = year
         self.duration = duration
         self.discNumber = discNumber
@@ -661,7 +664,8 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
             duration: duration,
             sourceContainer: sourceContainer,
             mediaSourceID: mediaSourceID,
-            artwork: artwork
+            artwork: artwork,
+            albumID: albumID
         )
     }
 }
@@ -791,6 +795,7 @@ public enum DulcetLibraryFailureKind: String, Sendable, Hashable {
     case tlsUntrusted
     case security
     case authentication
+    case forbidden
     case `protocol`
     case server
     case input

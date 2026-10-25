@@ -1369,6 +1369,35 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun untitledCachedSelectionPersistsItsRecoveredAlbumAndDuration() {
+        for (rawSelection in listOf(false, true)) {
+            val file = java.io.File.createTempFile("dulcet-cached-album", ".wav")
+            val downloads = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = LocalPlaybackPlan(
+                    DownloadId("download:$rawId"), DownloadIdentity(OWNER, rawId, DownloadIdentity.ORIGINAL_PROFILE),
+                    AudioContainer.Wav, 44, file.path)
+                override suspend fun localTrack(rawId: String) =
+                    AndroidTrack(OWNER, rawId, " \t", durationMilliseconds = 40_000, albumRawId = "album:cached")
+            }
+            try {
+                Fixture(localPlans = downloads, loadSong = { error("Offline selection must not request metadata") }).use { f ->
+                    f.controller.setNetworkAvailable(false)
+                    if (rawSelection) f.controller.playSong(OWNER, "cached", "")
+                    else f.controller.playQueue(listOf(AndroidTrack(OWNER, "cached", "")), 0, AndroidQueueSource.Search, "Search")
+                    settle(3)
+                    val track = f.controller.state.value.queue.single().track
+                    assertEquals(RuntimeEnvironment.getApplication().getString(R.string.playback_untitled), track.title)
+                    assertEquals("album:cached", track.albumRawId)
+                    val entry = PersistentQueueStore(f.store.database).load(ServerId(OWNER)).entries.single()
+                    assertEquals("album:cached", entry.albumRawId)
+                    assertEquals(40.seconds, entry.duration)
+                    assertEquals(listOf("cached"), f.preparedLocal.map { it.itemId.rawId })
+                    assertTrue(f.controller.state.value.playWhenReady)
+                }
+            } finally { file.delete() }
+        }
+    }
+
     @Test fun refusedDurationAdmissionPreservesAPendingPlayAndItsHeldAdditions() {
         for (localLookup in listOf(false, true)) {
             val release = kotlinx.coroutines.CompletableDeferred<Unit>()

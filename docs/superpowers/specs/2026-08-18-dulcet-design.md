@@ -3270,15 +3270,18 @@ the switch.
 
 - **The core decides when to ask.** With AutoPlay on and Shuffle and Repeat off, once one entry or
   none follows the current one, `takeAutoplayRequest()` hands out one request: a key, the seed (the
-  queue's last entry), every track id already queued, and a count of ten. Each key is handed out
-  once. The shell answers it with `appendAutoplay(key, items)`; an empty answer is valid, and the
+  queue's last entry), every track id already queued, and a count of ten. Each operation key is handed out
+  once. A cancelled or transiently failed operation releases it with `releaseAutoplayRequest`;
+  a retry receives a fresh key after the shell's quiet period. The shell answers it with `appendAutoplay(key, items)`; an empty answer is valid, and the
   same key is not asked again until the queue changes at its end. An answer to a key the queue has
   moved past changes nothing. If the queue finished while a request was outstanding, the answer's
   first entry starts on arrival; a request made after the queue finished only appends.
 - **Candidates, on OpenSubsonic (`/rest`)**, are tried in turn until enough new tracks are found:
   `getSimilarSongs2` for the seed's artist and `getSimilarSongs` for the seed, `getTopSongs` for the
   artist, then `getRandomSongs` in the seed's genre and finally from the whole library. A source that
-  fails or is not offered is skipped; refused credentials end the search. Dulcet Server serves the
+  is unsupported or fails for an item-specific reason is skipped; refused credentials end the
+  search. A transport failure or busy reply stops the whole chain and releases it for retry.
+  The shell waits at least five seconds, or a longer server `Retry-After`, before asking again. Dulcet Server serves the
   same requests from its own library (§29), so the chain is the same on every server.
 - **AutoPlay entries stay last.** They are marked `isAutoplay`; Add to Queue inserts before the first
   upcoming one, so the person's additions and AutoPlay's never interleave, and Play Next goes after
@@ -7127,7 +7130,10 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 **Normative:**
 
 1. **`apple-plan` decides the legs**, on `ubuntu-latest`, with `tools/ci/plan-apple-legs`. A push to
-   `main`, a manual dispatch and any other event plan every leg. A pull request never plans the
+   `main`, a plain manual dispatch and any other event plan every leg. The boolean dispatch input
+   `conformance_only` defaults to `false`; setting it to `true` plans both conformance jobs and
+   skips `apple-platform`. It affects only `workflow_dispatch`, never push or pull requests.
+   A pull request never plans the
    conformance jobs (`apple-conformance-core` and `apple-conformance-ipad-iphone`, which share one
    `conformance` plan output since 2026-10-03), and plans `apple-platform` when it changes an Apple
    input. Apple inputs are
@@ -7152,9 +7158,11 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    every leg, so a pull request's Apple citations are resolved after merge, on `main`.
 4. **A release build requires the full run.** `release.yml` runs `tools/release_plan.py
    full-run-gate` before any step reads a secret. It refuses unless every required check and
-   `apple-platform`, `apple-conformance-core` and `apple-conformance-ipad-iphone` all concluded
-   `success` on the exact commit being archived.
-   A skipped leg reports `skipped`, so a run that planned less cannot satisfy it. Only a dry run may
+   `apple-platform`, `apple-conformance-core`, `apple-conformance-ipad` and
+   `apple-conformance-iphone` all concluded `success` on the exact commit being archived. All Apple
+   legs must belong to the latest `apple-ci` aggregator's check suite; results from separate PR
+   and dispatch runs cannot be combined. Check IDs determine recency, not API response order.
+   A skipped leg reports `skipped`, so a conformance-only dispatch cannot satisfy it. Only a dry run may
    waive it, and only with the explicit `skip_full_run_gate` input, which defaults to `false`.
 5. **`core-ci` is unchanged**, including `conformance-env-linux` on every pull request (about 3.5
    minutes), so the Linux and Android live-server conformance still gates every merge.
@@ -7163,7 +7171,9 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 a change that breaks Darwin conformance, a conformance-only control (`tools/test-darwin-*` and the
 other steps in that leg) or an Apple `FEATURES.yml` citation; `main`'s push run finds it, `main-health`
 reports it, and no release can ship it. A pull request that changes the conformance leg's own
-machinery can be proved before merge by dispatching `apple-ci` on its branch, which plans both legs.
+machinery can be proved before merge by dispatching `apple-ci` on its branch. A plain dispatch
+plans every leg; `conformance_only=true` proves just conformance after the same head's PR platform
+check has succeeded, saving one macOS job. The command and required conclusions are in `docs/MERGING.md`.
 A dispatch's checks do not appear on the pull request (same GitHub page), so this is evidence for the
 reviewer, not a merge gate.
 
@@ -7922,6 +7932,57 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-24 — Conformance-only Apple dispatch without repeating the platform build (§21.6).**
+
+`apple-ci` accepts the boolean `workflow_dispatch` input `conformance_only`, default `false`.
+When explicitly true on a dispatch, `apple-plan` outputs `platform=false`, `conformance=true`:
+the core, iPad and iPhone conformance jobs run and `apple-platform` is skipped. Plain dispatches
+and pushes to `main` still plan every leg, and PR planning is unchanged. The required aggregator
+continues to require success for every planned leg and skipped for every unplanned leg; full
+parity evidence is resolved only on a run that planned every leg. A same-head PR platform run
+plus this dispatch costs four macOS jobs rather than five.
+
+Release safety remains stricter: every Apple leg must succeed within the latest `apple-ci`
+aggregator's check suite on the release commit. The release reader retains check IDs and suite
+IDs, so response order and a platform success in another suite cannot turn a partial run into
+a full run. `tools/test-plan-apple-legs` executes the event/input plans;
+`tools/test-release-channel` accepts a full suite and refuses a conformance-only run, including
+when an earlier full suite or a separate platform success is available. `docs/MERGING.md`
+documents the opt-in command and the conclusions a maintainer must inspect.
+
+
+**2026-10-24 — Retry interrupted AutoPlay searches and retain queue musical context.**
+
+An AutoPlay key identifies one operation. Cancellation or a transient failure releases an
+unanswered request and gives its retry a fresh key; a late completion or release of the old
+operation cannot answer or retire the new one. A successful empty search still consumes its
+request. If the queue naturally ends while a search or its retry is outstanding, its eventual
+first recommendation starts playback. A request first made after the queue finished only appends.
+Transport failures and busy replies stop the candidate chain immediately, including after a
+partial result. The shells wait at least five seconds before retrying, or the server's longer
+`Retry-After`, on a monotonic clock. Repeated publications cannot bypass this quiet period.
+This chooses recovery without a queue edit while giving an unavailable server time to recover.
+Apple presents invalid credentials through the account state and waits for new credentials.
+A permission refusal retains its Forbidden subtype: Library presents access refused, while
+AutoPlay stays quiet until explicit accepted account configuration without closing remote playback.
+Android credential refresh services the released request after installing the account; the existing
+retry deadline still applies.
+
+Queue entries persist the album id and duration supplied when queued (schema 13), so restoration
+keeps same-album joins gapless and retains the short-track overlap rule before the engine reports
+Ready. Migration backfills existing entries from the account's pinned track cache where available;
+absent metadata stays unknown and retains the existing album-source fallback. Metadata belongs to
+the entry and leaves with its removal. Album-track and search-result copies retain their album id on both shells, including server
+`albumId` values and cached search rows. Android selected-song and system-media adapters retain
+the same context. Downloaded selections read the album id through the production download-cache
+adapter before queue insertion; both album id and duration survive a cold controller restore
+without a server metadata request. The legacy library enumeration and committed-snapshot adapters
+also retain the album id inside each playable track. A stop point spent by a queue edit clears
+its timer before starting the paused successor, just as a playback-event transition does.
+The directly exported sleep countdown clamps negative fades to zero and nonpositive lengths to
+an immediate deadline; arithmetic saturates at the clock range instead of throwing or wrapping.
+
 
 
 **2026-10-24 - Android untitled playback and queue admission.**
