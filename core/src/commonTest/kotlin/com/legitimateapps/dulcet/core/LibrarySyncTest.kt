@@ -133,6 +133,8 @@ class LibrarySyncTest {
             added_by = "play_now",
             original_position = 0,
             playback_position = 0,
+            duration_milliseconds = null,
+            album_raw_id = null,
         )
 
         repository.putTracks(SERVER, 1, rows("album", track("stable-track", "Before")))

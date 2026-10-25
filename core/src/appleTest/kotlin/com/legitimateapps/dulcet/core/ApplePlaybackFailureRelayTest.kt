@@ -15,6 +15,14 @@ import kotlin.time.Duration.Companion.seconds
  * track's own -- which is exactly what the collapsed names did before.
  */
 class ApplePlaybackFailureRelayTest {
+    @Test fun libraryAuthenticationSubtypesSurviveTheAutoplayRelay() {
+        for ((error, kind) in listOf(DomainError.Auth.InvalidCredentials to "authentication",
+            DomainError.Auth.Forbidden to "forbidden")) {
+            assertEquals(kind, error.appleLibraryKind())
+            assertEquals(error, error.appleLibraryKind().toClosedPlaybackDomainError())
+        }
+    }
+
     /**
      * The Swift half of the round trip, `DulcetPlaybackFailure(coreKind:).coreName`. The Swift
      * test `PlaybackFailureRelayTests` asserts the same table from its side, so the two halves

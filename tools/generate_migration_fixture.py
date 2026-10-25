@@ -7,6 +7,7 @@ installed copy of that schema would hold, and it can be regenerated only if the 
 it are written down. This tool is those steps:
 
     tools/migration-fixtures/v<N>/database.db
+      + PRE_MIGRATION_SEEDS[N + 1], if needed to exercise a data backfill
       + migrations/<N>.sqm, exactly as SQLDelight ships it
       + schema_meta.schema_version, PRAGMA user_version = N + 1
       + the rows in SEEDS[N + 1], which give the new tables something to migrate
@@ -24,7 +25,7 @@ it are written down. This tool is those steps:
                                                            # every version with a seed (CI)
 
 Fixtures v1-v3 were written with SQLite 3.50.6, v4-v9 with SQLite 3.51.0, and v10-v11 with
-SQLite 3.54.0, v12 with SQLite 3.53.4, and v13 with SQLite 3.54.0, by Python's sqlite3 module; none reserves bytes per page. Writing and --check
+SQLite 3.54.0 (also v13), and v12/v14 with SQLite 3.53.4, by Python's sqlite3 module; none reserves bytes per page. Writing and --check
 require the SQLite version recorded for that fixture and refuse a result that reserves bytes, because
 a different build lays pages out differently and a regeneration would then differ for reasons that
 have nothing to do with the schema. --check is
@@ -32,15 +33,15 @@ therefore a local check. --check-semantic runs anywhere, and is what CI runs: it
 normalised schema (sqlite_master, whitespace collapsed), PRAGMA user_version and every table's rows,
 and the files/ tree, between the committed fixture and a regeneration.
 
-A seed only adds to what the fixture before it holds: it never lowers a sequence an earlier seed
-set (last_issued is raised with MAX), so seeds stack when a schema is renumbered.
+Seeds preserve existing user data and never lower a sequence an earlier seed set (last_issued is
+raised with MAX). Preparatory seeds can populate cached metadata before testing a data backfill.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import filecmp
+import json
 import shutil
 import sqlite3
 import sys
@@ -51,7 +52,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tools/migration-fixtures"
 MIGRATIONS = ROOT / "core/src/commonMain/sqldelight/migrations"
 SQLITE_VERSION = "3.51.0"
-SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0", 11: "3.54.0", 12: "3.53.4", 13: "3.54.0"}
+SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0", 11: "3.54.0", 12: "3.53.4", 13: "3.54.0", 14: "3.53.4"}
 PAGE_SIZE = 4096
 
 
@@ -263,7 +264,56 @@ def seed_v12(connection):
     )
 
 
+def prepare_v13(connection):
+    """An installed v12 queue with known, partial and unknown cached track metadata."""
+    connection.execute(
+        "UPDATE cache_track SET album_raw_id = 'album:queue-backfill', "
+        "duration_milliseconds = 213000 WHERE server_id = 'server:fixture-alpha' "
+        "AND raw_id = 'track:scrobble-opaque'"
+    )
+    connection.execute(
+        "UPDATE cache_track SET duration_milliseconds = 184000 "
+        "WHERE server_id = 'server:fixture-alpha' AND raw_id = 'track:download-shared'"
+    )
+    # Same opaque ID on another server: a backfill must join on both parts of the track key.
+    connection.execute(
+        "INSERT INTO cache_track (server_id, raw_id, album_raw_id, duration_milliseconds, "
+        "issue_seq, last_access_wall, metadata_missing) VALUES (?, ?, ?, ?, ?, ?, 1)",
+        ("server:fixture-alpha", "track:download-stale", "album:other-server", 99000,
+         0, 1_790_137_097_000),
+    )
+    connection.execute(
+        "INSERT INTO cache_track (server_id, raw_id, issue_seq, last_access_wall, metadata_missing) "
+        "VALUES ('server:fixture-beta', 'track:scrobble-opaque', 0, 1790137097000, 1)"
+    )
+    connection.execute(
+        "INSERT INTO queue_entry VALUES ('server:fixture-beta', 'queue:beta-2', "
+        "'track:scrobble-opaque', 'search', NULL, 'Fixture Search', 'add_to_queue', 1, 1)"
+    )
+    connection.execute(
+        "INSERT INTO cache_pin VALUES ('server:fixture-beta', 'track', 'track:scrobble-opaque', 'queue')"
+    )
+
+
 def seed_v13(connection):
+    """Assert the migration did the backfill; never manufacture the expected output afterwards."""
+    rows = connection.execute(
+        "SELECT server_id, queue_entry_id, duration_milliseconds, album_raw_id "
+        "FROM queue_entry ORDER BY server_id, queue_entry_id"
+    ).fetchall()
+    expected = [
+        ("server:fixture-alpha", "queue:alpha-1", 213000, "album:queue-backfill"),
+        ("server:fixture-alpha", "queue:alpha-2", 184000, None),
+        ("server:fixture-beta", "queue:beta-1", None, None),
+        ("server:fixture-beta", "queue:beta-2", None, None),
+        ("server:library-fixture", "queue:library-fixture", None, None),
+    ]
+    if rows != expected:
+        fail(f"v13 queue backfill differs: expected={expected!r} actual={rows!r}")
+
+
+PRE_MIGRATION_SEEDS = {13: prepare_v13}
+def seed_v14(connection):
     """Scoped Discover cache and durable wish generations, independent of library membership."""
     connection.execute("INSERT INTO discover_read VALUES (?, ?, ?, ?, ?, ?)",
         ("server:fixture-alpha", "search:fixture", b"{}", 0, 50, 50))
@@ -279,7 +329,7 @@ def seed_v13(connection):
         ("server:fixture-alpha", "fixture-receipt", None, '{"applied":false,"wish":null,"removed":true}', 51))
 
 
-SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11, 12: seed_v12, 13: seed_v13}
+SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11, 12: seed_v12, 13: seed_v13, 14: seed_v14}
 
 
 def require_sqlite_version(version):
@@ -317,6 +367,8 @@ def generate(target, output, require_layout=True):
     try:
         if connection.execute("PRAGMA user_version").fetchone()[0] != target - 1:
             fail(f"{source} is not schema {target - 1}")
+        if target in PRE_MIGRATION_SEEDS:
+            PRE_MIGRATION_SEEDS[target](connection)
         connection.executescript(migration.read_text(encoding="utf-8"))
         connection.execute("BEGIN")
         connection.execute(

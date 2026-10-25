@@ -2,6 +2,8 @@ package com.legitimateapps.dulcet.core
 
 import com.legitimateapps.dulcet.database.DulcetDatabase
 import kotlin.random.Random
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 
 internal data class ServerId(val value: String) {
     init {
@@ -44,6 +46,9 @@ internal data class QueueEntry(
     val providerItemId: ProviderItemId,
     val sourceContext: QueueSourceContext,
     val addedBy: QueueAddedBy,
+    /** Policy metadata belongs to this durable queue entry, including after process recreation. */
+    val duration: Duration? = null,
+    val albumRawId: String? = null,
 ) {
     init {
         val sourceId = sourceContext.sourceId
@@ -416,6 +421,8 @@ internal class PersistentQueueStore(
             added_by = entry.addedBy.storageValue,
             original_position = originalPosition,
             playback_position = playbackPosition,
+            duration_milliseconds = entry.duration?.inWholeMilliseconds,
+            album_raw_id = entry.albumRawId,
         )
     }
 
@@ -436,6 +443,8 @@ internal class PersistentQueueStore(
             addedBy: String,
             originalPosition: Long,
             playbackPosition: Long,
+            durationMilliseconds: Long?,
+            albumRawId: String?,
         ->
             val kind = queueSourceKind(sourceKind)
             val sourceId = sourceRawId?.let { ProviderItemId(serverId.value, it) }
@@ -445,6 +454,8 @@ internal class PersistentQueueStore(
                     providerItemId = ProviderItemId(serverId.value, rawId),
                     sourceContext = QueueSourceContext(kind, sourceId, sourceDisplayName),
                     addedBy = queueAddedBy(addedBy),
+                    duration = durationMilliseconds?.milliseconds,
+                    albumRawId = albumRawId,
                 ),
                 originalPosition = originalPosition,
                 playbackPosition = playbackPosition,

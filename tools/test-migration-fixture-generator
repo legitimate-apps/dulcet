@@ -29,6 +29,11 @@ COPIED = [
     "tools/migration-fixtures/v10",
     "tools/migration-fixtures/v11",
     "core/src/commonMain/sqldelight/migrations/10.sqm",
+    "tools/migration-fixtures/v12",
+    "tools/migration-fixtures/v13",
+    "tools/migration-fixtures/v14",
+    "core/src/commonMain/sqldelight/migrations/13.sqm",
+    "core/src/commonMain/sqldelight/migrations/12.sqm",
 ]
 
 
@@ -66,6 +71,14 @@ def edit_fixture(root: Path, version: int, sql: str) -> None:
         connection.commit()
     finally:
         connection.close()
+
+
+def edit_queue_migration(root: Path, old: str, new: str) -> None:
+    path = root / "core/src/commonMain/sqldelight/migrations/12.sqm"
+    source = path.read_text()
+    if old not in source:
+        raise AssertionError(f"migration anchor missing: {old!r}")
+    path.write_text(source.replace(old, new))
 
 
 CASES = [
@@ -133,6 +146,63 @@ OFFLINE_CASES = [
     ),
 ]
 
+QUEUE_CASES = [
+    (
+        "a missing backfill",
+        lambda root: edit_queue_migration(root, ");\n", ") WHERE 0;\n"),
+        "v13 queue backfill differs",
+    ),
+    (
+        "a backfill from the wrong server",
+        lambda root: edit_queue_migration(root, "cache_track.server_id = queue_entry.server_id AND ", ""),
+        "v13 queue backfill differs",
+    ),
+    (
+        "an existing queue row deleted during migration",
+        lambda root: edit_queue_migration(root, "UPDATE queue_entry", "DELETE FROM queue_entry WHERE queue_entry_id = 'queue:alpha-1';\nUPDATE queue_entry"),
+        "v13 queue backfill differs",
+    ),
+    (
+        "unknown metadata invented during migration",
+        lambda root: edit_queue_migration(root, ");\n", ");\nUPDATE queue_entry SET duration_milliseconds = COALESCE(duration_milliseconds, 0);\n"),
+        "v13 queue backfill differs",
+    ),
+    (
+        "committed queue metadata erased",
+        lambda root: edit_fixture(root, 13, "UPDATE queue_entry SET album_raw_id = NULL, duration_milliseconds = NULL"),
+        "rows of queue_entry differ",
+    ),
+]
+
+
+DISCOVER_CASES = [
+    (
+        "a changed pending wish seed",
+        lambda root: edit_tool(root, '\"pending\", None, 51', '\"synced\", None, 51'),
+        "rows of wish_intent differ",
+    ),
+    (
+        "a committed pending wish erased",
+        lambda root: edit_fixture(root, 14, "DELETE FROM wish_intent"),
+        "rows of wish_intent differ",
+    ),
+    (
+        "a committed wish action clock lowered",
+        lambda root: edit_fixture(root, 14, "UPDATE wish_clock SET last_action_time = 0"),
+        "rows of wish_clock differ",
+    ),
+    (
+        "a committed wish receipt erased",
+        lambda root: edit_fixture(root, 14, "DELETE FROM wish_receipt"),
+        "rows of wish_receipt differ",
+    ),
+    (
+        "queue metadata erased alongside Discover",
+        lambda root: edit_fixture(root, 14, "UPDATE queue_entry SET album_raw_id = NULL, duration_milliseconds = NULL"),
+        "rows of queue_entry differ",
+    ),
+]
+
 
 def main() -> None:
     failures = []
@@ -144,6 +214,24 @@ def main() -> None:
         result = check(root, 11)
         if result.returncode != 0:
             failures.append(f"the unmodified offline fixture was refused: {result.stderr.strip()}")
+        result = check(root, 13)
+        if result.returncode != 0:
+            failures.append(f"the unmodified queue fixture was refused: {result.stderr.strip()}")
+        result = check(root, 14)
+        if result.returncode != 0:
+            failures.append(f"the unmodified Discover fixture was refused: {result.stderr.strip()}")
+        # A cached placeholder and a completely absent cached track both leave NULL metadata.
+        # Keep released v12 immutable; exercise the absent-track input on an isolated copy.
+        uncached = scratch(Path(directory) / "uncached")
+        connection = sqlite3.connect(uncached / "tools/migration-fixtures/v12/database.db")
+        before = connection.execute("SELECT * FROM queue_entry ORDER BY server_id, queue_entry_id").fetchall()
+        connection.execute("DELETE FROM cache_pin WHERE server_id = 'server:fixture-beta'")
+        connection.execute("DELETE FROM cache_track WHERE server_id = 'server:fixture-beta'")
+        connection.executescript((uncached / "core/src/commonMain/sqldelight/migrations/12.sqm").read_text())
+        after = connection.execute("SELECT * FROM queue_entry ORDER BY server_id, queue_entry_id").fetchall()
+        connection.close()
+        if after != [row + (None, None) for row in before]:
+            failures.append("absent cached tracks changed existing queue rows or invented metadata")
         # The sequence guard's positive case: an earlier fixture's higher sequence is kept.
         root = scratch(Path(directory) / "raised")
         edit_fixture(root, 7, "UPDATE cache_meta SET last_issued = 100 WHERE singleton_id = 1")
@@ -151,7 +239,8 @@ def main() -> None:
         result = check(root)
         if result.returncode != 0:
             failures.append(f"a seed lowered an earlier fixture's sequence: {result.stderr.strip()}")
-        cases = [(8, *case) for case in CASES] + [(11, *case) for case in OFFLINE_CASES]
+        cases = ([(8, *case) for case in CASES] + [(11, *case) for case in OFFLINE_CASES]
+                 + [(13, *case) for case in QUEUE_CASES] + [(14, *case) for case in DISCOVER_CASES])
         for index, (version, name, change, expected) in enumerate(cases):
             root = scratch(Path(directory) / f"case-{index}")
             change(root)
@@ -166,7 +255,9 @@ def main() -> None:
         sys.exit(1)
     print(
         f"test-migration-fixture-generator: the committed fixture and a raised sequence accepted; "
-        f"{len(CASES) + len(OFFLINE_CASES)} single changes refused, each named (SQLite {sqlite3.sqlite_version})"
+        f"uncached queue rows preserved; "
+        f"{len(CASES) + len(OFFLINE_CASES) + len(QUEUE_CASES) + len(DISCOVER_CASES)} single changes refused, "
+        f"each named (SQLite {sqlite3.sqlite_version})"
     )
 
 

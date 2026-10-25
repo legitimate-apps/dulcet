@@ -23,21 +23,33 @@ internal fun discoverStoreTest(block: suspend TestScope.(DiscoverStoreEnv) -> Un
     } finally { driver.close() }
 }
 class DiscoverStoreTest {
-    @Test fun migration12To13RetainsPendingMyLibraryAndMediaOwnership() {
+    @Test fun migration13To14RetainsPendingMyLibraryMediaOwnershipAndQueueContext() {
         val driver=createTestDriver()
         try {
             val before=DulcetDatabaseStore.open(driver)
             before.database.protectedReservedDataQueries.insertPendingMutation("A","song:opaque","inLibrary","1",1,1000)
             before.database.libraryDepthQueries.putEntry("A","download.mediaBinding","binding","opaque-owner",1)
+            before.database.queueQueries.insertQueueStateIfMissing("A")
+            before.database.queueQueries.insertQueueEntry(
+                server_id = "A", queue_entry_id = "queue:discover-upgrade", raw_id = "song:opaque",
+                source_context_kind = "album", source_context_raw_id = "album:opaque",
+                source_context_display_name = "Retained album", added_by = "play_now",
+                original_position = 0, playback_position = 0,
+                duration_milliseconds = 42000, album_raw_id = "album:opaque",
+            )
             for (table in listOf("discover_read","wishlist_snapshot","wish_clock","wish_intent","wish_receipt"))
                 driver.execute(null,"DROP TABLE IF EXISTS $table",0).value
-            before.database.schemaMetaQueries.updateSchemaVersion(12)
-            DulcetDatabase.Schema.migrate(driver,12,13)
+            before.database.schemaMetaQueries.updateSchemaVersion(13)
+            DulcetDatabase.Schema.migrate(driver,13,14)
             val after=DulcetDatabaseStore.open(driver)
             assertEquals(1L,after.database.protectedReservedDataQueries.countMutationsForServer("A").executeAsOne())
             assertEquals("opaque-owner",after.database.libraryDepthQueries.selectEntry("A","download.mediaBinding","binding").executeAsOne())
             assertEquals(0L,DiscoverStore(after.database,"A").pendingCount())
-            assertEquals(13L,after.metadata().schemaVersion)
+            assertEquals(14L,after.metadata().schemaVersion)
+            val queue = after.database.queueQueries.selectQueueEntriesByOriginalPosition("A").executeAsOne()
+            assertEquals("queue:discover-upgrade", queue.queue_entry_id)
+            assertEquals(42000L, queue.duration_milliseconds)
+            assertEquals("album:opaque", queue.album_raw_id)
         } finally { driver.close() }
     }
 

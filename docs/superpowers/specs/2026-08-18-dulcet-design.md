@@ -3270,15 +3270,18 @@ the switch.
 
 - **The core decides when to ask.** With AutoPlay on and Shuffle and Repeat off, once one entry or
   none follows the current one, `takeAutoplayRequest()` hands out one request: a key, the seed (the
-  queue's last entry), every track id already queued, and a count of ten. Each key is handed out
-  once. The shell answers it with `appendAutoplay(key, items)`; an empty answer is valid, and the
+  queue's last entry), every track id already queued, and a count of ten. Each operation key is handed out
+  once. A cancelled or transiently failed operation releases it with `releaseAutoplayRequest`;
+  a retry receives a fresh key after the shell's quiet period. The shell answers it with `appendAutoplay(key, items)`; an empty answer is valid, and the
   same key is not asked again until the queue changes at its end. An answer to a key the queue has
   moved past changes nothing. If the queue finished while a request was outstanding, the answer's
   first entry starts on arrival; a request made after the queue finished only appends.
 - **Candidates, on OpenSubsonic (`/rest`)**, are tried in turn until enough new tracks are found:
   `getSimilarSongs2` for the seed's artist and `getSimilarSongs` for the seed, `getTopSongs` for the
   artist, then `getRandomSongs` in the seed's genre and finally from the whole library. A source that
-  fails or is not offered is skipped; refused credentials end the search. Dulcet Server serves the
+  is unsupported or fails for an item-specific reason is skipped; refused credentials end the
+  search. A transport failure or busy reply stops the whole chain and releases it for retry.
+  The shell waits at least five seconds, or a longer server `Retry-After`, before asking again. Dulcet Server serves the
   same requests from its own library (§29), so the chain is the same on every server.
 - **AutoPlay entries stay last.** They are marked `isAutoplay`; Add to Queue inserts before the first
   upcoming one, so the person's additions and AutoPlay's never interleave, and Play Next goes after
@@ -7942,6 +7945,39 @@ a full run. `tools/test-plan-apple-legs` executes the event/input plans;
 `tools/test-release-channel` accepts a full suite and refuses a conformance-only run, including
 when an earlier full suite or a separate platform success is available. `docs/MERGING.md`
 documents the opt-in command and the conclusions a maintainer must inspect.
+
+**2026-10-24 — Retry interrupted AutoPlay searches and retain queue musical context.**
+
+An AutoPlay key identifies one operation. Cancellation or a transient failure releases an
+unanswered request and gives its retry a fresh key; a late completion or release of the old
+operation cannot answer or retire the new one. A successful empty search still consumes its
+request. If the queue naturally ends while a search or its retry is outstanding, its eventual
+first recommendation starts playback. A request first made after the queue finished only appends.
+Transport failures and busy replies stop the candidate chain immediately, including after a
+partial result. The shells wait at least five seconds before retrying, or the server's longer
+`Retry-After`, on a monotonic clock. Repeated publications cannot bypass this quiet period.
+This chooses recovery without a queue edit while giving an unavailable server time to recover.
+Apple presents invalid credentials through the account state and waits for new credentials.
+A permission refusal retains its Forbidden subtype: Library presents access refused, while
+AutoPlay stays quiet until explicit accepted account configuration without closing remote playback.
+Android credential refresh services the released request after installing the account; the existing
+retry deadline still applies.
+
+Queue entries persist the album id and duration supplied when queued (schema 13), so restoration
+keeps same-album joins gapless and retains the short-track overlap rule before the engine reports
+Ready. Migration backfills existing entries from the account's pinned track cache where available;
+absent metadata stays unknown and retains the existing album-source fallback. Metadata belongs to
+the entry and leaves with its removal. Album-track and search-result copies retain their album id on both shells, including server
+`albumId` values and cached search rows. Android selected-song and system-media adapters retain
+the same context. Downloaded selections read the album id through the production download-cache
+adapter before queue insertion; both album id and duration survive a cold controller restore
+without a server metadata request. The legacy library enumeration and committed-snapshot adapters
+also retain the album id inside each playable track. A stop point spent by a queue edit clears
+its timer before starting the paused successor, just as a playback-event transition does.
+The directly exported sleep countdown clamps negative fades to zero and nonpositive lengths to
+an immediate deadline; arithmetic saturates at the clock range instead of throwing or wrapping.
+
+
 
 **2026-10-23 - Integrate Discover and Wishlist native clients and finite proof jobs.**
 Step 2 composes the existing REST extension reader and durable wish outbox with Search Everywhere,
