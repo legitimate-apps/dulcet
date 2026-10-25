@@ -574,17 +574,12 @@ jobs:
           python3 tools/ci/host-pressure settle --phase platform-ipad-destination \
             --output "$DULCET_HOST_PRESSURE_LOG"
       - name: Confirm booted iPad remains an Xcode destination
-        # The resolver owns one 120-second inventory/discovery deadline. Run 40083176763
-        # also spent 63 seconds starting this shell; leave room for its terminal diagnostic.
         timeout-minutes: 4
         env:
           IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
         run: |
           set -euo pipefail
           python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" platform-ipad-destination
-          # Run 40068228078 resolved and booted this iPad, then Xcode offered only placeholders.
-          # Reuse the bounded discovery handshake after boot, before any app launch. A different
-          # iPad is not an acknowledgment for the device that passed the boot prerequisite.
           CONFIRMED_IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
           if [[ "$CONFIRMED_IPAD_UDID" != "$IPAD_UDID" ]]; then
             echo "::error::Post-boot Xcode destination differs from the acknowledged iPad"
