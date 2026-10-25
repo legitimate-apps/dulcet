@@ -5,6 +5,15 @@ import Testing
 /// The presentation half of the listening session: the AutoPlay section of Up Next, the queue
 /// confirmations' sentences, the sleep-timer choices and the crossfade setting's bounds.
 struct ListeningSessionModelTests {
+    @Test func searchPlaybackAdapterKeepsAlbumIdentityAndDuration() {
+        let result = DulcetSearchResult(id: .init(providerInstanceID: "server", rawID: "song:opaque"),
+            title: "Song", kind: .track, credits: [], albumTitle: "Album", year: nil,
+            duration: .seconds(40), mediaSourceID: nil, artwork: DulcetArtwork(seed: "song", palette: .indigoCoral),
+            albumID: .init(providerInstanceID: "server", rawID: "album:opaque"))
+        #expect(result.playableTrack?.albumID?.rawID == "album:opaque")
+        #expect(result.playableTrack?.duration == .seconds(40))
+    }
+
     @Test
     func autoplayEntriesFormTheirOwnSectionAfterWhatThePersonQueued() {
         // queue: h0 cur1 | u2 u3 | auto4 auto5

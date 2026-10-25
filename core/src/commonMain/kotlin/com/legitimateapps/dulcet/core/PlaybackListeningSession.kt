@@ -53,20 +53,19 @@ public enum class SleepTimerChoice(
  * the owner pauses and restores the gain.
  */
 public class SleepTimerCountdown(
-    public val fadeMilliseconds: Long = DEFAULT_FADE.inWholeMilliseconds,
+    fadeMilliseconds: Long = DEFAULT_FADE.inWholeMilliseconds,
 ) {
     private var deadline: Long? = null
 
-    init {
-        require(fadeMilliseconds >= 0)
-    }
+    /** Invalid fade inputs disable fading; this type is called directly from Swift. */
+    public val fadeMilliseconds: Long = fadeMilliseconds.coerceAtLeast(0)
 
     public val isRunning: Boolean get() = deadline != null
 
     /** Starts, or restarts, a countdown of [lengthMilliseconds] from [nowMilliseconds]. */
     public fun start(lengthMilliseconds: Long, nowMilliseconds: Long) {
-        require(lengthMilliseconds > 0)
-        deadline = nowMilliseconds + lengthMilliseconds
+        val length = lengthMilliseconds.coerceAtLeast(0)
+        deadline = if (nowMilliseconds > Long.MAX_VALUE - length) Long.MAX_VALUE else nowMilliseconds + length
     }
 
     public fun cancel() {
@@ -75,7 +74,13 @@ public class SleepTimerCountdown(
 
     /** The time left, never negative; null when no countdown runs. */
     public fun remainingMilliseconds(nowMilliseconds: Long): Long? =
-        deadline?.let { (it - nowMilliseconds).coerceAtLeast(0) }
+        deadline?.let { end ->
+            when {
+                nowMilliseconds >= end -> 0
+                nowMilliseconds < 0 && end > Long.MAX_VALUE + nowMilliseconds -> Long.MAX_VALUE
+                else -> end - nowMilliseconds
+            }
+        }
 
     /** The gain to play at: 1 until the fade begins, then down to 0 at the deadline. */
     public fun gain(nowMilliseconds: Long): Double {
@@ -112,8 +117,8 @@ public class SleepTimerCountdown(
  * 1. `getSimilarSongs2` for the seed's artist, then `getSimilarSongs` for the seed itself;
  * 2. `getTopSongs` for the seed's artist;
  * 3. `getRandomSongs` in the seed's genre, then from the whole library.
- * A source that fails or is not offered is skipped; refused credentials end the search, since
- * every later request would be refused too.
+ * Unsupported and item-specific failures skip a source. Refused credentials, transport failures
+ * and busy replies stop the search: later sources would only repeat the refusal or add load.
  */
 internal class AutoplayCandidateSource(
     private val providerInstanceId: String,
@@ -159,18 +164,16 @@ internal class AutoplayCandidateSource(
         return response
     }
 
-    /** One request; null when it failed for any reason but refused credentials or cancellation. */
+    /** Only source-specific failures fall through; account and transient failures hold the search. */
     private suspend fun attempt(request: suspend () -> String): String? = try {
         request()
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (failure: LibraryRequestFailure) {
-        if (failure.error is DomainError.Auth) throw failure
+        if (failure.error.stopsAutoplaySearch()) throw failure
         null
     } catch (failure: AuthenticatedEndpointFailure) {
-        if (failure.error is DomainError.Auth) throw failure
-        null
-    } catch (_: Exception) {
+        if (failure.error.stopsAutoplaySearch()) throw failure
         null
     }
 
@@ -186,3 +189,8 @@ private fun JsonObject.sourceString(name: String): String? =
         ?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
 
 private fun JsonObject.optionalSourceId(name: String): String? = sourceString(name)
+
+/** A retryable outage cannot be mistaken for an exhausted recommendation source. */
+private fun DomainError.stopsAutoplaySearch(): Boolean =
+    this is DomainError.Auth || this is DomainError.Transport || this is DomainError.Server.Busy ||
+        (this is DomainError.Server.HttpStatus && status >= 500)

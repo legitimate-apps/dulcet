@@ -95,6 +95,11 @@ REQUIRED_IMPLEMENTED_TABLES = {
     "cache_album",
 }
 PROTECTED_COLUMNS = {
+    "queue_entry": (
+        "server_id", "queue_entry_id", "raw_id", "source_context_kind",
+        "source_context_raw_id", "source_context_display_name", "added_by",
+        "original_position", "playback_position", "duration_milliseconds", "album_raw_id",
+    ),
     "scrobble_outbox": (
         "server_id",
         "raw_id",
@@ -308,12 +313,24 @@ def reconcile_runtime_metadata(
 def canonical_rows(connection: sqlite3.Connection, table: str) -> list[dict[str, object]]:
     columns = PROTECTED_COLUMNS[table]
     available = {row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')}
-    # Schema 12's additive field is unknown in earlier submitted plays. Missing any other
-    # protected field remains an error rather than being silently replaced with a default.
-    selected = ", ".join(
-        "NULL" if table == "scrobble_outbox" and column == "playlist_raw_id" and column not in available
-        else f'"{column}"' for column in columns
-    )
+    selected_columns = []
+    for column in columns:
+        if column not in available and table == "scrobble_outbox" and column == "playlist_raw_id":
+            selected_columns.append("NULL")
+        elif column not in available and table == "queue_entry" and column in (
+            "duration_milliseconds", "album_raw_id"
+        ):
+            # Before v13, the expected value is the cached track's field at upgrade time.
+            # Pre-cache schemas and uncached tracks have no metadata to backfill.
+            selected_columns.append(
+                f'(SELECT "{column}" FROM cache_track WHERE '
+                'cache_track.server_id = queue_entry.server_id '
+                'AND cache_track.raw_id = queue_entry.raw_id)'
+                if "cache_track" in table_names(connection) else "NULL"
+            )
+        else:
+            selected_columns.append(f'"{column}"')
+    selected = ", ".join(selected_columns)
     rows = []
     for raw_row in connection.execute(f'SELECT {selected} FROM "{table}"'):
         row: dict[str, object] = {}
@@ -390,6 +407,18 @@ def protected_schema(connection: sqlite3.Connection, version: int) -> dict[str, 
         outbox = tables["scrobble_outbox"]
         outbox["columns"] = [column for column in outbox["columns"] if column[1] != "playlist_raw_id"]
         outbox["sql"] = normalized_sql(re.sub(r", playlist_raw_id text(?= ,| \))", "", outbox["sql"]))
+    if version < 13 and "queue_entry" in tables:
+        queue = tables["queue_entry"]
+        queue["columns"] = [column for column in queue["columns"]
+                            if column[1] not in ("duration_milliseconds", "album_raw_id")]
+        queue["sql"] = normalized_sql(re.sub(
+            r", (?:duration_milliseconds integer|album_raw_id text)(?= ,| \))", "", queue["sql"]
+        ))
+        if version < 2:
+            # Schema 2 rebuilt the table to allow the Library source context.
+            queue["sql"] = queue["sql"].replace('"queue_entry"', "queue_entry").replace(
+                "'library' , ", ""
+            )
     triggers = [
         {
             "name": name,
@@ -1067,6 +1096,7 @@ NEGATIVE_CONTROLS = (
         DELETE FROM mutation_outbox WHERE field = 'favorite';
         DELETE FROM download WHERE state IN ('queued', 'stale');
         DELETE FROM resume_position WHERE position_milliseconds < 1000;
+        DELETE FROM queue_entry WHERE queue_entry_id = 'queue:alpha-1';
         """,
         tuple(f"{table}: protected rows changed" for table in protected_tables(1)),
     ),
@@ -1381,8 +1411,17 @@ def main() -> None:
     context_controls = (("playlist_context_erased", "UPDATE scrobble_outbox SET playlist_raw_id = NULL;",
                          ("scrobble_outbox: protected rows changed",)),)
     prove_negative_controls(fixtures[current], current, current, context_controls)
+    queue_controls = (
+        ("queue_row_erased", "DELETE FROM queue_entry WHERE queue_entry_id = 'queue:alpha-1';",
+         ("queue_entry: protected rows changed",)),
+        ("queue_metadata_erased", "UPDATE queue_entry SET duration_milliseconds = NULL, album_raw_id = NULL;",
+         ("queue_entry: protected rows changed",)),
+        ("queue_unknown_metadata_invented", "UPDATE queue_entry SET duration_milliseconds = 0 "
+         "WHERE duration_milliseconds IS NULL;", ("queue_entry: protected rows changed",)),
+    )
+    prove_negative_controls(fixtures[current], current, current, queue_controls)
     control_count = (
-        len(context_controls)
+        len(context_controls) + len(queue_controls)
         +         len(NEGATIVE_CONTROLS)
         + len(PIN_NEGATIVE_CONTROLS)
         + len(PROTECTED_PIN_NEGATIVE_CONTROLS)
