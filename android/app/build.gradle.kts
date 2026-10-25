@@ -91,7 +91,7 @@ val productionSearchConformance = providers.gradleProperty("dulcet.productionSea
 val discoverWishlistConformance = providers.gradleProperty("dulcet.discoverWishlistConformance").isPresent
 tasks.withType<Test>().configureEach {
     if (discoverWishlistConformance) {
-        filter { includeTestsMatching("*PhoneWishlistIntegrationTest") }
+        // Enable the disposable-fixture class without narrowing the caller's --tests selection.
         outputs.upToDateWhen { false }
         usesService(gradle.sharedServices.registrations.getByName("disposableServerAccount").service)
     }
