@@ -150,7 +150,17 @@ import UIKit
     func search(_ query: String = "Fixture") throws {
         select("search")
         let everywhere = app.buttons["Everywhere"].firstMatch
-        XCTAssertTrue(everywhere.waitForExistence(timeout: 15), "Missing Search Everywhere scope")
+#if os(iOS)
+        // Search retains its metadata stack when Open in Library changes destinations.
+        // Use the same native Back controls as a person before entering another query.
+        let back = app.navigationBars.buttons["BackButton"].firstMatch
+        var pops = 0
+        while !everywhere.exists, back.exists, back.isHittable, pops < 4 {
+            activate(back)
+            pops += 1
+        }
+#endif
+        XCTAssertTrue(everywhere.waitForExistence(timeout: 15), "Missing Search Everywhere scope: " + app.debugDescription)
         activate(everywhere)
         let field = app.textFields["discover.query"].firstMatch
         if !field.exists {
