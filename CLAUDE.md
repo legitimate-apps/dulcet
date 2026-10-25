@@ -118,6 +118,7 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 ./gradlew :core:compileTestKotlinIosSimulatorArm64   # commonTest compiled for native (the JVM run does not)
 ./gradlew :core:macosArm64Test                       # native RUN: different SQLite driver, shared in-memory DBs
 python3 tools/parity_gate.py
+python3 tools/migration_gate.py
 python3 tools/verify_ci_policy.py
 python3 tools/verify_os_floors.py --configuration-only
 python3 tools/verify_release_policy.py

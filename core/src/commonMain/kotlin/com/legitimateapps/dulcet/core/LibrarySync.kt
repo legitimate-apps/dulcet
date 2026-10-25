@@ -563,6 +563,7 @@ internal fun parseEnumeratedTracks(
             sourceContainer = track.syncAudioContainer(),
             mediaSourceId = null,
             artworkKey = track.syncOptionalOpaqueId("coverArt"),
+            albumRawId = track.syncOpaqueId("albumId"),
         ),
     )
 }
@@ -1111,6 +1112,7 @@ internal class LibrarySyncRepository(
                     sourceContainer = sourceContainer?.let(::audioContainerFromWireName),
                     mediaSourceId = mediaSourceId,
                     artworkKey = artworkKey,
+                    albumRawId = albumRawId,
                 )
             }.executeAsList().groupBy({ it.first }, { it.second })
             CommittedLibraryBrowseSnapshot(

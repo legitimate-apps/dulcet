@@ -551,20 +551,19 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
                 providerInstanceID: album.providerInstanceId,
                 artworkKey: album.artworkKey
             ),
-            tracks: album.tracks.map { copyTrack($0, fallbackArtworkKey: album.artworkKey, carriesAlbumID: false) },
+            tracks: album.tracks.map { copyTrack($0, fallbackArtworkKey: album.artworkKey) },
             trackCount: Int(album.trackCount),
             areTracksLoaded: album.tracksLoaded
         )
     }
 
-    /// One track as the core read it. An album's tracks fall back to the album's artwork, and
-    /// keep the album list's shape (no album identity of their own) they have always had.
+    /// One track as the core read it, retaining its album identity for queue policy.
+    /// An album's tracks fall back to the album's artwork.
     static func copyTrack(
         _ track: AppleLibraryTrackDto,
-        fallbackArtworkKey: String? = nil,
-        carriesAlbumID: Bool = true
+        fallbackArtworkKey: String? = nil
     ) -> DulcetTrack {
-        DulcetCoreLibraryTrackCopy.track(track, fallbackArtworkKey: fallbackArtworkKey, carriesAlbumID: carriesAlbumID)
+        DulcetCoreLibraryTrackCopy.track(track, fallbackArtworkKey: fallbackArtworkKey)
     }
 
     private static func copyCredit(_ credit: AppleLibraryCreditDto) -> DulcetCredit {
@@ -674,7 +673,8 @@ final class DulcetCoreServerSearch: DulcetServerSearching {
             ),
             discNumber: result.discNumber?.intValue,
             trackNumber: result.trackNumber?.intValue,
-            sourceContainer: result.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:))
+            sourceContainer: result.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:)),
+            albumID: result.albumRawId.map { DulcetProviderItemID(providerInstanceID: result.providerInstanceId, rawID: $0) }
         )
     }
 
