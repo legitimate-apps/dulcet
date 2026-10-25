@@ -576,7 +576,10 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         let shellResult = XCTWaiter.wait(for: [compactShell], timeout: 30)
         print("DISCOVER_COMPACT_SHELL window=\(window.frame) tabs=\(app.tabBars.firstMatch.exists) markers=\(app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label)")
         XCTAssertEqual(shellResult, .completed, "The resized window must finish presenting its compact tab shell: " + app.debugDescription)
-        XCTAssertTrue(album.exists)
+        // The compact shell creates a new detail model, whose cached read completes
+        // asynchronously. A tab bar alone does not mean the album has finished loading.
+        XCTAssertTrue(album.waitForExistence(timeout: 30),
+                      "The retained album route must finish loading after the compact shell appears: " + app.debugDescription)
         XCTAssertEqual(album.label, "Fixture Album 00")
         try capture("iPad-Compact-Album")
         let back = app.navigationBars.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Wishlist", "Back")).firstMatch
