@@ -51,6 +51,8 @@ jobs:
         run: python3 tools/verify_ci_policy.py
       - name: Verify deployment configuration
         run: python3 tools/verify_os_floors.py --configuration-only
+      - name: Prove Gradle workers use ordered schema retrieval
+        run: python3 tools/test-gradle-schema-scheduler
       - name: Verify protected-data migration semantics
         run: python3 tools/migration_gate.py
       - name: Verify Apple presents every playback phase the core can send
