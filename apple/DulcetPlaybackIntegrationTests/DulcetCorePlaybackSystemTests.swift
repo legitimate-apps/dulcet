@@ -12,6 +12,27 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     /// process, so a fixed provider would let one test's queue decide what another test sees.
     private let provider = "system-provider-\(UUID().uuidString)"
 
+    func testUnknownServerDurationReachesTheQueueAndDecoderDurationReachesPresentation() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"], duration: nil)
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let attempt = try await fixture.waitForPrepare(rawID: "a")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.durationMilliseconds, -1)
+        fixture.emit(.ready(attemptID: attempt, duration: nil, seekability: .unknown))
+        fixture.emit(.playbackProgressBegan(attemptID: attempt, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
+        let unknown = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertNil(unknown.duration)
+        XCTAssertNil(unknown.remaining)
+        XCTAssertNil(unknown.progressFraction)
+        fixture.emit(.durationChanged(attemptID: attempt, duration: 40))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.duration == .seconds(40) }
+        let known = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(known.duration, .seconds(40))
+        XCTAssertEqual(known.remaining, .seconds(39))
+        XCTAssertEqual(known.progressFraction, 0.025)
+        XCTAssertEqual(known.sessionID, unknown.sessionID)
+    }
+
     /// Spec §12.5: the quality for the network reaches each resolve. A change replaces a preload
     /// resolved at the old quality, so the next item plays at the new one, and never restarts or
     /// re-prepares what is playing. The choice is saved in the core's stored form.
@@ -1531,7 +1552,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         artwork: Data? = nil,
         recordStatuses: Bool = false,
         sourceContainer: DulcetAudioContainer = .mp3,
-        downloadController: (any DulcetDownloadControlling)? = nil
+        downloadController: (any DulcetDownloadControlling)? = nil,
+        duration: Duration? = .seconds(120)
     ) -> Fixture {
         let tracks = rawIDs.map { rawID in
             DulcetTrack(
@@ -1539,7 +1561,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
                 title: "Track \(rawID)",
                 credits: [],
                 albumTitle: "System album",
-                duration: .seconds(120),
+                duration: duration,
                 sourceContainer: sourceContainer,
                 mediaSourceID: nil,
                 artwork: DulcetArtwork(

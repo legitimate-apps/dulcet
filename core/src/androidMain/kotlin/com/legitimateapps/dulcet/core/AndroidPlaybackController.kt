@@ -305,7 +305,6 @@ public class AndroidPlaybackController internal constructor(
     private var needsReconnect = false
     private var pendingResume: Long? = null
     private var requestGeneration = 0L
-    private var admissionGeneration = 0L
     // Play Next and Add to Queue accepted while a new queue was still resolving; applied, in the order
     // given, the moment that queue is in place. They belong to the resolution in flight and to no
     // other. Every path that cancels or ends that resolution without starting it drops them
@@ -617,15 +616,15 @@ public class AndroidPlaybackController internal constructor(
         if (providerInstanceId != account.providerInstanceId || rawId.isBlank()) {
             failure = DomainError.Auth.Forbidden; publish(); return
         }
-        selectQueue(listOf(AndroidTrack(providerInstanceId, rawId, displayTitle)), 0, AndroidQueueSource.Search, "Search", resolveDuration = true)
+        selectQueue(listOf(AndroidTrack(providerInstanceId, rawId, displayTitle)), 0, AndroidQueueSource.Search, "Search", resolveMetadata = true)
     }
 
     /**
      * Replaces the queue with [tracks] and starts [startIndex]. Every track must belong to this
      * service's account; a foreign identity is refused rather than played with the wrong credentials.
      * An album, artist or playlist queue names its source by opaque [sourceRawId]; library and search do not.
-     * Duration may come from the supplied track, learned metadata or a local file's metadata.
-     * Unknown-duration neighbors are omitted; an explicit selected unknown-duration track refuses.
+     * Duration may come from the supplied track, learned metadata, a local file or the decoder.
+     * Missing duration never excludes a selected track or its neighbors.
      */
     public fun playQueue(
         tracks: List<AndroidTrack>,
@@ -640,8 +639,7 @@ public class AndroidPlaybackController internal constructor(
 
     private fun selectQueue(
         tracks: List<AndroidTrack>, startIndex: Int, source: AndroidQueueSource, sourceName: String,
-        sourceRawId: String? = null, shuffle: Boolean = false, resolveDuration: Boolean = false,
-        resolvedLocalMetadata: Boolean = false,
+        sourceRawId: String? = null, shuffle: Boolean = false, resolveMetadata: Boolean = false,
     ) {
         if (!live()) { android.util.Log.d("DulcetPlayQueue", "refused closed"); return }
         android.util.Log.d("DulcetPlayQueue", "received source=$source tracks=${tracks.size} start=$startIndex contact=${contactOpen()}")
@@ -652,36 +650,8 @@ public class AndroidPlaybackController internal constructor(
             android.util.Log.d("DulcetPlayQueue", "refused invalid-selection")
             failure = DomainError.Auth.Forbidden; publish(); return
         }
-        val admission = ++admissionGeneration
-        val known = tracks.map(::withKnownDuration)
-        if (!resolveDuration && !resolvedLocalMetadata && localPlans != null && known.any { it.durationMilliseconds == null }) {
-            // Refusing a new selection must leave an earlier pending Play and its additions
-            // intact. Inspect only local metadata before superseding any playback work.
-            val generation = requestGeneration
-            scope.launch {
-                try {
-                    val cached = known.filter { it.durationMilliseconds == null }.mapNotNull { track ->
-                        if (localPlans.isLocallyPlayable(track.rawId)) localTrack(track.rawId) else null
-                    }
-                    if (closed || admission != admissionGeneration || generation != requestGeneration) return@launch
-                    cached.forEach(::remember)
-                    selectQueue(known.map(::withKnownDuration), startIndex, source, sourceName, sourceRawId,
-                        shuffle, resolvedLocalMetadata = true)
-                } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) {
-                    if (!closed && admission == admissionGeneration && generation == requestGeneration) {
-                        failure = DomainError.Playback.NoPlayableSource; publish()
-                    }
-                }
-            }
-            return
-        }
-        if (!resolveDuration && known[startIndex].durationMilliseconds == null) {
-            failure = DomainError.Playback.NoPlayableSource; publish(); return
-        }
-        val admitted = known.withIndex().filter { resolveDuration || it.value.durationMilliseconds != null }
-        val admittedStartIndex = admitted.indexOfFirst { it.index == startIndex }
-        val admittedTracks = admitted.map { it.value }
+        val admittedTracks = tracks.map(::withKnownDuration)
+        val admittedStartIndex = startIndex
         requestGeneration++
         heldQueueAuthorization = null
         val previousWantsPlay = wantsPlay
@@ -728,8 +698,8 @@ public class AndroidPlaybackController internal constructor(
             // chosen connection may retain Play across a transient loss of verification.
             if (contactOpen() || !contact.isChosen() || authorization == null ||
                 authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return false
-            // An unresolved raw-ID selection cannot enter a new queue before admission.
-            if (resolveDuration && chosen.durationMilliseconds == null) return false
+            // A raw-ID request waits for metadata after contact recovers; duration may stay unknown.
+            if (resolveMetadata) return false
             heldQueueAuthorization = authorization
             val directive = replaceSelection(null) ?: run { heldQueueAuthorization = null; return false }
             needsReconnect = true
@@ -741,7 +711,7 @@ public class AndroidPlaybackController internal constructor(
         var recoveredRawContact = false
         suspend fun awaitRawContact(): Boolean {
             val contact = serverContact ?: return false
-            if (!resolveDuration || contactOpen() || !contact.isChosen() || authorization == null ||
+            if (!resolveMetadata || contactOpen() || !contact.isChosen() || authorization == null ||
                 authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return false
             needsReconnect = true; publish()
             do {
@@ -806,11 +776,6 @@ public class AndroidPlaybackController internal constructor(
                     android.util.Log.d("DulcetPlayQueue", "refused after-metadata contact=${contactOpen()} authorizationPresent=${authorization != null} epochMatches=${authorization != null && authorization == AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)} generation=$generation")
                     dropHeldAdditions(); wantsPlay = false; needsReconnect = true; publish()
                     return@launch
-                }
-                if (resolveDuration && (song?.track?.durationMilliseconds
-                        ?: metadata[ProviderItemId(chosen.providerInstanceId, chosen.rawId)]?.durationMilliseconds) == null) {
-                    dropHeldAdditions(); wantsPlay = previousWantsPlay
-                    failure = DomainError.Playback.NoPlayableSource; publish(); return@launch
                 }
                 // Carry only this recovered selection through the reader's lagging outage hint.
                 // start() consumes this authorization after local acquisition, as for a held queue.
@@ -1001,7 +966,7 @@ public class AndroidPlaybackController internal constructor(
      * and [AndroidPlaybackState.droppedAdditions] says so.
      *
      * False, and nothing changed, when refused: a closed controller, no tracks, or a track of another
-     * account, or an unknown duration that the controller has not already learned.
+     * account. A duration that the server omitted is learned from the decoder when available.
      */
     public fun addToQueue(
         tracks: List<AndroidTrack>,
@@ -1015,7 +980,6 @@ public class AndroidPlaybackController internal constructor(
         require(named == !sourceRawId.isNullOrBlank()) { "Album, artist and playlist queues, and only they, name a source" }
         if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId }) return false
         val admitted = tracks.map(::withKnownDuration)
-        if (admitted.any { it.durationMilliseconds == null }) return false
         if (queueLoading()) {
             heldAdditions += HeldAddition(admitted, insertion, source, sourceName, sourceRawId)
             return true

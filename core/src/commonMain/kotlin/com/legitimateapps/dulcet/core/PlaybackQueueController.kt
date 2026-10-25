@@ -1125,10 +1125,13 @@ internal class PlaybackQueueController(
         val next = upcomingEntry(this) ?: return Duration.ZERO
         if (next.queueEntryId == current.queueEntryId) return Duration.ZERO
         if (sameAlbum(current, next)) return Duration.ZERO
-        val duration = knownDurations[current.queueEntryId]
-            ?: playback.currentSession?.takeIf { it.queueEntryId == current.queueEntryId }
-                ?.currentAttempt?.duration
-        if (duration != null && duration < crossfade * PlaybackCrossfade.MINIMUM_TRACK_MULTIPLE) {
+        // The decoder's current duration supersedes server metadata. With neither, wait until
+        // the engine reports a duration before scheduling an overlap against an unknown end.
+        val duration = playback.currentSession?.takeIf { it.queueEntryId == current.queueEntryId }
+            ?.currentAttempt?.duration?.takeIf { it > Duration.ZERO }
+            ?: knownDurations[current.queueEntryId]?.takeIf { it > Duration.ZERO }
+            ?: return Duration.ZERO
+        if (duration < crossfade * PlaybackCrossfade.MINIMUM_TRACK_MULTIPLE) {
             return Duration.ZERO
         }
         return crossfade

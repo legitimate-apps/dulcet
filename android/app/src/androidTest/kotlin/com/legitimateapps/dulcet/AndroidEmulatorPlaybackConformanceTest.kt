@@ -10,6 +10,7 @@ import com.legitimateapps.dulcet.emulator.await
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
 import com.legitimateapps.dulcet.emulator.requireExactlyOneServerPlay
+import com.legitimateapps.dulcet.emulator.requireDurationlessPlayback
 import com.legitimateapps.dulcet.emulator.requireMediaTimeAdvances
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import org.junit.Test
@@ -22,6 +23,29 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorPlaybackConformanceTest {
+    @Test fun productionEntryPlaysATrackWhoseServerDurationIsMissing() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        val title = "Durationless Playback Canary"
+        val rawId = probe.songId(title)
+        awaitQueuedBroadcastsDelivered()
+        connectSavedAccount(context, probe)
+        val account = checkNotNull(AndroidAccountCredentialStore(context).load())
+        // Start and bind before Play: the fixture lasts less than one second.
+        ActivityScenario.launch(MainActivity::class.java).use {
+            PlaybackObserver(context).use { observer ->
+                observer.bind()
+                requireDurationlessPlayback(observer, probe, rawId) {
+                    val play = PlaybackIntents.playTrack(context, account.id, rawId, title)
+                        .setClassName(context, PLAYBACK_ENTRY_ALIAS)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(play)
+                }
+            }
+        }
+    }
+
     @Test fun productionEntryPlaysThroughMedia3AndTheServerRecordsExactlyOnePlay() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

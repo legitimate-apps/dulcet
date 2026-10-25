@@ -1096,17 +1096,15 @@ internal fun TrackRow(
     rowTagOverride: String? = null,
     onClick: () -> Unit,
 ) {
-    val durationUnknown = track.durationMilliseconds == null
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val accent = when {
         playing -> MaterialTheme.colorScheme.primary
-        unavailable || durationUnknown -> MaterialTheme.colorScheme.onSurfaceVariant
+        unavailable -> MaterialTheme.colorScheme.onSurfaceVariant
         else -> MaterialTheme.colorScheme.onSurface
     }
     val resources = libraryResources()
     val downloadLine = download?.status?.takeIf { !it.playsOffline }?.let { LocalContext.current.resources.downloadLine(it) }
     val supporting = if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
-        else if (durationUnknown) resources.getString(SharedR.string.library_duration_required)
         else downloadLine ?: track.artistName
     val rowTag = rowTagOverride ?: favouriteTag?.removeSuffix(".favourite")
     ListItem(
@@ -1138,7 +1136,7 @@ internal fun TrackRow(
                 }
             }
         },
-        modifier = modifier.clickable(enabled = !durationUnknown) { if (unavailable) onUnavailable() else onClick() },
+        modifier = modifier.clickable() { if (unavailable) onUnavailable() else onClick() },
     )
 }
 

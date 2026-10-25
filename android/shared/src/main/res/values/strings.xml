@@ -319,5 +319,4 @@
     <string name="account_replacement_confirm">Replace Server</string>
     <string name="account_identity_changed_message">This address now belongs to a different server. Your saved content is kept offline.</string>
     <string name="account_identity_changed_recovery">Open Account, choose Add Server, and connect again to review the replacement.</string>
-    <string name="library_duration_required">This song cannot play because its duration is missing.</string>
 </resources>

@@ -1046,7 +1046,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         ApplePlaybackQueueItemDto(
             providerInstanceId: track.id.providerInstanceID,
             rawId: track.id.rawID,
-            durationMilliseconds: track.duration.playbackMilliseconds,
+            durationMilliseconds: track.duration?.playbackMilliseconds ?? -1,
             albumRawId: track.albumID?.rawID
         )
     }
@@ -1676,6 +1676,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     ? snapshot.entries[index].sourceDisplayName
                     : nil,
                 elapsed: .milliseconds(max(0, session.positionMilliseconds)),
+                decodedDuration: session.durationMilliseconds > 0 ? .milliseconds(session.durationMilliseconds) : nil,
                 isPlaying: didProgress && phase != .paused,
                 outputName: DulcetPlaybackStrings.thisDevice,
                 volume: 1,

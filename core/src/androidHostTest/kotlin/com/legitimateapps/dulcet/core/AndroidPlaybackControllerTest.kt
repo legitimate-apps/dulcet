@@ -1283,7 +1283,7 @@ class AndroidPlaybackControllerTest {
         }
     }
 
-    @Test fun rawIdSelectionsRetainPlayUntilDurationCanBeResolvedAfterContactRecovery() {
+    @Test fun rawIdSelectionsRetainPlayUntilMetadataCanBeResolvedAfterContactRecovery() {
         for (closesDuringRead in listOf(false, true)) {
             val owner = "provider:raw-recovery:${java.util.UUID.randomUUID()}"
             kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
@@ -1309,7 +1309,7 @@ class AndroidPlaybackControllerTest {
                     }
                     f.controller.playSong(owner, "selected", "")
                     settle(3)
-                    assertTrue(f.controller.state.value.queue.isEmpty(), "No new entry is admitted before duration is known")
+                    assertTrue(f.controller.state.value.queue.isEmpty(), "A raw-ID entry waits for authorized metadata before replacing the queue")
                     assertTrue(f.controller.state.value.needsReconnect)
                     kotlinx.coroutines.runBlocking { assertNull(AndroidServerIdentity.validate(owner) { null }) }
                     settle(5)
@@ -1362,14 +1362,14 @@ class AndroidPlaybackControllerTest {
                     f.controller.playQueue(tracks, 0, AndroidQueueSource.Library, "Offline My Library")
                     settle(3)
                     assertEquals(session, f.controller.state.value.playbackSessionId,
-                        "An explicit unknown selection must not fall back to the cached song")
-                    assertEquals(DomainError.Playback.NoPlayableSource, f.controller.state.value.error)
+                        "An unavailable explicit selection must not fall back to the cached song")
+                    assertEquals(DomainError.Transport.Unreachable, f.controller.state.value.error)
                 }
             } finally { file.delete() }
         }
     }
 
-    @Test fun refusedDurationAdmissionPreservesAPendingPlayAndItsHeldAdditions() {
+    @Test fun aDurationlessSelectionSupersedesAPendingPlayAndItsHeldAdditions() {
         for (localLookup in listOf(false, true)) {
             val release = kotlinx.coroutines.CompletableDeferred<Unit>()
             Fixture(localPlans = if (localLookup) AndroidLocalPlaybackSource { null } else null,
@@ -1379,9 +1379,9 @@ class AndroidPlaybackControllerTest {
                 f.controller.playQueue(listOf(AndroidTrack(OWNER, "unknown", "Unknown")), 0, AndroidQueueSource.Library, "Library")
                 release.complete(Unit)
                 settle(3)
-                assertEquals(listOf("pending", "held"), f.controller.state.value.queue.map { it.track.rawId })
-                assertEquals(listOf("pending"), f.prepared.map { it.itemId.rawId })
-                assertNull(f.controller.state.value.droppedAdditions)
+                assertEquals(listOf("unknown"), f.controller.state.value.queue.map { it.track.rawId })
+                assertEquals(listOf("unknown"), f.prepared.map { it.itemId.rawId })
+                assertNotNull(f.controller.state.value.droppedAdditions)
             }
         }
     }
@@ -1430,20 +1430,27 @@ class AndroidPlaybackControllerTest {
         }
     }
 
-    @Test fun newQueueAdmissionsRequireDurationWithoutReplacingTheExistingQueue() {
-        Fixture().use { f ->
+    @Test fun durationlessTracksReplaceTheQueueAndCanBeAddedWithoutDroppingNeighbors() {
+        val missingDuration: suspend (String) -> AuthenticatedEndpointResponse = { id ->
+            val response = song(id)
+            response.copy(body = response.body.decodeToString().replace(",\"duration\":40", "").toByteArray())
+        }
+        Fixture(loadSong = missingDuration).use { f ->
             f.controller.playQueue(album("kept"), 0, AndroidQueueSource.Search, "Search")
             shadowOf(Looper.getMainLooper()).idle()
-            val before = f.controller.state.value.queue.map { it.track.rawId }
             val unknown = album("unknown").single().copy(durationMilliseconds = null)
-            f.controller.playQueue(listOf(unknown), 0, AndroidQueueSource.Search, "Search")
+            f.controller.playQueue(listOf(album("first").single(), unknown, album("last").single()), 1, AndroidQueueSource.Search, "Search")
             shadowOf(Looper.getMainLooper()).idle()
-            assertEquals(before, f.controller.state.value.queue.map { it.track.rawId })
-            assertFalse(f.controller.addToQueue(listOf(unknown), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Search, "Search"))
+            assertEquals(listOf("first", "unknown", "last"), f.controller.state.value.queue.map { it.track.rawId })
+            assertEquals("unknown", f.controller.state.value.let { it.queue[checkNotNull(it.currentIndex)].track.rawId })
+            assertNull(f.controller.state.value.queue[checkNotNull(f.controller.state.value.currentIndex)].track.durationMilliseconds)
+            assertEquals(listOf("kept", "unknown"), f.prepared.map { it.itemId.rawId })
+            assertTrue(f.controller.addToQueue(listOf(unknown), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Search, "Search"))
+            assertEquals(listOf("first", "unknown", "last", "unknown"), f.controller.state.value.queue.map { it.track.rawId })
         }
     }
 
-    @Test fun rawIdSelectionRequiresResolvedDurationWhileRestoredUnknownEntriesStillPlay() {
+    @Test fun rawIdSelectionsAndRestoredEntriesPlayWhenTheServerDurationIsUnknown() {
         val missingDuration: suspend (String) -> AuthenticatedEndpointResponse = { id ->
             val response = song(id)
             response.copy(body = response.body.decodeToString().replace(",\"duration\":40", "").toByteArray())
@@ -1451,9 +1458,10 @@ class AndroidPlaybackControllerTest {
         Fixture(loadSong = missingDuration).use { f ->
             f.controller.playSong(OWNER, "unknown", "")
             shadowOf(Looper.getMainLooper()).idle()
-            assertTrue(f.controller.state.value.queue.isEmpty())
-            assertTrue(f.prepared.isEmpty())
-            assertEquals(DomainError.Playback.NoPlayableSource, f.controller.state.value.error)
+            assertEquals(listOf("unknown"), f.controller.state.value.queue.map { it.track.rawId })
+            assertEquals(listOf("unknown"), f.prepared.map { it.itemId.rawId })
+            assertNull(f.controller.state.value.queue[checkNotNull(f.controller.state.value.currentIndex)].track.durationMilliseconds)
+            assertNull(f.controller.state.value.error)
         }
         Fixture(savedOwner = OWNER, savedSongs = listOf("saved-song", "next"), savedDuration = null, loadSong = missingDuration).use { f ->
             shadowOf(Looper.getMainLooper()).idle()

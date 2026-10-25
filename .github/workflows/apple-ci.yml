@@ -1400,6 +1400,17 @@ jobs:
           xcodebuild test-without-building \
               -xctestrun "$download_xctestrun" \
               -destination 'platform=macOS' \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-durationless-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetPlaybackIntegrationTests/DulcetMacPlaybackSystemLiveTests/testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-durationless-playback.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-durationless-playback.xcresult" \
+            DulcetPlaybackIntegrationTests.DulcetMacPlaybackSystemLiveTests \
+            testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay
+          xcodebuild test-without-building \
+              -xctestrun "$download_xctestrun" \
+              -destination 'platform=macOS' \
               -resultBundlePath "$RUNNER_TEMP/dulcet-mac-download-conf51.xcresult" \
               -parallel-testing-enabled NO \
               -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically 2>&1 | \

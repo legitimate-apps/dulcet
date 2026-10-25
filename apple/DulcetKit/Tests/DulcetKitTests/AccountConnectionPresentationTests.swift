@@ -1009,13 +1009,15 @@ func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent
     ])))
 
     store.activateSearchResult(missingDurationTrack.id)
-    #expect(playback.queueIntents.isEmpty)
+    #expect(playback.queueIntents.last?.tracks.map(\.id) == [firstTrack.id, secondTrack.id, missingDurationTrack.id])
+    #expect(playback.queueIntents.last?.startIndex == 2)
+    #expect(playback.queueIntents.last?.tracks.last?.duration == nil)
 
     store.activateSearchResult(secondTrack.id)
     let queueIntent = try #require(playback.queueIntents.last)
     #expect(queueIntent.sourceKind == .search)
     #expect(queueIntent.sourceID == nil)
-    #expect(queueIntent.tracks.map(\.id) == [firstTrack.id, secondTrack.id])
+    #expect(queueIntent.tracks.map(\.id) == [firstTrack.id, secondTrack.id, missingDurationTrack.id])
     #expect(queueIntent.startIndex == 1)
 
     store.selectDestination(.search)

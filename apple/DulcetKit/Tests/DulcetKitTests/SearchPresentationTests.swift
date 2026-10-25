@@ -32,7 +32,8 @@ struct SearchPresentationTests {
                 id: result.id, title: title, kind: .track, credits: [], albumTitle: nil,
                 year: nil, duration: nil, mediaSourceID: nil, artwork: result.artwork
             )
-            #expect(unknownDuration.playableTrack == nil)
+            #expect(unknownDuration.playableTrack?.title == expected)
+            #expect(unknownDuration.playableTrack?.duration == nil)
         }
     }
 

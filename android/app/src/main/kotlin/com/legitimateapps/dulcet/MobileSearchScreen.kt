@@ -193,7 +193,7 @@ internal fun MobileSearchScreen(
                     val row = indexed.value
                     val result = row.item
                     val available = row.playability != AndroidLibraryPlayability.UnavailableOffline
-                    val playable = available && result.duration != null
+                    val playable = available
                     MobileSearchResult(
                         result = result,
                         index = index,
@@ -204,7 +204,7 @@ internal fun MobileSearchScreen(
                         unavailableOffline = !available,
                         onActivate = { presenter.commitQuery(); onActivate(result) },
                         onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { presenter.commitQuery(); play(result) } },
-                        onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable && result.duration != null }
+                        onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable }
                             ?.let { queue -> { insertion -> queue(result, insertion) } },
                     )
                 }
@@ -238,7 +238,6 @@ private fun MobileSearchResult(
             val notes = listOfNotNull(
                 resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
-                resources.getString(SharedR.string.library_duration_required).takeIf { result.type == SearchResultType.Track && result.duration == null },
             )
             Text((listOf(kind, credits) + notes).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
@@ -261,7 +260,7 @@ private fun MobileSearchResult(
                 }
             }
         },
-        modifier = Modifier.fillMaxWidth().clickable(enabled = result.type != SearchResultType.Track || (!unavailableOffline && result.duration != null), onClick = onActivate).testTag("search.result.$index"),
+        modifier = Modifier.fillMaxWidth().clickable(enabled = result.type != SearchResultType.Track || !unavailableOffline, onClick = onActivate).testTag("search.result.$index"),
     )
 }
 

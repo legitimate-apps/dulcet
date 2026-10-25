@@ -1127,13 +1127,13 @@ public fun SearchAccount.toReaderAccount(): AndroidLibraryReaderAccount =
 
 /**
  * The album header's tracks as queue entries: those the core says can play now, by their playability
- * (§16.14), with a known duration as on Apple. The controller localizes absent display titles.
+ * (§16.14). Duration may remain unknown; the controller localizes absent display titles.
  */
 public fun AndroidLibraryPublication.playableTracks(providerInstanceId: String): List<AndroidTrack> =
     titledTracks(providerInstanceId, playableOnly = true)
 
 /**
- * Every track of the album header with a duration, playable now or not: what a queue already
+ * Every track of the album header, playable now or not: what a queue already
  * holding them needs to show them, which does not depend on whether they can play at this moment.
  */
 public fun AndroidLibraryPublication.titledTracks(providerInstanceId: String, playableOnly: Boolean = false): List<AndroidTrack> {
@@ -1146,7 +1146,6 @@ public fun AndroidLibraryPublication.titledTracks(providerInstanceId: String, pl
 
 /** A queue entry for one track; a track without its own artwork or credits uses its album's. */
 public fun AndroidLibraryItem.Track.toTrack(providerInstanceId: String, album: AndroidLibraryItem.Album? = null): AndroidTrack? {
-    if (durationMilliseconds == null) return null
     // Display fallback belongs to the controller, which has the localized Android resources.
     val name = title.orEmpty()
     return AndroidTrack(

@@ -614,6 +614,10 @@ extension Duration {
     }
 }
 
+extension Optional where Wrapped == Duration {
+    var dulcetDuration: String { self?.dulcetDuration ?? DulcetStrings.readerTrackDurationUnknown }
+}
+
 enum DulcetHoverEffect {
     /// A tint behind a row, a link or an icon control.
     case highlight

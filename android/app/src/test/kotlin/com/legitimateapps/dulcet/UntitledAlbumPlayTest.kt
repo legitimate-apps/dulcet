@@ -72,10 +72,11 @@ class UntitledAlbumPlayTest {
 
     @Test fun anAlbumWithOnlyBlankOrMissingTitlesPlaysWithLocalizedUntitledMetadata() = exerciseAlbum(false)
     @Test fun anAlbumWithOnlyBlankOrMissingTitlesShufflesWithLocalizedUntitledMetadata() = exerciseAlbum(true)
-    @Test fun anAlbumWithoutDurationsKeepsPlayAndShuffleDisabled() = exerciseAlbum(false, false)
+    @Test fun anAlbumWithoutDurationsPlays() = exerciseAlbum(false, false)
+    @Test fun anAlbumWithoutDurationsShuffles() = exerciseAlbum(true, false)
 
-    @Test fun selectingADurationlessRowInAMixedAlbumNeverStartsAnotherSong() = exerciseAlbum(false, rowSelection = true)
-    @Test fun selectingADurationlessRowInAnAlbumWithoutDurationsExplainsWhy() = exerciseAlbum(false, false, rowSelection = true)
+    @Test fun selectingADurationlessRowInAMixedAlbumPlaysThatSong() = exerciseAlbum(false, rowSelection = true)
+    @Test fun selectingADurationlessRowInAnAlbumWithoutDurationsPlaysThatSong() = exerciseAlbum(false, false, rowSelection = true)
     @Test fun aLaterTitleReplacesTheFallbackInThePlayerSessionAndNotification() = exerciseAlbum(false, enrich = true)
 
     private fun exerciseAlbum(shuffle: Boolean, knownDuration: Boolean = true, rowSelection: Boolean = false, enrich: Boolean = false) {
@@ -110,33 +111,18 @@ class UntitledAlbumPlayTest {
         assertEquals(3, tracks.size, "The reader must publish every fixture track")
         assertTrue(tracks.all { it.title.isNullOrBlank() && it.playability == AndroidLibraryPlayability.Streamable })
         compose.onNodeWithTag("album.track.1").assertTextContains(context.getString(com.legitimateapps.dulcet.core.R.string.playback_untitled))
-        if (rowSelection) {
-            compose.onNodeWithTag("album.track.1").assertTextContains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_duration_required))
-            compose.onNodeWithTag("album.track.1").performTouchInput { click() }
-            compose.waitForIdle()
-            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
-            assertTrue(playback.state.value.queue.isEmpty(), "An explicit filtered selection must never choose another song")
-            compose.onNodeWithTag("album.track.1").assertIsNotEnabled()
-            assertFalse(playAlbum(binding, account.providerInstanceId, publication, tracks[1].rawId))
-            return
-        }
-        if (!knownDuration) {
-            assertTrue(publication.playableTracks(account.providerInstanceId).isEmpty())
-            compose.onNodeWithTag("album.play").assertIsNotEnabled()
-            compose.onNodeWithTag("album.shuffle").assertIsNotEnabled()
-            assertTrue(playback.state.value.queue.isEmpty())
-            return
-        }
         assertEquals(3, publication.playableTracks(account.providerInstanceId).size)
         compose.onNodeWithTag("album.title").assertExists()
         compose.onNodeWithTag("album.play").assertIsEnabled()
         compose.onNodeWithTag("album.shuffle").assertIsEnabled()
-        compose.onNodeWithTag(if (shuffle) "album.shuffle" else "album.play").performClick()
+        if (rowSelection) compose.onNodeWithTag("album.track.1").assertIsEnabled().performTouchInput { click() }
+        else compose.onNodeWithTag(if (shuffle) "album.shuffle" else "album.play").performClick()
         compose.waitUntil(30_000) {
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(20))
             playback.state.value.validatedBytesConsumed > 0
         }
         assertUntitledPlayback(context, playback, "untitled-1", shuffle)
+        if (rowSelection) assertEquals(tracks[1].rawId, playback.state.value.let { it.queue[checkNotNull(it.currentIndex)].track.rawId }, "The selected unknown-duration song plays")
         compose.onNodeWithTag("player.title").assertTextEquals(context.getString(com.legitimateapps.dulcet.core.R.string.playback_untitled))
         if (enrich) {
             val session = playback.state.value.playbackSessionId
@@ -149,8 +135,8 @@ class UntitledAlbumPlayTest {
             compose.onNodeWithTag("player.title").assertTextEquals("Recovered title")
         }
         val withoutDuration = tracks.first().copy(durationMilliseconds = null)
-        assertFalse(withoutDuration.canBeQueued())
-        assertNull(withoutDuration.toTrack(account.providerInstanceId))
+        assertTrue(withoutDuration.canBeQueued())
+        assertEquals(null, checkNotNull(withoutDuration.toTrack(account.providerInstanceId)).durationMilliseconds)
         assertTrue(tracks.all { it.canBeQueued() })
     }
 }

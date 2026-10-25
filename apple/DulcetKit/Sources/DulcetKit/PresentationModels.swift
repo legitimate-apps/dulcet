@@ -365,7 +365,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
     public let albumTitle: String?
     public let discNumber: Int?
     public let trackNumber: Int?
-    public let duration: Duration
+    public let duration: Duration?
     public let sourceContainer: DulcetAudioContainer?
     public let mediaSourceID: String?
     public let artwork: DulcetArtwork
@@ -383,7 +383,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         albumTitle: String?,
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
-        duration: Duration,
+        duration: Duration?,
         sourceContainer: DulcetAudioContainer? = .mp3,
         mediaSourceID: String?,
         artwork: DulcetArtwork,
@@ -398,7 +398,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         self.albumTitle = albumTitle
         self.discNumber = discNumber
         self.trackNumber = trackNumber
-        self.duration = duration
+        self.duration = duration.flatMap { $0 > .zero ? $0 : nil }
         self.sourceContainer = sourceContainer
         self.mediaSourceID = mediaSourceID
         self.artwork = artwork
@@ -419,7 +419,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         albumTitle: String?,
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
-        duration: Duration,
+        duration: Duration?,
         artwork: DulcetArtwork,
         availability: DulcetMediaAvailability = .playable,
         isFavorite: Bool = false
@@ -485,8 +485,10 @@ public struct DulcetAlbum: Identifiable, Sendable, Hashable {
 
     /// The album list carries the album's own duration, so this stays right before the track
     /// list is read and switches to the sum once it has been.
-    public var totalDuration: Duration {
-        areTracksLoaded ? tracks.reduce(.zero) { $0 + $1.duration } : duration
+    public var totalDuration: Duration? {
+        guard areTracksLoaded else { return duration > .zero ? duration : nil }
+        guard tracks.allSatisfy({ $0.duration != nil }) else { return nil }
+        return tracks.reduce(.zero) { $0 + ($1.duration ?? .zero) }
     }
 
     public var discNumbers: [Int] {
@@ -506,7 +508,7 @@ public struct DulcetAlbum: Identifiable, Sendable, Hashable {
             title: title,
             credits: albumArtists.map { DulcetCredit(role: .albumArtist, name: $0, id: nil) },
             year: year,
-            duration: tracks.reduce(.zero) { $0 + $1.duration },
+            duration: tracks.reduce(.zero) { $0 + ($1.duration ?? .zero) },
             mediaSourceID: nil,
             artwork: artwork,
             tracks: tracks
@@ -650,7 +652,7 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
     }
 
     public var playableTrack: DulcetTrack? {
-        guard kind == .track, let duration else { return nil }
+        guard kind == .track else { return nil }
         return DulcetTrack(
             id: id,
             title: displayTitle,
@@ -703,6 +705,13 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public let currentIndex: Int
     public let sourceDisplayName: String?
     public let elapsed: Duration
+    /// The current decoder's duration, falling back to positive server metadata until Ready.
+    public let duration: Duration?
+    public var remaining: Duration? { duration.map { max(.zero, $0 - elapsed) } }
+    public var progressFraction: Double? {
+        guard let duration, duration > .zero else { return nil }
+        return min(1, max(0, elapsed.dulcetSeconds / duration.dulcetSeconds))
+    }
     public let isPlaying: Bool
     public let outputName: String
     public let volume: Double
@@ -731,6 +740,7 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         currentIndex: Int = 0,
         sourceDisplayName: String? = nil,
         elapsed: Duration,
+        decodedDuration: Duration? = nil,
         isPlaying: Bool,
         outputName: String,
         volume: Double,
@@ -752,7 +762,8 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         self.queue = queue
         self.currentIndex = currentIndex
         self.sourceDisplayName = sourceDisplayName
-        self.elapsed = elapsed
+        self.elapsed = max(.zero, elapsed)
+        self.duration = decodedDuration.flatMap { $0 > .zero ? $0 : nil } ?? current.duration
         self.isPlaying = isPlaying
         self.outputName = outputName
         self.volume = volume

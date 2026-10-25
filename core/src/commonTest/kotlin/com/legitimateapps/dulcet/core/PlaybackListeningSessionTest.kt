@@ -336,6 +336,42 @@ class PlaybackListeningSessionTest {
     }
 
     @Test
+    fun crossfadeWaitsForKnownDurationAndDecodedShortDurationOverridesLongServerMetadata() {
+        // Both an unknown server duration and an optimistic long server duration must follow
+        // the decoder once it reports the real length. Ready(null) keeps metadata as a fallback.
+        for (serverDuration in listOf(null, 180.seconds)) {
+            val fixture = fixture()
+            fixture.controller.setCrossfade(12.seconds)
+            val start = assertNotNull(fixture.controller.replaceAndStart(
+                searchRequest(listOf("a", "b"), serverDuration),
+            ).startDirective)
+            assertEquals(
+                if (serverDuration == null) Duration.ZERO else 12.seconds,
+                fixture.controller.snapshot().crossfadeIntoNext,
+            )
+            fixture.controller.recordPlaybackEvent(
+                PlaybackEngineEvent.Ready(start.attemptId, null, PlaybackSeekability.Unknown),
+            )
+            assertEquals(
+                if (serverDuration == null) Duration.ZERO else 12.seconds,
+                fixture.controller.snapshot().crossfadeIntoNext,
+                "Ready without a decoder duration must preserve the existing duration fallback",
+            )
+            fixture.controller.recordPlaybackEvent(
+                PlaybackEngineEvent.DurationChanged(start.attemptId, 180.seconds),
+            )
+            assertEquals(12.seconds, fixture.controller.snapshot().crossfadeIntoNext)
+            fixture.controller.recordPlaybackEvent(
+                PlaybackEngineEvent.DurationChanged(start.attemptId, 30.seconds),
+            )
+            assertEquals(
+                Duration.ZERO, fixture.controller.snapshot().crossfadeIntoNext,
+                "A decoded short track must not overlap even if server metadata said it was long",
+            )
+        }
+    }
+
+    @Test
     fun aCrossfadedEndCountsThePlayOnceAndClearsTheResumePosition() {
         // The engine ends the outgoing attempt where the overlap begins, `crossfade` before its
         // duration. Scrobble and resume follow the same rules as any natural end (§12.8).
@@ -507,7 +543,7 @@ class PlaybackListeningSessionTest {
         shuffle = false,
     )
 
-    private fun searchRequest(rawIds: List<String>, duration: Duration) = PlaybackQueueRequest(
+    private fun searchRequest(rawIds: List<String>, duration: Duration?) = PlaybackQueueRequest(
         items = rawIds.map { PlaybackQueueItem(ProviderItemId(SERVER.value, it), duration) },
         sourceContext = QueueSourceContext(QueueSourceKind.Search, null, "Search"),
         startIndex = 0,
