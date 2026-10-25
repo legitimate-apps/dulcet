@@ -9,9 +9,30 @@ This record distinguishes accepted finalized results from diagnostic failures an
 The corrected candidate is `375b991d`, incorporating main through `a452a7a8` and the pressure
 admission dependency below. All four candidate-native surfaces have finalized passing results: iPhone 5/5,
 iPad 5/5, Mac 6/6 and Android ten phases across five methods. Earlier mobile reds and their observed causes are retained
-below. Diagnostic dispatches cannot replace the final plain full Apple release gate.
+below. Discover-only diagnostic dispatches cannot replace the complete Apple proof sequence.
+The current merge-head procedure is recorded next.
 
 
+
+## Merge-head confirmation and citation policy
+
+Main [#391](https://github.com/legitimate-apps/dulcet/pull/391) lands as `e2ca8fcb` and is
+integrated by `56c60233`. Its seven shared pressure, isolation, My Library and startup harness
+files match main byte for byte. Main's workflow comments and isolation controls replace the
+previous integration copies. The Discover-specific adapter continues to invoke those shared helpers.
+
+The final merge candidate needs green PR checks plus an `apple-ci` dispatch with
+`conformance_only=true` on that same head. PR `apple-platform` supplies platform builds, package,
+Keychain and layout checks; the dispatch supplies Darwin conformance, both device conformance
+legs and all three Discover native jobs. `tools/ci/plan-apple-legs` plans `platform=false`,
+`conformance=true` and `discover=true` for this dispatch. A Discover-only diagnostic still cannot
+substitute for those baseline conformance legs. Counts are accepted only from finalized results.
+
+A candidate does not cite its own future dispatch in its committed files. The PR body records
+the exact tested head, workflow run, jobs, counts and artifact names without creating a new head.
+A later documentation change can add that permanent confirmation. Existing FEATURES citations
+remain pinned to the native results they describe; they do not claim an unexecuted final-head run.
+No further cell promotion is inferred from shared tests, host tests or a pending dispatch.
 
 ## Integrated native confirmation and artifact handoff
 
@@ -178,7 +199,7 @@ query; its established device warm-up and admission retain the original producti
 The GitHub PR itself remains separate. The two textual conflicts preserve its admission/phase
 markers and this branch's exact same-device confirmation and negative controls. All pressure,
 isolation, readiness, executed-shell controls and CI policy pass. A generic app/test build compiles
-the merge without booting a device. The final full Apple run still must demonstrate admission,
+the merge without booting a device. The final merge-head proof sequence still must demonstrate admission,
 destination confirmation and native execution together.
 
 ## Integration decisions
@@ -195,7 +216,7 @@ changes remain authoritative for their owned contracts; the client behavior is c
 | Compose and SDK setup | Keep main #368's Compose test rule and #367's bounded SDK installer. The new Android job invokes the same installer and checks its booted image. Both merge cleanly. |
 | Android connection/playback recovery | Keep main #372's controller, remote proof and regression sources unchanged. The revision-record insertion conflict retains both complete entries. The accepted Android client visual structure is preserved. |
 | Fixtures and proof runners | Retain both client modes, distinct old/new payloads, acknowledged held detail, and committed remove-before-add ordering. Keep main's existing conformance and baseline checks in addition to the new finite native jobs. |
-| Hosted pressure admission | Incorporate #391's committed quiet-window and first-launch implementation as a dependency after the platform boot inventory red. Retain exact selected-device confirmation and both sets of rejection controls; final full Apple execution remains required. |
+| Hosted pressure admission | Incorporate #391's committed quiet-window and first-launch implementation as a dependency after the platform boot inventory red. Use main's exact selected-device confirmation and rejection controls; final merge-head Apple execution remains required. |
 
 The detailed integration and red/green records below distinguish textual conflicts from clean
 merges and harness corrections. No client signature is removed; the two core exports are additive.
@@ -247,7 +268,7 @@ completes scans 29 and 30. Old A remains unapplied/removed while
 `wi_14ea56b5-0253-4705-9e94-1a541cb8ae60` survives. Intentional Arrived removal then retains
 library item `e53c7915-1c68-47fa-927a-ad9884998c3f`. Positive Navidrome browsing reads one
 album with zero feature RPCs. The candidate dispatch succeeds but intentionally skips baseline
-legs; it does not replace the final plain full Apple release run.
+legs; it does not replace the final merge-head conformance dispatch and PR platform checks.
 
 ## Current hosted Mac and Android native results
 
