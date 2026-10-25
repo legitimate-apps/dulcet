@@ -37,7 +37,8 @@ elapsed time alone. No product fix is claimed for this failure.
 
 The Discover harness now uses the shared `host-pressure` sampler and `isolate-simulator`
 post-boot admission and first-launch warm-up, retaining their raw diagnostics in its own native
-artifact. Every Discover test launch enables the existing opt-in navigation receipts. Assertions,
+artifact. Every Discover test launch enables opt-in navigation receipts, including the sidebar
+action request and any destination guard rejection. Assertions,
 selection input and test deadlines are unchanged. The runner wiring control fails against
 `a7e2d6b8` with `native launch bypassed pressure diagnostics`; five admission controls separately
 fail before the helper exists. The corrected controls require exact-device warm-up, reject

@@ -380,7 +380,11 @@ public final class DulcetPresentationStore {
         let previousWriter = navigationWriter
         navigationWriter = "selectDestination"
         defer { navigationWriter = previousWriter }
-        guard !isApplyingSourceSnapshot else { return }
+        guard !isApplyingSourceSnapshot else {
+            navigationBindingReceipt("selectDestination.guard", oldPath: String(describing: readerPath),
+                newPath: String(describing: readerPath), outcome: "drop:applyingSourceSnapshot requested=\(destination)")
+            return
+        }
         let destination = destination == .browse && !myLibraryAvailable ? .library : destination
         if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
         if destination == .listenNow || destination == .library || destination == .browse {
@@ -399,7 +403,11 @@ public final class DulcetPresentationStore {
         let previousWriter = navigationWriter
         navigationWriter = "navigate(to:)"
         defer { navigationWriter = previousWriter }
-        guard !isApplyingSourceSnapshot else { return }
+        guard !isApplyingSourceSnapshot else {
+            navigationBindingReceipt("navigate(to:).guard", oldPath: String(describing: readerPath),
+                newPath: String(describing: readerPath), outcome: "drop:applyingSourceSnapshot requested=\(destination)")
+            return
+        }
         if (destination == .listenNow || destination == .library || destination == .browse), readerOwnsLibrary {
             // The reader's pages are the store's own; the source is told only the destination.
             if selectedDestination == destination {

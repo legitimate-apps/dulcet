@@ -1089,6 +1089,8 @@ private struct DulcetSidebar: View {
                 return .destination(store.selectedDestination)
             },
             set: { selection in
+                store.navigationBindingReceipt("sidebar.selection", oldPath: String(describing: store.readerPath),
+                    newPath: String(describing: store.readerPath), outcome: "requested=\(String(describing: selection))")
                 switch selection {
                 case nil:
                     return
