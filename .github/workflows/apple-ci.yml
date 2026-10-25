@@ -1408,6 +1408,10 @@ jobs:
             "$RUNNER_TEMP/dulcet-durationless-playback.xcresult" \
             DulcetPlaybackIntegrationTests.DulcetMacPlaybackSystemLiveTests \
             testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-durationless-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-mac-download-junit/TEST-durationless-playback.xml" \
+            DulcetMacPlaybackSystemLiveTests
           xcodebuild test-without-building \
               -xctestrun "$download_xctestrun" \
               -destination 'platform=macOS' \
