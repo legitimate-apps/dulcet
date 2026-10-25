@@ -134,6 +134,7 @@ struct DulcetDiscoverDetailView: View {
     @State private var detail: DulcetDiscoverDetailModel
     @Environment(\.openURL) private var openURL
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(DulcetPresentationStore.self) private var presentationStore: DulcetPresentationStore?
     let destination: DulcetDiscoverDestination
     let openLibrary: (DulcetDiscoverLibraryRef) -> Void
     let openMetadata: ((DulcetDiscoverDestination) -> Void)?
@@ -192,6 +193,9 @@ struct DulcetDiscoverDetailView: View {
             .padding(DulcetSpacing.md).frame(maxWidth: .infinity, alignment: .leading)
         }
         .dulcetForeground(.primaryTextOnWindow)
+        .onChange(of: presentationStore?.showsNowPlayingBar, initial: true) { _, required in
+            DulcetUIProofMarkers.record("discover-player-bar-required:\(required == true)")
+        }
         .onAppear { model.open(); detail.load(destination) }
         .onDisappear { model.close(); detail.close() }
     }

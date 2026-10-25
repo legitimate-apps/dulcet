@@ -49,9 +49,10 @@ import UIKit
         _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": state])
         print("DISCOVER_ACK scenario=\(name) revision=\(revision) flag=\(flag ?? "served")")
     }
-    func launch(server: String? = nil, other: Bool = false, connect: Bool = true, variant: String = "light") throws {
+    func launch(server: String? = nil, other: Bool = false, connect: Bool = true, variant: String = "light", navigationReceipts: Bool = false) throws {
         if !prepared { try prepare(); prepared = true }
         var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
+        if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
         if variant == "largest" { args.append("-dulcet-debug-largest-text") }
         if other { args += ["-dulcet-debug-add-account"] }
         if connect { args += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", try server ?? required("SERVER_URL"), "-dulcet-debug-account-username", try required(other ? "OTHER_USERNAME" : "USERNAME"), "-dulcet-debug-account-password", try required(other ? "OTHER_PASSWORD" : "PASSWORD")] }
@@ -303,6 +304,7 @@ import UIKit
         try search(); activate(item("song", 10))
         let play = app.buttons["discover.openLibrary"].firstMatch
         XCTAssertTrue(play.waitForExistence(timeout: 15)); activate(play)
+        print("DISCOVER_PLAY_UI markers=\(app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label)")
         XCTAssertTrue(app.buttons["dulcet.mini-player.play-pause"].waitForExistence(timeout: 30))
         assertPlaybackReference(trackId)
         print("DISCOVER_ROUTE scopedAlbumId=\(albumId) scopedPlaybackId=\(trackId)")
@@ -537,7 +539,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     func testIPadSidebarSelectionSurvivesWishlistDetailAndResize() throws {
         XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .pad)
         XCUIDevice.shared.orientation = .landscapeLeft
-        try launch(); try search(); activate(item("album", 200))
+        try launch(navigationReceipts: true); try search(); activate(item("album", 200))
         _ = try scenario("offline")
         activate(app.buttons["discover.wish"].firstMatch)
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
