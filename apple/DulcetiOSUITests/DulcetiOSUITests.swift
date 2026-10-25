@@ -4339,7 +4339,8 @@ final class DulcetiOSUITests: XCTestCase {
                 let frame = item.frame
                 return frame.origin.x.isFinite && frame.origin.y.isFinite
                     && frame.width.isFinite && frame.height.isFinite
-                    && frame.width > 0 && frame.height > 0 && item.isHittable
+                    && frame.width > 0 && frame.height > 0
+                    && app.windows.firstMatch.frame.contains(frame) && item.isHittable
             }, object: item)
             if XCTWaiter.wait(for: [ready], timeout: 30) == .completed {
                 usable = true
@@ -4361,7 +4362,10 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The picker must offer a hittable \(option) after two presentations: " + app.debugDescription)
             return false
         }
-        item.tap()
+        // A native menu row can report a usable frame and hittability while XCTest cannot
+        // compute its accessibility activation point. Send the same native tap at the checked
+        // row center; the selected value and subsequent stream assertion still prove its effect.
+        item.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let deadline = Date().addingTimeInterval(5)
         while !pickerShows(option, picker), Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
