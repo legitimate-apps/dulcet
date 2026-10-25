@@ -2062,3 +2062,20 @@ for mutation in ['echo '+compile_command,compile_command.replace('compileTestKot
 for mutation in [compile_good+'        if: false\n',compile_good+'        continue-on-error: true\n','      - run: echo no-native-test-compile\n']:
     assert compile_check((compile_prefix+mutation).splitlines()),mutation
 print('Discover iOS shared-test compilation controls: 8/8, framework-only, echo, dry-run, exclusion, disabled and allowed-failure rejections')
+
+# A focused iPad diagnostic must never narrow an ordinary release run.
+focus_functions = [node for node in ast.parse(VERIFIER.read_text()).body
+                   if isinstance(node, ast.FunctionDef) and node.name == 'discover_diagnostic_selector_errors']
+focus_namespace = dict(condition_namespace)
+exec(compile(ast.Module(body=focus_functions, type_ignores=[]), str(VERIFIER), 'exec'), focus_namespace)
+focus_check = focus_namespace['discover_diagnostic_selector_errors']
+focus_expression = "${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || 'DulcetDiscoverWishlistIPadUITests' }}"
+focus_line = '          DULCET_DISCOVER_ONLY_TEST: ' + focus_expression
+assert focus_check([focus_line]) == []
+assert focus_check(['jobs:', '  ordinary:']) == []
+for mutation in [focus_expression.replace('inputs.discover_only == true && ', '', 1),
+                 focus_expression.replace('inputs.discover_only == true && ', ''),
+                 focus_expression.replace("|| 'DulcetDiscoverWishlistIPadUITests'", "|| 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting'"),
+                 "${{ inputs.discover_ipad_case }}", 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize']:
+    assert focus_check(['          DULCET_DISCOVER_ONLY_TEST: ' + mutation]), mutation
+print('Discover focused diagnostic selector controls: 7/7, full suite fallback and both diagnostic guards required')

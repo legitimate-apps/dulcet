@@ -14,6 +14,11 @@ on:
         description: Run the three Discover fixture proofs only (diagnostic, not a full release run)
         type: boolean
         default: false
+      discover_ipad_case:
+        description: Focus the iPad case only when discover_only is true (never full release evidence)
+        type: choice
+        default: suite
+        options: [suite, sidebar, everywhere]
 
 permissions:
   contents: read
@@ -3017,6 +3022,7 @@ jobs:
         timeout-minutes: 60
         env:
           DULCET_DISCOVER_PREBUILT: "true"
+          DULCET_DISCOVER_ONLY_TEST: ${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || 'DulcetDiscoverWishlistIPadUITests' }}
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-ipad/fixture" -- tools/ci/run-discover-wishlist-proofs ipad
       - name: Stage finalized native parity results
         run: |

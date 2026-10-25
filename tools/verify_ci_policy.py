@@ -1125,6 +1125,17 @@ def discover_native_condition_errors(lines: list[str]) -> list[str]:
     return result
 
 
+def discover_diagnostic_selector_errors(lines: list[str]) -> list[str]:
+    """A focused reproduction cannot narrow a default, push or plain dispatch run."""
+    expected = "${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || 'DulcetDiscoverWishlistIPadUITests' }}"
+    errors = []
+    for line in lines:
+        entry = mapping_entry(line)
+        if entry and entry[1] == "DULCET_DISCOVER_ONLY_TEST" and entry[2] != expected:
+            errors.append("Discover native selector must guard both focused cases with discover_only == true and fall back to the complete iPad suite")
+    return errors
+
+
 def discover_ios_test_compile_errors(lines: list[str]) -> list[str]:
     """Discover integration compiles shared test sources for iOS, not only its framework."""
     spans=list(job_spans(lines))
@@ -1214,6 +1225,7 @@ for workflow in workflows:
     # left alone had uploaded under attempt 1. Checked in every workflow, not only the two known
     # aggregators, so a new aggregator cannot reintroduce it.
     errors.extend(discover_native_condition_errors(lines))
+    errors.extend(discover_diagnostic_selector_errors(lines))
     errors.extend(discover_native_fixture_errors(lines))
     errors.extend(discover_ios_test_compile_errors(lines))
     errors.extend(partial_rerun_errors(workflow, lines))
