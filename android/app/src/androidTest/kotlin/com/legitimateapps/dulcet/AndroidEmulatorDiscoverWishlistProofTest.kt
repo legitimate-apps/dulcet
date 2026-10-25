@@ -106,7 +106,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.more.artist")
             awaitTag("discover.item.artist.20")
             click("discover.item.artist.0")
-            awaitTag("discover.artist.surface");capture("artist")
+            awaitArtistLoaded();capture("artist")
             click("discover.item.album.0")
             awaitTag("discover.album.surface")
             requireText("8 of 12")
@@ -363,7 +363,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             navigationControlsRemainLabeled()
             accessible("discover.scope.everywhere");accessible("discover.item.artist.0")
             capture("search")
-            click("discover.item.artist.0");awaitTag("discover.artist.surface")
+            click("discover.item.artist.0");awaitArtistLoaded()
             accessible("discover.back");capture("artist")
             clickDisplayed("discover.item.album.0")
             awaitTag("discover.album.surface")
@@ -444,6 +444,14 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun nodeConfig(tag:String)=compose.onNodeWithTag(tag,useUnmergedTree=true).fetchSemanticsNode().config
     private fun exists(tag:String)=compose.onAllNodes(hasTestTag(tag),useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()
     private fun awaitTag(tag:String){await("visible $tag"){exists(tag)}}
+    private fun awaitArtistLoaded() {
+        awaitTag("discover.artist.surface")
+        await("loaded artist metadata before capture") {
+            exists("discover.artist.header") &&
+                text("discover.artist.header").contains("Fixture Artist") &&
+                !exists("discover.artist.loading")
+        }
+    }
     private fun click(tag:String) {
         ensureDisplayed(tag)
         compose.onNodeWithTag(tag).performClick();compose.waitForIdle()
