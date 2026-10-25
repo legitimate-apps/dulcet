@@ -422,6 +422,21 @@ and release-policy verification pass. The CI policy self-test includes 32 finite
 invocation controls across all four surfaces and eight shared iOS-test compilation controls.
 These controls validate the harness and job wiring; they supply no native feature promotion. On `0f29b7cd`, disabling `validate_report` in an isolated copy makes 13 of the 14 controls fail while the positive control still passes. The tracked implementation passes all 14; no production validator is changed for this mutation test.
 
+## Parity execution-fixture correction
+
+OBSERVED: [parity job 121160089576 in 40190435090](https://github.com/legitimate-apps/dulcet/actions/runs/40190435090/job/121160089576)
+rejects its synthetic positive execution report on metadata head `8389b6f6`: that fixed report
+omits the newly cited Discover identities. The first reported missing identity is
+`DulcetMacDiscoverWishlistAppTest/testEverywhereQueryPagesAndHeldRouting`. The production parity
+validator correctly refuses the omission. The correction explicitly registers the twelve cited
+Discover case identities across four surfaces in the fixed fixture, independently of FEATURES,
+and adds missing/failure/error/skip rejection controls for each. The complete local self-test
+passes two workflow-specific positive controls and all 48 Discover rejection controls. Each runs
+in its actual Apple or core context; the original Apple-only helper would ignore Android claims.
+The production validator also accepts the 278 cited core identities against the actual archived
+core and native XML. The production validator and native cases are unchanged. These synthetic cases are harness controls and supply no native
+feature evidence. The replacement final-head run must pass the complete self-test before release.
+
 ## Current fixture and rejection controls
 
 On `e2fb654f`, the full finite-fixture control suite records 16 passing cases in
