@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the operator's host-pressure limits without booting a simulator."""
+"""Exercise simulator host-pressure guards without booting a device."""
 import unittest
 
 from discover_simulator_health import SimulatorHealth
