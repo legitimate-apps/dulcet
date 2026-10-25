@@ -28,9 +28,7 @@ public struct DulcetDiscoverSearchView: View {
                                     }
                                     if let page = group.page {
                                         ForEach(page.items, id: \.id) { item in
-                                            NavigationLink(value: DulcetDiscoverDestination(item: item)) {
-                                                DulcetDiscoverItemRow(item: item, reader: model.reader)
-                                            }
+                                            metadataLink(item)
                                             .buttonStyle(.plain)
                                             .accessibilityIdentifier("discover.item.\(item.id)")
                                             .accessibilityLabel(DulcetStrings.readerRowAccessibility(item.title, DulcetDiscoverItemPresentation(item: item).availabilityText))
@@ -55,14 +53,33 @@ public struct DulcetDiscoverSearchView: View {
 #endif
             }
             .padding(DulcetSpacing.md)
+#if os(macOS)
             .navigationDestination(for: DulcetDiscoverDestination.self) { destination in
                 DulcetDiscoverDetailView(reader: model.reader, destination: destination, openLibrary: openLibrary)
             }
+#endif
         }
         .dulcetForeground(.primaryTextOnWindow)
         .onAppear { model.open(); model.reader.setQuery(query) }
         .onDisappear { model.close(); model.reader.setQuery("") }
     }
+    @ViewBuilder
+    private func metadataLink(_ item: DulcetDiscoverItem) -> some View {
+#if os(iOS)
+        // Search is embedded in the shell's navigation owner. Supply the destination
+        // here instead of relying on an inner value registration.
+        NavigationLink {
+            DulcetDiscoverDetailView(reader: model.reader, destination: DulcetDiscoverDestination(item: item), openLibrary: openLibrary)
+        } label: {
+            DulcetDiscoverItemRow(item: item, reader: model.reader)
+        }
+#else
+        NavigationLink(value: DulcetDiscoverDestination(item: item)) {
+            DulcetDiscoverItemRow(item: item, reader: model.reader)
+        }
+#endif
+    }
+
     private func groupTitle(_ kind: String) -> String {
         switch kind { case "artist": DulcetStrings.artists; case "album": DulcetStrings.albums; case "song": DulcetStrings.myLibrarySongs; default: kind }
     }
@@ -240,7 +257,15 @@ struct DulcetDiscoverDetailView: View {
             if let openMetadata {
                 Button { openMetadata(destination) } label: { DulcetDiscoverItemRow(item: item, reader: model.reader) }
             } else {
+#if os(iOS)
+                NavigationLink {
+                    DulcetDiscoverDetailView(reader: model.reader, destination: destination, openLibrary: openLibrary)
+                } label: {
+                    DulcetDiscoverItemRow(item: item, reader: model.reader)
+                }
+#else
                 NavigationLink(value: destination) { DulcetDiscoverItemRow(item: item, reader: model.reader) }
+#endif
             }
         }
         .buttonStyle(.plain).accessibilityIdentifier("discover.item.\(item.id)")
