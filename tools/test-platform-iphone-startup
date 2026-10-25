@@ -109,7 +109,7 @@ import json, os, sys
 args = sys.argv[1:]
 with open(os.environ['CALLS'], 'a') as f: f.write(json.dumps(args) + '\\n')
 if args[0].endswith('host-pressure'):
-    sys.exit(1 if os.environ['SCENARIO'] == 'pressure-failure' else 0)
+    sys.exit(1 if args[1] == 'settle' and os.environ['SCENARIO'] == 'pressure-failure' else 0)
 if args[0].endswith('resolve-ipad-destination'):
     if os.environ['SCENARIO'] == 'destination-failure': sys.exit(1)
     print('OTHER' if os.environ['SCENARIO'] == 'destination-mismatch' else 'IPAD')

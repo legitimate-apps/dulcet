@@ -490,6 +490,31 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     stale reading cannot establish readiness. The 900-second cap logs `settled=false` and fails
     the prerequisite; no proof is skipped, retried or given a larger allowance. Waiting has its
     own `post-boot-pressure-*` phase, so moving the burst out of the proof stays visible. Free
-    pages and resident swap are logged but do not independently establish active I/O. Threshold
-    effectiveness is ASSUMED until compared with hosted proof pressure; the app remains cold and
-    the disposable account/library state is untouched.
+    pages and resident swap are logged but do not independently establish active I/O. The app
+    remains cold and the disposable account/library state is untouched.
+
+    **OBSERVED in [platform run 40142840023](https://github.com/legitimate-apps/dulcet/actions/runs/40142840023)
+    (2026-10-25 UTC):** both pressure gates and every platform proof passed. The table describes
+    the final 60-second admission window; elapsed time covers the whole pressure gate.
+
+    | Measurement | iPhone | iPad |
+    |---|---:|---:|
+    | Gate elapsed seconds | 340.8 | 392.9 |
+    | Maximum page-ins, MiB/s | 18.81 | 19.34 |
+    | Maximum combined swap I/O, MiB/s | 0.17 | 0.07 |
+    | Maximum load1 | 106.8 | 110.5 |
+    | Minimum free memory, MiB | 60.0 | 57.8 |
+    | Maximum resident swap, MiB | 861.75 | 959.0 |
+
+    The booted iPad's same-device Xcode destination confirmation then passed in 22 seconds.
+    Requiring abundant free pages or empty swap would have rejected these passing controls.
+    The workflow leaves two minutes of shell/process startup margin around the unchanged
+    900-second pressure deadline: run 40083176763 had spent 63 seconds starting its shell.
+    Explicit marks after iPad settling, before its layout proof and before tvOS keep the wait,
+    destination query and subsequent device tests in separate summary phases. In the first
+    implementation, the iPad wait's mark extended through later proofs and reported 30,896 MiB
+    of page-ins over 1,720 seconds; that was not the wait's own pressure.
+    The conformance comparison uses [run 40153793474](https://github.com/legitimate-apps/dulcet/actions/runs/40153793474)'s
+    per-device `my-library-*` phase summaries and first automation-session timestamps. Lower
+    first-proof pressure must be checked separately from admission; a single green run does not
+    estimate the snapshot flake rate.
