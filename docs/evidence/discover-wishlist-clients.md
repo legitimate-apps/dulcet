@@ -15,6 +15,41 @@ below. Diagnostic dispatches cannot replace the final plain full Apple release g
 
 ## Integrated native confirmation and artifact handoff
 
+The subsequent full [Apple run 40202061025](https://github.com/legitimate-apps/dulcet/actions/runs/40202061025)
+on `a7e2d6b8` concludes failure. Its dedicated Mac suite passes 6/6 and iPhone passes 5/5,
+each in a finalized xcresult with zero failures, errors or skips. The dedicated
+[iPad job 121217562182](https://github.com/legitimate-apps/dulcet/actions/runs/40202061025/job/121217562182)
+finalizes five executions, four passes and one failure, with zero errors or skips. The failed
+`testAccountSwitchAndIdentityReplacementFence` reports `Missing Search Everywhere scope`
+at 120.823 seconds. The other four cases pass, including
+`testIPadSidebarSelectionSurvivesWishlistDetailAndResize` at 351.921 seconds. Device: iPad (A16),
+iOS 26.5 (23F77), `3EDBE328-2B49-460D-AD93-9380F8C7EDC5`. Artifact:
+`discover-wishlist-ipad-40202061025-1`, `native/proof.xcresult`.
+
+OBSERVED: XCTest's Search activation point `(126, 364.25)` is inside the button's
+`(26, 338, 200, 52)` frame. UIKit dispatches touch events to the app and XCTest receives its
+touch-completion event at 16:10:46 UTC. The subsequent hierarchy still selects Listen Now.
+The first catalog snapshot takes roughly 44 seconds and the SpringBoard interruption check
+roughly ten seconds. The artifact contains no host-pressure record or app stack sample, and
+this first case did not enable navigation receipts. Whether SwiftUI dropped the action or a
+later source snapshot replaced the destination is unresolved; pressure is not established by
+elapsed time alone. No product fix is claimed for this failure.
+
+The Discover harness now uses the shared `host-pressure` sampler and `isolate-simulator`
+post-boot admission and first-launch warm-up, retaining their raw diagnostics in its own native
+artifact. Every Discover test launch enables the existing opt-in navigation receipts. Assertions,
+selection input and test deadlines are unchanged. The runner wiring control fails against
+`a7e2d6b8` with `native launch bypassed pressure diagnostics`; five admission controls separately
+fail before the helper exists. The corrected controls require exact-device warm-up, reject
+missing builds or failed admission, and exercise TERM cleanup. This closes an observed harness
+and diagnostic gap; a new-head native result is still required.
+
+The same run's baseline iPad My Library case times out at its existing 300-second bound under
+recorded host pressure; the baseline iPhone proof step succeeds but artifact upload fails DNS
+resolution. Neither is accepted as a passing final gate. These failures remain recorded while
+the shared startup-admission dependency lands on main. No old-head diagnostic rerun substitutes
+for the final updated branch's required checks and conformance dispatch.
+
 On `4eb79877`, the plain full [Apple run 40191182235](https://github.com/legitimate-apps/dulcet/actions/runs/40191182235)
 finalizes every platform, conformance and native job successfully. The aggregate then fails its
 executed-evidence check. This is an artifact-directory handoff failure, not a native test failure.

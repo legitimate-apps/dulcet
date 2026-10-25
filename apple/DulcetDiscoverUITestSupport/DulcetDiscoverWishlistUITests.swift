@@ -49,7 +49,7 @@ import UIKit
         _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": state])
         print("DISCOVER_ACK scenario=\(name) revision=\(revision) flag=\(flag ?? "served")")
     }
-    func launch(server: String? = nil, other: Bool = false, connect: Bool = true, variant: String = "light", navigationReceipts: Bool = false) throws {
+    func launch(server: String? = nil, other: Bool = false, connect: Bool = true, variant: String = "light", navigationReceipts: Bool = true) throws {
         if !prepared { try prepare(); prepared = true }
         var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
