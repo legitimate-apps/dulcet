@@ -531,6 +531,34 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     downloads. It supplies no server credentials and performs no account/library operation.
     The original proof launches a new production process with its original arguments and fresh
     account UUID. This warms first installation/rendering without seeding any proof's state.
-    ASSUMED until hosted comparison: absorbing that first launch prevents the renewed burst.
-    Check the per-device `my-library-*` summaries and first automation timestamps separately
-    from admission; a single green run does not estimate the snapshot flake rate.
+    **OBSERVED in [conformance run 40164687903](https://github.com/legitimate-apps/dulcet/actions/runs/40164687903)
+    on implementation head `20bd6cac` (2026-10-25 UTC):** warm-up launch and termination succeeded
+    on both devices, all seven iPhone and five iPad My Library methods passed, and both complete
+    device conformance jobs passed. No proof was retried or given a larger allowance.
+
+    | First My Library phase | iPhone | iPad |
+    |---|---:|---:|
+    | Phase seconds | 891 | 527 |
+    | Page-ins, MiB | 8403 | 7911 |
+    | Maximum resident swap, MiB | 331.69 | 744.69 |
+    | Maximum load1 | 234.4 | 139.9 |
+    | First automation marker, seconds | 12.69 | 7.61 |
+    | Browse/relaunch/offline test, seconds | 264.376 | 149.933 |
+
+    Pressure admission took 240.3/220.1 seconds; its accepted windows had page-in maxima
+    18.61/6.64 MiB/s, combined swap I/O maxima 0.14/0.14 MiB/s, and load maxima 118.2/119.5.
+    The separately logged waiting phases reached load 524.9/547.9, keeping the burst's cost
+    visible outside the proofs. The failed idle-gate-only iPad phase above had load 354.9,
+    11019 MiB of page-ins and first automation at 24.96 seconds. The combined method's iPad
+    phase had less paging and load, and completed the original assertions within their bounds.
+    Both device phase loads were below the supplied census's approximately 240..671 range.
+    Paging remained substantial, and the iPhone was slower than the earlier idle-gate-only
+    passing control (load 222.9, 8653 MiB, first automation 7.76 seconds). Runner variability
+    prevents attributing every difference to warm-up. These are first-phase pressure and
+    execution observations; one passing pair does not estimate the one-in-seven flake rate.
+
+    Proof dispatches on the same branch share the workflow's concurrency group. Dispatching
+    the second before the first core job finished canceled that first core job: run 40153793474
+    concluded canceled, with iPhone success, iPad failure and core canceled. Its completed
+    device evidence above remains valid; it has no completed core result. Wait for the whole
+    first run when collecting multiple complete comparisons on one branch.
