@@ -2789,7 +2789,7 @@ jobs:
   # dispatch both must succeed. On a run that planned every leg it then resolves every apple-ci
   # evidence row against the JUnit the legs uploaded, as `core-ci` does for Android. It runs no
   # Apple tooling, so it takes no macOS runner.
-  # Each native proof follows its corresponding baseline leg. Together they retain four slots.
+  # Use released baseline slots for native proofs while retaining the four-slot envelope.
   discover-wishlist-macos:
     name: discover-wishlist-macos
     needs: [apple-plan, apple-platform]
@@ -2859,7 +2859,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Each native proof follows its corresponding baseline leg. Together they retain four slots.
+  # Use released baseline slots for native proofs while retaining the four-slot envelope.
   discover-wishlist-iphone:
     name: discover-wishlist-iphone
     needs: [apple-plan, apple-conformance-ipad-iphone]
@@ -2933,10 +2933,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Each native proof follows its corresponding baseline leg. Together they retain four slots.
+  # Use released baseline slots for native proofs while retaining the four-slot envelope.
   discover-wishlist-ipad:
     name: discover-wishlist-ipad
-    needs: [apple-plan, apple-conformance-ipad-iphone]
+    needs: [apple-plan, discover-wishlist-macos]
     if: ${{ !cancelled() && needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
     timeout-minutes: 95

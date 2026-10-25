@@ -1985,7 +1985,9 @@ assert capacity({'mac':{'platform','core','devices'},'phone':{'mac'},'pad':{'lin
 assert capacity({'mac':{'platform'},'phone':{'mac'},'pad':{'phone'}},weights)==4
 assert capacity({'phone':{'mac'},'pad':{'phone'}},weights)==5
 assert capacity({'mac':{'platform'},'phone':{'devices'},'pad':{'devices'}},weights)==4
-print('Hosted macOS capacity controls passed: 6/6 cases, parallel device tails, matrix weights and transitive paths')
+assert capacity({'mac':{'platform'},'phone':{'devices'},'pad':{'mac'}},weights)==4
+assert capacity({'mac':{'platform'},'phone':{'devices'}},weights)==5
+print('Hosted macOS capacity controls passed: 8/8 cases, staggered device tails, matrix weights and transitive paths')
 
 for graph in [{'a':{'a'}},{'a':{'b'},'b':{'a'}}]:
     try:capacity(graph,{'a':1,'b':1})
