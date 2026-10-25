@@ -433,6 +433,15 @@ private struct DulcetIOSShell: View {
             }
         }
 #endif
+        // Split-view destinations inherit from the split presentation owner, which is above
+        // its detail stack. Keep the existing player action and chrome available there too.
+        .environment(\.dulcetPageNowPlayingBar, DulcetOptionalNowPlayingBar(
+            store: store,
+            placement: .floating,
+            isSuppressed: store.selectedDestination == .nowPlaying,
+            drawsNotices: true,
+            onOpen: openPlayer
+        ))
         .environment(\.dulcetPlayerTransition, playerTransition)
         .background {
             DulcetPlayerPresenter(
