@@ -18,6 +18,59 @@ class DiscoverPagesTest {
         assertEquals("B",assertIs<DiscoverResult.Value<DiscoverAlbum>>(second).value.selectedReleaseId)
         pages.close()
     }
+    @Test fun closingDuplicateDefaultAlbumReadDoesNotCancelSurvivingPage() = discoverStoreTest { env ->
+        val release=CompletableDeferred<Unit>()
+        val wire=DiscoverTestTransport().apply {
+            onAlbum={id,_ ->
+                withContext(NonCancellable){release.await()}
+                DiscoverResult.Value(DiscoverAlbum(sampleDiscoverItem(id),emptyList(),"resolved-edition",sampleDiscoverPage()))
+            }
+        }
+        val pages=DiscoverPages(this,wire,env.store(),{true})
+        val visible=mutableListOf<DiscoverResult<DiscoverAlbum>>()
+        val departing=mutableListOf<DiscoverResult<DiscoverAlbum>>()
+        pages.album("group",null){visible.add(it)};runCurrent()
+        val duplicate=pages.album("group",null){departing.add(it)};runCurrent()
+        duplicate.cancel();release.complete(Unit);advanceUntilIdle()
+        assertEquals(1,visible.size)
+        assertEquals("resolved-edition",assertIs<DiscoverResult.Value<DiscoverAlbum>>(visible.single()).value.selectedReleaseId)
+        assertEquals("cancelled",assertIs<DiscoverResult.Failed>(departing.single()).error.code)
+        // A resolved default does not turn the next identical nil request into a new selection.
+        val next=mutableListOf<DiscoverResult<DiscoverAlbum>>()
+        val nextDuplicate=mutableListOf<DiscoverResult<DiscoverAlbum>>()
+        val heldAgain=CompletableDeferred<Unit>()
+        wire.onAlbum={id,_ ->
+            withContext(NonCancellable){heldAgain.await()}
+            DiscoverResult.Value(DiscoverAlbum(sampleDiscoverItem(id),emptyList(),"resolved-edition",sampleDiscoverPage()))
+        }
+        pages.album("group",null){next.add(it)};runCurrent()
+        val nextOperation=pages.album("group",null){nextDuplicate.add(it)};runCurrent()
+        nextOperation.cancel();heldAgain.complete(Unit);advanceUntilIdle()
+        assertIs<DiscoverResult.Value<DiscoverAlbum>>(next.single())
+        assertEquals("cancelled",assertIs<DiscoverResult.Failed>(nextDuplicate.single()).error.code)
+        pages.close()
+    }
+    @Test fun newEditionRevokesAllDuplicateReadersEvenWhenTheSelectionReturns() = discoverStoreTest { env ->
+        val release=CompletableDeferred<Unit>()
+        val wire=DiscoverTestTransport().apply {
+            onAlbum={id,edition ->
+                withContext(NonCancellable){release.await()}
+                DiscoverResult.Value(DiscoverAlbum(sampleDiscoverItem(id),emptyList(),edition,sampleDiscoverPage()))
+            }
+        }
+        val pages=DiscoverPages(this,wire,env.store(),{true})
+        val results=List(4){mutableListOf<DiscoverResult<DiscoverAlbum>>()}
+        for((index,edition) in listOf("A","A","B","A").withIndex()) {
+            pages.album("group",edition){results[index].add(it)};runCurrent()
+        }
+        release.complete(Unit);advanceUntilIdle()
+        for(result in results.take(3)) {
+            assertEquals(1,result.size)
+            assertEquals("cancelled",assertIs<DiscoverResult.Failed>(result.single()).error.code)
+        }
+        assertEquals("A",assertIs<DiscoverResult.Value<DiscoverAlbum>>(results.last().single()).value.selectedReleaseId)
+        pages.close()
+    }
     @Test fun partial8of12IsNotPlayableAsCompleteAlbum() {
         val ref=DiscoverLibraryRef("A","album","album:opaque")
         val partial=sampleDiscoverItem(kind="album",status="partlyHeld",completeness="known",refs=listOf(ref)).let {

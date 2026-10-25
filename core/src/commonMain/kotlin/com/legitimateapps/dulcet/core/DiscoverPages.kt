@@ -31,6 +31,9 @@ internal class DiscoverPages(
     private var closed=false
     private val operations=mutableSetOf<PageOperation<*>>()
     private val editions=mutableMapOf<String,String?>()
+    // Requested identity is separate from the default edition resolved by a response. Two
+    // presentations may read the same album while a navigation stack is replaced.
+    private val requestedEditions=mutableMapOf<String,String?>()
     private val epochs=mutableMapOf<String,Long>()
     private val albumOperations=mutableMapOf<String,MutableSet<DiscoverOperation>>()
 
@@ -39,9 +42,12 @@ internal class DiscoverPages(
     fun artistAlbums(mbid: String,cursor: String?,completion: (DiscoverResult<DiscoverPage>)->Unit): DiscoverOperation = json(
         "artist-albums:$mbid:$cursor",DiscoverPage.serializer(),{it.asDeviceCached()},completion) {transport.artistAlbums(mbid,cursor)}
     fun album(mbid: String,releaseId: String?,completion: (DiscoverResult<DiscoverAlbum>)->Unit): DiscoverOperation {
-        val epoch=(epochs[mbid] ?: 0)+1
-        epochs[mbid]=epoch;editions[mbid]=releaseId
-        albumOperations.remove(mbid)?.toList()?.forEach {it.cancel()}
+        val changed=mbid !in requestedEditions || requestedEditions[mbid]!=releaseId
+        val epoch=if(changed) (epochs[mbid] ?: 0)+1 else epochs.getValue(mbid)
+        if(changed) {
+            epochs[mbid]=epoch;requestedEditions[mbid]=releaseId;editions[mbid]=releaseId
+            albumOperations.remove(mbid)?.toList()?.forEach {it.cancel()}
+        }
         val op=json("album:$mbid:$releaseId",DiscoverAlbum.serializer(),{it.copy(tracks=it.tracks.asDeviceCached())}, { result ->
             if(result is DiscoverResult.Value && epochs[mbid]==epoch) editions[mbid]=result.value.selectedReleaseId
             completion(result)
@@ -50,7 +56,7 @@ internal class DiscoverPages(
         return op
     }
     fun albumTracks(mbid: String,releaseId: String,cursor: String?,completion: (DiscoverResult<DiscoverPage>)->Unit): DiscoverOperation {
-        if (mbid !in epochs) {epochs[mbid]=1;editions[mbid]=releaseId}
+        if (mbid !in epochs) {epochs[mbid]=1;editions[mbid]=releaseId;requestedEditions[mbid]=releaseId}
         val epoch=epochs[mbid]
         val op=json("album-tracks:$mbid:$releaseId:$cursor",DiscoverPage.serializer(),{it.asDeviceCached()},completion,
             {epochs[mbid]==epoch && editions[mbid]==releaseId}) {transport.albumTracks(mbid,releaseId,cursor)}
