@@ -34,17 +34,17 @@ class AndroidTvEmulatorPlaybackConformanceTest {
         awaitQueuedBroadcastsDelivered()
         connectSavedAccount(context, probe)
         val account = checkNotNull(AndroidAccountCredentialStore(context).load())
-        // Start and bind before Play: the fixture lasts less than one second.
-        ActivityScenario.launch(TvPlaybackActivity::class.java).use {
-            PlaybackObserver(context).use { observer ->
-                observer.bind()
+        // Bind and subscribe before launching Play: the fixture lasts less than one second.
+        PlaybackObserver(context).use { observer ->
+            observer.bind()
+            var activity: ActivityScenario<TvPlaybackActivity>? = null
+            try {
                 requireDurationlessPlayback(observer, probe, rawId) {
                     val play = PlaybackIntents.playTrack(context, account.id, rawId, title)
                         .setClassName(context, TvPlaybackActivity::class.java.name)
-                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(play)
+                    activity = ActivityScenario.launch<TvPlaybackActivity>(play)
                 }
-            }
+            } finally { activity?.close() }
         }
     }
 

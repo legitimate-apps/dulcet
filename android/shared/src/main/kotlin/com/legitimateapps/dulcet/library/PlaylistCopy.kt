@@ -112,8 +112,8 @@ public data class PlaylistQueue(val name: String, val tracks: List<AndroidTrack>
 
 /**
  * The playlist in [publication] as a queue from the entry at [position] (an index into its items), in
- * the playlist's order, duplicates kept. Entries this device cannot play now, or whose duration is unknown, are
- * left out; a start on one of those begins at the next entry that can play. Null when the publication
+ * the playlist's order, duplicates kept. Unknown-duration entries stay in the queue. Entries this
+ * device cannot play now are left out; a start on one begins at the next entry that can play. Null when the publication
  * is not a playlist with its entries present, or nothing in it can play.
  */
 public fun AndroidLibraryPublication.playlistQueue(providerInstanceId: String, position: Int): PlaylistQueue? {

@@ -13,7 +13,15 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     private let provider = "system-provider-\(UUID().uuidString)"
 
     func testUnknownServerDurationReachesTheQueueAndDecoderDurationReachesPresentation() async throws {
-        let fixture = makeFixture(tracks: ["a", "b"], duration: nil)
+        let databaseName = "durationless-model-\(UUID().uuidString).db"
+        addTeardownBlock {
+            let directory = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/databases")
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(databaseName + suffix))
+            }
+        }
+        let fixture = makeFixture(tracks: ["a", "b"], duration: nil, databaseName: databaseName)
         fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
         let attempt = try await fixture.waitForPrepare(rawID: "a")
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.durationMilliseconds, -1)
@@ -1553,7 +1561,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         recordStatuses: Bool = false,
         sourceContainer: DulcetAudioContainer = .mp3,
         downloadController: (any DulcetDownloadControlling)? = nil,
-        duration: Duration? = .seconds(120)
+        duration: Duration? = .seconds(120),
+        databaseName: String = ":memory:"
     ) -> Fixture {
         let tracks = rawIDs.map { rawID in
             DulcetTrack(
@@ -1571,7 +1580,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
                 )
             )
         }
-        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        let queue = ApplePlaybackQueueClient(databaseName: databaseName)
         let engine = RecordingCommandEngine()
         let fetcher = RecordingArtworkFetcher(data: artwork)
         let controller = DulcetCorePlaybackController(
@@ -1579,7 +1588,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
             engine: engine,
             catalog: tracks,
             downloadController: downloadController,
-            artworkFetcher: artwork == nil ? nil : fetcher
+            artworkFetcher: artwork == nil ? nil : fetcher,
+            identityDatabaseName: databaseName
         )
         controller.configure(account: account(provider))
         // The store's data source installs the controller's single presentation handler. Tests

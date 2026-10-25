@@ -31,9 +31,12 @@ final class DulcetMacPlaybackSystemLiveTests: XCTestCase {
         let track = try XCTUnwrap(item.playableTrack, "a server-listed track must be queueable without duration")
         XCTAssertNil(track.duration)
         let before = try await server.playCount(track.id.rawID)
-        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        let databaseName = "durationless-live-\(UUID().uuidString).db"
+        removeDatabaseAfterTest(databaseName)
+        let queue = ApplePlaybackQueueClient(databaseName: databaseName)
         defer { queue.close() }
-        let controller = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(), catalog: [])
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(),
+                                                      catalog: [], identityDatabaseName: databaseName)
         var reports: [DulcetScrobbleDeliveryReport] = []
         controller.setScrobbleDeliveryHandler { reports.append($0) }
         controller.configure(account: DulcetPlaybackAccount(
@@ -48,7 +51,9 @@ final class DulcetMacPlaybackSystemLiveTests: XCTestCase {
             tracks: [track], sourceKind: .library, sourceID: nil,
             sourceDisplayName: "Library", startIndex: 0, shuffle: false
         ))
-        XCTAssertEqual(queue.snapshot().snapshot?.currentSession?.durationMilliseconds, -1,
+        let initialSession = try XCTUnwrap(queue.snapshot().snapshot?.currentSession,
+                                           "the production Play action must create a session")
+        XCTAssertEqual(initialSession.durationMilliseconds, -1,
                        "positive control: the session really starts with unknown duration")
         var progressingPositions: [Duration] = []
         var decodedDuration: Duration?
