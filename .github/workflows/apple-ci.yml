@@ -2703,6 +2703,21 @@ jobs:
             ${{ runner.temp }}/dulcet-*-my-library-captures
           if-no-files-found: error
           retention-days: 14
+      # These native input cases have exact xcresult execution guards. Retain their bundles on
+      # success too, so the individual results can be read independently of the runner log.
+      - name: Retain native drag and interaction result bundles
+        if: ${{ always() }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-native-input-results-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dulcet-*-album-tile-drag.xcresult
+            ${{ runner.temp }}/dulcet-*-playlist-row-drag.xcresult
+            ${{ runner.temp }}/dulcet-*-interaction-scope.xcresult
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
       # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
       - name: Stop host-pressure sampling and bound unfinished stack captures
