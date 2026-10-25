@@ -27,6 +27,20 @@ TIMEOUT = object()
 IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 OLD_IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
 
+# Keep the real CLI/subprocess boundary and file parsing, but make fixture-only
+# selection independent of host scheduling. The deadline controls below advance
+# their clocks explicitly; none of these controls changes the production budget.
+FIXTURE_CLOCK = """
+import runpy, sys
+from unittest.mock import patch
+elapsed = [0.0]
+def advance(seconds):
+    elapsed[0] += seconds
+sys.argv = sys.argv[1:]
+with patch("time.monotonic", side_effect=lambda: elapsed[0]), patch("time.sleep", side_effect=advance):
+    runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+
 
 def destinations(*ids: str) -> str:
     return 'Available destinations for the "DulcetiOS" scheme:\n' + "\n".join(
@@ -44,7 +58,7 @@ def run(payload: dict, transcript: str | None = None, field: str = "name") -> su
             *(d["udid"] for devices in payload["devices"].values() for d in devices)
         ))
         return subprocess.run(
-            [sys.executable, str(RESOLVER), "--devices-json", str(path),
+            [sys.executable, "-c", FIXTURE_CLOCK, str(RESOLVER), "--devices-json", str(path),
              "--destinations-file", str(accepted), "--discovery-timeout", "0.1", "--print", field],
             # Fixtures must be sufficient: neither Apple executable can be found in these controls.
             env={**os.environ, "PATH": ""},
@@ -214,6 +228,22 @@ def main() -> None:
         if result.returncode != 0 or result.stdout.strip() != expected:
             raise SystemExit(f"MUTATION CONTROL FAILED {label}: {result.stdout}{result.stderr}")
         print(f"MUTATION CONTROL PASS {label} stdout={result.stdout.strip()!r} stderr={result.stderr.strip()!r}")
+
+    # Fixture selection is a pure CLI control, not a host scheduling benchmark. A real
+    # inventory I/O pause must not exhaust the virtual deadline used by these controls.
+    with TemporaryDirectory() as tmp:
+        paused_resolver = Path(tmp) / "resolve-ipad-destination"
+        source = RESOLVER.read_text()
+        header = "def load_devices(path: str | None, timeout: float = XCODE_QUERY_TIMEOUT) -> dict:\n"
+        if source.count(header) != 1:
+            raise SystemExit("FIXTURE CLOCK CONTROL FAILED: cannot locate inventory entry point")
+        paused_resolver.write_text(source.replace(
+            header, header + "    __import__('threading').Event().wait(0.2)\n", 1))
+        with patch.dict(run.__globals__, {"RESOLVER": paused_resolver}):
+            paused = run(inventory, destinations("FFF", "EEE"), "udid")
+    if paused.returncode != 0 or paused.stdout.strip() != "EEE":
+        raise SystemExit(f"FIXTURE CLOCK CONTROL FAILED: scheduling consumed fixture budget: {paused.stderr}")
+    print("FIXTURE CLOCK CONTROL PASS slow_inventory_uses_virtual_budget=true cli_boundary=true")
 
     for label, transcript in (
         ("empty_intersection", destinations("UNRELATED")),
