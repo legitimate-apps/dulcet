@@ -660,6 +660,8 @@ struct DulcetDestinationStack: View {
             .modifier(bar(drawsNotices: showing && (usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty)))
             .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
         }
+        // Concrete NavigationLink destinations need the same page chrome as store routes.
+        .environment(\.dulcetPageNowPlayingBar, bar(drawsNotices: showing))
         // The split detail keeps its navigation owner when a destination changes. Recreating
         // it with an already-pushed path causes SwiftUI to write its initial [] over that push.
         .onAppear(perform: retainLibrary)
@@ -785,6 +787,33 @@ struct DulcetDestinationStack: View {
                 store.popLibrary(to: path)
             }
         )
+    }
+}
+
+private struct DulcetPageNowPlayingBarKey: EnvironmentKey {
+    static let defaultValue: DulcetOptionalNowPlayingBar? = nil
+}
+
+private extension EnvironmentValues {
+    var dulcetPageNowPlayingBar: DulcetOptionalNowPlayingBar? {
+        get { self[DulcetPageNowPlayingBarKey.self] }
+        set { self[DulcetPageNowPlayingBarKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Gives a concrete destination the shell's existing transport and player action.
+    func dulcetPageNowPlayingBar() -> some View {
+        modifier(DulcetInheritedNowPlayingBar())
+    }
+}
+
+private struct DulcetInheritedNowPlayingBar: ViewModifier {
+    @Environment(\.dulcetPageNowPlayingBar) private var bar
+
+    func body(content: Content) -> some View {
+        if let bar { content.modifier(bar) }
+        else { content }
     }
 }
 

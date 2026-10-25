@@ -70,6 +70,7 @@ public struct DulcetDiscoverSearchView: View {
         // here instead of relying on an inner value registration.
         NavigationLink {
             DulcetDiscoverDetailView(reader: model.reader, destination: DulcetDiscoverDestination(item: item), openLibrary: openLibrary)
+                .dulcetPageNowPlayingBar()
         } label: {
             DulcetDiscoverItemRow(item: item, reader: model.reader)
         }
@@ -264,6 +265,7 @@ struct DulcetDiscoverDetailView: View {
 #if os(iOS)
                 NavigationLink {
                     DulcetDiscoverDetailView(reader: model.reader, destination: destination, openLibrary: openLibrary)
+                        .dulcetPageNowPlayingBar()
                 } label: {
                     DulcetDiscoverItemRow(item: item, reader: model.reader)
                 }
