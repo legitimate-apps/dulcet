@@ -43,10 +43,19 @@ Check that the dispatched run's head SHA equals the PR head and that `apple-conf
 alone does not prove conformance. The separate dispatch is maintainer merge evidence; the required
 PR check still comes from the PR run. A new head needs fresh evidence.
 
-Omitting the input (or passing `-f conformance_only=false`) runs every leg, as does push to `main`.
-Use that full run for a release: a conformance-only dispatch cannot satisfy the release full-run
+Omitting the input (or passing `-f conformance_only=false`) runs every leg. On push to `main`,
+`plan-apple-legs` can reuse the merged PR's same-tree, exact-head PR platform and dispatch
+conformance proof. It plans no macOS legs only after checking repository-owned workflow identities,
+successful latest attempts and all required proof jobs; every uncertainty runs every leg. The run
+summary names the PR, head, tree and both proof runs. Its successful `apple-ci` check means the
+planned skips were valid, which is sufficient for main-health's required-context check.
+
+A reused push does not resolve Apple FEATURES identities against combined JUnit. That resolution
+runs on full runs, including the plain full dispatch required on the release commit. Use that full
+run for a release: a conformance-only dispatch cannot satisfy the release full-run
 gate, which requires every Apple leg successful in the latest `apple-ci` check suite on the release
-commit. Full parity evidence is resolved only when every leg was planned.
+commit. A main push with skipped legs cannot satisfy it either. Full parity evidence is resolved
+only when every leg was planned.
 
 **History, so nobody re-derives the two-account dance.** There really was a wall here: on 2026-08-20
 an approving review from a pull request's own author was refused with
