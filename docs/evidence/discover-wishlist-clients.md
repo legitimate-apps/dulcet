@@ -754,7 +754,8 @@ These PROD host sources are unchanged by the later held-read test correction.
 ## Nonblocking lifecycle follow-ups
 
 A completed independent code inspection of `de940790` reports no blockers and two should-fix
-findings. They are recorded as follow-ups under the repository's review policy. The relevant
+findings. They remain follow-ups in [issue #393](https://github.com/legitimate-apps/dulcet/issues/393)
+under the repository's review policy. The relevant
 Discover lifetime, WishOutbox and reader implementations are unchanged through `441798be`;
 later diagnostic facade receipts do not change these paths. These are code-inspection findings,
 not new native reproductions, and do not replace the owner's final review after green CI.
