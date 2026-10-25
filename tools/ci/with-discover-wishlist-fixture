@@ -62,7 +62,7 @@ class DiscoverFixture:
         self.start_process(role,args);return self.wait(lambda:json.loads(ready.read_text()) if ready.exists() else None)['url']
     def media(self,name,recording,album,release,track):
         path=self.root/name
-        self.process_owner.run([self.ffmpeg,'-v','error','-nostdin','-y','-f','lavfi','-i','sine=frequency=440:duration=2','-threads','1',
+        self.process_owner.run([self.ffmpeg,'-v','error','-nostdin','-y','-f','lavfi','-i','sine=frequency=440:duration=120','-threads','1',
             '-metadata',f'title=Fixture Song {recording:02d}','-metadata','artist=Fixture Artist','-metadata',f'album=Fixture Album {album:02d}',
             '-metadata','album_artist=Fixture Artist','-metadata',f'track={track}','-metadata','date=2026',
             '-metadata',f'MUSICBRAINZ_TRACKID={mbid(recording)}','-metadata',f'MUSICBRAINZ_ARTISTID={IDS["artist"]}',

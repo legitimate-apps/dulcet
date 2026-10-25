@@ -34,6 +34,25 @@ def call(url,path,body=None):
     with urllib.request.urlopen(req,timeout=40) as r:return json.load(r)
 
 class ModuleLoadingTests(unittest.TestCase):
+    def test_mediaOutlastsNativePlaybackObservation(self):
+        # Native AX snapshots can consume much of a 30-second observation window.
+        # Exercise the actual generated file, including its tags and decoded duration.
+        fixture = module().DiscoverFixture()
+        self.assertIsNotNone(fixture.ffmpeg, "ffmpeg is required by the fixture")
+        with tempfile.TemporaryDirectory(prefix='discover-media-control-') as scratch:
+            fixture.root = Path(scratch)
+            try:
+                media = fixture.media('control.flac', 10, 0, 300, 1)
+                probe = subprocess.run([str(Path(fixture.ffmpeg).with_name('ffprobe')),
+                    '-v', 'error', '-show_entries', 'format=duration:format_tags=title',
+                    '-of', 'json', str(media)], capture_output=True, text=True, check=True)
+                decoded = json.loads(probe.stdout)['format']
+                self.assertEqual('Fixture Song 10', decoded['tags']['title'])
+                self.assertGreaterEqual(float(decoded['duration']), 120,
+                    'The native player observation must not race a two-second EOF')
+            finally:
+                fixture.process_owner.close()
+
     def test_fixtureListenerBindsWithoutReverseDns(self):
         loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
         spec=importlib.util.spec_from_loader(loader.name,loader)
