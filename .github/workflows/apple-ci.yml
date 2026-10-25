@@ -3091,19 +3091,19 @@ jobs:
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: dulcet-apple-parity-evidence-discover-wishlist-macos-${{ github.run_id }}-${{ needs.discover-wishlist-macos.outputs.attempt }}
-          path: ${{ runner.temp }}
+          path: ${{ runner.temp }}/dulcet-discover-macos-junit
       - name: Download iphone Discover parity evidence
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' && needs.apple-plan.outputs.discover == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: dulcet-apple-parity-evidence-discover-wishlist-iphone-${{ github.run_id }}-${{ needs.discover-wishlist-iphone.outputs.attempt }}
-          path: ${{ runner.temp }}
+          path: ${{ runner.temp }}/dulcet-discover-iphone-junit
       - name: Download ipad Discover parity evidence
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' && needs.apple-plan.outputs.discover == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: dulcet-apple-parity-evidence-discover-wishlist-ipad-${{ github.run_id }}-${{ needs.discover-wishlist-ipad.outputs.attempt }}
-          path: ${{ runner.temp }}
+          path: ${{ runner.temp }}/dulcet-discover-ipad-junit
       - name: Report whether this run resolves evidence
         run: |
           if [ "$RUN_APPLE_PLATFORM" = true ] && [ "$RUN_APPLE_CONFORMANCE" = true ]; then

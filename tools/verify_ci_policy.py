@@ -1180,6 +1180,32 @@ def discover_native_fixture_errors(lines: list[str]) -> list[str]:
     return errors
 
 
+def discover_parity_artifact_path_errors(lines: list[str]) -> list[str]:
+    """Restore the directory stripped from each single-directory Discover JUnit upload."""
+    spans = {name: (start, end) for name, start, end in job_spans(lines)}
+    if 'apple-ci' not in spans:
+        return []
+    consumers = job_steps(lines, *spans['apple-ci'])
+    errors = []
+    for mode in ('macos', 'iphone', 'ipad'):
+        job = 'discover-wishlist-' + mode
+        if job not in spans:
+            continue
+        artifact = 'dulcet-apple-parity-evidence-' + job + '-'
+        directory = '${{ runner.temp }}/dulcet-discover-' + mode + '-junit'
+        for role, steps, action in (
+            ('upload', job_steps(lines, *spans[job]), 'actions/upload-artifact@'),
+            ('download', consumers, 'actions/download-artifact@'),
+        ):
+            paths = [str(step.get('with', {}).get('path', '')).strip("\"'")
+                     for step in steps
+                     if str(step.get('uses', '')).startswith(action)
+                     and str(step.get('with', {}).get('name', '')).startswith(artifact)]
+            if paths != [directory]:
+                errors.append(f'Discover {mode} parity artifact must {role} exactly {directory}; single-directory uploads contain bare JUnit files')
+    return errors
+
+
 # spec §21.1 caveat 1: runs-on for every job is a STANDARD hosted label and nothing else. A larger
 # runner is billed even on a public repository and fails as a bill, not as a red build, so this is
 # an allowlist rather than a list of forbidden suffixes: any label not matched here is refused,
@@ -1228,6 +1254,7 @@ for workflow in workflows:
     errors.extend(discover_diagnostic_selector_errors(lines))
     errors.extend(discover_native_fixture_errors(lines))
     errors.extend(discover_ios_test_compile_errors(lines))
+    errors.extend(discover_parity_artifact_path_errors(lines))
     errors.extend(partial_rerun_errors(workflow, lines))
     # core-ci's stale-evidence argument rests on its result check running before any download.
     # That was enforced only for apple-ci, and twelve edits to the real core-ci.yml that defeat it
@@ -1370,6 +1397,13 @@ def apple_matrix_values(job_lines: list[str]) -> dict[str, list[str]] | str | No
                     "flow list, such as `device: [ipad, iphone]`")
         return {rows[0][1]: [value.strip() for value in flow[1].split(",")]}
     return None
+
+
+def parity_artifact_download_directory(patterns: list[str]) -> str:
+    """A literal directory upload strips its parent; wildcard/multiple paths retain children."""
+    if len(patterns) == 1 and re.fullmatch(r"\$\{\{ runner\.temp \}\}/[\w-]+-junit/?", patterns[0]):
+        return patterns[0].rstrip('/')
+    return '${{ runner.temp }}'
 
 
 VERIFY_CALL = re.compile(r"(?m)^\s*(?:-\s+)?(?:run:\s*)?python3\s+tools/verify-parity-evidence\b")
@@ -1543,10 +1577,11 @@ if apple_ci:
                     )
             wanted = (f"dulcet-apple-parity-evidence-{leg}{suffix}-${{{{ github.run_id }}}}-"
                       f"${{{{ needs.{leg}.outputs.{output} }}}}")
-            if download_names.get(wanted) != "${{ runner.temp }}":
+            download_directory = parity_artifact_download_directory(patterns)
+            if download_names.get(wanted) != download_directory:
                 errors.append(
                     f"{apple_ci_path}: {APPLE_AGGREGATOR} must download {wanted} to "
-                    "${{ runner.temp }}, where the verify call reads the JUnit directories",
+                    f"{download_directory}, where the verify call reads the JUnit directories",
                 )
     # Two legs may reach one directory's text only through ONE shared script that they invoke
     # with different first arguments, and only when that script spells the directory out exactly

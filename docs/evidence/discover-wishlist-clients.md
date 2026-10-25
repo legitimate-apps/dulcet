@@ -13,6 +13,86 @@ below. Diagnostic dispatches cannot replace the final plain full Apple release g
 
 
 
+## Integrated native confirmation and artifact handoff
+
+On `4eb79877`, the plain full [Apple run 40191182235](https://github.com/legitimate-apps/dulcet/actions/runs/40191182235)
+finalizes every platform, conformance and native job successfully. The aggregate then fails its
+executed-evidence check. This is an artifact-directory handoff failure, not a native test failure.
+All Apple native counts below are read directly from finalized, noninterrupted xcresult summaries
+and test trees, matched to their XML, with xcodebuild exit zero. Android uses instrumentation XML.
+Every dedicated native result has zero failures, errors or skips.
+
+| Surface | Workflow run / native job | Passing executions | Device and runtime | Captures |
+| --- | --- | ---: | --- | ---: |
+| iPhone | [40191182235 / 121182044024](https://github.com/legitimate-apps/dulcet/actions/runs/40191182235/job/121182044024) | 5 | iPhone 17, iOS 26.5 (23F77), `79164188-6D2E-441E-A806-056A14711F9B` | 23 |
+| iPad | [40191182235 / 121181073849](https://github.com/legitimate-apps/dulcet/actions/runs/40191182235/job/121181073849) | 5 | iPad (A16), iOS 26.5 (23F77), `31A03367-4FE9-4172-888A-633C6F94AD12` | 26 |
+| Mac | [40191182235 / 121178487656](https://github.com/legitimate-apps/dulcet/actions/runs/40191182235/job/121178487656) | 6 | Apple Virtual Machine 1 arm64, macOS 26.6.2 (25G83), `9560c9774de9d226f8cf112ceeeaa4b26af27a83` | 25 |
+| Android | [40191174154 / 121162538516](https://github.com/legitimate-apps/dulcet/actions/runs/40191174154/job/121162538516) | 10 phases across 5 methods | API 34, `sdk_gphone64_x86_64`, `emulator-5554` | 32 |
+
+Apple artifacts are `discover-wishlist-<mode>-40191182235-1`, with `native/proof.xcresult`,
+`native/junit.xml`, `native/acknowledgements.jsonl` and `native/captures/`. Android's artifact is
+`discover-wishlist-android-40191174154-1`, with instrumentation XML and 32 positive foreground
+capture receipts. Its PR checkout `12abee25c306dda7c5a955e39064063b7cd5bec3` has tree
+`542ef0e512edba5939ec984c969ba805e4593564`, identical to source head `4eb79877`.
+
+The iPhone and iPad suites serve the 120-second 429 at revision 7 and return distinct new/old
+query payloads at 10. iPhone delivers lost operation `8d0cb4b9-cc09-4280-807f-f7b1f936d0f7`
+at 25 and completes actual scans 27/28; iPad delivers `a5804097-0bf9-4af2-adc7-05c70bc7ce72`
+at 27 and completes scans 29/30. Both old-A replies are removed/unapplied. Generations
+`wi_2225b1db-1fa4-4532-870c-943e54adefe9` and `wi_5b34e88b-59b1-4662-80b6-f93038142782`
+respectively survive the old reply. Removing the Arrived wish retains exact library items
+`77b61c68-2c53-47be-988a-275a15025472` and `1e1b5443-a9c8-4f0a-8bb8-a0e1eaf61032`.
+The iPad sidebar/held-album/resize/Back/durable-pending case and native iPhone consent Cancel
+with its VoiceOver label pass. Each Apple positive Navidrome control reads an album and observes
+zero feature RPCs.
+
+Mac acknowledges the held window-close detail at 26 before closure and its release afterward;
+lost operation `4f402285-8ed6-4b0d-a283-972a533683d1` is delivered at 29 and scans 31/32 complete.
+The old receipt is removed/unapplied and B survives; intentional Arrived removal retains
+`39a6bcca-6c76-42cc-a28d-f466465af87e`. The hosted durability scope is the production window,
+reader, session and SQL reopen inside the XCTest hosting process.
+
+Android delivers lost operation `293ba0ba-86b8-4de6-bd3a-2ce25a5ccee9` at 6 and completes
+scans 8/9. Both held remove/add mutations at 10 are delivered. Retry/stale controls use 13/15;
+both old-A replies are removed/unapplied and B `wi_662d38fd-e4c5-478f-8461-3a1f565d0040`
+survives. Navidrome records 14 positive album reads in 40 requests and zero feature RPCs. The old
+app PID was already absent before the explicit stop; the native pending/relaunch proof passes,
+and no prior death is attributed to that later stop.
+
+The same full Apple run verifies packages Mac 415, iPhone 397, iPad 397 and TV 377, one Keychain
+case per simulator platform and one iPad layout case. Darwin core records Mac 1,415 / iOS 2 /
+TV 2; server conformance Mac 74 / iOS 64 / TV 64. Its app proofs record Mac 30, iPhone 6, iPad 6
+and TV 23. Device conformance adds iPhone 28 XML plus two retained native interaction passes,
+iPad 20 XML plus three interaction passes. All these groups have zero failures, errors or skips.
+[PR Apple 40191174121](https://github.com/legitimate-apps/dulcet/actions/runs/40191174121) is green
+with the same package counts; conformance and Discover are correctly unplanned on that PR event.
+
+OBSERVED: [aggregate job 121192921250](https://github.com/legitimate-apps/dulcet/actions/runs/40191182235/job/121192921250)
+fails with `evidence test did not execute` for the Mac Everywhere identity, `nearby=[]`. Each
+single-directory parity upload contains a bare `TEST-...xml`; the aggregate downloads it at the
+temporary root while reading `dulcet-discover-<mode>-junit`. The new actual-workflow regression
+fails first with `macos Discover JUnit artifact directory missing`. The correction restores each
+platform directory at download. CI policy also distinguishes a literal directory upload from a
+wildcard or multiple-directory upload, and rejects missing, root, sibling, duplicate or renamed
+downloads and mismatched producer paths. Restoring the actual hosted files resolves all 192
+cited Apple identities across 251 reports without changing `verify-parity-evidence`. The fresh
+full workflow on the artifact-wiring correction remains required before readiness.
+
+The six exact-`4eb79877` Linux soak scopes each verify every requested class in all twenty
+repetitions, with zero XML failures, errors or skips. Executions include repetition.
+
+| Scope | Run / job | Executions / XML reports | Exact result |
+| --- | --- | ---: | --- |
+| Core Android, 17 classes | [40191188754 / 121162365639](https://github.com/legitimate-apps/dulcet/actions/runs/40191188754/job/121162365639) | 3,740 / 340 | SOAK RESULT passed=20 failed=0 |
+| JVM, four classes including DiscoverPagesTest | [40191190474 / 121162370213](https://github.com/legitimate-apps/dulcet/actions/runs/40191190474/job/121162370213) | 600 / 80 | SOAK RESULT passed=20 failed=0 |
+| PROD, seven classes | [40191192157 / 121162375818](https://github.com/legitimate-apps/dulcet/actions/runs/40191192157/job/121162375818) | 780 / 140 | SOAK RESULT passed=20 failed=0 |
+| DEV production reader | [40191193903 / 121162380250](https://github.com/legitimate-apps/dulcet/actions/runs/40191193903/job/121162380250) | 560 / 20 | SOAK RESULT passed=20 failed=0 |
+| TV My Library | [40191195846 / 121162392790](https://github.com/legitimate-apps/dulcet/actions/runs/40191195846/job/121162392790) | 120 / 20 | SOAK RESULT passed=20 failed=0 |
+| Discover real reader, fresh fixture per repetition | [40191198094 / 121162391945](https://github.com/legitimate-apps/dulcet/actions/runs/40191198094/job/121162391945) | 60 / 20 | SOAK RESULT passed=20 failed=0 |
+
+The artifact handoff changes CI policy, workflow destinations and this record; native/client/core
+sources are unchanged. Fresh final-head confirmations are recorded in the PR once they finish.
+
 ## Detail lifecycle regression
 
 OBSERVED: the focused [iPad job 121139750680 in 40183080857](https://github.com/legitimate-apps/dulcet/actions/runs/40183080857/job/121139750680)
