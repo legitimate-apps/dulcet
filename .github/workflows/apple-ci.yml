@@ -419,6 +419,13 @@ jobs:
               output.write(f"udid={udid}\n")
           print(f"PLATFORM IPHONE STARTUP PASS udid={udid} settled=true isolated=true app-launched=false")
           PY
+      - name: Settle iPhone host pressure before the first platform test
+        # 15 minutes in the gate plus two for shell/process startup. Run 40083176763 spent
+        # 63 seconds starting a post-boot shell; the gate must get time to log its own result.
+        timeout-minutes: 17
+        run: |
+          python3 tools/ci/host-pressure settle --phase platform-native-iphone \
+            --output "$DULCET_HOST_PRESSURE_LOG"
       - name: Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone
         timeout-minutes: 17
         env:
@@ -539,12 +546,35 @@ jobs:
           # a different launch path regardless. So app.launch() provides the launch evidence, and
           # this prerequisite can never reject a destination that would in fact have run the test.
           echo "IPADOS SIMULATOR PREREQUISITE PASS booted=true app-launched=false"
+      # Destination inventory uses the same starved host as accessibility. In run 40083176763
+      # its post-boot confirmation timed out before any proof could start. Absorb the paging
+      # burst before that query as well; neither step launches the product or touches its state.
+      - name: Settle iPadOS host pressure before destination confirmation
+        # Same 900-second admission deadline and startup margin as the iPhone pressure step.
+        timeout-minutes: 17
+        run: |
+          python3 tools/ci/host-pressure settle --phase platform-ipad-destination \
+            --output "$DULCET_HOST_PRESSURE_LOG"
+      - name: Confirm booted iPad remains an Xcode destination
+        timeout-minutes: 4
+        env:
+          IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
+        run: |
+          set -euo pipefail
+          python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" platform-ipad-destination
+          CONFIRMED_IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
+          if [[ "$CONFIRMED_IPAD_UDID" != "$IPAD_UDID" ]]; then
+            echo "::error::Post-boot Xcode destination differs from the acknowledged iPad"
+            exit 1
+          fi
+          echo "IPADOS XCODE DESTINATION PASS udid=$IPAD_UDID same-device=true"
       - name: Launch iPadOS shell and prove layout plus stored Keychain attributes
         timeout-minutes: 23
         env:
           IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
         run: |
           set -o pipefail
+          python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" platform-native-ipad
           # The model name is NOT the thing being proved -- the UI test asserts regular width itself
           # and rejects anything narrower. Pinning `iPad Pro 13-inch (M4)` broke when the hosted image
           # rotated to M5 models, so resolve whatever iPad this image actually ships. The resolver
@@ -625,6 +655,7 @@ jobs:
         timeout-minutes: 30
         run: |
           set -o pipefail
+          python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" platform-native-tvos
           xcodebuild test \
             -project apple/Dulcet.xcodeproj \
             -scheme DulcetTV \
@@ -2192,8 +2223,15 @@ jobs:
         run: python3 tools/ci/stop-build-daemons
       # Start and positively validate all loopback fixtures before the device's first boot.
       # Cold simulator services compete with the server and proxy startup on this small runner.
-      # run-my-library-proofs then boots and settles this member's one device, exactly once,
-      # before xcodebuild starts any per-test execution allowance. Keep it booted for later proofs.
+      # run-my-library-proofs then boots this member's one device exactly once, requires both
+      # stable services, a sacrificial in-memory fixture launch and a quiet memory/CPU window,
+      # then confirms the booted iPad destination. The first installation/render can renew the
+      # burst after an idle-device quiet window (40153793474); pay it before any proof's clock.
+      # The pressure wait is capped at 15 minutes and logs its own phase; exhaustion fails the
+      # prerequisite. It runs before xcodebuild starts any per-test execution allowance. The app
+      # fixture process is terminated before the original proofs start a new production process
+      # with their own account UUID. No account/library state is created by the warm-up. Keep
+      # the device booted for later proofs.
       - name: Assert this leg's conformance proofs
         # §21.5 rule 5: 125 = ceil(1.5 x 81.850 / 5) x 5, measured in
         # 39144805540's successful iPad member. Replaces the pre-split projection.
