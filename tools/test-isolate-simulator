@@ -146,3 +146,56 @@ for pressure_ok in [True, False]:
         assert tool.main() == (0 if pressure_ok else 1)
         pressure.assert_called_once_with('my-library-ipad')
     print(f'PRESSURE ACK CONTROL PASS observed={pressure_ok} accepted={pressure_ok}')
+
+# The sacrificial first launch pays installation/render work before admission, never connects
+# an account, and must be gone before proof execution. Failures cannot authorize a proof.
+import plistlib
+with tempfile.TemporaryDirectory() as directory:
+    app = Path(directory) / 'Dulcet DEV.app'
+    app.mkdir()
+    (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'com.legitimateapps.dulcet.dev'}))
+    for scenario in ['positive', 'install-failure', 'launch-failure', 'launch-timeout',
+                     'pressure-failure', 'terminate-failure', 'pressure-timeout']:
+        operations = []
+        def fake_warm_simctl(*arguments, **kwargs):
+            operations.append(arguments)
+            if scenario == 'launch-timeout' and arguments[0] == 'launch':
+                raise subprocess.TimeoutExpired(arguments, 120)
+            failed = scenario == arguments[0] + '-failure'
+            return subprocess.CompletedProcess(arguments, int(failed), '', '')
+        def fake_pressure(phase):
+            operations.append(('pressure', phase))
+            if scenario == 'pressure-timeout':
+                raise subprocess.TimeoutExpired(['pressure'], 930)
+            return scenario != 'pressure-failure'
+        with patch.object(tool, 'simctl', side_effect=fake_warm_simctl), \
+                patch.object(tool, 'settle_pressure', side_effect=fake_pressure), redirect_stdout(StringIO()):
+            assert tool.warm_first_launch('my-library-ipad', 'IPAD', str(app)) == (scenario == 'positive')
+        assert operations[0] == ('install', 'IPAD', str(app)), operations
+        if scenario == 'install-failure':
+            assert len(operations) == 1, operations
+        else:
+            assert operations[1] == ('launch', '--terminate-running-process', 'IPAD',
+                                     'com.legitimateapps.dulcet.dev', '-dulcet-account-connect-layout-fixture'), operations
+            assert operations[-1] == ('terminate', 'IPAD', 'com.legitimateapps.dulcet.dev'), operations
+            assert any(op[0] == 'pressure' for op in operations) == (not scenario.startswith('launch-')), operations
+        print(f'WARMUP CONTROL PASS {scenario} proof_allowed={scenario == "positive"}')
+    (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'other.app'}))
+    with patch.object(tool, 'simctl') as sim, redirect_stdout(StringIO()):
+        assert not tool.warm_first_launch('my-library-ipad', 'IPAD', str(app))
+        sim.assert_not_called()
+    print('WARMUP CONTROL PASS wrong app rejected without simulator commands')
+
+# The main path must choose warm-up plus admission, rather than silently ignoring the argument.
+arguments = [TOOL, '--phase', 'my-library-ipad', '--keep', 'IPAD', '--settle',
+             '--require-settle', '--settle-pressure', '--require-isolation', '--warmup-app', '/built.app']
+for warm_ok in [True, False]:
+    with patch.object(sys, 'argv', arguments), patch.object(tool, 'devices', return_value=running), \
+            patch.object(tool, 'simctl', side_effect=fake_simctl), patch.object(tool, 'settle', return_value=True), \
+            patch.object(tool, 'warm_first_launch', return_value=warm_ok) as warm, \
+            patch.object(tool, 'settle_pressure') as pressure, \
+            patch.dict(tool.os.environ, {}, clear=True), redirect_stdout(StringIO()):
+        assert tool.main() == (0 if warm_ok else 1)
+        warm.assert_called_once_with('my-library-ipad', 'IPAD', '/built.app')
+        pressure.assert_not_called()
+print('WARMUP ACK CONTROLS PASS 2/2')

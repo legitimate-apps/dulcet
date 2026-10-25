@@ -70,6 +70,7 @@ for mode in ['iphone', 'ipad']:
     assert script.index('isolate-simulator') < script.index('xcodebuild')
     preparation = script.split('xcodebuild', 1)[0]
     assert '--settle' in preparation and '--require-settle' in preparation and '--require-isolation' in preparation
+    assert '--warmup-app' in preparation and '/Debug-iphonesimulator/Dulcet DEV.app' in preparation
 print('READINESS ORDER CONTROL PASS fixture gate before first boot and settled device before UI clocks')
 
 def empty_catalog(port, endpoint, **parameters):
@@ -94,7 +95,9 @@ import json, os, sys
 args = sys.argv[1:]
 with open(os.environ['CALLS'], 'a') as f: f.write(json.dumps(args) + '\\n')
 if args[0].endswith('isolate-simulator'):
-    sys.exit(1 if os.environ['SCENARIO'] == 'pressure-failure' and '--settle-pressure' in args else 0)
+    failed = ((os.environ['SCENARIO'] == 'pressure-failure' and '--settle-pressure' in args)
+              or (os.environ['SCENARIO'] == 'warmup-failure' and '--warmup-app' in args))
+    sys.exit(1 if failed else 0)
 if args[0].endswith('resolve-ipad-destination'):
     if os.environ['SCENARIO'] == 'destination-timeout': sys.exit(1)
     print('OTHER' if os.environ['SCENARIO'] == 'destination-mismatch' else 'IPAD')
@@ -106,7 +109,7 @@ raise AssertionError(args)
     xcode.write_text('#!/bin/bash\necho \'["xcodebuild"]\' >> "$CALLS"\nexit 42\n')
     xcode.chmod(0o755)
     for mode in ['iphone', 'ipad']:
-        scenarios = ['positive', 'pressure-failure']
+        scenarios = ['positive', 'pressure-failure', 'warmup-failure']
         if mode == 'ipad': scenarios += ['destination-mismatch', 'destination-timeout']
         for scenario in scenarios:
             calls = tmp / 'calls'

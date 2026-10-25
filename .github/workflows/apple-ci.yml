@@ -2224,10 +2224,14 @@ jobs:
       # Start and positively validate all loopback fixtures before the device's first boot.
       # Cold simulator services compete with the server and proxy startup on this small runner.
       # run-my-library-proofs then boots this member's one device exactly once, requires both
-      # stable services and a quiet memory/CPU window, and confirms the booted iPad destination.
+      # stable services, a sacrificial in-memory fixture launch and a quiet memory/CPU window,
+      # then confirms the booted iPad destination. The first installation/render can renew the
+      # burst after an idle-device quiet window (40153793474); pay it before any proof's clock.
       # The pressure wait is capped at 15 minutes and logs its own phase; exhaustion fails the
       # prerequisite. It runs before xcodebuild starts any per-test execution allowance. The app
-      # is still cold and clean for the original proofs. Keep the device booted for later proofs.
+      # fixture process is terminated before the original proofs start a new production process
+      # with their own account UUID. No account/library state is created by the warm-up. Keep
+      # the device booted for later proofs.
       - name: Assert this leg's conformance proofs
         # §21.5 rule 5: 125 = ceil(1.5 x 81.850 / 5) x 5, measured in
         # 39144805540's successful iPad member. Replaces the pre-split projection.

@@ -25,6 +25,7 @@ Failing to boot the device the phase needs IS raised: that phase cannot run.
 import argparse
 import json
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -126,6 +127,43 @@ def settle_pressure(phase: str) -> bool:
         return False
 
 
+def warm_first_launch(phase: str, udid: str, app: str) -> bool:
+    """Pay simulator app-install/render work without constructing a production account store.
+
+    The Debug shell's existing layout-fixture argument returns from DulcetiOSApp.init before
+    makeIOSComposition(), using an in-memory account-connect-idle source and no downloads.
+    The proof still launches a new process with its own arguments and UUID account namespace.
+    Keep the warm-up alive through the quiet window so its first rendering work is included;
+    always terminate it before any proof, including when pressure admission fails.
+    """
+    try:
+        with open(os.path.join(app, "Info.plist"), "rb") as info:
+            bundle = plistlib.load(info)["CFBundleIdentifier"]
+        if bundle != "com.legitimateapps.dulcet.dev":
+            raise ValueError("warm-up requires the Debug iOS shell")
+        installed = simctl("install", udid, app)
+        if installed.returncode:
+            print(f"SIMULATOR WARMUP FAILED phase={phase} operation=install exit={installed.returncode}", flush=True)
+            return False
+        try:
+            launched = simctl("launch", "--terminate-running-process", udid, bundle,
+                              "-dulcet-account-connect-layout-fixture")
+            if launched.returncode:
+                print(f"SIMULATOR WARMUP FAILED phase={phase} operation=launch exit={launched.returncode}", flush=True)
+                return False
+            print(f"SIMULATOR WARMUP phase={phase} udid={udid} bundle={bundle} "
+                  "source=account-connect-idle production-account=false launched=true", flush=True)
+            ready = settle_pressure(phase)
+        finally:
+            stopped = simctl("terminate", udid, bundle)
+            print(f"SIMULATOR WARMUP phase={phase} terminated={'true' if stopped.returncode == 0 else 'false'}",
+                  flush=True)
+        return ready and stopped.returncode == 0
+    except (OSError, ValueError, KeyError, plistlib.InvalidFileException, subprocess.TimeoutExpired) as error:
+        print(f"SIMULATOR WARMUP FAILED phase={phase} error={type(error).__name__}", flush=True)
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--phase", required=True)
@@ -143,6 +181,7 @@ def main() -> int:
                         help="fail if the requested service-count settle condition was not observed")
     parser.add_argument("--settle-pressure", action="store_true",
                         help="require a quiet host-pressure window after service settling")
+    parser.add_argument("--warmup-app", help="install/launch the built Debug iOS shell's in-memory fixture before pressure settling")
     args = parser.parse_args()
     if args.require_settle and not args.settle:
         parser.error("--require-settle needs --settle")
@@ -150,6 +189,8 @@ def main() -> int:
         parser.error("--settle needs a device to keep")
     if args.settle_pressure and not args.settle:
         parser.error("--settle-pressure needs --settle")
+    if args.warmup_app and not args.settle_pressure:
+        parser.error("--warmup-app needs --settle-pressure")
 
     started = time.monotonic()
     before = devices(args.devices_json)
@@ -181,7 +222,10 @@ def main() -> int:
             did_settle = settle(args.phase, keep)
             if args.require_settle and not did_settle:
                 return 1
-        if args.settle_pressure and not settle_pressure(args.phase):
+        if args.warmup_app:
+            if not warm_first_launch(args.phase, keep, args.warmup_app):
+                return 1
+        elif args.settle_pressure and not settle_pressure(args.phase):
             return 1
     after = booted(devices(None))
     expected = [keep] if keep else []

@@ -490,8 +490,7 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     stale reading cannot establish readiness. The 900-second cap logs `settled=false` and fails
     the prerequisite; no proof is skipped, retried or given a larger allowance. Waiting has its
     own `post-boot-pressure-*` phase, so moving the burst out of the proof stays visible. Free
-    pages and resident swap are logged but do not independently establish active I/O. The app
-    remains cold and the disposable account/library state is untouched.
+    pages and resident swap are logged but do not independently establish active I/O.
 
     **OBSERVED in [platform run 40142840023](https://github.com/legitimate-apps/dulcet/actions/runs/40142840023)
     (2026-10-25 UTC):** both pressure gates and every platform proof passed. The table describes
@@ -514,7 +513,24 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     destination query and subsequent device tests in separate summary phases. In the first
     implementation, the iPad wait's mark extended through later proofs and reported 30,896 MiB
     of page-ins over 1,720 seconds; that was not the wait's own pressure.
-    The conformance comparison uses [run 40153793474](https://github.com/legitimate-apps/dulcet/actions/runs/40153793474)'s
-    per-device `my-library-*` phase summaries and first automation-session timestamps. Lower
-    first-proof pressure must be checked separately from admission; a single green run does not
-    estimate the snapshot flake rate.
+    **OBSERVED in [conformance run 40153793474](https://github.com/legitimate-apps/dulcet/actions/runs/40153793474),
+    iPad job 121050704506:** an idle-device quiet window was insufficient. Admission passed after
+    320.1 seconds, with maximum page-ins 3.17 MiB/s, swap I/O 0.07 MiB/s and load1 62.4. The
+    first My Library phase nevertheless reached `pageins_mb=11019`, `swap_used_max_mb=435.81`,
+    `load1_max=354.9`. First automation setup was at t=24.96s, followed by the 60-second app-idle
+    warning; the connected query completed, but the browse/relaunch/offline test exhausted its
+    unchanged 300-second allowance. The first app stack sample contains just two main-thread
+    samples in XCTest snapshot work. Later My Library tests passed. Do not describe this as a
+    successful fix just because the gate found a quiet window.
+
+    Device conformance now also installs and launches the already-built Debug shell before the
+    pressure window, keeps it alive while the first rendering work settles, and requires its
+    termination before `xcodebuild`. This uses the existing `-dulcet-account-connect-layout-fixture`
+    path: `DulcetiOSApp.init` returns with an in-memory `DulcetDeterministicDataSource` in
+    `.accountConnectIdle` before constructing the production composition, credential store or
+    downloads. It supplies no server credentials and performs no account/library operation.
+    The original proof launches a new production process with its original arguments and fresh
+    account UUID. This warms first installation/rendering without seeding any proof's state.
+    ASSUMED until hosted comparison: absorbing that first launch prevents the renewed burst.
+    Check the per-device `my-library-*` summaries and first automation timestamps separately
+    from admission; a single green run does not estimate the snapshot flake rate.
