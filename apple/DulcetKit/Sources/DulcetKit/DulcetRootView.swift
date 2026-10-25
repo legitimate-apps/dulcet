@@ -812,8 +812,13 @@ private struct DulcetInheritedNowPlayingBar: ViewModifier {
     @Environment(\.dulcetPageNowPlayingBar) private var bar
 
     func body(content: Content) -> some View {
-        if let bar { content.modifier(bar) }
-        else { content }
+        Group {
+            if let bar { content.modifier(bar) }
+            else { content }
+        }
+        .onChange(of: bar?.store.showsNowPlayingBar, initial: true) { _, required in
+            DulcetUIProofMarkers.detail("pageBar", context: "present=\(bar != nil) required=\(required == true) suppressed=\(bar?.isSuppressed == true) placement=\(String(describing: bar?.placement))")
+        }
     }
 }
 

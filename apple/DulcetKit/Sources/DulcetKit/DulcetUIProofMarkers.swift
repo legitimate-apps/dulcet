@@ -32,6 +32,17 @@ enum DulcetUIProofMarkers {
 #endif
     }
 
+    static func detail(_ writer: String, context: @autoclosure () -> String) {
+#if DEBUG
+        guard isEnabled, navigationReceiptsEnabled else { return }
+        navigationSequence += 1
+        let receipt = "DETAIL|\(navigationSequence)|\(writer)|\(context())"
+        record(receipt)
+        print(receipt)
+        logger.notice("\(receipt, privacy: .public)")
+#endif
+    }
+
     /// Records that a handler ran, when proofs are enabled; otherwise nothing.
     static func record(_ marker: @autoclosure () -> String) {
 #if DEBUG

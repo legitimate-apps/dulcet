@@ -243,7 +243,7 @@ import UIKit
         XCTAssertEqual(parts.last, localId, "Actual track supplied to the existing player")
     }
     func everywherePagesAndHeldRouting() throws {
-        try launch()
+        try launch(navigationReceipts: true)
         let revision = try scenario("delayed-old-query")
         try search("old")
         try effect("delayed-old-query", revision: revision, flag: "held")

@@ -152,17 +152,29 @@ public struct DulcetDiscoverStatus: Sendable {
         }
     }
     func loadArtist(_ mbid: String) {
-        let generation = selection.begin(); operation?.cancel(); loading = true; error = nil
+        let generation = selection.begin()
+        DulcetUIProofMarkers.detail("loadArtist", context: "model=\(ObjectIdentifier(self)) reader=\(ObjectIdentifier(reader)) mbid=\(mbid) generation=\(generation)")
+        operation?.cancel(); loading = true; error = nil
         operation = reader.artist(mbid: mbid) { [weak self] result in
-            guard let self, self.selection.accepts(generation) else { return }
+            guard let self else { return }
+            let accepted = self.selection.accepts(generation)
+            let outcome = switch result { case .success: "success"; case let .failure(error): error.code }
+            DulcetUIProofMarkers.detail("artistCompletion", context: "model=\(ObjectIdentifier(self)) generation=\(generation) accepted=\(accepted) result=\(outcome)")
+            guard accepted else { return }
             self.loading = false
             switch result { case let .success(value): self.artist = value; case let .failure(error): self.error = error }
         }
     }
     func loadAlbum(_ mbid: String, releaseId: String?) {
-        let generation = selection.begin(); operation?.cancel(); requestedReleaseId = releaseId; loading = true; error = nil
+        let generation = selection.begin()
+        DulcetUIProofMarkers.detail("loadAlbum", context: "model=\(ObjectIdentifier(self)) reader=\(ObjectIdentifier(reader)) mbid=\(mbid) release=\(releaseId ?? "nil") generation=\(generation)")
+        operation?.cancel(); requestedReleaseId = releaseId; loading = true; error = nil
         operation = reader.album(mbid: mbid, releaseId: releaseId) { [weak self] result in
-            guard let self, self.selection.accepts(generation) else { return }
+            guard let self else { return }
+            let accepted = self.selection.accepts(generation)
+            let outcome = switch result { case .success: "success"; case let .failure(error): error.code }
+            DulcetUIProofMarkers.detail("albumCompletion", context: "model=\(ObjectIdentifier(self)) generation=\(generation) accepted=\(accepted) result=\(outcome)")
+            guard accepted else { return }
             self.loading = false
             switch result { case let .success(value): self.album = value; case let .failure(error): self.error = error }
         }
@@ -194,5 +206,8 @@ public struct DulcetDiscoverStatus: Sendable {
             }
         }
     }
-    func close() { selection.close(); operation?.cancel(); operation = nil; loading = false }
+    func close() {
+        DulcetUIProofMarkers.detail("close", context: "model=\(ObjectIdentifier(self)) reader=\(ObjectIdentifier(reader)) loading=\(loading) albumPresent=\(album != nil)")
+        selection.close(); operation?.cancel(); operation = nil; loading = false
+    }
 }
