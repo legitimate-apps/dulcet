@@ -175,7 +175,9 @@ enum SignedAccountConnectProof {
         XCTAssertTrue(connected.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Sign Out"].exists)
         if rotating {
-            guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+            guard let width = settledWindowWidth(
+                app.windows.firstMatch, expecting: "regular", matching: { $0 > 700 }
+            ) else { return }
             XCTAssertGreaterThan(width, 700, "The iPad proof requires a regular-width tablet window")
             XCTAssertLessThan(app.frame.width, app.frame.height, "Connected proof begins in portrait")
             XCUIDevice.shared.orientation = .landscapeLeft

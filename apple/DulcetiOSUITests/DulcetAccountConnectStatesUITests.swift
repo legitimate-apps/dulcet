@@ -334,7 +334,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.launchArguments = []
         launchInInteractionScope(app)
         let window = app.windows.element(boundBy: 0)
-        guard let width = settledWindowWidth(window) else { return }
+        guard let width = settledWindowWidth(
+            window, expecting: expectedCompact ? "compact" : "regular",
+            matching: { ($0 < 700) == expectedCompact }
+        ) else { return }
         let compact = width < 700
         print("DULCET ACCOUNT STATES destination=\(compact ? "compact" : "regular") width=\(width)")
         guard compact == expectedCompact else {

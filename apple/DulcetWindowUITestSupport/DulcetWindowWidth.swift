@@ -5,15 +5,18 @@ struct WindowWidthSettlementTimeout: Error, CustomStringConvertible {
     let previousWidth: CGFloat?
     let latestWidth: CGFloat?
     let elapsed: TimeInterval
+    let expectedClass: String?
 
     var description: String {
         "The app window width must settle; previous-width=\(String(describing: previousWidth))"
-            + " latest-width=\(String(describing: latestWidth)) elapsed=\(elapsed) seconds"
+            + " latest-width=\(String(describing: latestWidth)) expected-class=\(expectedClass ?? "any")"
+            + " elapsed=\(elapsed) seconds"
     }
 }
 
 func waitForSettledWindowWidth(
     timeout: TimeInterval,
+    expecting expectedClass: String? = nil, matching expectation: (CGFloat) -> Bool = { _ in true },
     readFrame: () -> CGRect?,
     now: () -> TimeInterval,
     pause: (TimeInterval) -> Void
@@ -31,27 +34,28 @@ func waitForSettledWindowWidth(
         latestFrame = readFrame()
         let elapsed = now() - started
         guard elapsed < timeout else { break }
-        // Treat width as settled when two finite, nonempty snapshots at least 250 ms apart report the same width.
+        // Accept two finite, nonempty snapshots at least 250 ms apart only when their widths agree and satisfy the expectation.
         if let previousFrame, let latestFrame, usable(previousFrame), usable(latestFrame),
-           previousFrame.width == latestFrame.width {
+           previousFrame.width == latestFrame.width, expectation(latestFrame.width) {
             return latestFrame.width
         }
         pause(min(0.25, timeout - elapsed))
     }
     throw WindowWidthSettlementTimeout(
         previousWidth: previousFrame?.width, latestWidth: latestFrame?.width,
-        elapsed: now() - started
+        elapsed: now() - started, expectedClass: expectedClass
     )
 }
 
 @MainActor
 func settledWindowWidth(
     _ window: XCUIElement, timeout: TimeInterval = 60,
+    expecting expectedClass: String? = nil, matching expectation: (CGFloat) -> Bool = { _ in true },
     file: StaticString = #filePath, line: UInt = #line
 ) -> CGFloat? {
     do {
         return try waitForSettledWindowWidth(
-            timeout: timeout,
+            timeout: timeout, expecting: expectedClass, matching: expectation,
             readFrame: { (try? window.snapshot())?.frame },
             now: { ProcessInfo.processInfo.systemUptime },
             pause: { Thread.sleep(forTimeInterval: $0) }
