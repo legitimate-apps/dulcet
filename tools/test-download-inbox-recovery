@@ -23,9 +23,9 @@ source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{path}'], 
           if args.source_ref else (ROOT / path).read_text())
 
 
-def method(name):
+def method(name, parameter_prefix=''):
     prefix = '    private func ' if f'    private func {name}(' in source else '    func '
-    start = source.index(f'{prefix}{name}(')
+    start = source.index(f'{prefix}{name}({parameter_prefix}')
     end = source.index('\n    }', start) + len('\n    }')
     return source[start:end].replace('    private func ', '    func ', 1)
 
@@ -37,6 +37,8 @@ if 'private func removeSecuredDownload(' in source:
 if 'private func promoteSecuredDownload(' in source:
     names.append('promoteSecuredDownload')
 bodies = '\n'.join(method(name) for name in names)
+if '    private func cancelFramingVerifications(' in source:
+    bodies += '\n' + method('cancelFramingVerifications', 'downloadIdentifiers:')
 harness = r'''
 import Foundation
 let selectedControl: String? = __CONTROL__
@@ -69,9 +71,14 @@ struct Outcome { var state = "downloaded"; var retryNotBeforeWallClock: NSNumber
 final class SessionTask: @unchecked Sendable {
     let taskIdentifier: Int
     var taskDescription: String?
+    var response: URLResponse?
     var cancellations = 0
     init(_ id: Int, _ description: String) { taskIdentifier = id; taskDescription = description }
     func cancel() { cancellations += 1 }
+}
+@MainActor final class FramingSession {
+    var cancellations = 0
+    func invalidateAndCancel() { cancellations += 1 }
 }
 typealias URLSessionDownloadTask = SessionTask
 @MainActor final class Session {
@@ -85,13 +92,17 @@ struct DulcetSecuredDownload: Codable {
     var statusCode: Int? = 200
     var contentType: String? = "audio/wav"
     var deliveredFileLength: Int64 = 8
-    var exactContentLength: Int64? { deliveredFileLength }
+    var contentLength: String? = "8"
+    var framingVerified: Bool? = nil
+    var exactContentLength: Int64? { contentLength.flatMap(Int64.init) }
     var retryAfterMilliseconds: Int64 { -1 }
     func payloadURL(in inbox: URL) -> URL { inbox.appendingPathComponent("\(identifier).download") }
     func metadataURL(in inbox: URL) -> URL { inbox.appendingPathComponent("\(identifier).json") }
 }
 extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
 @MainActor final class Controller {
+    struct FramingTransfer { let downloadIdentifier: String; let session: FramingSession }
+    var framingVerificationSessions: [UUID: FramingTransfer] = [:]
     let downloadInboxURL: URL
     var client: Client?
     var account: Account? = Account()
@@ -121,8 +132,12 @@ extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
         identityValidations += 1
         completion(identityValidationSucceeds)
     }
-    func secureDownloadedFile(task: SessionTask, location: URL) -> DulcetSecuredDownload? {
+    func secureDownloadedFile(task: SessionTask, location: URL, response: HTTPURLResponse? = nil,
+                              framingVerified: Bool = false) -> DulcetSecuredDownload? {
         securedAttempts += 1; return nil
+    }
+    func verifyFramingAndDownload(task: SessionTask, authorizedGeneration: Int?) {
+        preconditionFailure("inbox controls must not start a framing replacement")
     }
 __BODIES__
 }
@@ -151,9 +166,20 @@ struct Failure: Error, CustomStringConvertible { let description: String }
         try await MainActor.run {
             try run("membership-cancellation-before-enumeration") { controller, root in
                 controller.knownTaskIdentifiers = [42: "auto", 43: "explicit"]
+                let automaticFraming = FramingSession()
+                let explicitFraming = FramingSession()
+                controller.framingVerificationSessions = [
+                    UUID(): .init(downloadIdentifier: "auto", session: automaticFraming),
+                    UUID(): .init(downloadIdentifier: "explicit", session: explicitFraming)
+                ]
                 controller.applyOfflineChange(.init(taskIdentifiersToCancel: ["auto"]))
                 try require(controller.session.pending != nil, "must exercise suspended enumeration")
                 try require(controller.removedTaskIdentifiers == [42], "cancelled membership task must be marked synchronously; explicit must survive")
+                if __HAS_FRAMING__ {
+                    try require(automaticFraming.cancellations == 1 && explicitFraming.cancellations == 0 &&
+                                controller.framingVerificationSessions.values.map(\.downloadIdentifier) == ["explicit"],
+                                "membership cancellation must stop only its own framing verification")
+                }
                 let source = root.appendingPathComponent("late-system-payload")
                 try Data("late bytes".utf8).write(to: source)
                 controller.handleCompletedDownload(task: SessionTask(42, "auto"), location: source)
@@ -217,7 +243,8 @@ struct Failure: Error, CustomStringConvertible { let description: String }
         print("Adapter controls passed; no app/runtime claim")
     }
 }
-'''.replace('__BODIES__', bodies).replace('__CONTROL__', '"' + args.control + '"' if args.control else 'nil')
+'''.replace('__BODIES__', bodies).replace('__CONTROL__', '"' + args.control + '"' if args.control else 'nil').replace(
+    '__HAS_FRAMING__', 'true' if '    private func cancelFramingVerifications(' in source else 'false')
 with tempfile.TemporaryDirectory(prefix='dulcet-inbox-adapter-') as directory:
     swift = Path(directory) / 'controls.swift'
     binary = Path(directory) / 'controls'

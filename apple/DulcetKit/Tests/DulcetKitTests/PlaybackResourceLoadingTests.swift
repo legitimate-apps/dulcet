@@ -1,10 +1,42 @@
 import AVFoundation
 import Foundation
+import Network
 import Testing
 @testable import DulcetKit
 
 @Suite(.serialized)
 struct PlaybackResourceLoadingTests {
+@Test
+func rangePolicyKeepsSignatureProbeSmallAndBoundsLaterReads() {
+    func range(_ offset: Int64, _ end: Int64, signature: Bool = false,
+               total: Int64? = nil, toEnd: Bool = false) -> DulcetPlaybackByteRange? {
+        DulcetAVAssetResourceLoaderDelegate.nextRange(
+            offset: offset, requestedEndExclusive: end, requestsToEnd: toEnd,
+            requiresAudioSignature: signature, contentLength: total)
+    }
+
+    // AVFoundation can ask for just two header bytes; the validator still needs its probe.
+    #expect(range(0, 2, signature: true) == .init(start: 0, endInclusive: 262_143))
+    #expect(range(0, 10_485_760, signature: true) == .init(start: 0, endInclusive: 262_143))
+    #expect(range(0, 2, signature: true, total: 100) == .init(start: 0, endInclusive: 99))
+    // A later contiguous read and a seek both use at most 1 MiB.
+    #expect(range(262_144, 10_485_760, total: 10_485_760) ==
+        .init(start: 262_144, endInclusive: 1_310_719))
+    #expect(range(7_340_032, 10_485_760, total: 10_485_760) ==
+        .init(start: 7_340_032, endInclusive: 8_388_607))
+    // The requested end wins even when the representation has more bytes.
+    #expect(range(7_340_032, 7_340_132, total: 10_485_760) ==
+        .init(start: 7_340_032, endInclusive: 7_340_131))
+    // The known resource end wins even when the request extends past it.
+    #expect(range(9_699_328, 20_000_000, total: 10_485_760) ==
+        .init(start: 9_699_328, endInclusive: 10_485_759))
+    // All-data-to-end requests use the discovered total after the initial probe.
+    #expect(range(262_144, 2, total: 10_485_760, toEnd: true) ==
+        .init(start: 262_144, endInclusive: 1_310_719))
+    #expect(range(100, 100, total: 1_000) == nil)
+    #expect(range(1_000, 2_000, total: 1_000) == nil)
+}
+
 @Test
 func unusedResourcesReleaseWithoutConstructingADelegateDuringDeinitialization() async {
     for _ in 0..<20 {
@@ -777,5 +809,312 @@ private final class LoaderRetirementTrace: @unchecked Sendable {
         lock.withLock { events.filter {
             switch $0 { case .finished, .cancelled, .failed: true; default: false }
         }.count }
+    }
+}
+
+
+/// These fixtures close the actual TCP connection, rather than synthesizing a URL loading error.
+/// The accepting validator makes HTTP framing the only possible reason for rejecting the body.
+@Suite(.serialized)
+struct ChunkedMediaTransferTests {
+    @Test(arguments: ChunkedMediaEnding.allCases, ["/rest/stream.view", "/api/media/song"])
+    func playbackAndCacheRequireTheFinalChunk(ending: ChunkedMediaEnding, path: String) async throws {
+        let server = try ChunkedMediaServer(ending: ending)
+        defer { server.stop() }
+        let observations = ChunkedMediaObservations()
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: ChunkedMediaAuthorizer(url: server.url(path)), validator: ChunkedMediaValidator(),
+            redirectEvaluator: ChunkedMediaRedirectEvaluator())
+        let cached = DulcetCachingPlaybackResource(source: resource) { _, data, _ in observations.record(data) }
+        let holder = ChunkedMediaOperationHolder()
+        let outcome = await withCheckedContinuation { continuation in
+            holder.operation = cached.load(.init(range: .init(start: 0, endInclusive: 262_143),
+                requiresAudioSignature: true)) { continuation.resume(returning: $0) }
+        }
+        withExtendedLifetime(holder) {}
+        if ending.isComplete {
+            guard case let .loaded(data, information) = outcome else {
+                Issue.record("complete chunked playback failed")
+                return
+            }
+            #expect(data == ChunkedMediaServer.body)
+            #expect(information.contentLength == Int64(data.count))
+            #expect(observations.bytes == ChunkedMediaServer.body)
+        } else {
+            guard case .failed(error: .transport, refreshReason: nil) = outcome else {
+                Issue.record("incomplete chunked playback was accepted")
+                return
+            }
+            #expect(observations.bytes.isEmpty, "incomplete media must never reach the cache writer")
+        }
+        #expect(server.requestCount > 0, "the real socket fixture must receive the media request")
+    }
+
+    @Test
+    func strictTransportPreservesTheAuthorizedVirtualHost() async throws {
+        let server = try ChunkedMediaServer(ending: .complete)
+        defer { server.stop() }
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: ChunkedMediaAuthorizer(url: server.url("/rest/stream.view"), host: "media.example.invalid"),
+            validator: ChunkedMediaValidator(), redirectEvaluator: ChunkedMediaRedirectEvaluator())
+        guard case .loaded = await load(resource) else { Issue.record("virtual host request failed"); return }
+        #expect(server.requestHeaders.contains { $0.contains("Host: media.example.invalid\r\n") })
+    }
+
+    @Test
+    func explicitProxyPolicyDoesNotBecomeADirectMediaConnection() async throws {
+        let server = try ChunkedMediaServer(ending: .complete)
+        defer { server.stop() }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = ["HTTPEnable": 1, "HTTPProxy": "proxy.example.invalid", "HTTPPort": 8080]
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: ChunkedMediaAuthorizer(url: server.url("/rest/stream.view")),
+            validator: ChunkedMediaValidator(), redirectEvaluator: ChunkedMediaRedirectEvaluator(),
+            sessionConfiguration: configuration)
+        guard case .failed(error: .transport, refreshReason: nil) = await load(resource) else {
+            Issue.record("an unsupported proxy did not fail closed"); return
+        }
+        #expect(server.requestCount == 0)
+    }
+
+    @Test(arguments: [false, true])
+    func strictTransportRoutesRedirectsThroughTheExistingCredentialPolicy(crossOrigin: Bool) async throws {
+        let source = try ChunkedMediaServer(ending: .complete)
+        let other = try ChunkedMediaServer(ending: .complete)
+        defer { source.stop(); other.stop() }
+        let destination = crossOrigin ? other : source
+        let target = destination.url("/rest/stream.view?u=redirect-user-canary&t=redirect-token-canary&s=redirect-salt-canary&object-signature=keep")
+        source.redirect(to: target)
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: FixedPlaybackAuthorizer(url: source.url("/redirect")),
+            validator: ChunkedMediaValidator(), redirectEvaluator: LoopbackCredentialRedirectEvaluator())
+        let outcome = await load(resource)
+        guard case let .loaded(data, _) = outcome else { Issue.record("strict redirect did not load"); return }
+        #expect(data == ChunkedMediaServer.body)
+        let requests = destination.requestTargets.filter { !$0.hasPrefix("/redirect") }
+        #expect(requests.count == 1)
+        #expect(requests[0].contains("object-signature=keep"))
+        for canary in ["redirect-user-canary", "redirect-token-canary", "redirect-salt-canary"] {
+            #expect(requests[0].contains(canary) == !crossOrigin)
+        }
+    }
+
+    @Test
+    func activeTransfersCanLastLongerThanTheirIdleTimeout() async throws {
+        let server = try ChunkedMediaServer(ending: .complete, trickleInterval: 0.12)
+        defer { server.stop() }
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: ChunkedMediaAuthorizer(url: server.url("/rest/stream.view"), timeout: 0.3),
+            validator: ChunkedMediaValidator(), redirectEvaluator: ChunkedMediaRedirectEvaluator())
+        let start = ContinuousClock.now
+        guard case let .loaded(data, _) = await load(resource) else { Issue.record("an active transfer hit a total-duration deadline"); return }
+        #expect(data == ChunkedMediaServer.body)
+        #expect(start.duration(to: .now) > .seconds(1))
+    }
+
+    @Test
+    func rejectedRedirectCompletesWithoutFollowingTheTarget() async throws {
+        let source = try ChunkedMediaServer(ending: .complete)
+        let target = try ChunkedMediaServer(ending: .complete)
+        defer { source.stop(); target.stop() }
+        source.redirect(to: target.url("/rest/stream.view"))
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: ChunkedMediaAuthorizer(url: source.url("/redirect")),
+            validator: ChunkedMediaValidator(), redirectEvaluator: ChunkedMediaRedirectEvaluator())
+        guard case let .loaded(data, _) = await load(resource) else {
+            Issue.record("a rejected redirect did not complete its original response"); return
+        }
+        #expect(data.isEmpty)
+        #expect(target.requestCount == 0)
+    }
+
+    @Test(arguments: ChunkedMediaEnding.allCases, ["/rest/download.view", "/api/media/song"])
+    func downloadDelegateRequiresTheFinalChunk(ending: ChunkedMediaEnding, path: String) async throws {
+        let server = try ChunkedMediaServer(ending: ending)
+        defer { server.stop() }
+        let delegate = ChunkedDownloadDelegate()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        DulcetMediaTransport.requireCompleteHTTPBodies(in: configuration)
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let result = await withCheckedContinuation { continuation in
+            delegate.completion = { continuation.resume(returning: $0) }
+            session.downloadTask(with: server.url(path)).resume()
+        }
+        if ending.isComplete {
+            #expect(result.body == ChunkedMediaServer.body)
+            #expect(result.errorCode == nil)
+        } else {
+            #expect(result.body == nil, "the delegate must not deliver a promotable download file")
+            #expect(result.errorCode == NSURLErrorNetworkConnectionLost)
+        }
+        #expect(server.requestCount > 0, "the real socket fixture must receive the media request")
+    }
+}
+
+enum ChunkedMediaEnding: CaseIterable, Sendable {
+    case complete, chunkBoundary, midChunk, completeWithExtensionsAndTrailers, incompleteTrailers
+    var isComplete: Bool { self == .complete || self == .completeWithExtensionsAndTrailers }
+}
+
+private final class ChunkedMediaOperationHolder: @unchecked Sendable {
+    var operation: (any DulcetPlaybackResourceLoadOperation)?
+}
+
+private final class ChunkedMediaObservations: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = Data()
+    var bytes: Data { lock.withLock { storage } }
+    func record(_ data: Data) { lock.withLock { storage.append(data) } }
+}
+
+private final class ChunkedMediaAuthorizer: DulcetPlaybackRequestAuthorizing, @unchecked Sendable {
+    let url: URL
+    let host: String?
+    let timeout: TimeInterval
+    init(url: URL, host: String? = nil, timeout: TimeInterval = 5) { self.url = url; self.host = host; self.timeout = timeout }
+    func authorize(range: DulcetPlaybackByteRange,
+        completion: @escaping @Sendable (Result<DulcetPlaybackAuthorizedRequest, DulcetPlaybackFailure>) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        if let host { request.setValue(host, forHTTPHeaderField: "Host") }
+        request.setValue("bytes=\(range.start)-\(range.endInclusive)", forHTTPHeaderField: "Range")
+        completion(.success(.init(request: request)))
+        return ChunkedMediaOperation()
+    }
+}
+private final class ChunkedMediaOperation: DulcetPlaybackResourceLoadOperation, @unchecked Sendable {
+    func cancel() {}
+}
+private final class ChunkedMediaValidator: DulcetPlaybackResponseValidating, @unchecked Sendable {
+    func validate(response: DulcetPlaybackHTTPResponse, expectedContainer: DulcetAudioContainer,
+        requestedRange: DulcetPlaybackByteRange, requiresAudioSignature: Bool) -> DulcetPlaybackResponseValidation {
+        .accepted(contentInformation: .init(contentLength: Int64(response.body.count), supportsByteRanges: false))
+    }
+}
+private final class ChunkedMediaRedirectEvaluator: DulcetPlaybackRedirectEvaluating, @unchecked Sendable {
+    func evaluate(sourceURL: URL, proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision {
+        .reject(.transport)
+    }
+}
+
+private struct ChunkedDownloadResult: Sendable {
+    let body: Data?
+    let errorCode: Int?
+}
+private final class ChunkedDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    var completion: (@Sendable (ChunkedDownloadResult) -> Void)?
+    private var body: Data?
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        body = try? Data(contentsOf: location)
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        completion?(.init(body: body, errorCode: (error as NSError?)?.code))
+    }
+}
+
+private final class ChunkedMediaServer: @unchecked Sendable {
+    static let body = Data("ID3chunked-media-body".utf8)
+    private let ending: ChunkedMediaEnding
+    private let trickleInterval: TimeInterval?
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.chunked-media")
+    private let lock = NSLock()
+    private var requests = 0
+    private var targets: [String] = []
+    private var receivedHeaders: [String] = []
+    var requestHeaders: [String] { lock.withLock { receivedHeaders } }
+    private var redirectTarget: URL?
+    var requestTargets: [String] { lock.withLock { targets } }
+    func redirect(to target: URL) { lock.withLock { redirectTarget = target } }
+    var requestCount: Int { lock.withLock { requests } }
+    func url(_ path: String) -> URL { URL(string: "http://127.0.0.1:\(listener.port!.rawValue)\(path)")! }
+    init(ending: ChunkedMediaEnding, trickleInterval: TimeInterval? = nil) throws {
+        self.trickleInterval = trickleInterval
+        self.ending = ending
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: self?.queue ?? .global())
+            self?.receive(connection, accumulated: Data())
+        }
+        listener.start(queue: queue)
+        guard ready.wait(timeout: .now() + 5) == .success else {
+            listener.cancel()
+            throw URLError(.cannotConnectToHost)
+        }
+    }
+    func stop() { listener.cancel() }
+    private func receive(_ connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, done, error in
+            guard let self else { connection.cancel(); return }
+            var request = accumulated
+            if let data { request.append(data) }
+            guard request.range(of: Data("\r\n\r\n".utf8)) != nil else {
+                if done || error != nil { connection.cancel() } else { receive(connection, accumulated: request) }
+                return
+            }
+            let target = String(decoding: request, as: UTF8.self).split(separator: " ").dropFirst().first.map(String.init) ?? ""
+            let redirect = lock.withLock {
+                requests += 1; targets.append(target)
+                receivedHeaders.append(String(decoding: request, as: UTF8.self))
+                return target.hasPrefix("/redirect") ? redirectTarget : nil
+            }
+            if let redirect {
+                let wire = Data("HTTP/1.1 302 Found\r\nLocation: \(redirect.absoluteString)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                connection.send(content: wire, contentContext: .finalMessage, isComplete: true,
+                    completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+            var wire = Data("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".utf8)
+            if ending == .completeWithExtensionsAndTrailers || ending == .incompleteTrailers {
+                wire.append(Data("3;first=chunk\r\nID3\r\n\(String(Self.body.count - 3, radix: 16));last=chunk\r\n".utf8))
+                wire.append(Self.body.dropFirst(3))
+                wire.append(Data("\r\n0\r\nX-Media-Test: complete\r\n".utf8))
+                if ending.isComplete { wire.append(Data("\r\n".utf8)) }
+                connection.send(content: wire, contentContext: .finalMessage, isComplete: true,
+                    completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+            wire.append(Data("\(String(Self.body.count, radix: 16))\r\n".utf8))
+            wire.append(ending == .midChunk ? Self.body.prefix(5) : Self.body)
+            if ending != .midChunk { wire.append(Data("\r\n".utf8)) }
+            if ending.isComplete { wire.append(Data("0\r\n\r\n".utf8)) }
+            if let trickleInterval {
+                let header = Data(wire.prefix(wire.count - Self.body.count - 7))
+                connection.send(content: header, completion: .contentProcessed { [weak self] error in
+                    guard error == nil, let self else { connection.cancel(); return }
+                    sendTrickle(Self.body, connection: connection, interval: trickleInterval)
+                })
+            }
+            else {
+                connection.send(content: wire, contentContext: .finalMessage, isComplete: true,
+                    completion: .contentProcessed { _ in connection.cancel() })
+            }
+        }
+    }
+    private func sendTrickle(_ data: Data, connection: NWConnection, interval: TimeInterval) {
+        let count = min(2, data.count)
+        let rest = Data(data.dropFirst(count))
+        var piece = Data(data.prefix(count))
+        if rest.isEmpty { piece.append(Data("\r\n0\r\n\r\n".utf8)) }
+        connection.send(content: piece, contentContext: rest.isEmpty ? .finalMessage : .defaultMessage,
+            isComplete: true, completion: .contentProcessed { [weak self] error in
+                guard error == nil, !rest.isEmpty, let self else { connection.cancel(); return }
+                queue.asyncAfter(deadline: .now() + interval) { self.sendTrickle(rest, connection: connection, interval: interval) }
+            })
+    }
+}
+
+private final class LoopbackCredentialRedirectEvaluator: DulcetPlaybackRedirectEvaluating, @unchecked Sendable {
+    func evaluate(sourceURL: URL, proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision {
+        guard redirectsAlreadyFollowed < 8, !(sourceURL.scheme == "https" && proposedURL.scheme == "http") else { return .reject(.transport) }
+        if sourceURL.host == proposedURL.host && sourceURL.port == proposedURL.port && sourceURL.scheme == proposedURL.scheme { return .followPreservingRequest }
+        return .followStrippingQueryItems(["u", "t", "s"])
     }
 }

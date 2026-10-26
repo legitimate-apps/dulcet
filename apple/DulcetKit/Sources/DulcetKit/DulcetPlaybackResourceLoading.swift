@@ -158,6 +158,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         defer { lock.unlock() }
         if let initializedSession { return initializedSession }
         let configuration = sessionConfiguration
+        DulcetMediaTransport.requireCompleteHTTPBodies(in: configuration)
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil
@@ -202,7 +203,11 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
             case let .failure(error):
                 completion(.failed(error: error, refreshReason: nil))
             case let .success(authorized):
-                let task = self.sessionForLoading().dataTask(with: authorized.request)
+                var mediaRequest = authorized.request
+                mediaRequest.allowsCellularAccess = mediaRequest.allowsCellularAccess && self.sessionConfiguration.allowsCellularAccess
+                mediaRequest.allowsExpensiveNetworkAccess = mediaRequest.allowsExpensiveNetworkAccess && self.sessionConfiguration.allowsExpensiveNetworkAccess
+                mediaRequest.allowsConstrainedNetworkAccess = mediaRequest.allowsConstrainedNetworkAccess && self.sessionConfiguration.allowsConstrainedNetworkAccess
+                let task = self.sessionForLoading().dataTask(with: mediaRequest)
                 self.setTaskCompletion(taskIdentifier: task.taskIdentifier, cancellation: {
                     completion(.cancelled)
                 }) { [weak self, weak operation] data, response, error in
@@ -221,8 +226,11 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                     // cold transcode, and the body then stops at an arbitrary earlier write. So the
                     // core validator treats every declared length as exact and refuses the short
                     // body, and the load fails as the lost connection it was. A 200 that declared no
-                    // length is never ended this way: with nothing to compare against, a body cut
-                    // off by a real drop would pass as the whole representation.
+                    // length is never ended this way. If it was chunked, the session's strict
+                    // transport has already reported a body whose zero chunk never came as that
+                    // -1005, so the load stays the lost connection. Only a close-delimited body has
+                    // no framing to check, and a real drop there still passes as the whole
+                    // representation.
                     let lostConnectionResponse = error.map { Self.isLostConnection($0) } == true
                         ? response as? HTTPURLResponse : nil
                     let endedShort = lostConnectionResponse.map {
@@ -543,7 +551,8 @@ enum DulcetPlaybackResourceLoaderTraceEvent: Sendable {
 public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelegate,
     @unchecked Sendable {
     public static let scheme = "dulcet-stream"
-    public static let maximumChunkLength: Int64 = 256 * 1024
+    static let initialChunkLength: Int64 = 256 * 1024
+    public static let maximumChunkLength: Int64 = 1024 * 1024
 
     private let resource: any DulcetPlaybackResourceLoading
     private let attemptID: DulcetPlaybackAttemptID
@@ -666,29 +675,44 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
         traceHandler?(.cancelled(requestID: context.requestID))
     }
 
+    /// The signature probe can outgrow AVFoundation's tiny initial header request. Once the
+    /// signature is checked, larger bounded reads amortize the strict transport's connections.
+    static func nextRange(
+        offset: Int64,
+        requestedEndExclusive: Int64,
+        requestsToEnd: Bool,
+        requiresAudioSignature: Bool,
+        contentLength: Int64?
+    ) -> DulcetPlaybackByteRange? {
+        let desiredEndExclusive: Int64
+        if let contentLength {
+            desiredEndExclusive = requestsToEnd
+                ? contentLength
+                : min(requestedEndExclusive, contentLength)
+        } else {
+            desiredEndExclusive = requestedEndExclusive
+        }
+        guard offset < desiredEndExclusive else { return nil }
+        let maximumLength = requiresAudioSignature ? initialChunkLength : maximumChunkLength
+        let boundedEndExclusive = requiresAudioSignature
+            ? contentLength ?? Int64.max
+            : desiredEndExclusive
+        let length = min(maximumLength, boundedEndExclusive - offset)
+        return DulcetPlaybackByteRange(start: offset, endInclusive: offset + length - 1)
+    }
+
     private func loadNextChunk(_ context: LoadingContext) {
         guard !context.isCancelled else { return }
-        let desiredEndExclusive: Int64
-        if let contentLength = context.contentInformation?.contentLength {
-            desiredEndExclusive = context.requestsToEnd
-                ? contentLength
-                : min(context.requestedEndExclusive, contentLength)
-        } else {
-            desiredEndExclusive = context.requestedEndExclusive
-        }
-        if context.nextOffset >= desiredEndExclusive {
+        guard let range = Self.nextRange(
+            offset: context.nextOffset,
+            requestedEndExclusive: context.requestedEndExclusive,
+            requestsToEnd: context.requestsToEnd,
+            requiresAudioSignature: context.requiresAudioSignature,
+            contentLength: context.contentInformation?.contentLength
+        ) else {
             complete(context)
             return
         }
-        let chunkEndExclusive = context.nextOffset + Self.maximumChunkLength
-        let fetchEndExclusive = context.requiresAudioSignature
-            ? chunkEndExclusive
-            : min(desiredEndExclusive, chunkEndExclusive)
-        let endInclusive = fetchEndExclusive - 1
-        let range = DulcetPlaybackByteRange(
-            start: context.nextOffset,
-            endInclusive: endInclusive
-        )
         traceHandler?(.rangeRequested(requestID: context.requestID, range: range))
         let operation = resource.load(
             DulcetPlaybackResourceLoadRequest(
