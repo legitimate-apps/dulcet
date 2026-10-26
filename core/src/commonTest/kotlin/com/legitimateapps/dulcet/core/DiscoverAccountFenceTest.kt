@@ -8,6 +8,9 @@ import kotlin.test.*
 internal class DiscoverSessionWire:LibraryEndpointTransport {
     val baseline=SessionTestServer(FakeReaderServer(albumCount=3))
     val requests=mutableListOf<String>()
+    val wishParameters=mutableListOf<Map<String,String>>()
+    var retryAfter:String?=null
+    var retryEndpoint="addToDulcetWishlist"
     var advertised=true
     var hold:String?=null
     var entered=CompletableDeferred<Unit>()
@@ -15,6 +18,13 @@ internal class DiscoverSessionWire:LibraryEndpointTransport {
     var extensionFailure=false
     override suspend fun request(endpoint:String,parameters:Map<String,String>):LibraryEndpointResponse {
         requests+=endpoint
+        if(endpoint=="addToDulcetWishlist") {
+            wishParameters+=parameters
+        }
+        if(endpoint==retryEndpoint) retryAfter?.let { wait ->
+            retryAfter=null
+            return LibraryEndpointResponse(429,"busy","https://fixture.invalid?<redacted>",retryAfter=wait)
+        }
         if(endpoint==hold){entered.complete(Unit);withContext(NonCancellable){release.await()}}
         val child=when(endpoint) {
             "getOpenSubsonicExtensions" -> if(extensionFailure) return LibraryEndpointResponse(500,"failure","https://fixture.invalid?<redacted>") else "\"openSubsonicExtensions\":"+if(advertised) """[{"name":"dulcetDiscover","versions":[1]},{"name":"dulcetWishlist","versions":[1]}]""" else "[]"
@@ -31,7 +41,7 @@ internal class DiscoverSessionWire:LibraryEndpointTransport {
 class DiscoverAccountFenceTest {
     private suspend fun TestScope.open(env:ReaderEnv,wire:DiscoverSessionWire,authorization:()->Long?={0L},validate:suspend ()->DomainError?={null}):LibraryReaderSession = LibraryReaderSession(
         com.legitimateapps.dulcet.database.DulcetDatabase(env.driver),env.store.bind(ReaderEnv.BINDING),wire,
-        backgroundScope,formPost=false,foreground=false,identityAuthorization=authorization,validateServerIdentity=validate
+        backgroundScope,config=LibraryReaderConfig(monotonic=testScheduler.timeSource),formPost=false,foreground=false,identityAuthorization=authorization,validateServerIdentity=validate
     ).also {it.reader.connect()}
     @Test fun identityMismatchBeforeReconnectSendsNoFeatureWrite()=readerTest {env ->
         val wire=DiscoverSessionWire();var rejected=false
@@ -48,6 +58,119 @@ class DiscoverAccountFenceTest {
         assertTrue(wire.requests.drop(before).none {it=="addToDulcetWishlist"})
         assertEquals(1L,parent.pendingChangeCount());assertEquals("identity-changed",pubs.last().access.error?.code)
         client.close()
+    }
+    /** #393: the accepted saved lineage must reopen Discover on the SAME reader and client. */
+    @Test fun acceptedSameReaderReconnectFlushesWishAfterIdentityRejection()=readerTest {env ->
+        val wire=DiscoverSessionWire();var rejected=false;var epoch:Long?=0
+        val parent=open(env,wire,{epoch},validate={if(rejected) DomainError.Protocol.ServerIdentityChanged else null})
+        val reader=parent.reader
+        val client=parent.openDiscoverClient();val pubs=mutableListOf<DiscoverPublication>();client.observe {pubs+=it}
+        client.refreshWishlist(WishFilter());runCurrent()
+        client.setQuery("restored");advanceTimeBy(350);runCurrent()
+        assertEquals(3,pubs.last().groups.size)
+        parent.setOnline(false);runCurrent()
+        client.add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent()
+        assertEquals(1L,parent.pendingChangeCount())
+        rejected=true;epoch=null
+        assertIs<ReaderConnectionOutcome.Failed>(reader.reconnect());runCurrent()
+        assertEquals("identity-changed",pubs.last().access.error?.code)
+        assertTrue(wire.wishParameters.isEmpty())
+        // Validation accepts the saved account again, not a bind to a different principal.
+        rejected=false;epoch=1
+        assertIs<ReaderConnectionOutcome.Read>(reader.reconnect());runCurrent()
+        assertSame(reader,parent.reader)
+        assertEquals(1,wire.wishParameters.size,"accepted reconnect must deliver the durable wish")
+        assertEquals(0L,parent.pendingChangeCount())
+        assertTrue(pubs.last().access.canAddWish,"the existing client must recover too")
+        assertTrue(pubs.last().wishlistSettled);assertNull(pubs.last().wishlistError)
+        advanceTimeBy(350);runCurrent()
+        assertEquals("restored",pubs.last().query);assertEquals(3,pubs.last().groups.size)
+        assertTrue(pubs.last().groups.all {it.page!=null && it.error==null})
+        client.close()
+    }
+    /** #393: no foreground event, refresh, reconnect or second command wakes this idle outbox. */
+    @Test fun idleOnlineWishRetriesExactlyAtBackoffDeadline()=readerTest {env ->
+        val wire=DiscoverSessionWire();val parent=open(env,wire);val client=parent.openDiscoverClient()
+        wire.retryAfter="120"
+        client.add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent()
+        assertEquals(1,wire.wishParameters.size);assertEquals(1L,parent.pendingChangeCount())
+        client.close() // The reader owns delivery after the originating surface disappears.
+        // A wall-clock jump cannot move the in-memory monotonic deadline.
+        env.clock.now+=86_400_000
+        advanceTimeBy(119_999);runCurrent()
+        assertEquals(1,wire.wishParameters.size,"nothing may write before Retry-After")
+        advanceTimeBy(1);runCurrent()
+        assertEquals(2,wire.wishParameters.size,"the reader must wake the idle outbox at its deadline")
+        assertEquals(wire.wishParameters.first(),wire.wishParameters.last(),"retry keeps the durable operation bytes")
+        assertEquals(0L,parent.pendingChangeCount())
+        advanceTimeBy(120_000);runCurrent();assertEquals(2,wire.wishParameters.size)
+    }
+    @Test fun repeatedRateLimitReplacesWakeupAndKeepsOneRetryPerDeadline()=readerTest {env ->
+        val wire=DiscoverSessionWire();val parent=open(env,wire)
+        wire.retryAfter="120"
+        parent.openDiscoverClient().add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent()
+        wire.retryAfter="60"
+        advanceTimeBy(120_000);runCurrent()
+        assertEquals(2,wire.wishParameters.size);assertEquals(1L,parent.pendingChangeCount())
+        advanceTimeBy(59_999);runCurrent();assertEquals(2,wire.wishParameters.size)
+        advanceTimeBy(1);runCurrent()
+        assertEquals(3,wire.wishParameters.size);assertEquals(0L,parent.pendingChangeCount())
+        advanceTimeBy(120_000);runCurrent();assertEquals(3,wire.wishParameters.size)
+    }
+    @Test fun wishQueuedDuringReadBackoffStillGetsItsDeadlineWakeup()=readerTest {env ->
+        val wire=DiscoverSessionWire();val parent=open(env,wire);val client=parent.openDiscoverClient()
+        wire.retryEndpoint="getDulcetWishlist";wire.retryAfter="120"
+        client.refreshWishlist(WishFilter());runCurrent()
+        assertTrue(wire.requests.contains("getDulcetWishlist"));assertEquals(0L,parent.pendingChangeCount())
+        client.add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent()
+        assertEquals(1L,parent.pendingChangeCount());assertTrue(wire.wishParameters.isEmpty())
+        advanceTimeBy(119_999);runCurrent();assertTrue(wire.wishParameters.isEmpty())
+        advanceTimeBy(1);runCurrent()
+        assertEquals(1,wire.wishParameters.size);assertEquals(0L,parent.pendingChangeCount())
+        client.close()
+    }
+    @Test fun acceptedRecoveryKeepsUnexpiredMonotonicBackoff()=readerTest {env ->
+        val wire=DiscoverSessionWire();var epoch:Long?=0
+        val parent=open(env,wire,{epoch})
+        wire.retryAfter="120"
+        parent.openDiscoverClient().add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent()
+        epoch=null;parent.reader.rejectServerIdentity()
+        advanceTimeBy(60_000);runCurrent();epoch=1
+        assertIs<ReaderConnectionOutcome.Read>(parent.reader.reconnect());runCurrent()
+        assertEquals(1,wire.wishParameters.size,"same-account recovery cannot bypass Retry-After")
+        advanceTimeBy(59_999);runCurrent();assertEquals(1,wire.wishParameters.size)
+        advanceTimeBy(1);runCurrent()
+        assertEquals(2,wire.wishParameters.size);assertEquals(0L,parent.pendingChangeCount())
+    }
+    @Test fun closeOrIdentityRetirementCancelsWishWakeup()=runTest {
+        for(close in listOf(false,true)) withReaderEnv {isolated ->
+            val wire=DiscoverSessionWire();var epoch:Long?=0
+            val parent=open(isolated,wire,{epoch})
+            wire.retryAfter="120"
+            parent.openDiscoverClient().add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent()
+            assertEquals(1,wire.wishParameters.size)
+            if(close)parent.closeDiscoverClients() else {
+                epoch=null;parent.reader.rejectServerIdentity()
+                epoch=1 // An external accept alone must not authorize an old timer.
+            }
+            advanceTimeBy(120_000);runCurrent()
+            assertEquals(1,wire.wishParameters.size)
+            assertEquals(1L,parent.pendingChangeCount())
+            assertTrue(parent.reader.uncaughtFailures.isEmpty())
+        }
+    }
+    @Test fun oldWishReplyCannotAcknowledgeAfterSameReaderRecovery()=readerTest {env ->
+        val wire=DiscoverSessionWire();var epoch:Long?=0
+        val parent=open(env,wire,{epoch});val client=parent.openDiscoverClient()
+        wire.hold="addToDulcetWishlist"
+        client.add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent();wire.entered.await()
+        epoch=null;parent.reader.rejectServerIdentity();epoch=1
+        val reconnect=async {parent.reader.reconnect()};runCurrent()
+        wire.release.complete(Unit);runCurrent()
+        assertIs<ReaderConnectionOutcome.Read>(reconnect.await())
+        assertEquals(2,wire.wishParameters.size,"a retired reply cannot acknowledge the intent for the recovered lifetime")
+        assertEquals(wire.wishParameters.first(),wire.wishParameters.last())
+        assertEquals(0L,parent.pendingChangeCount());client.close()
     }
     @Test fun heldWishAcknowledgementAcrossExternalRejectAcceptKeepsIntent()=readerTest {env ->
         val wire=DiscoverSessionWire();var epoch:Long?=0

@@ -16,6 +16,7 @@ internal class WishOutbox(
     private val uuid: ()->String = {Uuid.random().toString()},
     private val backoff: DiscoverBackoff? = null,
     private val changed: ()->Unit = {},
+    private val captureAuthorization: ()->(()->Boolean) = { active },
 ) {
     var lastError: DiscoverFailure?=null;private set
     private val lock=Mutex()
@@ -53,7 +54,9 @@ internal class WishOutbox(
         catch(_: Exception) {lastError=DiscoverFailure("storage",null,true);if(admitted()) changed()}
     }
     private suspend fun flushChecked() = lock.withLock {
-        while(admitted() && canSend() && backoff?.allowed()!=false) {
+        // Renewing the account must never authorize a reply from a retired flush.
+        val authorized=captureAuthorization()
+        while(admitted() && authorized() && canSend() && backoff?.allowed()!=false) {
             val gates=access()
             if(gates.detection!="known") return@withLock
             val pending=store.pending()
@@ -66,10 +69,10 @@ internal class WishOutbox(
                 is WishMutation.Reject -> gates.canRejectMatch
             }
             if(!allowed) {store.refuse(intent.mutation.operationId,DiscoverFailure("unsupported",null,false));changed();continue}
-            if(!admitted() || !canSend()) return@withLock
+            if(!admitted() || !authorized() || !canSend()) return@withLock
             lastError=null
             val result=transport.apply(intent.mutation)
-            if(!admitted() || !canSend()) return@withLock
+            if(!admitted() || !authorized() || !canSend()) return@withLock
             when(result) {
                 is DiscoverResult.Value -> {
                     val receipt=result.value

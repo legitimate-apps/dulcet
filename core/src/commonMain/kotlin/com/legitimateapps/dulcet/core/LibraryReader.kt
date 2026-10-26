@@ -200,11 +200,16 @@ internal class LibraryReader(
                 return DomainError.Protocol.ServerIdentityChanged
             }
             identityRejected = false
+            identityAccepted?.invoke()
         }
         return failure
     }
 
+    /** Only a successful saved-account validation can renew a feature lifetime. */
+    internal var identityAccepted: (() -> Unit)? = null
+
     private fun rejectIdentity() {
+        cancelWishRetry()
         identityRejected = true
         identityGeneration += 1
         // Rejection also changes an already-offline screen; goOffline alone is then a no-op.
@@ -1003,6 +1008,23 @@ internal class LibraryReader(
     /** When the current wait ends, on [LibraryReaderConfig.monotonic]; null when none holds. */
     private var busyUntil: ComparableTimeMark? = null
     private var busyRetry: Job? = null
+    private var wishRetry: Job? = null
+
+    /** Like the busy retry, owned by the reader scope, but using Discover's shared deadline. */
+    internal fun retryWishesAfter(wait: Duration) {
+        cancelWishRetry()
+        wishRetry = outboxRetryAfter(wait, captureRequestAuthorization())
+    }
+
+    internal fun cancelWishRetry() {
+        wishRetry?.cancel()
+        wishRetry = null
+    }
+
+    private fun outboxRetryAfter(wait: Duration, authorized: () -> Boolean = { true }): Job = scope.launch {
+        delay(wait)
+        if (authorized() && canSend) flushOutboxes()
+    }
 
     /**
      * The server asked for quiet (an HTTP 429) with [retryAfter], if it said, answering a request of
@@ -1031,10 +1053,7 @@ internal class LibraryReader(
             busyUntil = until
             // The retry of the shorter wait is replaced; a longer wait keeps its own retry.
             busyRetry?.cancel()
-            busyRetry = scope.launch {
-                delay(wait)
-                if (canSend) flushOutboxes()
-            }
+            busyRetry = outboxRetryAfter(wait)
         }
         return count && streak == 1
     }

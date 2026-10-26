@@ -4,12 +4,13 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlin.time.Duration
 import kotlin.time.ComparableTimeMark
 import kotlin.time.TimeSource
 import kotlin.time.Duration.Companion.milliseconds
 
 /** Shared per account, so changing query or surface cannot bypass server backoff. */
-internal class DiscoverBackoff(private val wall: () -> Long, private val monotonic: TimeSource.WithComparableMarks = TimeSource.Monotonic) {
+internal class DiscoverBackoff(private val wall: () -> Long, private val monotonic: TimeSource.WithComparableMarks = TimeSource.Monotonic, private val deadlineChanged: (Duration) -> Unit = {}) {
     private var until: ComparableTimeMark? = null
     private var failure: DiscoverFailure? = null
     fun note(error: DiscoverFailure) {
@@ -19,8 +20,10 @@ internal class DiscoverBackoff(private val wall: () -> Long, private val monoton
         if (until == null || deadline > until!!) {
             until=deadline
             failure=error.copy(retryAtMillis=error.retryAtMillis ?: (wall()+60000))
+            deadlineChanged(delay)
         }
     }
+    fun remaining(): Duration? = until?.let { -it.elapsedNow() }?.takeIf { it.isPositive() }
     fun allowed(): Boolean = until?.let { monotonic.markNow() >= it } ?: true
     fun error(): DiscoverFailure? = if (allowed()) null else failure
 }
