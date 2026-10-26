@@ -7,13 +7,17 @@ from importlib.machinery import SourceFileLoader
 import importlib.util
 from pathlib import Path
 import os
+import copy
+import json
+import re
+from unittest.mock import patch
 import subprocess
 import sys
 import tempfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
-TOOL = ROOT / "tools" / "ci" / "plan-apple-legs"
+TOOL = Path(os.environ.get("PLAN_APPLE_LEGS_UNDER_TEST", ROOT / "tools/ci/plan-apple-legs"))
 _spec = importlib.util.spec_from_loader("plan_apple_legs", SourceFileLoader("plan_apple_legs", str(TOOL)))
 planner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(planner)
@@ -84,6 +88,11 @@ for path in NOT_APPLE:
 for event in ("push", "workflow_dispatch", "schedule", "merge_group", ""):
     expect(planner.plan(event, ["docs/a.md"])[:2] == (True, True),
            f"event {event!r} must run every leg")
+expect(planner.plan("workflow_dispatch", None, True)[:2] == (False, True),
+       "a conformance-only dispatch skips only the platform leg")
+for event in ("push", "schedule", "merge_group", ""):
+    expect(planner.plan(event, None, True)[:2] == (True, True),
+           f"conformance-only cannot change event {event!r}")
 expect(planner.plan("pull_request", ["docs/a.md", "android/app/src/X.kt"])[:2] == (False, False),
        "a docs and Android pull request runs no Apple leg")
 expect(planner.plan("pull_request", ["docs/a.md", "core/src/X.kt"])[:2] == (True, False),
@@ -95,6 +104,8 @@ expect(planner.plan("pull_request", [])[:2] == (True, False),
 for changed in (["core/X.kt"], ["docs/a.md"], None, []):
     expect(planner.plan("pull_request", changed)[1] is False,
            "a pull request never runs the conformance leg")
+    expect(planner.plan("pull_request", changed, True) == planner.plan("pull_request", changed),
+           "conformance-only cannot change a pull request's plan")
 
 # --- require-leg: exactly two accepted pairs, everything else refused.
 ACCEPTED = {("true", "success"), ("false", "skipped")}
@@ -108,19 +119,27 @@ for planned in ("true", "false", "", "TRUE", "1", "True"):
 # --- The CLI's step outputs, end to end.
 with tempfile.TemporaryDirectory() as directory:
     listing = Path(directory) / "changed"
-    listing.write_text("docs/a.md\nCLAUDE.md\n")
-    out = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "pull_request",
-                          "--changed-files", str(listing)],
-                         capture_output=True, text=True, check=True).stdout
-    expect(out == "platform=false\nconformance=false\n", f"docs-only outputs: {out!r}")
-    listing.write_text("apple/project.yml\n")
-    out = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "pull_request",
-                          "--changed-files", str(listing)],
-                         capture_output=True, text=True, check=True).stdout
-    expect(out == "platform=true\nconformance=false\n", f"Apple outputs: {out!r}")
-    out = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "push"],
-                         capture_output=True, text=True, check=True).stdout
-    expect(out == "platform=true\nconformance=true\n", f"push outputs: {out!r}")
+    cases = (
+        ("PR without Apple inputs", "pull_request", "docs/a.md\nCLAUDE.md\n", [], False, False),
+        ("PR with Apple inputs", "pull_request", "apple/project.yml\n", [], True, False),
+        ("push", "push", "", [], True, True),
+        ("plain dispatch", "workflow_dispatch", "", [], True, True),
+        ("explicit full dispatch", "workflow_dispatch", "", ["--conformance-only", "false"], True, True),
+        ("conformance-only dispatch", "workflow_dispatch", "", ["--conformance-only", "true"], False, True),
+        ("push ignores dispatch input", "push", "", ["--conformance-only", "true"], True, True),
+    )
+    for label, event, changed, options, platform, conformance in cases:
+        listing.write_text(changed)
+        result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", event,
+                                 "--changed-files", str(listing), *options],
+                                capture_output=True, text=True, check=True)
+        expected = f"platform={str(platform).lower()}\nconformance={str(conformance).lower()}\n"
+        expect(result.stdout == expected, f"{label} outputs: {result.stdout!r}")
+        print(f"CLI EXECUTED {label}: {result.stdout.strip().replace(chr(10), ' ')}")
+    for value in ("TRUE", "1", "yes", ""):
+        result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "workflow_dispatch",
+                                 "--conformance-only", value], capture_output=True, text=True)
+        expect(result.returncode != 0 and not result.stdout, f"invalid input {value!r} must fail closed")
 
 # --- The diff read from a real merge commit, and the fail-safe on a checkout that is not one.
 with tempfile.TemporaryDirectory() as directory:
@@ -162,6 +181,183 @@ with tempfile.TemporaryDirectory() as directory:
     git("merge", "-q", "--no-ff", "-m", "merge 2", "topic")
     expect(plan_here() == "platform=true\nconformance=false\n",
            "a merge commit carrying a core change runs the platform leg")
+
+# --- Same-tree main proof: recorded REST responses, through the production reader and CLI.
+fixture_path = ROOT / "tools/ci/fixtures/proven-main-389.json"
+recording = json.loads(fixture_path.read_text())
+repository, sha, head = (recording[key] for key in ("repository", "sha", "head"))
+base = f"/repos/{repository}"
+responses = recording["responses"]
+association = f"{base}/commits/{sha}/pulls?per_page=100&page=1"
+pr_path = f"{base}/pulls/389"
+commit_path = f"{base}/commits/{head}"
+workflow_path = f"{base}/actions/workflows/apple-ci.yml"
+runs_path = next(path for path in responses if "/runs?" in path)
+pr_run = f"{base}/actions/runs/40127671219"
+dispatch = f"{base}/actions/runs/40127671088"
+pr_jobs = pr_run + "/attempts/1/jobs?per_page=100&page=1"
+dispatch_jobs = dispatch + "/attempts/1/jobs?per_page=100&page=1"
+
+
+def replay(documents, ref="refs/heads/main"):
+    api = planner.GitHub("", str(fixture_path))
+    api.responses = documents
+    return planner.push_plan(api, repository, sha, ref)
+
+
+positive = replay(responses)
+expect(positive[:2] == (False, False), f"recorded same-tree proof must skip: {positive}")
+for identity in ("#389", head, "b603c224a50ec9b23d0140ec501999cf84feebde",
+                 "40127671219", "40127671088", "not resolved"):
+    expect(identity in positive[2], f"audit receipt missing {identity}")
+print("PROOF PASS: recorded #389 same-tree PR platform + conformance dispatch")
+
+
+def control(label, edit):
+    documents = copy.deepcopy(responses)
+    edit(documents)
+    actual = replay(documents)
+    expect(actual[:2] == (True, True), f"{label} wrongly skipped: {actual}")
+    print(f"PROOF FALLBACK PASS: {label}: {actual[2]}")
+
+
+def run_edit(path, key, value):
+    def edit(documents):
+        documents[path][key] = value
+    return edit
+
+
+def job_edit(path, name, key, value):
+    def edit(documents):
+        next(job for job in documents[path]["jobs"] if job["name"] == name)[key] = value
+    return edit
+
+
+control("no associated PR", lambda d: d.__setitem__(association, []))
+control("multiple associated PRs", lambda d: d[association].append({"number": 390}))
+control("tree mismatch", lambda d: d[commit_path]["commit"]["tree"].__setitem__("sha", "a" * 40))
+control("missing dispatch", lambda d: (d[runs_path].__setitem__("workflow_runs", [d[pr_run]]),
+                                      d[runs_path].__setitem__("total_count", 1)))
+control("missing PR run", lambda d: (d[runs_path].__setitem__("workflow_runs", [d[dispatch]]),
+                                    d[runs_path].__setitem__("total_count", 1)))
+control("fork PR", lambda d: d[pr_path]["head"]["repo"].__setitem__("id", 123))
+control("unmerged associated PR", run_edit(pr_path, "merged", False))
+control("different merge commit", run_edit(pr_path, "merge_commit_sha", "a" * 40))
+control("wrong workflow path", run_edit(workflow_path, "path", ".github/workflows/fake.yml"))
+for path in (pr_run, dispatch):
+    for key, value in (("workflow_id", 123), ("path", ".github/workflows/fake.yml"),
+                       ("head_sha", "a" * 40), ("event", "pull_request_target"),
+                       ("conclusion", "failure"), ("conclusion", "cancelled"),
+                       ("status", "in_progress"), ("run_attempt", 2)):
+        control(f"{path.rsplit('/', 1)[-1]} {key}={value}", run_edit(path, key, value))
+    control(f"{path} foreign head repository",
+            lambda d, path=path: d[path]["head_repository"].__setitem__("id", 123))
+for path, names in ((pr_jobs, {"apple-platform", "apple-ci"}),
+                    (dispatch_jobs, planner.CONFORMANCE_JOBS | {"apple-ci"})):
+    for name in sorted(names):
+        for conclusion in ("failure", "skipped", "cancelled", None):
+            control(f"{name}={conclusion}", job_edit(path, name, "conclusion", conclusion))
+        control(f"{name} stale attempt", job_edit(path, name, "run_attempt", 0))
+        control(f"{name} wrong head", job_edit(path, name, "head_sha", "a" * 40))
+        control(f"missing {name}", lambda d, path=path, name=name:
+                (d[path].__setitem__("jobs", [j for j in d[path]["jobs"] if j["name"] != name]),
+                 d[path].__setitem__("total_count", d[path]["total_count"] - 1)))
+        control(f"duplicate {name}", lambda d, path=path, name=name:
+                (d[path]["jobs"].append(copy.deepcopy(next(j for j in d[path]["jobs"] if j["name"] == name))),
+                 d[path].__setitem__("total_count", d[path]["total_count"] + 1)))
+# Latest runs and attempts, never a successful historical execution or mixed attempts.
+for event_path in (pr_run, dispatch):
+    def newer_failure(d, event_path=event_path):
+        newer = dict(d[event_path], id=d[event_path]["id"] + 1000, conclusion="failure")
+        d[runs_path]["workflow_runs"].append(newer)
+        d[runs_path]["total_count"] += 1
+    control(f"newer failed {event_path}", newer_failure)
+control("API truncation", run_edit(runs_path, "total_count", 100))
+control("malformed API", lambda d: d.__setitem__(pr_path, None))
+# Each API read can independently fail, including final freshness reads.
+api = planner.GitHub("", str(fixture_path))
+with patch.object(api, "get", wraps=api.get) as reads:
+    expect(planner.push_plan(api, repository, sha, "refs/heads/main")[:2] == (False, False),
+           "live reader path positive")
+    call_paths = [call.args[0] for call in reads.call_args_list]
+for failure_at in range(len(call_paths)):
+    api = planner.GitHub("", str(fixture_path))
+    original = api.get
+    calls = [0]
+    def fail_one(path):
+        index = calls[0]
+        calls[0] += 1
+        if index == failure_at:
+            raise OSError("simulated API failure")
+        return original(path)
+    with patch.object(api, "get", side_effect=fail_one):
+        expect(planner.push_plan(api, repository, sha, "refs/heads/main")[:2] == (True, True),
+               f"API failure at read {failure_at} must plan every leg")
+print(f"PROOF FALLBACK PASS: API errors at all {len(call_paths)} reads")
+with patch.object(api, "get", side_effect=planner.http.client.IncompleteRead(b"partial")):
+    expect(planner.push_plan(api, repository, sha, "refs/heads/main")[:2] == (True, True),
+           "incomplete HTTP response must plan every leg")
+# A rerun begins after the jobs response but before the receipt is issued.
+api = planner.GitHub("", str(fixture_path))
+original = api.get
+seen = [0]
+def rerunning(path):
+    document = original(path)
+    if path == dispatch:
+        seen[0] += 1
+        if seen[0] == 2:
+            return dict(document, run_attempt=2, status="queued", conclusion=None)
+    return document
+with patch.object(api, "get", side_effect=rerunning):
+    expect(planner.push_plan(api, repository, sha, "refs/heads/main")[:2] == (True, True),
+           "concurrent rerun must invalidate proof")
+# Plain full dispatch is equally valid; only the three conformance jobs and aggregator are needed.
+full_dispatch = copy.deepcopy(responses)
+job_edit(dispatch_jobs, "apple-platform", "conclusion", "success")(full_dispatch)
+expect(replay(full_dispatch)[:2] == (False, False), "plain full dispatch must count")
+expect(replay(responses, "refs/heads/topic")[:2] == (True, True), "only main can skip")
+with tempfile.TemporaryDirectory() as directory:
+    summary = Path(directory) / "summary.md"
+    env = {**os.environ, "GITHUB_REPOSITORY": repository, "GITHUB_SHA": sha,
+           "GITHUB_REF": "refs/heads/main", "GITHUB_STEP_SUMMARY": str(summary)}
+    result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "push",
+                             "--proof-fixture", str(fixture_path)], env=env,
+                            text=True, capture_output=True, check=True)
+    expect(result.stdout == "platform=false\nconformance=false\n", "recorded CLI must skip")
+    expect(positive[2] in summary.read_text(), "Actions summary must carry the audited proof")
+print("PROOF CLI PASS: same production push code path, recorded API, audited Actions summary")
+
+# Execute the real aggregator shell with the plan's outputs and Actions' skipped job results.
+# This verifies the integration that turns a no-leg plan into a successful required check.
+workflow = (ROOT / ".github/workflows/apple-ci.yml").read_text()
+def workflow_shell(name):
+    match = re.search(r"      - name: " + re.escape(name) + r"\n        run: \|\n((?:          .*\n|\n)+)",
+                      workflow)
+    expect(match is not None, f"workflow step {name} must be executable by this control")
+    return "\n".join(line[10:] for line in match[1].splitlines())
+
+with tempfile.TemporaryDirectory() as directory:
+    summary = Path(directory) / "summary"
+    env = {**os.environ, "APPLE_PLAN_RESULT": "success", "RUN_APPLE_PLATFORM": "false",
+           "RUN_APPLE_CONFORMANCE": "false", "APPLE_PLATFORM_RESULT": "skipped",
+           "APPLE_CONFORMANCE_CORE_RESULT": "skipped",
+           "APPLE_CONFORMANCE_IPAD_IPHONE_RESULT": "skipped", "GITHUB_STEP_SUMMARY": str(summary)}
+    shell = workflow_shell("Require every planned Apple leg")
+    result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT, env=env,
+                            capture_output=True, text=True)
+    expect(result.returncode == 0 and "APPLE CI LEGS PASS" in result.stdout,
+           f"real aggregator must accept planned skips: {result.stdout} {result.stderr}")
+    for key, value in (("APPLE_PLAN_RESULT", "failure"), ("RUN_APPLE_PLATFORM", ""),
+                       ("APPLE_CONFORMANCE_CORE_RESULT", "failure")):
+        bad = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT,
+                             env={**env, key: value}, capture_output=True, text=True)
+        expect(bad.returncode != 0, f"aggregator must refuse {key}={value!r}")
+    subprocess.run(["bash", "-e", "-o", "pipefail", "-c",
+                    workflow_shell("Report whether this run resolves evidence")],
+                   cwd=ROOT, env=env, check=True, capture_output=True, text=True)
+    expect("EVIDENCE not resolved on this run" in summary.read_text(),
+           "skipped run summary must explicitly disclaim FEATURES resolution")
+print("PROOF AGGREGATOR PASS: real workflow shell accepts planned skips and rejects bad results")
 
 # --- Closure: no excluded tool is named by anything the Apple legs read. An excluded tool that an
 # Apple-affecting file mentions in code (by path, file name or module stem) would let a pull request change

@@ -200,6 +200,46 @@ class PlaybackListeningSessionTest {
         assertEquals(listOf("a", "q", "y"), answered.snapshot.rawIds())
     }
 
+    @Test
+    fun releasedAutoplayRetriesWithFreshIdentityAndIgnoresLateAnswersAndReleases() {
+        val fixture = fixture()
+        fixture.controller.setAutoplay(true)
+        fixture.controller.replaceAndStart(request(listOf("a")))
+        val old = assertNotNull(fixture.controller.takeAutoplayRequest())
+        fixture.controller.releaseAutoplayRequest(old.key)
+        val retry = assertNotNull(fixture.controller.takeAutoplayRequest())
+        assertTrue(old.key != retry.key)
+        fixture.controller.releaseAutoplayRequest(old.key)
+        fixture.controller.appendAutoplay(old.key, items(listOf("stale")))
+        assertEquals(listOf("a"), fixture.controller.snapshot().rawIds())
+        assertNull(fixture.controller.takeAutoplayRequest(), "A stale release cannot free the newer operation")
+        fixture.controller.appendAutoplay(retry.key, emptyList())
+        fixture.controller.releaseAutoplayRequest(retry.key)
+        assertNull(fixture.controller.takeAutoplayRequest(), "A successful empty search remains exhausted")
+        fixture.controller.appendAutoplay(retry.key, items(listOf("duplicate")))
+        assertEquals(listOf("a"), fixture.controller.snapshot().rawIds())
+    }
+
+    @Test
+    fun autoplayRetryKeepsNaturalEndIntentBeforeOrAfterRelease() {
+        for (endBeforeRelease in listOf(true, false)) {
+            val fixture = fixture()
+            fixture.controller.setAutoplay(true)
+            val first = assertNotNull(fixture.controller.replaceAndStart(request(listOf("a"))).startDirective)
+            val old = assertNotNull(fixture.controller.takeAutoplayRequest())
+            fixture.playPast(first.attemptId, 3)
+            fun end() { fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(first.attemptId, 180.seconds)) }
+            if (endBeforeRelease) end()
+            fixture.controller.releaseAutoplayRequest(old.key)
+            if (!endBeforeRelease) end()
+            val retry = assertNotNull(fixture.controller.takeAutoplayRequest())
+            assertNull(fixture.controller.appendAutoplay(old.key, items(listOf("stale"))).startDirective)
+            val recovered = fixture.controller.appendAutoplay(retry.key, items(listOf("recovered")))
+            assertEquals("recovered", assertNotNull(recovered.startDirective).itemId.rawId)
+            assertEquals(listOf("a", "recovered"), recovered.snapshot.rawIds())
+        }
+    }
+
     // ---- Sleep timer stop points ------------------------------------------------------------------
 
     @Test
@@ -443,6 +483,65 @@ class PlaybackListeningSessionTest {
         val tracks = AutoplayCandidateSource("server", unknownSeed).candidates("seed", emptySet(), count = 2)
         assertEquals(listOf("r1"), tracks.map { it.id.rawId })
         assertEquals(listOf("getSong", "getSimilarSongs", "getRandomSongs"), requests)
+    }
+
+    @Test
+    fun busyStopsTheCandidateChainAtTheSeedOrAfterPartialResults() = runTest {
+        for (busyAt in listOf("getSong", "getSimilarSongs")) {
+            val requests = mutableListOf<String>()
+            val transport = LibraryEndpointTransport { endpoint, _ ->
+                requests += endpoint
+                LibraryEndpointResponse(
+                    if (endpoint == busyAt) 429 else 200,
+                    when (endpoint) {
+                        "getSong" -> ok("\"song\":{\"id\":\"seed\",\"artistId\":\"artist\",\"artist\":\"Artist\",\"genre\":\"Jazz\"}")
+                        "getSimilarSongs2" -> ok("\"similarSongs2\":{\"song\":[${song("first")}]}" )
+                        else -> failure(0)
+                    }, "http://fixture.invalid/rest", retryAfter = "17",
+                )
+            }
+            val error = assertFailsWith<LibraryRequestFailure> {
+                AutoplayCandidateSource("server", transport).candidates("seed", emptySet(), 10)
+            }.error
+            assertEquals(DomainError.Server.Busy(17.seconds), error)
+            assertEquals(if (busyAt == "getSong") listOf("getSong") else
+                listOf("getSong", "getSimilarSongs2", "getSimilarSongs"), requests,
+                "A busy answer stops all later sources, even after finding some tracks")
+        }
+    }
+
+    @Test
+    fun transientTransportFailureIsNotASuccessfulEmptyAnswer() = runTest {
+        var calls = 0
+        val transport = LibraryEndpointTransport { _, _ ->
+            calls++
+            throw LibraryRequestFailure(DomainError.Transport.Timeout)
+        }
+        assertEquals(DomainError.Transport.Timeout, assertFailsWith<LibraryRequestFailure> {
+            AutoplayCandidateSource("server", transport).candidates("seed", emptySet(), 10)
+        }.error)
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun invalidSleepCountdownInputsAreSafeAtTheSwiftBoundary() {
+        val timer = SleepTimerCountdown(-1)
+        assertEquals(0L, timer.fadeMilliseconds)
+        for (length in listOf(0L, -1L, Long.MIN_VALUE)) {
+            timer.start(length, 100)
+            assertEquals(0L, timer.remainingMilliseconds(100))
+            assertTrue(timer.expire(100), "A nonpositive countdown expires immediately")
+        }
+    }
+
+    @Test
+    fun sleepCountdownArithmeticSaturatesInsteadOfWrapping() {
+        val timer = SleepTimerCountdown()
+        timer.start(Long.MAX_VALUE, 100)
+        assertFalse(timer.expire(100), "A long duration cannot wrap to a past deadline")
+        assertEquals(Long.MAX_VALUE - 100, timer.remainingMilliseconds(100))
+        assertEquals(Long.MAX_VALUE, timer.remainingMilliseconds(Long.MIN_VALUE))
+        assertTrue(timer.expire(Long.MAX_VALUE))
     }
 
     // ---- helpers ------------------------------------------------------------------------------------

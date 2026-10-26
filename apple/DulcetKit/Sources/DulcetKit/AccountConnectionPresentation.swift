@@ -818,6 +818,13 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 self.playbackController?.setNetworkAvailable(reachable)
             }
         }
+        playbackController?.setAuthenticationFailureHandler { [weak self] in
+            guard let self, pendingConnection == nil, currentSnapshot.accountConnection != .connecting else { return }
+            cancelReconnectRetry()
+            let failure = DulcetAccountErrorPresenter.presentation(for: .init(
+                kind: .invalidCredentials, serverName: savedServerName ?? ""))
+            publishInPlace(status: .failed(failure), form: currentSnapshot.accountForm)
+        }
         librarySession?.onServerIdentityChanged = { [weak self] in self?.handleServerIdentityChanged() }
         downloadController?.setServerIdentityChangedHandler { [weak self] in self?.handleServerIdentityChanged() }
         librarySession?.onServerConnectionChanged = { [weak self] available in
