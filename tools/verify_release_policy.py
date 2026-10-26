@@ -41,7 +41,9 @@
    pieces -- that is review's job, not this gate's.
 6. Before any step reads a secret, an unconditional step runs `tools/release_plan.py
    full-run-gate`, which refuses a commit whose required checks and every apple-ci leg are not
-   green (spec §21.6); only a dry run may waive it, and release_plan.py enforces that part.
+   green (spec §21.6), with all Apple legs in the latest apple-ci check suite. A conformance-only
+   dispatch's skipped platform cannot qualify, including with a platform success in another suite;
+   only a dry run may waive it, and release_plan.py enforces that part.
 
 Reads files relative to the current directory, so tools/test-release-channel can run it against
 mutated copies. Exits 1 with every violation listed. A file it parses (project.yml, the committed

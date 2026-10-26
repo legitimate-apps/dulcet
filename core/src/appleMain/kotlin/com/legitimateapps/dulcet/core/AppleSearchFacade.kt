@@ -51,6 +51,7 @@ public class AppleSearchResultItemDto internal constructor(
     public val sourceContainer: String?,
     public val mediaSourceId: String?,
     public val artworkKey: String?,
+    public val albumRawId: String?,
 )
 
 public class AppleSearchPageDto internal constructor(
@@ -178,6 +179,7 @@ private fun SearchPage.toAppleDto(): AppleSearchPageDto = AppleSearchPageDto(
             sourceContainer = result.sourceContainer?.name,
             mediaSourceId = result.mediaSourceId,
             artworkKey = result.artworkKey,
+            albumRawId = result.albumRawId,
         )
     },
     artistResultCount = artistResultCount,

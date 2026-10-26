@@ -127,6 +127,8 @@ jobs:
           test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
           ffmpeg -version
           ffprobe -version
+      - name: Test safe Discover verification evidence
+        run: python3 -m unittest discover -s tools/server -p 'test_*.py'
       - name: Test Dulcet Server
         run: >-
           ./gradlew --no-daemon

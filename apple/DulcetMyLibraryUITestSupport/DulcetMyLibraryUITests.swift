@@ -77,13 +77,6 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor
     func testBrowseAddRemoveRelaunchAndOfflineReplay() throws {
         continueAfterFailure = false
-#if os(iOS)
-        // Six real launches plus offline playback/replay exceeded 300 s under hosted load
-        // (40065138225, attempt 2). That timeout killed the runner during the next case,
-        // despite this case eventually printing "passed". Keep a finite allowance for the
-        // entire proof; every UI/server deadline and every assertion below is unchanged.
-        if UIDevice.current.userInterfaceIdiom == .pad { executionTimeAllowance = 600 }
-#endif
         try setOffline(false)
         let album = try fixtureAlbum()
         try removeAlbum(album.id)

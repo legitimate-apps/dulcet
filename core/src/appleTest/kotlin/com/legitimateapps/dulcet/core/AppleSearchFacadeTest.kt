@@ -6,6 +6,16 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class AppleSearchFacadeTest {
+    @Test fun serverAlbumIdentityCrossesTheSearchDtoAdapter() = kotlinx.coroutines.test.runTest {
+        val response = """{"subsonic-response":{"status":"ok","searchResult3":{"song":[{"id":"song:opaque","title":"Song","albumId":"album:opaque","duration":40}]}}}"""
+        val result = ServerSearch(SearchEndpointTransport { SearchEndpointResponse(200, response, "<redacted>") })
+            .search(SearchPageRequest("server", "https://music.example.invalid", "listener", "password", false,
+                "song", 0, 0, 0, 0, 10, 0))
+        val track = assertNotNull(result.toAppleOutcome().page).results.single()
+        assertEquals("album:opaque", track.albumRawId)
+        assertEquals(40_000L, track.durationMilliseconds)
+    }
+
     /**
      * Each per-kind count reaches the Objective-C DTO under its own kind.
      *

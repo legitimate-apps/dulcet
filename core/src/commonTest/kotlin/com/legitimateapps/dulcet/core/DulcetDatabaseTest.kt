@@ -91,6 +91,8 @@ class DulcetDatabaseTest {
             added_by = "play_now",
             original_position = 0,
             playback_position = 0,
+            duration_milliseconds = null,
+            album_raw_id = null,
         )
         database.queueQueries.activateQueue(serverId)
 

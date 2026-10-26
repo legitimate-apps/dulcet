@@ -66,15 +66,22 @@ fi
 
 if [ "$mode" = iphone ]; then
     # The caller has positively validated the server and every proxy. Pay the first boot and
-    # post-boot service burst now, before any test's execution clock, and keep this device booted.
-    python3 tools/ci/isolate-simulator --phase my-library-iphone --keep-name "iPhone 17 Pro" --settle --require-settle --require-isolation
+    # post-boot service AND paging burst now, before any test's execution clock. A stable service
+    # count alone still admitted load1 671 in run 40117378423. Warm the built shell's in-memory
+    # connect screen before the quiet window, then terminate it; an idle-device window alone
+    # renewed pressure on first launch in 40153793474. No production account/library is opened.
+    python3 tools/ci/isolate-simulator --phase my-library-iphone --keep-name "iPhone 17 Pro" --settle --require-settle --settle-pressure --require-isolation \
+        --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
+    # 600 s per test on iPhone and iPad (docs/TRAPS.md 56): after admission, one accessibility query
+    # can still take 17-30 s, and the browse/relaunch/offline test was cut off at 300 s while it was
+    # still progressing (40232687092). The allowance remains a hang guard, not a retry.
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
         -destination "platform=iOS Simulator,name=iPhone 17 Pro,OS=latest" \
         -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
         -parallel-testing-enabled NO \
-        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300 \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
@@ -98,14 +105,25 @@ if [ "$mode" = iphone ]; then
 fi
 
 if [ "$mode" = ipad ]; then
-    python3 tools/ci/isolate-simulator --phase my-library-ipad --keep "${IPAD_UDID:?}" --settle --require-settle --require-isolation
+    python3 tools/ci/isolate-simulator --phase my-library-ipad --keep "${IPAD_UDID:?}" --settle --require-settle --settle-pressure --require-isolation \
+        --warmup-app "$RUNNER_TEMP/DulcetiPadOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
+    # Post-boot destination discovery competes with the same burst as accessibility. Confirm the
+    # build's original device only after pressure settles, before starting any proof allowance.
+    confirmed_ipad="$(python3 tools/resolve-ipad-destination --print udid)"
+    if [ "$confirmed_ipad" != "$IPAD_UDID" ]; then
+        echo "Booted iPad destination changed: expected=$IPAD_UDID resolved=$confirmed_ipad" >&2
+        exit 1
+    fi
+    # 600 s per test on iPhone and iPad (docs/TRAPS.md 56): after admission, one accessibility query
+    # can still take 17-30 s, and the browse/relaunch/offline test was cut off at 300 s while it was
+    # still progressing (40232687092). The allowance remains a hang guard, not a retry.
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
         -destination "platform=iOS Simulator,id=${IPAD_UDID:?}" \
         -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
         -parallel-testing-enabled NO \
-        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 600 \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \

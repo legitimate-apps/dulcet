@@ -102,6 +102,50 @@ module = runpy.run_path(TOOL)
 HotAppCapture = module['HotAppCapture']
 capture_stack = module['capture_stack']
 
+# Admission controls distinguish low memory from active thrashing. Every interval in a full
+# minute counts, so one quiet last poll, a counter reset, or a sampler gap cannot authorize UI.
+from contextlib import redirect_stdout
+from io import StringIO
+quiet = [dict(seconds=t, page_bytes=PAGE, pageins=t * 64, swapins=t, swapouts=t,
+              free_pages=3800, swapUsedMb=1500, load1=110 - t / 10) for t in range(0, 71, 10)]
+window = module['pressure_window']
+cases = [("quiet-with-low-free-and-resident-swap", quiet, True),
+         ("short-window", quiet[-6:], False),
+         ("high-load", [dict(r, load1=450) for r in quiet], False),
+         ("renewed-load-rise", [dict(r, load1=50 + r['seconds'] / 2) for r in quiet], False),
+         ("pagein-burst", [dict(r, pageins=r['seconds'] * 2048) for r in quiet], False),
+         ("swap-io", [dict(r, swapins=r['seconds'] * 128) for r in quiet], False),
+         ("missing-counter", [dict(r, pageins=None) for r in quiet], False),
+         ("reset-counter", quiet[:-1] + [dict(quiet[-1], pageins=0)], False),
+         ("stale-reading", [quiet[0], quiet[-1]], False)]
+for name, readings, expected in cases:
+    assert window(readings)['quiet'] == expected, (name, window(readings))
+print(f'PRESSURE WINDOW CONTROLS PASS {len(cases)}/{len(cases)} quiet, burst, short, rising, missing, reset, stale')
+
+# Drive the real wait with a virtual monotonic clock. It must wait for 60 seconds of fresh
+# quiet evidence, clear the window on command failure, and stop at its cap on persistent load.
+settle_pressure = module['settle_pressure']
+for scenario, expected, elapsed in [('quiet', 0, 60), ('burst-then-quiet', 0, 90),
+                                    ('unreadable-then-quiet', 0, 80), ('busy', 1, 100),
+                                    ('unreadable', 1, 100)]:
+    now = [0.0]
+    def memory(**kwargs):
+        if scenario == 'unreadable' or (scenario == 'unreadable-then-quiet' and now[0] == 10):
+            raise subprocess.TimeoutExpired('vm_stat', 10)
+        return dict(page_bytes=PAGE, pageins=int(now[0]) * 64, swapins=0, swapouts=0,
+                    free_pages=3800)
+    def load():
+        return (450 if scenario == 'busy' or (scenario == 'burst-then-quiet' and now[0] < 30) else 100, 0, 0)
+    def sleep(seconds): now[0] += seconds
+    with patch.dict(settle_pressure.__globals__, vm_stat=memory, swap_used_mb=lambda **kw: 1500), \
+            patch('time.monotonic', side_effect=lambda: now[0]), patch('time.sleep', side_effect=sleep), \
+            patch('os.getloadavg', side_effect=load), redirect_stdout(StringIO()) as output:
+        assert settle_pressure('control', timeout=100) == expected, output.getvalue()
+    assert now[0] == elapsed, (scenario, now, output.getvalue())
+    rows = [json.loads(line.split('HOST PRESSURE SETTLE ', 1)[1]) for line in output.getvalue().splitlines()]
+    assert rows[-1]['settled'] == (expected == 0), rows[-1]
+    print(f'PRESSURE WAIT CONTROL PASS {scenario} exit={expected} seconds={now[0]:.0f}')
+
 def app(pid=123, cpu=90.0, started='Fri Oct 23 20:00:00 2026', name='Dulcet DEV'):
     return dict(pid=pid, cpu=cpu, started=started, name=name, rss=1024)
 

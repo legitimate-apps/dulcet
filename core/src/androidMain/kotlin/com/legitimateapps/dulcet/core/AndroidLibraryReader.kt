@@ -526,6 +526,7 @@ public class AndroidLibraryReader internal constructor(
                             album = record.albumTitle,
                             durationMilliseconds = record.durationMilliseconds,
                             artworkKey = record.artworkKey,
+                            albumRawId = record.albumRawId,
                         )
                     }
                 }

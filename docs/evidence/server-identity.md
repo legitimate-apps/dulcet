@@ -862,11 +862,12 @@ UNKNOWN.
 The xcresult summary retains five tests, four passes, one failure and zero skips, identifying
 the offline/replay case as failed despite its console's later passed line. That run remains a
 failure. The long case performs six real launches in addition to download completion, offline
-native playback, durable add/remove, pending-write and reconnect checks. It now requests a
-finite 600-second execution allowance only on iPad. The iPad command permits that override
-with a 600-second maximum while retaining its 300-second default; every other case and platform
-keeps its previous allowance. All individual UI/server waits, proof assertions, exact execution
-checks and fatal xcodebuild status remain unchanged. ASSUMED: this headroom will accommodate
+native playback, durable add/remove, pending-write and reconnect checks. This branch first
+gave that case a finite 600-second execution allowance on iPad only. Before it merged, #394 set
+the iPhone and iPad My Library commands to a 600-second default and maximum (`docs/TRAPS.md`
+56), which covers this case on both devices, so the merge with `main` removed the per-case
+override. macOS and tvOS keep 300 seconds. All individual UI/server waits, proof assertions,
+exact execution checks and fatal xcodebuild status remain unchanged. ASSUMED: this headroom will accommodate
 similar hosted load; no local passing runtime or causal speedup is claimed. The interrupted
 local verification and passing static/tool controls are recorded in the playlist-ordering section
 above. Final-head hosted execution remains required; no workflow was dispatched for this follow-up.

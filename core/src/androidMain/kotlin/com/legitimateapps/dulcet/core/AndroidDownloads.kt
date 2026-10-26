@@ -561,7 +561,7 @@ public class AndroidDownloadController internal constructor(
             if (closed || !engine.isMediaBindingCurrent() || engine.records(account.providerInstanceId).none { it.identity.rawId == rawId }) return@withContext null
             val record = cache().track(rawId)?.record?.takeIf { it.title.isNotBlank() } ?: return@withContext null
             AndroidTrack(account.providerInstanceId, rawId, record.title, record.credits.firstOrNull()?.name,
-                record.albumTitle, record.durationMilliseconds, record.artworkKey)
+                record.albumTitle, record.durationMilliseconds, record.artworkKey, albumRawId = record.albumRawId)
         }
     }
 

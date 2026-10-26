@@ -121,11 +121,11 @@ class PersistentQueueStoreTest {
         assertEquals(playedPrefix, afterRemoval.entries.take(2).map(::rawId))
         assertEquals("b", rawId(afterRemoval.entries[afterRemoval.currentIndex!!]))
         val originalPositions = database.queueQueries
-            .selectQueueEntriesByOriginalPosition(serverId.value) { _, _, _, _, _, _, original, _ -> original }
-            .executeAsList()
+            .selectQueueEntriesByOriginalPosition(serverId.value)
+            .executeAsList().map { it.original_position }
         val playbackPositions = database.queueQueries
-            .selectQueueEntriesByPlaybackPosition(serverId.value) { _, _, _, _, _, _, _, playback -> playback }
-            .executeAsList()
+            .selectQueueEntriesByPlaybackPosition(serverId.value)
+            .executeAsList().map { it.playback_position }
         assertEquals(afterRemoval.entries.indices.map(Int::toLong), originalPositions)
         assertEquals(afterRemoval.entries.indices.map(Int::toLong), playbackPositions)
         driver.close()

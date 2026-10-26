@@ -96,7 +96,9 @@ internal enum class PlaybackStopPoint {
 /**
  * The queue wants AutoPlay entries (§14.8). The owner fetches up to [count] tracks like [seed],
  * none of them in [excludedRawIds], and answers with [PlaybackQueueController.appendAutoplay]
- * under the same [key] -- with an empty list when it found nothing or the fetch failed.
+ * under the same [key]. A successful search that found nothing answers with an empty list.
+ * Cancellation or a transient failure releases that exact key with [PlaybackQueueController.releaseAutoplayRequest];
+ * a retry receives a fresh key, so stale completions cannot answer its replacement.
  */
 internal data class PlaybackAutoplayRequest(
     val key: String,
@@ -170,13 +172,13 @@ internal class PlaybackQueueController(
         val start: PlaybackSessionStart,
     )
 
-    private val knownDurations = mutableMapOf<QueueEntryId, Duration?>()
-    private val knownAlbums = mutableMapOf<QueueEntryId, String>()
     private var autoplayEnabled = false
     /** Bumped whenever an outstanding AutoPlay request stops describing what the queue wants. */
     private var autoplayGeneration = 0L
     /** The AutoPlay request last handed out; it is not handed out again ([takeAutoplayRequest]). */
     private var takenAutoplayKey: String? = null
+    /** A released request keeps the natural-end intent, but may be handed out under its new key. */
+    private var retryableAutoplayKey: String? = null
     /** The AutoPlay request last answered, found something or not; it is no longer outstanding. */
     private var answeredAutoplayKey: String? = null
     /**
@@ -244,8 +246,6 @@ internal class PlaybackQueueController(
         val discarded = discardRegisteredPreload()
         val finalized = playback.clearQueue()
         check(finalized is PlaybackTransitionResult.Applied)
-        knownDurations.clear()
-        knownAlbums.clear()
         autoplayGeneration++
         takenAutoplayKey = null
         answeredAutoplayKey = null
@@ -275,8 +275,6 @@ internal class PlaybackQueueController(
         skippedPastFailures.clear()
         val serverId = ServerId(request.items.first().itemId.providerInstanceId)
         val previousRepeatMode = queues.load(serverId).repeatMode
-        knownDurations.clear()
-        knownAlbums.clear()
         autoplayGeneration++
         val entries = playable.map { item ->
             QueueEntry(
@@ -284,7 +282,9 @@ internal class PlaybackQueueController(
                 providerItemId = item.itemId,
                 sourceContext = request.sourceContext,
                 addedBy = QueueAddedBy.PlayNow,
-            ).also { remember(it, item) }
+                duration = item.duration,
+                albumRawId = item.albumRawId,
+            )
         }
         queues.replaceQueue(
             QueueState(
@@ -335,7 +335,9 @@ internal class PlaybackQueueController(
                     QueueInsertionMode.PlayNext -> QueueAddedBy.PlayNext
                     QueueInsertionMode.Append -> QueueAddedBy.AddToQueue
                 },
-            ).also { remember(it, item) }
+                duration = item.duration,
+                albumRawId = item.albumRawId,
+            )
         }
         // Each PlayNext insert lands directly after the current entry, so inserting in reverse
         // keeps the caller's order: the first item given is the first one heard.
@@ -380,8 +382,9 @@ internal class PlaybackQueueController(
         val serverId = queues.activeServerId() ?: return null
         val state = queues.load(serverId)
         val key = state.autoplayKey() ?: return null
-        if (key == takenAutoplayKey) return null
+        if (key == takenAutoplayKey && key != retryableAutoplayKey) return null
         takenAutoplayKey = key
+        retryableAutoplayKey = null
         return PlaybackAutoplayRequest(
             key = key,
             seed = state.entries.last().providerItemId,
@@ -391,13 +394,29 @@ internal class PlaybackQueueController(
     }
 
     /**
+     * Retires an unanswered operation so this tail may be requested again. A retry gets a new
+     * generation: a cancelled operation's late answer can never answer its replacement's key.
+     * A natural end already waiting for this request keeps waiting through the retry.
+     */
+    fun releaseAutoplayRequest(key: String) {
+        if (takenAutoplayKey != key || answeredAutoplayKey == key) return
+        val awaiting = finishedAwaitingAutoplayKey == key
+        autoplayGeneration++
+        val replacement = queues.activeServerId()?.let { queues.load(it).autoplayKey() }
+        takenAutoplayKey = replacement
+        retryableAutoplayKey = replacement
+        finishedAwaitingAutoplayKey = replacement.takeIf { awaiting }
+    }
+
+    /**
      * The answer to the AutoPlay request [key]. Items already in the queue are dropped. A stale
      * answer -- the queue changed at its end, or AutoPlay stopped being active -- changes nothing.
      */
     fun appendAutoplay(key: String, items: List<PlaybackQueueItem>): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = queues.load(serverId)
-        if (key != takenAutoplayKey || state.autoplayKey() != key) return emptyTransition()
+        if (key != takenAutoplayKey || key == retryableAutoplayKey || answeredAutoplayKey == key ||
+            state.autoplayKey() != key) return emptyTransition()
         answeredAutoplayKey = key
         val awaited = finishedAwaitingAutoplayKey == key
         finishedAwaitingAutoplayKey = null
@@ -413,7 +432,9 @@ internal class PlaybackQueueController(
                 providerItemId = item.itemId,
                 sourceContext = QueueSourceContext(QueueSourceKind.Library, null, AUTOPLAY_SOURCE_NAME),
                 addedBy = QueueAddedBy.Autoplay,
-            ).also { remember(it, item) }
+                duration = item.duration,
+                albumRawId = item.albumRawId,
+            )
         }
         entries.forEach { queues.insert(serverId, it, QueueInsertionMode.Append) }
         if (awaited && playback.currentSession == null) {
@@ -446,11 +467,6 @@ internal class PlaybackQueueController(
         return emptyTransition()
     }
 
-    private fun remember(entry: QueueEntry, item: PlaybackQueueItem) {
-        knownDurations[entry.queueEntryId] = item.duration
-        item.albumRawId?.let { knownAlbums[entry.queueEntryId] = it }
-    }
-
     private fun QueueState.firstUpcomingAutoplayIndex(): Int? {
         if (shuffleState == QueueShuffleState.Enabled) return null
         val from = (currentIndex ?: return null) + 1
@@ -476,8 +492,6 @@ internal class PlaybackQueueController(
             .filter { it.addedBy == QueueAddedBy.Autoplay }
             .forEach {
                 queues.remove(serverId, it.queueEntryId)
-                knownDurations.remove(it.queueEntryId)
-                knownAlbums.remove(it.queueEntryId)
             }
     }
 
@@ -502,7 +516,6 @@ internal class PlaybackQueueController(
         require(state.entries.any { it.queueEntryId == queueEntryId }) { "Unknown queue entry" }
         skippedPastFailures.clear()
         queues.remove(serverId, queueEntryId)
-        knownDurations.remove(queueEntryId)
         return editedTransition()
     }
 
@@ -637,7 +650,7 @@ internal class PlaybackQueueController(
                 playbackSessionId = session.playbackSessionId,
                 attemptId = attemptId,
                 itemId = entry.providerItemId,
-                duration = knownDurations[entry.queueEntryId],
+                duration = entry.duration,
                 resumePosition = resumePositions.restore(entry.providerItemId),
                 shouldAutoPlay = true,
             ),
@@ -1125,7 +1138,7 @@ internal class PlaybackQueueController(
         val next = upcomingEntry(this) ?: return Duration.ZERO
         if (next.queueEntryId == current.queueEntryId) return Duration.ZERO
         if (sameAlbum(current, next)) return Duration.ZERO
-        val duration = knownDurations[current.queueEntryId]
+        val duration = current.duration
             ?: playback.currentSession?.takeIf { it.queueEntryId == current.queueEntryId }
                 ?.currentAttempt?.duration
         if (duration != null && duration < crossfade * PlaybackCrossfade.MINIMUM_TRACK_MULTIPLE) {
@@ -1135,8 +1148,8 @@ internal class PlaybackQueueController(
     }
 
     private fun sameAlbum(a: QueueEntry, b: QueueEntry): Boolean {
-        val albumA = knownAlbums[a.queueEntryId]
-        val albumB = knownAlbums[b.queueEntryId]
+        val albumA = a.albumRawId
+        val albumB = b.albumRawId
         if (albumA != null && albumB != null) return albumA == albumB
         return a.sourceContext.kind == QueueSourceKind.Album &&
             a.sourceContext.sourceId != null &&
@@ -1208,7 +1221,7 @@ internal class PlaybackQueueController(
         playbackSessionId = PlaybackSessionId(identities.next("session")),
         attemptId = AttemptId(identities.next("attempt")),
         itemId = entry.providerItemId,
-        initialDuration = knownDurations[entry.queueEntryId],
+        initialDuration = entry.duration,
         playlistContextId = entry.sourceContext.sourceId
             .takeIf { entry.sourceContext.kind == QueueSourceKind.Playlist },
     )
