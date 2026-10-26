@@ -11,6 +11,11 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.utils.io.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -36,6 +41,19 @@ class ApiMedia(private val ctx:ServerContext) {
             execute("CREATE TABLE IF NOT EXISTS api_artwork_grant(parent TEXT NOT NULL,user_id TEXT NOT NULL,id TEXT NOT NULL,size INTEGER NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(parent,user_id,id,size))")
         }
     }
+    private val artworkWarmup = Semaphore(4)
+
+    /** Resolve cold originals outside catalog transactions, before serial resource rendering.
+     * Each lookup still checks this user's current access; only successful source bytes are cached.
+     * The shared permits bound all concurrent home requests, not just a single response.
+     */
+    suspend fun warmArtwork(ids: List<String>, p: Principal) = coroutineScope {
+        ids.distinct().map { id -> async {
+            artworkWarmup.withPermit { withContext(Dispatchers.IO) { ctx.artwork.image(id,null,p.user); Unit } }
+        } }.awaitAll()
+        Unit
+    }
+
     fun artworkRef(id:String,p:Principal):JsonObject? {
         val image=ctx.artwork.image(id,null,p.user) ?: return null
         if(!image.contentType.startsWith("image/")) return null

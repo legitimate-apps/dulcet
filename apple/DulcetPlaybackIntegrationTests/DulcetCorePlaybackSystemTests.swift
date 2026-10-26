@@ -1227,10 +1227,14 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     }
 
     /// With AutoPlay on and the queue on its last entry, the core's request is answered once.
-    /// The fixture's server does not listen; every source fails and is skipped (only refused
-    /// credentials end the search), so the answer is an empty list and adds nothing.
+    /// The deterministic candidate boundary answers with a successful empty search; failures
+    /// have their own retry controls below.
     func testAutoplayAsksOnceWhenTheQueueRunsOutAndNotWhenItIsOff() async throws {
         let fixture = makeFixture(tracks: ["only"])
+        fixture.controller.startAutoplayCandidates = { _, _, _, _, completion in
+            completion(.init(tracks: [], errorKind: nil, retryAfterMilliseconds: nil))
+            return HeldAutoplayOperation()
+        }
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "dulcet.tests.autoplay.\(UUID().uuidString)"))
         let settings = DulcetCoreListeningSettings(defaults: defaults)
         settings.setListeningPreference(DulcetListeningPreference(autoplayEnabled: false, crossfadeSeconds: 0))
@@ -1254,6 +1258,204 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
                        "on, with Shuffle and Repeat off")
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(fixture.controller.autoplayLog.count, 1, "a key is answered once")
+    }
+
+    func testAutoplaySynchronousCompletionIsAccepted() async throws {
+        let fixture = makeFixture(tracks: ["only", "x"])
+        fixture.controller.startAutoplayCandidates = { _, _, _, _, completion in
+            completion(.init(tracks: [], errorKind: nil, retryAfterMilliseconds: nil))
+            return HeldAutoplayOperation()
+        }
+        enableAutoplay(fixture)
+        try await beginAutoplayPlayback(fixture)
+        XCTAssertEqual(fixture.controller.autoplayLog, ["answered:0"])
+    }
+
+    func testAutoplayCancellationReleasesTheKeyAndIgnoresTheRetiredCompletion() async throws {
+        let fixture = makeFixture(tracks: ["only", "x"])
+        var completions: [(DulcetCorePlaybackController.AutoplayAnswer) -> Void] = []
+        var operations: [HeldAutoplayOperation] = []
+        fixture.controller.startAutoplayCandidates = { _, _, _, _, completion in
+            completions.append(completion)
+            let operation = HeldAutoplayOperation()
+            operations.append(operation)
+            return operation
+        }
+        enableAutoplay(fixture)
+        try await beginAutoplayPlayback(fixture)
+        await fixture.waitFor { completions.count == 1 }
+        XCTAssertEqual(completions.count, 1)
+        fixture.controller.configure(account: account(provider))
+        await fixture.waitFor { completions.count == 2 }
+        XCTAssertEqual(completions.count, 2, "credential refresh must retry the same tail")
+        XCTAssertTrue(operations[0].cancelled)
+        guard completions.count == 2 else { return }
+        completions[0](.init(tracks: [fixture.tracks[1]], errorKind: nil, retryAfterMilliseconds: nil))
+        XCTAssertTrue(fixture.controller.autoplayLog.isEmpty, "the old answer cannot clear the new operation")
+        completions[1](.init(tracks: [], errorKind: nil, retryAfterMilliseconds: nil))
+        XCTAssertEqual(fixture.controller.autoplayLog, ["answered:0"])
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.entries.count, 1, "the cancelled answer appends nothing")
+    }
+
+    func testLateAutoplayCompletionCannotConsumeANewerOperationAfterSettingsAndConfigure() async throws {
+        let fixture = makeFixture(tracks: ["only", "x"])
+        var completions: [(DulcetCorePlaybackController.AutoplayAnswer) -> Void] = []
+        fixture.controller.startAutoplayCandidates = { _, _, _, _, callback in
+            completions.append(callback)
+            return HeldAutoplayOperation()
+        }
+        enableAutoplay(fixture)
+        try await beginAutoplayPlayback(fixture)
+        XCTAssertEqual(completions.count, 1)
+        fixture.controller.configureOffline(account: account(provider))
+        let settings = try XCTUnwrap(fixture.controller.listeningSettings)
+        settings.setListeningPreference(.init(autoplayEnabled: false, crossfadeSeconds: 0))
+        settings.setListeningPreference(.init(autoplayEnabled: true, crossfadeSeconds: 0))
+        fixture.controller.configure(account: account(provider))
+        XCTAssertEqual(completions.count, 2)
+        guard completions.count == 2 else { return }
+        completions[0](.init(tracks: [fixture.tracks[1]], errorKind: nil, retryAfterMilliseconds: nil))
+        XCTAssertTrue(fixture.controller.autoplayLog.isEmpty)
+        completions[1](.init(tracks: [], errorKind: nil, retryAfterMilliseconds: nil))
+        XCTAssertEqual(fixture.controller.autoplayLog, ["answered:0"])
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.entries.count, 1)
+    }
+
+    func testAutoplayAuthenticationRefusalReachesAccountStateWithoutStoppingTheTrack() async throws {
+        let fixture = makeFixture(tracks: ["only"])
+        var completion: ((DulcetCorePlaybackController.AutoplayAnswer) -> Void)?
+        fixture.controller.startAutoplayCandidates = { _, _, _, _, callback in
+            completion = callback
+            return HeldAutoplayOperation()
+        }
+        let accountSource = DulcetAccountDataSource(
+            connector: SystemTestsUnusedConnector(), playbackController: fixture.controller)
+        enableAutoplay(fixture)
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "only")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        let stops = fixture.engine.count("stop")
+        try XCTUnwrap(completion)(.init(tracks: nil, errorKind: "authentication", retryAfterMilliseconds: nil))
+        guard case let .failed(failure) = accountSource.currentSnapshot.accountConnection else {
+            return XCTFail("AutoPlay credentials refusal must reach the account connection")
+        }
+        XCTAssertEqual(failure.kind, .invalidCredentials)
+        XCTAssertEqual(fixture.engine.count("stop"), stops)
+        XCTAssertTrue(fixture.controller.currentPresentation.nowPlaying?.isPlaying == true)
+    }
+
+    func testAutoplayForbiddenStaysQuietWithoutClosingRemoteAccessOrChangingCredentials() async throws {
+        let fixture = makeFixture(tracks: ["only"])
+        var completions: [(DulcetCorePlaybackController.AutoplayAnswer) -> Void] = []
+        fixture.controller.startAutoplayCandidates = { _, _, _, _, callback in
+            completions.append(callback)
+            return HeldAutoplayOperation()
+        }
+        var credentialFailures = 0
+        fixture.controller.setAuthenticationFailureHandler { credentialFailures += 1 }
+        enableAutoplay(fixture)
+        try await beginAutoplayPlayback(fixture)
+        try XCTUnwrap(completions.first)(.init(tracks: nil, errorKind: "forbidden", retryAfterMilliseconds: nil))
+        fixture.controller.setServerAvailable(true)
+        fixture.controller.setNetworkAvailable(true)
+        XCTAssertEqual(credentialFailures, 0)
+        XCTAssertEqual(completions.count, 1, "Permission refusal stays quiet across publications")
+        XCTAssertTrue(fixture.controller.currentPresentation.nowPlaying?.isPlaying == true)
+        fixture.controller.configure(account: account(provider))
+        XCTAssertEqual(completions.count, 2, "Explicit accepted configuration can retry without closing remote access")
+    }
+
+    func testStaleAutoplayRefusalCannotCloseAReplacementAccountsRemoteAccess() async throws {
+        for kind in ["authentication", "forbidden"] {
+            let fixture = makeFixture(tracks: ["only"])
+            var completion: ((DulcetCorePlaybackController.AutoplayAnswer) -> Void)?
+            fixture.controller.startAutoplayCandidates = { _, _, _, _, callback in
+                completion = callback
+                return HeldAutoplayOperation()
+            }
+            var credentialFailures = 0
+            fixture.controller.setAuthenticationFailureHandler { credentialFailures += 1 }
+            enableAutoplay(fixture)
+            try await beginAutoplayPlayback(fixture)
+            let stale = try XCTUnwrap(completion)
+            fixture.controller.configure(account: account("replacement-\(provider)"))
+            let stops = fixture.engine.count("stop")
+            stale(.init(tracks: nil, errorKind: kind, retryAfterMilliseconds: nil))
+            XCTAssertEqual(credentialFailures, 0)
+            XCTAssertEqual(fixture.engine.count("stop"), stops)
+            XCTAssertTrue(fixture.controller.autoplayLog.isEmpty)
+        }
+    }
+
+    func testAutoplayBusyWaitsThenRetriesTheSameTail() async throws {
+        try await proveAutoplayRetry(kind: "serverBusy")
+    }
+
+    func testAutoplayTransportFailureWaitsThenRetriesTheSameTail() async throws {
+        try await proveAutoplayRetry(kind: "unreachable")
+    }
+
+    private func proveAutoplayRetry(kind: String) async throws {
+        let fixture = makeFixture(tracks: ["only"])
+        var completions: [(DulcetCorePlaybackController.AutoplayAnswer) -> Void] = []
+        fixture.controller.startAutoplayCandidates = { _, _, _, _, callback in
+            completions.append(callback)
+            return HeldAutoplayOperation()
+        }
+        enableAutoplay(fixture)
+        try await beginAutoplayPlayback(fixture)
+        await fixture.waitFor { completions.count == 1 }
+        XCTAssertEqual(completions.count, 1)
+        try XCTUnwrap(completions.first)(.init(tracks: nil, errorKind: kind, retryAfterMilliseconds: 5_200))
+        fixture.controller.configure(account: account(provider))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(completions.count, 1, "configure must not bypass the server's wait")
+        try await Task.sleep(for: .milliseconds(5_300))
+        await fixture.waitFor { completions.count == 2 }
+        XCTAssertEqual(completions.count, 2, "a failure must not consume the queue-tail key")
+        if completions.count == 2 {
+            completions[1](.init(tracks: [], errorKind: nil, retryAfterMilliseconds: nil))
+        }
+    }
+
+    func testSettingEndOfTrackDuringAHeldHandoverStartsPausedAndSpendsTheTimer() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        _ = try await fixture.waitForPreload(rawID: "b")
+        await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+        fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+        await fixture.waitFor { fixture.controller.preloadLog.contains("end-held") }
+        XCTAssertTrue(fixture.controller.preloadLog.contains("end-held"))
+        let prepares = fixture.engine.count("prepare")
+        let plays = fixture.engine.count("play")
+        fixture.controller.setSleepTimer(.endOfTrack)
+        let next = try await fixture.waitForPrepare(rawID: "b", after: prepares)
+        fixture.emit(.ready(attemptID: next, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.current.id.rawID == "b" }
+        XCTAssertNil(fixture.controller.currentPresentation.nowPlaying?.sleepTimer)
+        XCTAssertEqual(fixture.engine.count("play"), plays)
+    }
+
+    private func beginAutoplayPlayback(_ fixture: Fixture) async throws {
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let attempt = try await fixture.waitForPrepare(rawID: "only")
+        fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: attempt, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+    }
+
+    private func enableAutoplay(_ fixture: Fixture) {
+        let suite = "dulcet-autoplay-followup-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suite) }
+        let settings = DulcetCoreListeningSettings(defaults: defaults)
+        settings.setListeningPreference(.init(autoplayEnabled: true, crossfadeSeconds: 0))
+        fixture.controller.listeningSettings = settings
     }
 
     // MARK: Fixture
@@ -1609,7 +1811,10 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
             tracks: tracks,
             artworkFetcher: fetcher
         )
-        addTeardownBlock { queue.close() }
+        addTeardownBlock { @MainActor in
+            controller.disconnect()
+            queue.close()
+        }
         if recordStatuses {
             controller.setPresentationHandler { [weak fixture] presentation in
                 fixture?.statuses.append(presentation.status)
@@ -1973,4 +2178,9 @@ private final class SystemTestsUnusedConnector: DulcetAccountConnecting {
     ) -> any DulcetAccountConnectOperation {
         fatalError("Playback system tests must not connect to a server")
     }
+}
+
+private final class HeldAutoplayOperation: NSObject, AppleLibraryBrowseOperation {
+    private(set) var cancelled = false
+    func cancel() { cancelled = true }
 }

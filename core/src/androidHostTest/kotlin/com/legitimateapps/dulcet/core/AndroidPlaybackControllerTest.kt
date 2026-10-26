@@ -1369,6 +1369,74 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun untitledCachedSelectionPersistsItsRecoveredAlbumAndOptionalDuration() {
+        for (rawSelection in listOf(false, true)) for (duration in listOf(40_000L, null)) {
+            val file = java.io.File.createTempFile("dulcet-cached-album", ".wav")
+            val downloads = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = LocalPlaybackPlan(
+                    DownloadId("download:$rawId"), DownloadIdentity(OWNER, rawId, DownloadIdentity.ORIGINAL_PROFILE),
+                    AudioContainer.Wav, 44, file.path)
+                override suspend fun localTrack(rawId: String) =
+                    AndroidTrack(OWNER, rawId, " \t", durationMilliseconds = duration, albumRawId = "album:cached")
+            }
+            try {
+                Fixture(localPlans = downloads, loadSong = { error("Offline selection must not request metadata") }).use { f ->
+                    f.controller.setNetworkAvailable(false)
+                    if (rawSelection) f.controller.playSong(OWNER, "cached", "")
+                    else f.controller.playQueue(listOf(AndroidTrack(OWNER, "cached", "")), 0, AndroidQueueSource.Search, "Search")
+                    settle(3)
+                    val track = f.controller.state.value.queue.single().track
+                    assertEquals(RuntimeEnvironment.getApplication().getString(R.string.playback_untitled), track.title)
+                    assertEquals("album:cached", track.albumRawId)
+                    val entry = PersistentQueueStore(f.store.database).load(ServerId(OWNER)).entries.single()
+                    assertEquals("album:cached", entry.albumRawId)
+                    assertEquals(duration?.milliseconds, entry.duration)
+                    assertEquals(listOf("cached"), f.preparedLocal.map { it.itemId.rawId })
+                    assertTrue(f.controller.state.value.playWhenReady)
+                }
+            } finally { file.delete() }
+        }
+    }
+
+    @Test fun cachedNeighborsKeepTheirAlbumIdentityAndGaplessPolicyWithoutServerMetadata() {
+        for (sameAlbum in listOf(true, false)) for (suppliedDuration in listOf(40_000L, null)) {
+            val file = java.io.File.createTempFile("dulcet-cached-neighbors", ".wav")
+            val downloads = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = LocalPlaybackPlan(
+                    DownloadId("download:$rawId"), DownloadIdentity(OWNER, rawId, DownloadIdentity.ORIGINAL_PROFILE),
+                    AudioContainer.Wav, 44, file.path)
+                override suspend fun localTrack(rawId: String) = AndroidTrack(OWNER, rawId, "Cached $rawId",
+                    durationMilliseconds = 40_000, albumRawId = if (sameAlbum || rawId == "a") "album:one" else "album:two")
+            }
+            try {
+                Fixture(localPlans = downloads, loadSong = { error("Cached metadata needs no server request") }).use { f ->
+                    f.controller.setNetworkAvailable(false)
+                    f.controller.setAutoplay(false)
+                    // A duration alone is not complete metadata: both rows also need their album.
+                    f.controller.playQueue(listOf("a", "b").map {
+                        AndroidTrack(OWNER, it, "", durationMilliseconds = suppliedDuration)
+                    }, 0, AndroidQueueSource.Library, "Offline My Library")
+                    settle(3)
+                    val expectedAlbums = listOf("album:one", if (sameAlbum) "album:one" else "album:two")
+                    assertEquals(expectedAlbums, f.controller.state.value.queue.map { it.track.albumRawId })
+                    val saved = PersistentQueueStore(f.store.database).load(ServerId(OWNER))
+                    assertEquals(expectedAlbums, saved.entries.map { it.albumRawId })
+                    assertEquals(listOf(40.seconds, 40.seconds), saved.entries.map { it.duration })
+                    assertEquals(listOf("a"), f.preparedLocal.map { it.itemId.rawId })
+                    // Restore what the next launch reads, then drive the real shared crossfade policy.
+                    val restored = PlaybackQueueController(PersistentQueueStore(f.store.database),
+                        PersistentResumePositionStore(f.store.database),
+                        PlaybackIdentitySource { "$it:${java.util.UUID.randomUUID()}" })
+                    assertNotNull(restored.restoreCurrentPaused().startDirective)
+                    restored.setCrossfade(5.seconds)
+                    assertEquals(if (sameAlbum) kotlin.time.Duration.ZERO else 5.seconds,
+                        restored.snapshot().crossfadeIntoNext,
+                        "The different-album control must crossfade; a cached same-album pair stays gapless")
+                }
+            } finally { file.delete() }
+        }
+    }
+
     @Test fun aDurationlessSelectionSupersedesAPendingPlayAndItsHeldAdditions() {
         for (localLookup in listOf(false, true)) {
             val release = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -1387,7 +1455,8 @@ class AndroidPlaybackControllerTest {
     }
 
     @Test fun staleLocalAdmissionCannotPlayOrRememberMetadataAfterAnotherPlaybackCommand() {
-        for (knownDuration in listOf(false, true)) for (action in listOf("queue", "song", "stop", "jump")) {
+        for (knownDuration in listOf(false, true)) for (heldNeighbor in listOf(false, true))
+            for (action in listOf("queue", "song", "stop", "jump")) {
             var pending: Continuation<Unit>? = null
             val file = java.io.File.createTempFile("dulcet-admission-generation", ".wav")
             var reads = 0
@@ -1405,8 +1474,10 @@ class AndroidPlaybackControllerTest {
             try {
                 Fixture(localPlans = downloads).use { f ->
                     f.controller.playQueue(album("first", "second"), 0, AndroidQueueSource.Library, "Library")
-                    f.controller.playQueue(listOf(AndroidTrack(OWNER, "cached", "",
-                        durationMilliseconds = if (knownDuration) 40_000 else null)), 0, AndroidQueueSource.Library, "Library")
+                    val cached = AndroidTrack(OWNER, "cached", "",
+                        durationMilliseconds = if (knownDuration) 40_000 else null)
+                    val selecting = if (heldNeighbor) listOf(album("selected").single(), cached) else listOf(cached)
+                    f.controller.playQueue(selecting, 0, AndroidQueueSource.Library, "Library")
                     assertEquals(1, reads, "The local metadata read must be held")
                     when (action) {
                         "queue" -> f.controller.playQueue(album("latest"), 0, AndroidQueueSource.Library, "Library")

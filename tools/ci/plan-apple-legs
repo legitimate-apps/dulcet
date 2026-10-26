@@ -3,15 +3,18 @@
 
 spec §21.6. A pull request runs `apple-platform` only when it changes something an Apple build can
 read, and never runs the two conformance jobs, `apple-conformance-core` and
-`apple-conformance-ipad-iphone`; a push to `main` and a manual dispatch run every leg. The
+`apple-conformance-ipad-iphone`; a push to `main` reuses same-tree PR proof only when both exact-head
+runs are successful in their latest attempts. Otherwise it and a plain dispatch run every leg. A dispatch
+with --conformance-only true runs only the conformance jobs. The
 required `apple-ci` job always runs, because a check that never reports blocks a merge forever.
 
-  plan-apple-legs plan --event EVENT [--changed-files FILE]
+  plan-apple-legs plan --event EVENT [--changed-files FILE] [--conformance-only true|false]
       Prints `platform=true|false` and `conformance=true|false` as step outputs on stdout, and the
       reason on stderr. On a pull request the changed paths come from FILE (one per line) or, when
       it is omitted, from `git diff --name-only HEAD^1 HEAD` on the merge commit Actions checks out.
-      Anything it cannot establish -- an unknown event, a checkout that is not a two-parent merge, a
-      failed diff, an empty diff -- plans every leg. It can only ever plan MORE work than needed.
+      Unknown events plan every leg. An unreadable or empty PR diff plans the platform leg.
+      --conformance-only defaults to false and applies only to workflow_dispatch; it cannot
+      suppress the platform leg on push or change a pull request's plan.
 
   plan-apple-legs require-leg PLANNED RESULT
       Exits 0 only for (PLANNED=true, RESULT=success) or (PLANNED=false, RESULT=skipped). Every
@@ -28,8 +31,14 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import http.client
+import json
+import os
+from pathlib import Path
+import re
 import subprocess
 import sys
+import urllib.request
 
 
 # Tools no Apple leg runs or reads. Each is run by parity-gate, core-ci or release.yml, or is a
@@ -86,7 +95,7 @@ NOT_APPLE = (
     "*.md",
     "LICENSE",
     "NOTICE",
-    "FEATURES.yml",  # read by parity-gate; evidence is resolved on main and before a release
+    "FEATURES.yml",  # read by parity-gate; full Apple evidence resolves on full runs before release
     "android/*",
     # Kotlin source sets no Apple target compiles (the default hierarchy: android* and jvm* sit
     # beside appleMain, not under it). commonMain, commonTest and apple* stay Apple inputs.
@@ -113,8 +122,10 @@ def apple_affecting(path: str) -> bool:
     return not any(fnmatch.fnmatchcase(path, pattern) for pattern in NOT_APPLE)
 
 
-def plan(event: str, changed: list[str] | None) -> tuple[bool, bool, str]:
+def plan(event: str, changed: list[str] | None, conformance_only: bool = False) -> tuple[bool, bool, str]:
     """(platform, conformance, reason). `changed` is None when the diff could not be read."""
+    if event == "workflow_dispatch" and conformance_only:
+        return False, True, "manual dispatch requested conformance only (not a full release run)"
     if event != "pull_request":
         return True, True, f"event {event!r} runs every leg"
     if changed is None:
@@ -143,12 +154,160 @@ def merge_diff() -> list[str] | None:
     return [line for line in names.splitlines() if line.strip()]
 
 
+REPOSITORY = "legitimate-apps/dulcet"
+WORKFLOW_PATH = ".github/workflows/apple-ci.yml"
+CONFORMANCE_JOBS = {"apple-conformance-core", "apple-conformance-ipad", "apple-conformance-iphone"}
+
+
+class ProofUnavailable(ValueError):
+    """Uncertain evidence means run every leg, never an optimistic skip."""
+
+
+def require(condition: bool, reason: str) -> None:
+    if not condition:
+        raise ProofUnavailable(reason)
+
+
+class GitHub:
+    def __init__(self, token: str, fixture: str | None = None):
+        self.token = token
+        self.responses = json.loads(Path(fixture).read_text())["responses"] if fixture else None
+
+    def get(self, path: str):
+        if self.responses is not None:
+            # Replay exactly the live endpoint, pagination and validation path. No canned verdicts.
+            return self.responses[path]
+        require(bool(self.token), "GITHUB_TOKEN is unavailable")
+        request = urllib.request.Request("https://api.github.com" + path, headers={
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.load(response)
+
+    def listing(self, path: str, key: str | None = None) -> list[dict]:
+        result = []
+        total = None
+        # Bounded API work. Truncation, changing totals or malformed pages refuse reuse.
+        for page in range(1, 11):
+            document = self.get(f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
+            if key:
+                count = document["total_count"]
+                require(type(count) is int and count >= 0, "invalid API total_count")
+                require(total is None or total == count, "API total_count changed")
+                total = count
+                batch = document[key]
+            else:
+                batch = document
+            require(isinstance(batch, list) and all(isinstance(x, dict) for x in batch),
+                    "invalid API list")
+            result.extend(batch)
+            if len(batch) < 100:
+                require(total is None or total == len(result), "API list truncated")
+                return result
+        raise ProofUnavailable("API pagination limit reached")
+
+
+def proven_main_push(api: GitHub, repository: str, sha: str, ref: str) -> str:
+    """Return an audit receipt or raise. Only this repository's merged, non-fork PR can qualify."""
+    require(repository == REPOSITORY and ref == "refs/heads/main", "not this repository's main push")
+    require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "invalid pushed SHA")
+    base = f"/repos/{repository}"
+    pulls = api.listing(f"{base}/commits/{sha}/pulls")
+    require(len(pulls) == 1, "push must have exactly one associated PR")
+    number = pulls[0]["number"]
+    require(type(number) is int and number > 0, "invalid PR number")
+    pr = api.get(f"{base}/pulls/{number}")
+    require(pr["number"] == number and pr["merged"] is True and pr["state"] == "closed"
+            and pr["merge_commit_sha"] == sha and pr["base"]["ref"] == "main",
+            "associated PR did not produce this main commit")
+    own = pr["base"]["repo"]
+    require(own["full_name"] == repository and type(own["id"]) is int and own["id"] > 0
+            and pr["head"]["repo"]["id"] == own["id"]
+            and pr["head"]["repo"]["full_name"] == repository, "foreign or fork PR")
+    head = pr["head"]["sha"]
+    require(bool(re.fullmatch(r"[0-9a-f]{40}", head)), "invalid PR head SHA")
+
+    def tree(commit: str) -> str:
+        document = api.get(f"{base}/commits/{commit}")
+        value = document["commit"]["tree"]["sha"]
+        require(document["sha"] == commit and bool(re.fullmatch(r"[0-9a-f]{40}", value)),
+                "invalid commit/tree response")
+        return value
+
+    pushed_tree = tree(sha)
+    require(pushed_tree == tree(head), "pushed tree differs from PR head tree")
+    workflow = api.get(f"{base}/actions/workflows/apple-ci.yml")
+    require(workflow["path"] == WORKFLOW_PATH and type(workflow["id"]) is int
+            and workflow["id"] > 0, "wrong workflow identity")
+    runs = api.listing(f'{base}/actions/workflows/{workflow["id"]}/runs?head_sha={head}',
+                       "workflow_runs")
+    require(len({run["id"] for run in runs}) == len(runs), "duplicate workflow runs")
+
+    def valid_run(run: dict, event: str) -> None:
+        require(type(run["id"]) is int and run["id"] > 0
+                and run["workflow_id"] == workflow["id"] and run["path"] == WORKFLOW_PATH
+                and run["event"] == event and run["head_sha"] == head
+                and run["repository"]["id"] == own["id"]
+                and run["repository"]["full_name"] == repository
+                and run["head_repository"]["id"] == own["id"]
+                and run["head_repository"]["full_name"] == repository,
+                "wrong run provenance, event, workflow or head")
+        require(type(run["run_attempt"]) is int and run["run_attempt"] > 0
+                and run["status"] == "completed" and run["conclusion"] == "success",
+                "latest workflow attempt is not successful")
+
+    def proof(event: str, names: set[str]) -> int:
+        candidates = [run for run in runs if run["event"] == event]
+        require(bool(candidates), f"missing {event} run")
+        # Do not rescue a newer failed/pending run with an older green run.
+        listed = max(candidates, key=lambda run: run["id"])
+        valid_run(listed, event)
+        path = f'{base}/actions/runs/{listed["id"]}'
+        current = api.get(path)
+        valid_run(current, event)
+        require(current["id"] == listed["id"] and current["run_attempt"] == listed["run_attempt"],
+                "workflow attempt changed since listing")
+        jobs = api.listing(f'{path}/attempts/{current["run_attempt"]}/jobs', "jobs")
+        for name in names | {"apple-ci"}:
+            found = [job for job in jobs if job["name"] == name]
+            require(len(found) == 1, f"missing or ambiguous {name} job")
+            job = found[0]
+            require(job["run_id"] == current["id"] and job["head_sha"] == head
+                    and job["run_attempt"] == current["run_attempt"]
+                    and job["status"] == "completed" and job["conclusion"] == "success",
+                    f"{name} did not succeed in latest attempt")
+        # Detect a rerun started while its jobs were read.
+        require(api.get(path) == current, "workflow run changed while reading jobs")
+        return current["id"]
+
+    platform_run = proof("pull_request", {"apple-platform"})
+    dispatch_run = proof("workflow_dispatch", CONFORMANCE_JOBS)
+    return (f"Reused Apple proof for PR #{number}: head `{head}`, tree `{pushed_tree}`, "
+            f"PR run [{platform_run}](https://github.com/{repository}/actions/runs/{platform_run}), "
+            f"dispatch run [{dispatch_run}](https://github.com/{repository}/actions/runs/{dispatch_run}). "
+            "No macOS legs planned. FEATURES evidence is not resolved on this run; "
+            "it requires a full run, including the release's plain full dispatch.")
+
+
+def push_plan(api: GitHub, repository: str, sha: str, ref: str) -> tuple[bool, bool, str]:
+    try:
+        return False, False, proven_main_push(api, repository, sha, ref)
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError, AttributeError) as error:
+        # No raw HTTP bodies, URLs, tokens or PR-controlled text in logs or summaries.
+        reason = str(error) if isinstance(error, ProofUnavailable) else type(error).__name__
+        return True, True, f"main proof unavailable ({reason}); run every leg"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
     plan_parser = commands.add_parser("plan")
     plan_parser.add_argument("--event", required=True)
     plan_parser.add_argument("--changed-files")
+    plan_parser.add_argument("--conformance-only", choices=("true", "false"), default="false")
+    plan_parser.add_argument("--proof-fixture", help="Replay recorded REST responses without network access")
     require = commands.add_parser("require-leg")
     require.add_argument("planned")
     require.add_argument("result")
@@ -171,7 +330,19 @@ def main() -> int:
                 changed = [line.strip() for line in handle if line.strip()]
         else:
             changed = merge_diff()
-    platform, conformance, reason = plan(arguments.event, changed)
+    platform, conformance, reason = plan(arguments.event, changed, arguments.conformance_only == "true")
+    if arguments.event == "push":
+        try:
+            api = GitHub(os.environ.get("GITHUB_TOKEN", ""), arguments.proof_fixture)
+            platform, conformance, reason = push_plan(
+                api, os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_SHA", ""),
+                os.environ.get("GITHUB_REF", ""))
+        except (OSError, ValueError, KeyError, TypeError):
+            platform, conformance, reason = True, True, "proof fixture unreadable; run every leg"
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(f"Apple leg plan: platform={str(platform).lower()}, "
+                         f"conformance={str(conformance).lower()}. {reason}\n\n")
     print(f"APPLE LEG PLAN platform={str(platform).lower()} "
           f"conformance={str(conformance).lower()}: {reason}", file=sys.stderr)
     print(f"platform={str(platform).lower()}")

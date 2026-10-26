@@ -3270,15 +3270,18 @@ the switch.
 
 - **The core decides when to ask.** With AutoPlay on and Shuffle and Repeat off, once one entry or
   none follows the current one, `takeAutoplayRequest()` hands out one request: a key, the seed (the
-  queue's last entry), every track id already queued, and a count of ten. Each key is handed out
-  once. The shell answers it with `appendAutoplay(key, items)`; an empty answer is valid, and the
+  queue's last entry), every track id already queued, and a count of ten. Each operation key is handed out
+  once. A cancelled or transiently failed operation releases it with `releaseAutoplayRequest`;
+  a retry receives a fresh key after the shell's quiet period. The shell answers it with `appendAutoplay(key, items)`; an empty answer is valid, and the
   same key is not asked again until the queue changes at its end. An answer to a key the queue has
   moved past changes nothing. If the queue finished while a request was outstanding, the answer's
   first entry starts on arrival; a request made after the queue finished only appends.
 - **Candidates, on OpenSubsonic (`/rest`)**, are tried in turn until enough new tracks are found:
   `getSimilarSongs2` for the seed's artist and `getSimilarSongs` for the seed, `getTopSongs` for the
   artist, then `getRandomSongs` in the seed's genre and finally from the whole library. A source that
-  fails or is not offered is skipped; refused credentials end the search. Dulcet Server serves the
+  is unsupported or fails for an item-specific reason is skipped; refused credentials end the
+  search. A transport failure or busy reply stops the whole chain and releases it for retry.
+  The shell waits at least five seconds, or a longer server `Retry-After`, before asking again. Dulcet Server serves the
   same requests from its own library (§29), so the chain is the same on every server.
 - **AutoPlay entries stay last.** They are marked `isAutoplay`; Add to Queue inserts before the first
   upcoming one, so the person's additions and AutoPlay's never interleave, and Play Next goes after
@@ -7126,8 +7129,26 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 
 **Normative:**
 
-1. **`apple-plan` decides the legs**, on `ubuntu-latest`, with `tools/ci/plan-apple-legs`. A push to
-   `main`, a manual dispatch and any other event plan every leg. A pull request never plans the
+1. **`apple-plan` decides the legs**, on `ubuntu-latest`, with `tools/ci/plan-apple-legs`.
+   **Amended 2026-10-25 (#390):** a push to `main` plans no macOS legs only when exactly one
+   associated, merged PR produced that pushed SHA, its base is `main`, its head belongs to this
+   repository, and the pushed commit and PR head have identical Git trees. That exact head must
+   have successful latest attempts of this repository's own `apple-ci.yml` runs: a `pull_request`
+   run with `apple-platform` successful and a `workflow_dispatch` run with `apple-conformance-core`,
+   `apple-conformance-ipad` and `apple-conformance-iphone` successful. Each run and its `apple-ci`
+   aggregator must also succeed. Plain full dispatches count as conformance proof. The reader
+   selects the newest run of each event on that head, checks the workflow's numeric id and path,
+   reads attempt-specific jobs and rechecks run freshness. It cannot reuse old job attempts,
+   fork runs or `pull_request_target` runs. Missing, ambiguous, stale, malformed, non-success or
+   unreadable evidence plans every leg. API pagination is bounded and fails closed on truncation.
+   Only `apple-plan` receives `contents: read`, `pull-requests: read` and `actions: read` through
+   `GITHUB_TOKEN`; no write permission or external token is needed. The run summary names the PR,
+   head, tree and both proof run IDs when it skips. `--proof-fixture` replays recorded REST responses
+   through the same push reader without a network request. Plain manual dispatches and other
+   events plan every leg. The boolean dispatch input
+   `conformance_only` defaults to `false`; setting it to `true` plans both conformance jobs and
+   skips `apple-platform`. It affects only `workflow_dispatch`, never push or pull requests.
+   A pull request never plans the
    conformance jobs (`apple-conformance-core` and `apple-conformance-ipad-iphone`, which share one
    `conformance` plan output since 2026-10-03), and plans `apple-platform` when it changes an Apple
    input. Apple inputs are
@@ -7149,21 +7170,35 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 3. **`apple-ci` checks each leg against the plan:** the plan job must succeed, a planned leg must
    report `success`, and an unplanned leg must report `skipped`. Anything else fails, including an
    empty plan output. It downloads and resolves `FEATURES.yml` evidence only on a run that planned
-   every leg, so a pull request's Apple citations are resolved after merge, on `main`.
+   every leg: an unproven main push or a plain full dispatch. A push that reuses proof does not
+   download JUnit or resolve Apple `FEATURES.yml` identities across the two proof runs. Its summary
+   explicitly says evidence was not resolved. Full resolution runs before release in the release
+   commit's required plain full dispatch. A full run reports resolution as pending until the
+   blocking verifier executes; its success remains necessary for a green aggregator.
 4. **A release build requires the full run.** `release.yml` runs `tools/release_plan.py
    full-run-gate` before any step reads a secret. It refuses unless every required check and
-   `apple-platform`, `apple-conformance-core` and `apple-conformance-ipad-iphone` all concluded
-   `success` on the exact commit being archived.
-   A skipped leg reports `skipped`, so a run that planned less cannot satisfy it. Only a dry run may
+   `apple-platform`, `apple-conformance-core`, `apple-conformance-ipad` and
+   `apple-conformance-iphone` all concluded `success` on the exact commit being archived. All Apple
+   legs must belong to the latest `apple-ci` aggregator's check suite; results from separate PR
+   and dispatch runs cannot be combined. Check IDs determine recency, not API response order.
+   A skipped leg reports `skipped`, so neither a conformance-only dispatch nor a main push that
+   reuses PR proof can satisfy it. A release still requires a plain full dispatch on its commit. Only a dry run may
    waive it, and only with the explicit `skip_full_run_gate` input, which defaults to `false`.
 5. **`core-ci` is unchanged**, including `conformance-env-linux` on every pull request (about 3.5
    minutes), so the Linux and Android live-server conformance still gates every merge.
 
 **What this gives up, stated so it is not rediscovered as a defect.** A pull request can merge with
 a change that breaks Darwin conformance, a conformance-only control (`tools/test-darwin-*` and the
-other steps in that leg) or an Apple `FEATURES.yml` citation; `main`'s push run finds it, `main-health`
-reports it, and no release can ship it. A pull request that changes the conformance leg's own
-machinery can be proved before merge by dispatching `apple-ci` on its branch, which plans both legs.
+other steps in that leg) or an Apple `FEATURES.yml` citation. An unproven `main` push runs all
+legs and exposes these failures to `main-health`. A proven same-tree push reuses the successful PR
+and conformance proof but defers combined Apple FEATURES resolution to the next full dispatch,
+required before release. Its `apple-ci` aggregator concludes `success` after validating the planned
+skips, so main-health can close when the other required contexts also succeed on main's exact head;
+that health result does not claim a full run or FEATURES resolution. No release can ship without
+full evidence resolution. A pull request that changes the conformance leg's own
+machinery can be proved before merge by dispatching `apple-ci` on its branch. A plain dispatch
+plans every leg; `conformance_only=true` proves just conformance after the same head's PR platform
+check has succeeded, saving one macOS job. The command and required conclusions are in `docs/MERGING.md`.
 A dispatch's checks do not appear on the pull request (same GitHub page), so this is evidence for the
 reviewer, not a merge gate.
 
@@ -7933,6 +7968,76 @@ media time but never submit a play, and finalization diagnoses duration still un
 Scrubbing, remaining time, Now Playing duration and transition scheduling wait for a known
 positive duration. The disposable corpus deliberately includes a sub-second FLAC whose duration
 Navidrome omits; the other playback fixtures must retain their positive server durations.
+
+**2026-10-25 — Reuse exact-tree Apple merge proof on main pushes (§21.6, #390).**
+
+A main push can plan no macOS legs when one merged, same-repository PR produced it, its tree
+matches the PR head, and that exact head has successful latest `apple-ci.yml` PR platform and
+dispatch conformance proof. The planner reads only repository-owned workflow runs and their
+latest attempt's jobs, with read-only `GITHUB_TOKEN` permissions. Every uncertainty runs all legs.
+The Actions summary records the PR, head, tree and two run IDs. The always-running `apple-ci`
+aggregator accepts the planned skips and reports success for required-context main-health checks.
+
+Apple FEATURES identity resolution runs only when every leg is planned. A reused push explicitly
+reports that it did not resolve those identities; the release's plain full dispatch still resolves
+them before shipping. The release gate is unchanged: skipped jobs in the latest Apple suite cannot
+qualify, even alongside an older full green suite. `tools/test-plan-apple-legs` replays projected
+GitHub REST responses recorded from #389: head `4b4e4b04`, main `03e48c1e`, tree `b603c224`, PR run
+40127671219 and dispatch 40127671088. Its positive and fall-back controls exercise the production
+push code path, including latest attempts, provenance, pagination and API failures. The release
+and main-health controls distinguish successful required checks from full release evidence.
+**OBSERVED:** recorded-response planner controls and local policy checks. A real push skip remains
+**ASSUMED** until this change merges and a qualifying main push runs it.
+
+**2026-10-24 — Conformance-only Apple dispatch without repeating the platform build (§21.6).**
+
+`apple-ci` accepts the boolean `workflow_dispatch` input `conformance_only`, default `false`.
+When explicitly true on a dispatch, `apple-plan` outputs `platform=false`, `conformance=true`:
+the core, iPad and iPhone conformance jobs run and `apple-platform` is skipped. Plain dispatches
+and pushes to `main` still plan every leg, and PR planning is unchanged. The required aggregator
+continues to require success for every planned leg and skipped for every unplanned leg; full
+parity evidence is resolved only on a run that planned every leg. A same-head PR platform run
+plus this dispatch costs four macOS jobs rather than five.
+
+Release safety remains stricter: every Apple leg must succeed within the latest `apple-ci`
+aggregator's check suite on the release commit. The release reader retains check IDs and suite
+IDs, so response order and a platform success in another suite cannot turn a partial run into
+a full run. `tools/test-plan-apple-legs` executes the event/input plans;
+`tools/test-release-channel` accepts a full suite and refuses a conformance-only run, including
+when an earlier full suite or a separate platform success is available. `docs/MERGING.md`
+documents the opt-in command and the conclusions a maintainer must inspect.
+
+
+**2026-10-24 — Retry interrupted AutoPlay searches and retain queue musical context.**
+
+An AutoPlay key identifies one operation. Cancellation or a transient failure releases an
+unanswered request and gives its retry a fresh key; a late completion or release of the old
+operation cannot answer or retire the new one. A successful empty search still consumes its
+request. If the queue naturally ends while a search or its retry is outstanding, its eventual
+first recommendation starts playback. A request first made after the queue finished only appends.
+Transport failures and busy replies stop the candidate chain immediately, including after a
+partial result. The shells wait at least five seconds before retrying, or the server's longer
+`Retry-After`, on a monotonic clock. Repeated publications cannot bypass this quiet period.
+This chooses recovery without a queue edit while giving an unavailable server time to recover.
+Apple presents invalid credentials through the account state and waits for new credentials.
+A permission refusal retains its Forbidden subtype: Library presents access refused, while
+AutoPlay stays quiet until explicit accepted account configuration without closing remote playback.
+Android credential refresh services the released request after installing the account; the existing
+retry deadline still applies.
+
+Queue entries persist the album id and duration supplied when queued (schema 13), so restoration
+keeps same-album joins gapless and retains the short-track overlap rule before the engine reports
+Ready. Migration backfills existing entries from the account's pinned track cache where available;
+absent metadata stays unknown and retains the existing album-source fallback. Metadata belongs to
+the entry and leaves with its removal. Album-track and search-result copies retain their album id on both shells, including server
+`albumId` values and cached search rows. Android selected-song and system-media adapters retain
+the same context. Downloaded selections read the album id through the production download-cache
+adapter before queue insertion; both album id and duration survive a cold controller restore
+without a server metadata request. The legacy library enumeration and committed-snapshot adapters
+also retain the album id inside each playable track. A stop point spent by a queue edit clears
+its timer before starting the paused successor, just as a playback-event transition does.
+The directly exported sleep countdown clamps negative fades to zero and nonpositive lengths to
+an immediate deadline; arithmetic saturates at the clock range instead of throwing or wrapping.
 
 
 

@@ -1202,12 +1202,16 @@ func accountRemovalCancellationRecoversBeforeUncooperativeCleanupReturns() async
     #expect(store.selectedDestination == .library)
 }
 
-@Test(arguments: [false, true]) @MainActor
-func recoveryAfterDownloadCleanupRestoresConfigurationBeforeKeepAccount(cancelExplicitly: Bool) async throws {
+@Test(arguments: [false, true], [false, true]) @MainActor
+func recoveryAfterDownloadCleanupRestoresConfigurationBeforeKeepAccount(cancelExplicitly: Bool, delayedObservation: Bool) async throws {
     let connector = ControlledAccountConnector()
     let credentials = MemoryCredentialStore(persisted: nil)
     let downloads = ControlledDownloadController()
-    let artwork = ControlledArtworkFetcher()
+    // Observe the intermediate configuration at the cleanup boundary itself. Polling
+    // from this test task can resume after the watchdog has already restored it.
+    let artwork = ControlledArtworkFetcher { _ in
+        #expect(downloads.configuredAccount == nil)
+    }
     artwork.suspendRemoval = true
     let source = DulcetAccountDataSource(
         connector: connector,
@@ -1225,7 +1229,10 @@ func recoveryAfterDownloadCleanupRestoresConfigurationBeforeKeepAccount(cancelEx
     store.removeAccount()
     await settleSearchTask(until: { artwork.removalContinuation != nil })
     #expect(artwork.removalContinuation != nil)
-    #expect(downloads.configuredAccount == nil)
+    // Exercise the same ordering as a contended main actor: recovery can win before
+    // the polling observer resumes, even though artwork cleanup is still suspended.
+    if delayedObservation { try await Task.sleep(for: .milliseconds(100)) }
+    #expect(artwork.removedServerIDs.count == 1, "The cleanup-boundary assertion must run")
     if cancelExplicitly { source.cancelAccountRemoval() }
     await settleSearchTask(until: { store.snapshot.accountRemoval == .failed })
     #expect(store.snapshot.accountRemoval == .failed)

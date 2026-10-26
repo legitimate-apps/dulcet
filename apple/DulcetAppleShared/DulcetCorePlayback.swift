@@ -497,8 +497,7 @@ final class DulcetCoreListeningSettings: DulcetListeningSetting {
 enum DulcetCoreLibraryTrackCopy {
     static func track(
         _ track: AppleLibraryTrackDto,
-        fallbackArtworkKey: String? = nil,
-        carriesAlbumID: Bool = true
+        fallbackArtworkKey: String? = nil
     ) -> DulcetTrack {
         DulcetTrack(
             id: DulcetProviderItemID(
@@ -518,7 +517,7 @@ enum DulcetCoreLibraryTrackCopy {
                 providerInstanceID: track.providerInstanceId,
                 artworkKey: track.artworkKey ?? fallbackArtworkKey
             ),
-            albumID: track.albumRawId.flatMap { carriesAlbumID ? $0 : nil }.map {
+            albumID: track.albumRawId.map {
                 DulcetProviderItemID(providerInstanceID: track.providerInstanceId, rawID: $0)
             }
         )

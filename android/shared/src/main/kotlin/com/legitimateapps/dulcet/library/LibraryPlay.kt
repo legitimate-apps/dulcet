@@ -177,19 +177,16 @@ public fun queueSearchResult(
     insertion: AndroidQueueInsertion,
     searchName: String,
 ): Boolean {
-    if (playback == null || result.type != SearchResultType.Track) return false
-    val title = result.title
-    val artist = result.credits.singleOrNull { it.role == CreditRole.Artist }?.name?.takeIf { it.isNotBlank() }
-    val track = AndroidTrack(
-        providerInstanceId = providerInstanceId,
-        rawId = result.id.rawId,
-        title = title,
-        artist = artist,
-        album = result.albumTitle?.takeIf { it.isNotBlank() },
-        durationMilliseconds = result.duration?.inWholeMilliseconds,
-        artworkKey = result.artworkKey,
-    )
+    if (playback == null) return false
+    val track = result.toQueueTrack(providerInstanceId) ?: return false
     return playback.addToQueue(listOf(track), insertion, AndroidQueueSource.Search, searchName)
+}
+
+internal fun SearchResultItem.toQueueTrack(providerInstanceId: String): AndroidTrack? {
+    if (type != SearchResultType.Track) return null
+    val artist = credits.singleOrNull { it.role == CreditRole.Artist }?.name?.takeIf { it.isNotBlank() }
+    return AndroidTrack(providerInstanceId, id.rawId, title, artist, albumTitle?.takeIf { it.isNotBlank() },
+        duration?.inWholeMilliseconds, artworkKey = artworkKey, albumRawId = albumRawId)
 }
 
 /** An album whose tracks this device cannot play only because it is offline (§16.14). */
