@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import com.legitimateapps.dulcet.library.trackDisplayTitle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -190,7 +191,8 @@ internal fun MobileSearchScreen(
                     val index = indexed.index
                     val row = indexed.value
                     val result = row.item
-                    val playable = row.playability != AndroidLibraryPlayability.UnavailableOffline
+                    val available = row.playability != AndroidLibraryPlayability.UnavailableOffline
+                    val playable = available && result.duration != null
                     MobileSearchResult(
                         result = result,
                         index = index,
@@ -198,10 +200,10 @@ internal fun MobileSearchScreen(
                         // Only beside the server's rows is "on this device" news; the scope line covers the rest.
                         deviceOnly = row.source == AndroidLibrarySearchRowSource.Device &&
                             state.scope == AndroidLibrarySearchScope.ServerAndDevice,
-                        unavailableOffline = !playable,
+                        unavailableOffline = !available,
                         onActivate = { presenter.commitQuery(); onActivate(result) },
                         onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { presenter.commitQuery(); play(result) } },
-                        onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable }
+                        onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable && result.duration != null }
                             ?.let { queue -> { insertion -> queue(result, insertion) } },
                     )
                 }
@@ -230,18 +232,19 @@ private fun MobileSearchResult(
     })
     val credits = result.credits.joinToString { it.name }
     PhoneMediaRow(
-        title = result.title,
+        title = resources.trackDisplayTitle(result.title),
         supporting = {
             val notes = listOfNotNull(
                 resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
+                resources.getString(SharedR.string.library_duration_required).takeIf { result.type == SearchResultType.Track && result.duration == null },
             )
             Text((listOf(kind, credits) + notes).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         },
         leading = {
             if (result.type == SearchResultType.Artist) Monogram(result.title, 48.dp)
-            else if (account != null) Artwork(account, result.artworkKey, result.title, 48.dp)
+            else if (account != null) Artwork(account, result.artworkKey, resources.trackDisplayTitle(result.title), 48.dp)
             else Icon(DulcetIcons.MusicNote, null)
         },
         trailing = if (onPlay == null && onQueue == null) null else {
@@ -249,7 +252,7 @@ private fun MobileSearchResult(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     onPlay?.let { play ->
                         IconButton(onClick = play, modifier = Modifier.testTag("search.play.$index")) {
-                            Icon(DulcetIcons.Play, stringResource(R.string.action_play_track, result.title))
+                            Icon(DulcetIcons.Play, stringResource(R.string.action_play_track, resources.trackDisplayTitle(result.title)))
                         }
                     }
                     onQueue?.let { queue ->
@@ -259,7 +262,7 @@ private fun MobileSearchResult(
             }
         },
         modifier = Modifier.testTag("search.result.$index"),
-        onClick = onActivate,
+        onClick = onActivate.takeIf { result.type != SearchResultType.Track || (!unavailableOffline && result.duration != null) },
     )
 }
 

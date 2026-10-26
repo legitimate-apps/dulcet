@@ -305,7 +305,7 @@ public struct DulcetReaderItem: Identifiable, Sendable, Hashable {
     /// The name to draw. A genre's name is its id; an item whose name the server never gave says
     /// so rather than drawing an empty row.
     public var displayTitle: String {
-        if let title, !title.isEmpty { return title }
+        if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return title }
         return kind == .genre ? id.rawID : DulcetStrings.readerUntitled
     }
 

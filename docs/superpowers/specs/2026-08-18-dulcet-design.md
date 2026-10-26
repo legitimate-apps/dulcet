@@ -6524,6 +6524,11 @@ offset and a blank line, a sidecar `.txt`, embedded lyrics in three languages (t
 plain lyrics, and the health probe with none. **No copyrighted audio and no binary blobs in the
 repository.**
 
+Positive playback fixtures have a positive whole-second duration in the server response, checked
+across every `search3` page before conformance runs. Sub-second media is unsuitable here because
+Navidrome truncates its duration to zero and omits the field. Missing-duration admission is covered
+separately by the reader and playback negative controls.
+
 ### 20.3 Three test layers, each with an honest name
 
 Revision 1 claimed a fixture-replay suite proved "transport parity." It does not: an in-process Ktor
@@ -7124,8 +7129,23 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 
 **Normative:**
 
-1. **`apple-plan` decides the legs**, on `ubuntu-latest`, with `tools/ci/plan-apple-legs`. A push to
-   `main`, a plain manual dispatch and any other event plan every leg. The boolean dispatch input
+1. **`apple-plan` decides the legs**, on `ubuntu-latest`, with `tools/ci/plan-apple-legs`.
+   **Amended 2026-10-25 (#390):** a push to `main` plans no macOS legs only when exactly one
+   associated, merged PR produced that pushed SHA, its base is `main`, its head belongs to this
+   repository, and the pushed commit and PR head have identical Git trees. That exact head must
+   have successful latest attempts of this repository's own `apple-ci.yml` runs: a `pull_request`
+   run with `apple-platform` successful and a `workflow_dispatch` run with `apple-conformance-core`,
+   `apple-conformance-ipad` and `apple-conformance-iphone` successful. Each run and its `apple-ci`
+   aggregator must also succeed. Plain full dispatches count as conformance proof. The reader
+   selects the newest run of each event on that head, checks the workflow's numeric id and path,
+   reads attempt-specific jobs and rechecks run freshness. It cannot reuse old job attempts,
+   fork runs or `pull_request_target` runs. Missing, ambiguous, stale, malformed, non-success or
+   unreadable evidence plans every leg. API pagination is bounded and fails closed on truncation.
+   Only `apple-plan` receives `contents: read`, `pull-requests: read` and `actions: read` through
+   `GITHUB_TOKEN`; no write permission or external token is needed. The run summary names the PR,
+   head, tree and both proof run IDs when it skips. `--proof-fixture` replays recorded REST responses
+   through the same push reader without a network request. Plain manual dispatches and other
+   events plan every leg. The boolean dispatch input
    `conformance_only` defaults to `false`; setting it to `true` plans both conformance jobs and
    skips `apple-platform`. It affects only `workflow_dispatch`, never push or pull requests.
    A pull request never plans the
@@ -7150,22 +7170,32 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 3. **`apple-ci` checks each leg against the plan:** the plan job must succeed, a planned leg must
    report `success`, and an unplanned leg must report `skipped`. Anything else fails, including an
    empty plan output. It downloads and resolves `FEATURES.yml` evidence only on a run that planned
-   every leg, so a pull request's Apple citations are resolved after merge, on `main`.
+   every leg: an unproven main push or a plain full dispatch. A push that reuses proof does not
+   download JUnit or resolve Apple `FEATURES.yml` identities across the two proof runs. Its summary
+   explicitly says evidence was not resolved. Full resolution runs before release in the release
+   commit's required plain full dispatch. A full run reports resolution as pending until the
+   blocking verifier executes; its success remains necessary for a green aggregator.
 4. **A release build requires the full run.** `release.yml` runs `tools/release_plan.py
    full-run-gate` before any step reads a secret. It refuses unless every required check and
    `apple-platform`, `apple-conformance-core`, `apple-conformance-ipad` and
    `apple-conformance-iphone` all concluded `success` on the exact commit being archived. All Apple
    legs must belong to the latest `apple-ci` aggregator's check suite; results from separate PR
    and dispatch runs cannot be combined. Check IDs determine recency, not API response order.
-   A skipped leg reports `skipped`, so a conformance-only dispatch cannot satisfy it. Only a dry run may
+   A skipped leg reports `skipped`, so neither a conformance-only dispatch nor a main push that
+   reuses PR proof can satisfy it. A release still requires a plain full dispatch on its commit. Only a dry run may
    waive it, and only with the explicit `skip_full_run_gate` input, which defaults to `false`.
 5. **`core-ci` is unchanged**, including `conformance-env-linux` on every pull request (about 3.5
    minutes), so the Linux and Android live-server conformance still gates every merge.
 
 **What this gives up, stated so it is not rediscovered as a defect.** A pull request can merge with
 a change that breaks Darwin conformance, a conformance-only control (`tools/test-darwin-*` and the
-other steps in that leg) or an Apple `FEATURES.yml` citation; `main`'s push run finds it, `main-health`
-reports it, and no release can ship it. A pull request that changes the conformance leg's own
+other steps in that leg) or an Apple `FEATURES.yml` citation. An unproven `main` push runs all
+legs and exposes these failures to `main-health`. A proven same-tree push reuses the successful PR
+and conformance proof but defers combined Apple FEATURES resolution to the next full dispatch,
+required before release. Its `apple-ci` aggregator concludes `success` after validating the planned
+skips, so main-health can close when the other required contexts also succeed on main's exact head;
+that health result does not claim a full run or FEATURES resolution. No release can ship without
+full evidence resolution. A pull request that changes the conformance leg's own
 machinery can be proved before merge by dispatching `apple-ci` on its branch. A plain dispatch
 plans every leg; `conformance_only=true` proves just conformance after the same head's PR platform
 check has succeeded, saving one macOS job. The command and required conclusions are in `docs/MERGING.md`.
@@ -7968,6 +7998,26 @@ Main's queue migration retains schema 13; Discover uses the additive 13-to-14 mi
 v14. The integration migration proof preserves queue context, pending My Library intents and scoped
 media ownership. Native cells still require the corresponding native proof.
 
+**2026-10-25 — Reuse exact-tree Apple merge proof on main pushes (§21.6, #390).**
+
+A main push can plan no macOS legs when one merged, same-repository PR produced it, its tree
+matches the PR head, and that exact head has successful latest `apple-ci.yml` PR platform and
+dispatch conformance proof. The planner reads only repository-owned workflow runs and their
+latest attempt's jobs, with read-only `GITHUB_TOKEN` permissions. Every uncertainty runs all legs.
+The Actions summary records the PR, head, tree and two run IDs. The always-running `apple-ci`
+aggregator accepts the planned skips and reports success for required-context main-health checks.
+
+Apple FEATURES identity resolution runs only when every leg is planned. A reused push explicitly
+reports that it did not resolve those identities; the release's plain full dispatch still resolves
+them before shipping. The release gate is unchanged: skipped jobs in the latest Apple suite cannot
+qualify, even alongside an older full green suite. `tools/test-plan-apple-legs` replays projected
+GitHub REST responses recorded from #389: head `4b4e4b04`, main `03e48c1e`, tree `b603c224`, PR run
+40127671219 and dispatch 40127671088. Its positive and fall-back controls exercise the production
+push code path, including latest attempts, provenance, pagination and API failures. The release
+and main-health controls distinguish successful required checks from full release evidence.
+**OBSERVED:** recorded-response planner controls and local policy checks. A real push skip remains
+**ASSUMED** until this change merges and a qualifying main push runs it.
+
 **2026-10-24 — Conformance-only Apple dispatch without repeating the platform build (§21.6).**
 
 `apple-ci` accepts the boolean `workflow_dispatch` input `conformance_only`, default `false`.
@@ -8017,6 +8067,28 @@ its timer before starting the paused successor, just as a playback-event transit
 The directly exported sleep countdown clamps negative fades to zero and nonpositive lengths to
 an immediate deadline; arithmetic saturates at the clock range instead of throwing or wrapping.
 
+
+
+**2026-10-24 - Android untitled playback and queue admission.**
+
+Android phone and TV library queues accept tracks with a known duration regardless of whether
+there is a title, matching the Apple reader adapter. Missing, empty and whitespace-only titles
+use the localized Android `playback_untitled` string, "Untitled", in the queue, Now Playing,
+Media3 session and notification. Reader and search rows apply the same localized display fallback
+at presentation; cached and fresh records preserve the server title. A later real title updates
+the active Media3 item without restarting playback. New Android queue admissions require a known
+duration, including raw-ID selections after metadata resolution. Existing and restored queue
+entries remain playable when duration is absent; the admission rule does not invalidate saved plays.
+Admission can use duration already learned by playback or retained with a protected local file,
+even when a caller supplies only identity and title. It filters unknown-duration neighbors and
+preserves the selected track's identity; an explicitly selected unknown-duration track is refused.
+Durationless reader and search rows show why playback is unavailable, and an explicit filtered
+selection never substitutes another track.
+Play and Shuffle use the exact `playableTracks` list that starts playback; Play Next, Add to
+Queue, playlists and system media browsing use the same duration and offline availability
+requirements. Android continues to exclude tracks unavailable offline from a new queue, while
+Apple's adapter labels them `metadataOnly` for its queue's offline policy. Apple reader and search use their shared localized `reader.untitled` value, with English
+"Untitled". Both platforms treat whitespace-only titles as absent display text.
 
 
 **2026-10-23 — Retain Android Play across a chosen connection's transient validation loss.**

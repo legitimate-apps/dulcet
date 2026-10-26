@@ -119,6 +119,29 @@ def find_probe(response: dict, title: str) -> dict | None:
     return next((song for song in songs if song.get("title") == title), None)
 
 
+def require_playback_durations(client: ServerClient, expected_count: int) -> int:
+    """Positive playback fixtures must be queueable through the shared reader adapter."""
+    count = 0
+    while True:
+        songs = client.subsonic("search3", parameters={
+            "query": "", "artistCount": "0", "albumCount": "0",
+            "songCount": "200", "songOffset": str(count),
+        }).get("searchResult3", {}).get("song", [])
+        for song in songs:
+            duration = song.get("duration")
+            if type(duration) is not int or duration <= 0:
+                raise SystemExit(
+                    f"playback corpus track has no positive server duration: {song.get('id')}; "
+                    "Navidrome omits the duration of sub-second media"
+                )
+        count += len(songs)
+        if len(songs) < 200:
+            break
+    if count != expected_count:
+        raise SystemExit(f"playback corpus count mismatch: expected {expected_count}, observed {count}")
+    return count
+
+
 def append_summary(lines: list[str]) -> None:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
@@ -459,6 +482,8 @@ def main() -> None:
             f"observed {scan_status.get('count')}"
         )
 
+    queueable_tracks = require_playback_durations(client, manifest["generated_media_files"])
+
     extensions_response = client.subsonic("getOpenSubsonicExtensions")
     extension_names = {
         extension.get("name") for extension in extensions_response.get("openSubsonicExtensions", [])
@@ -529,6 +554,7 @@ def main() -> None:
         "known_probe_retrievable": True,
     }
     lines = [
+        f"OBSERVED playback_corpus known_positive_durations={queueable_tracks} expected={manifest['generated_media_files']}",
         f"OBSERVED runtime expected={args.runtime} observed={actual_runtime}",
         (
             f"OBSERVED timezone expected={compact_json(expected_timezone)} "

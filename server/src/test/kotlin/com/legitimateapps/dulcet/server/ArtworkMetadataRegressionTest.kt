@@ -85,7 +85,7 @@ class ArtworkMetadataRegressionTest {
     @Test fun changedStandaloneArtistMtimeDoesNotFanOutToUnrelatedArtists()=selectedArtistReplacement(false)
 
     @Test fun sameSizeAndMtimeEmbeddedReplacementRefreshesOriginalAndResizedCacheBeforeScan()=embeddedReplacement(true)
-    @Test fun sameSizeAndMtimeEmbeddedReplacementNotifiesWithoutRetaggingTracks()=embeddedReplacement(false)
+    @Test fun sameSizeAndMtimeEmbeddedReplacementNotifiesAndRechecksTrackTags()=embeddedReplacement(false)
     private fun embeddedReplacement(checkCacheBeforeScan:Boolean) {
         Catalog().use { c->
             c.populate()
@@ -100,17 +100,17 @@ class ArtworkMetadataRegressionTest {
             assertEquals(2,c.ctx.scanner.scan()!!.added)
             val ids=c.ids(1);val before=ids.associateWith {c.image(it)}
             ids.forEach {c.image(it,32)}
-            val trackBefore=c.ctx.db.read {single("SELECT title,mtime,size,updated FROM track WHERE path='artist-1/album/song.flac'") {
-                listOf(it.string("title"),it.long("mtime").toString(),it.long("size").toString(),it.long("updated").toString())
+            val trackBefore=c.ctx.db.read {single("SELECT title,mtime,size FROM track WHERE path='artist-1/album/song.flac'") {
+                listOf(it.string("title"),it.long("mtime").toString(),it.long("size").toString())
             }}
             val head=c.ctx.journal.head();replacePreservingMetadata(c.files[0],blueSource.copyOf(paddedSize))
             // Access before scanning must also invalidate the populated original and resized cache.
             if(checkCacheBeforeScan)ids.forEach {assertFalse(before.getValue(it).contentEquals(c.image(it)));blue(c.image(it));blue(c.image(it,32))}
             val scan=c.ctx.scanner.scan(force=true)!!
-            assertEquals(0,scan.updated,"Source identity changes must not force a tag re-read when size and mtime are unchanged")
-            assertEquals(2,scan.unchanged)
-            assertEquals(trackBefore,c.ctx.db.read {single("SELECT title,mtime,size,updated FROM track WHERE path='artist-1/album/song.flac'") {
-                listOf(it.string("title"),it.long("mtime").toString(),it.long("size").toString(),it.long("updated").toString())
+            assertEquals(1,scan.updated,"A changed embedded source may contain a hidden tag edit and must now be re-read")
+            assertEquals(1,scan.unchanged)
+            assertEquals(trackBefore,c.ctx.db.read {single("SELECT title,mtime,size FROM track WHERE path='artist-1/album/song.flac'") {
+                listOf(it.string("title"),it.long("mtime").toString(),it.long("size").toString())
             }})
             assertPublished(c,head,ids)
             ids.forEach {assertFalse(before.getValue(it).contentEquals(c.image(it)));blue(c.image(it));blue(c.image(it,32))}

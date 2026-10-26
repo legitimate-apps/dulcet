@@ -170,8 +170,11 @@ class PlayBeforeBindTest {
         // loading, and an addition to it plays instead of being held (seen on CI, where the
         // fixture's getSong came back first and the addition's own Play made a second one).
         server.holdSongs = true
-        controller.playQueue(listOf(AndroidTrack(provider, "a1", "A1")), 0, AndroidQueueSource.Library, "Library")
-        assertTrue(controller.addToQueue(listOf(AndroidTrack(provider, "x1", "X1"), AndroidTrack(provider, "x2", "X2")),
+        // These are admitted tracks; the failure under test is the held metadata response,
+        // rather than refusal of a new track whose duration has never been learned.
+        controller.playQueue(listOf(AndroidTrack(provider, "a1", "A1", durationMilliseconds = 40_000)), 0, AndroidQueueSource.Library, "Library")
+        assertTrue(controller.addToQueue(listOf(AndroidTrack(provider, "x1", "X1", durationMilliseconds = 40_000),
+            AndroidTrack(provider, "x2", "X2", durationMilliseconds = 40_000)),
             AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"), "held while the queue loads")
         server.releaseSongs()
         await("the queue to fail and the drop to be said") { ShadowToast.shownToastCount() > toasts }

@@ -641,6 +641,10 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
         self.artwork = artwork
     }
 
+    public var displayTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? DulcetStrings.readerUntitled : title
+    }
+
     public var subtitle: String {
         let creditNames = credits.map(\.name).joined(separator: ", ")
         return [creditNames, albumTitle]
@@ -652,7 +656,7 @@ public struct DulcetSearchResult: Identifiable, Sendable, Hashable {
         guard kind == .track, let duration else { return nil }
         return DulcetTrack(
             id: id,
-            title: title,
+            title: displayTitle,
             credits: credits,
             albumTitle: albumTitle,
             discNumber: discNumber,

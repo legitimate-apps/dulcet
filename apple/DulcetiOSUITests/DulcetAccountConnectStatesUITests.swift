@@ -333,22 +333,30 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         installSystemAlertInterruptionMonitors()
         app.launchArguments = []
         launchInInteractionScope(app)
-        let window = app.windows.firstMatch
-        // Launch can expose an existing window before its frame is laid out. Keep the same
-        // readiness budget and classify one captured frame, rather than separate live snapshots.
+        let window = app.windows.element(boundBy: 0)
+        // A live frame fetch has its own 30-second AX timeout. The former 15-second predicate
+        // waiter interrupted that fetch on a loaded runner before it could return (40065138225).
+        // Capture the frame in the snapshot, and allow a slow query plus another attempt.
+        let started = ProcessInfo.processInfo.systemUptime
+        let timeout: TimeInterval = 60
         var readyFrame: CGRect?
-        let laidOutWindow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            guard window.exists else { return false }
-            let frame = window.frame
-            guard frame.origin.x.isFinite, frame.origin.y.isFinite,
-                  frame.width.isFinite, frame.height.isFinite,
-                  frame.width > 0, frame.height > 0 else { return false }
-            readyFrame = frame
-            return true
-        }, object: nil)
-        guard XCTWaiter.wait(for: [laidOutWindow], timeout: 15) == .completed,
-              let frame = readyFrame else {
-            XCTFail("The app window must have finite, nonzero bounds within 15 seconds")
+        var attempts = 0
+        repeat {
+            attempts += 1
+            let queryStarted = ProcessInfo.processInfo.systemUptime
+            let captured = try? window.snapshot()
+            let frame = captured?.frame
+            print("DULCET ACCOUNT WINDOW attempt=\(attempts) query-seconds=\(ProcessInfo.processInfo.systemUptime - queryStarted)"
+                + " elapsed=\(ProcessInfo.processInfo.systemUptime - started) frame=\(String(describing: frame))")
+            if let frame, frame.origin.x.isFinite, frame.origin.y.isFinite,
+               frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 {
+                readyFrame = frame
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while ProcessInfo.processInfo.systemUptime - started < timeout
+        guard let frame = readyFrame else {
+            XCTFail("The app window must have finite, nonzero bounds within \(timeout) seconds; attempts=\(attempts)")
             return
         }
         let compact = frame.width < 700

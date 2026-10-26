@@ -16,7 +16,7 @@ data class CacheKey(val baseUrl:String,val path:String,val query:Map<String,Stri
         return MessageDigest.getInstance("SHA-256").digest(parts.joinToString("") { "${it.toByteArray().size}:$it" }.toByteArray()).joinToString("") { "%02x".format(it) }
     }
 }
-class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDiscoverClock,private val byteBudget:Long=256L*1024*1024) {
+class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDiscoverClock,private val byteBudget:Long=256L*1024*1024,private val diagnostics:DiscoverDiagnostics=DiscoverDiagnostics.shared) {
     companion object {
         const val HOUR=3_600_000L
         const val DAY=24*HOUR
@@ -40,7 +40,7 @@ class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDisc
             val entry=db.read { single("SELECT * FROM discover_cache WHERE key=?",digest) { Entry(it.int("status"),it.bytes("body")!!,it.long("fetched"),it.string("generation")) } }
                 ?.takeIf { (now-it.fetched).coerceAtLeast(0)<=MAX_AGE }
             val age=entry?.let { (now-it.fetched).coerceAtLeast(0) }
-            val previous=if(entry?.status==200) runCatching { decode(entry.body) }.getOrNull() else null
+            val previous=if(entry?.status==200) try { decode(entry.body) } catch(e:CancellationException) { throw e } catch(_:Exception) { null } else null
             if(entry!=null && age!! < if(entry.status==404) DAY else ttlMillis) {
                 if(entry.status==404) throw UpstreamNotFound()
                 if(previous!=null) {
@@ -48,11 +48,14 @@ class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDisc
                     return@withLock Cached(previous,CacheAge(entry.fetched,age/1000,false),entry.generation,mapOf(digest to entry.generation))
                 }
             }
+            val refreshStarted=clock.monotonicNanos()
+            var storing=false
             try {
                 val response=fetch()
-                if(response.status!=200 && response.status!=404) throw UpstreamUnavailable()
-                val value=if(response.status==200) try { decode(response.body) } catch(e:CancellationException) { throw e } catch(_:Exception) { throw UpstreamUnavailable() } else null
+                if(response.status!=200 && response.status!=404) throw UpstreamUnavailable(reason=UpstreamFailure.HttpStatus)
+                val value=if(response.status==200) try { decode(response.body) } catch(e:CancellationException) { throw e } catch(_:Exception) { diagnostics.parseFailure(key.baseUrl); throw UpstreamUnavailable(reason=UpstreamFailure.Parse) } else null
                 val fetched=clock.wallMillis(); val generation=UUID.randomUUID().toString()
+                storing=true
                 db.write {
                     execute("INSERT OR REPLACE INTO discover_cache(key,status,body,fetched,accessed,generation,bytes) VALUES(?,?,?,?,?,?,?)",digest,response.status,response.body,fetched,fetched,generation,response.body.size)
                     pruneIn(this,fetched)
@@ -63,7 +66,13 @@ class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDisc
             } catch(e:CancellationException) { throw e }
               catch(e:UpstreamNotFound) { throw e }
               catch(e:Exception) {
-                if(previous!=null && entry!=null && clock.wallMillis()-entry.fetched<=MAX_AGE) Cached(previous,CacheAge(entry.fetched,(clock.wallMillis()-entry.fetched).coerceAtLeast(0)/1000,true),entry.generation,mapOf(digest to entry.generation))
+                val reason=if(storing)UpstreamFailure.CacheWrite else (e as? UpstreamUnavailable)?.reason ?: UpstreamFailure.Unavailable
+                // A deliberately cache-only lookup never attempted an upstream refresh.
+                if(reason!=UpstreamFailure.CacheOnly) diagnostics.refreshFailure(key.baseUrl,reason,clock.monotonicNanos()-refreshStarted)
+                if(previous!=null && entry!=null && clock.wallMillis()-entry.fetched<=MAX_AGE) {
+                    diagnostics.stale(key.baseUrl,reason)
+                    Cached(previous,CacheAge(entry.fetched,(clock.wallMillis()-entry.fetched).coerceAtLeast(0)/1000,true),entry.generation,mapOf(digest to entry.generation))
+                }
                 else throw (e as? UpstreamUnavailable ?: UpstreamUnavailable())
             }
         }

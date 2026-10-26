@@ -285,7 +285,7 @@
 "queue.drag.refused" = "Can’t be added to Up Next";
 "lyrics.instrumental" = "Instrumental";
 "library.album.hint" = "Opens the album";
-"reader.untitled" = "Unknown";
+"reader.untitled" = "Untitled";
 "reader.track.durationUnknown" = "–";
 "reader.section.home" = "Home";
 "reader.section.albums" = "Albums";

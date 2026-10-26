@@ -147,6 +147,8 @@ jobs:
       # probe real audio: install both tools instead of replacing media behaviour with a stub.
       # Ubuntu Noble's exact package version: https://packages.ubuntu.com/noble/ffmpeg
       # This is FFmpeg 6.1.1, also used by the pinned Linux conformance environment.
+      - name: Test safe Discover verification evidence
+        run: python3 -m unittest discover -s tools/server -p 'test_*.py'
       - name: Test Dulcet Server
         run: >-
           ./gradlew --no-daemon
