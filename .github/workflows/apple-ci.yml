@@ -10,6 +10,10 @@ on:
         description: Run conformance legs only (not a full run for release)
         type: boolean
         default: false
+      apsd_experiment:
+        description: Measure simulator apsd A/B/A and repeat My Library browse (experiment, not a fix)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -878,6 +882,9 @@ jobs:
         run: python3 tools/test-measure-conformance-phase-gaps
       - name: Prove the host-pressure summary reports a known delta and refuses an empty record
         run: python3 tools/test-host-pressure
+      - name: Control the opt-in apsd experiment without a simulator
+        timeout-minutes: 1
+        run: python3 tools/test-apsd-experiment
       - name: Prove simulator isolation keeps the device OS=latest would pick and shuts down the rest
         run: python3 tools/test-isolate-simulator
       - name: Read toolchain pins
@@ -2264,6 +2271,7 @@ jobs:
           DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
           DULCET_CONFORMANCE_DISPOSABLE: "true"
           DULCET_DEVICE: ${{ matrix.device }}
+          DULCET_APSD_EXPERIMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.apsd_experiment && 'true' || 'false' }}
           IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
         run: |
           set -o pipefail
@@ -2302,16 +2310,24 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
-          if [ "$DULCET_DEVICE" = ipad ]; then
-            tools/ci/with-my-library-fixture --root "$ROOT/my-library-ipad" --music "$ROOT/music" \
-              --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
-              --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
-              -- tools/ci/run-my-library-proofs ipad
+          if [ "$DULCET_APSD_EXPERIMENT" = true ]; then
+            # Opt-in only. Three consecutive fresh-fixture browse comparisons run A/B/A,
+            # then the original full suite runs restored. Any arm failure fails this step.
+            tools/ci/apsd-experiment --device "$DULCET_DEVICE" --root "$ROOT/my-library-$DULCET_DEVICE" \
+              --music "$ROOT/music" --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+              --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe"
           else
-            tools/ci/with-my-library-fixture --root "$ROOT/my-library-iphone" --music "$ROOT/music" \
-              --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
-              --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
-              -- tools/ci/run-my-library-proofs iphone
+            if [ "$DULCET_DEVICE" = ipad ]; then
+              tools/ci/with-my-library-fixture --root "$ROOT/my-library-ipad" --music "$ROOT/music" \
+                --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+                --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
+                -- tools/ci/run-my-library-proofs ipad
+            else
+              tools/ci/with-my-library-fixture --root "$ROOT/my-library-iphone" --music "$ROOT/music" \
+                --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+                --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
+                -- tools/ci/run-my-library-proofs iphone
+            fi
           fi
           if [ "$DULCET_DEVICE" = ipad ]; then
           # ---- iPadOS playback + scrobble evidence -------------------------------------------
@@ -2725,6 +2741,10 @@ jobs:
           # no library count, so the skip probe's albums do not disturb it.
           tools/ci/run-lyrics-quality-proofs iphone-quality
           fi
+      - name: Restore the experiment's exact simulator apsd launch
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.apsd_experiment }}
+        timeout-minutes: 1
+        run: python3 tools/ci/apsd-experiment --restore "$RUNNER_TEMP/dulcet-apsd-experiment/restore.json"
       # The required `apple-ci` job resolves FEATURES.yml evidence from these directories on another
       # machine, so every JUnit directory this job wrote travels as one artifact named per job and
       # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
@@ -2755,6 +2775,18 @@ jobs:
         with:
           name: dulcet-host-pressure-${{ github.job }}-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dulcet-host-pressure.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload apsd experiment evidence on every verdict
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.apsd_experiment }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apsd-experiment-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dulcet-apsd-experiment
+            ${{ runner.temp }}/dulcet-host-pressure.log
+            ${{ runner.temp }}/dulcet-${{ matrix.device }}-my-library.log
+            ${{ runner.temp }}/dulcet-${{ matrix.device }}-my-library.xcresult
           if-no-files-found: warn
           retention-days: 14
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
