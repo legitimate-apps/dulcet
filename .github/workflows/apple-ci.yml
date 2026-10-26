@@ -10,10 +10,6 @@ on:
         description: Run conformance legs only (not a full run for release)
         type: boolean
         default: false
-      apsd_experiment:
-        description: Measure simulator apsd A/B/A and repeat My Library browse (experiment, not a fix)
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -25,7 +21,8 @@ concurrency:
 jobs:
   # spec §21.6: which legs this run needs. A pull request runs apple-platform only when it changes
   # something an Apple build reads, and never runs the two conformance jobs (`conformance=true`
-  # plans both); a push to main and a plain dispatch run every leg. A dispatch with
+  # plans both); a push to main reuses proven same-tree PR runs or runs every leg. A plain dispatch
+  # runs every leg. A dispatch with
   # conformance_only=true skips apple-platform. The legs are skipped by a job condition, never by a workflow `paths:` filter:
   # a workflow that does not run leaves its required check pending forever, while a job skipped by
   # a condition reports, and the required apple-ci job below always runs and decides. Anything the
@@ -34,6 +31,10 @@ jobs:
     name: apple-plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
     outputs:
       platform: ${{ steps.plan.outputs.platform }}
       conformance: ${{ steps.plan.outputs.conformance }}
@@ -48,6 +49,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           CONFORMANCE_ONLY: ${{ inputs.conformance_only || false }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 tools/ci/plan-apple-legs plan --event "$EVENT" --conformance-only "$CONFORMANCE_ONLY" >> "$GITHUB_OUTPUT"
 
   # spec §21.5: two parallel legs on the standard hosted image behind the required `apple-ci`
@@ -774,6 +776,14 @@ jobs:
         run: >-
           python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
           || echo "host-pressure record unavailable; see the summary line above"
+      - name: Upload host-pressure observations on every verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-host-pressure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-host-pressure.log
+          if-no-files-found: warn
+          retention-days: 14
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
       # the platform download and Keychain runs -- along with the JUnit directories
       # `verify-parity-evidence` consumes
@@ -868,9 +878,6 @@ jobs:
         run: python3 tools/test-measure-conformance-phase-gaps
       - name: Prove the host-pressure summary reports a known delta and refuses an empty record
         run: python3 tools/test-host-pressure
-      - name: Control the opt-in apsd experiment without a simulator
-        timeout-minutes: 1
-        run: python3 tools/test-apsd-experiment
       - name: Prove simulator isolation keeps the device OS=latest would pick and shuts down the rest
         run: python3 tools/test-isolate-simulator
       - name: Read toolchain pins
@@ -1980,6 +1987,14 @@ jobs:
         run: >-
           python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
           || echo "host-pressure record unavailable; see the summary line above"
+      - name: Upload host-pressure observations on every verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-host-pressure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-host-pressure.log
+          if-no-files-found: warn
+          retention-days: 14
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
       # the platform download and Keychain runs -- along with the JUnit directories
       # `verify-parity-evidence` consumes
@@ -2249,7 +2264,6 @@ jobs:
           DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
           DULCET_CONFORMANCE_DISPOSABLE: "true"
           DULCET_DEVICE: ${{ matrix.device }}
-          DULCET_APSD_EXPERIMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.apsd_experiment && 'true' || 'false' }}
           IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
         run: |
           set -o pipefail
@@ -2288,24 +2302,16 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
-          if [ "$DULCET_APSD_EXPERIMENT" = true ]; then
-            # Opt-in only. Three consecutive fresh-fixture browse comparisons run A/B/A,
-            # then the original full suite runs restored. Any arm failure fails this step.
-            tools/ci/apsd-experiment --device "$DULCET_DEVICE" --root "$ROOT/my-library-$DULCET_DEVICE" \
-              --music "$ROOT/music" --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
-              --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe"
+          if [ "$DULCET_DEVICE" = ipad ]; then
+            tools/ci/with-my-library-fixture --root "$ROOT/my-library-ipad" --music "$ROOT/music" \
+              --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+              --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
+              -- tools/ci/run-my-library-proofs ipad
           else
-            if [ "$DULCET_DEVICE" = ipad ]; then
-              tools/ci/with-my-library-fixture --root "$ROOT/my-library-ipad" --music "$ROOT/music" \
-                --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
-                --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
-                -- tools/ci/run-my-library-proofs ipad
-            else
-              tools/ci/with-my-library-fixture --root "$ROOT/my-library-iphone" --music "$ROOT/music" \
-                --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
-                --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
-                -- tools/ci/run-my-library-proofs iphone
-            fi
+            tools/ci/with-my-library-fixture --root "$ROOT/my-library-iphone" --music "$ROOT/music" \
+              --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+              --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
+              -- tools/ci/run-my-library-proofs iphone
           fi
           if [ "$DULCET_DEVICE" = ipad ]; then
           # ---- iPadOS playback + scrobble evidence -------------------------------------------
@@ -2719,10 +2725,6 @@ jobs:
           # no library count, so the skip probe's albums do not disturb it.
           tools/ci/run-lyrics-quality-proofs iphone-quality
           fi
-      - name: Restore the experiment's exact simulator apsd launch
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.apsd_experiment }}
-        timeout-minutes: 1
-        run: python3 tools/ci/apsd-experiment --restore "$RUNNER_TEMP/dulcet-apsd-experiment/restore.json"
       # The required `apple-ci` job resolves FEATURES.yml evidence from these directories on another
       # machine, so every JUnit directory this job wrote travels as one artifact named per job and
       # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
@@ -2747,16 +2749,12 @@ jobs:
         run: >-
           python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
           || echo "host-pressure record unavailable; see the summary line above"
-      - name: Upload apsd experiment evidence on every verdict
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.apsd_experiment }}
+      - name: Upload host-pressure observations on every verdict
+        if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dulcet-apsd-experiment-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/dulcet-apsd-experiment
-            ${{ runner.temp }}/dulcet-host-pressure.log
-            ${{ runner.temp }}/dulcet-${{ matrix.device }}-my-library.log
-            ${{ runner.temp }}/dulcet-${{ matrix.device }}-my-library.xcresult
+          name: dulcet-host-pressure-${{ github.job }}-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-host-pressure.log
           if-no-files-found: warn
           retention-days: 14
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
@@ -2847,15 +2845,15 @@ jobs:
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_CORE_RESULT"
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
           echo "APPLE CI LEGS PASS apple-platform=$APPLE_PLATFORM_RESULT apple-conformance-core=$APPLE_CONFORMANCE_CORE_RESULT apple-conformance-ipad-iphone=$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
-      # Evidence is resolved only on a run that planned every leg: push to main, a plain dispatch,
-      # and so before any release (release.yml requires this run green on the commit it ships). A
-      # pull request runs no conformance job, so its FEATURES.yml citations are resolved after merge.
+      # Evidence is resolved only on a run that planned every leg: an unproven main push or a plain
+      # full dispatch, including the full dispatch required before release. Reused PR proof does
+      # not resolve FEATURES.yml citations across separate runs.
       - name: Report whether this run resolves evidence
         run: |
           if [ "$RUN_APPLE_PLATFORM" = true ] && [ "$RUN_APPLE_CONFORMANCE" = true ]; then
-            echo "APPLE CI EVIDENCE resolved on this run"
+            echo "APPLE CI EVIDENCE resolution required below on this full run" | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            echo "APPLE CI EVIDENCE not resolved on this run: platform=$RUN_APPLE_PLATFORM conformance=$RUN_APPLE_CONFORMANCE (resolved on main and before any release)"
+            echo "APPLE CI EVIDENCE not resolved on this run: platform=$RUN_APPLE_PLATFORM conformance=$RUN_APPLE_CONFORMANCE (requires a full run, including the release's plain full dispatch)" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
       # Each download names the attempt that PRODUCED the artifact, read from that leg's `attempt`
       # output -- never this job's own `github.run_attempt`. Re-running failed jobs re-runs the

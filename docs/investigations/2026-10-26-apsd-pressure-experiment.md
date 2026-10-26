@@ -1,157 +1,163 @@
-# Simulator apsd pressure experiment, Refs #343
+# apsd experiment result and retained CPU attribution, Refs #343
 
-**OBSERVED:** retained iPhone job [121330195594](https://github.com/legitimate-apps/dulcet/actions/runs/40246865463/job/121330195594)
-and iPad job [121287620055](https://github.com/legitimate-apps/dulcet/actions/runs/40232687092/job/121287620055)
-contain simulator APNs client-identity failure loops. Their exported simulator archives contain
-2,627,454 and 1,518,716 `apsd` events respectively (`log stats --archive ... --count 15`).
-The host CoreSimulator logs report MobileActivation API denial with code -25. The existing
-`HOST PRESSURE CPU phase=...` lines merge processes with the same basename. They cannot tell
-which `diagnosticd` incurred the CPU cost, or establish that stopping this producer helps XCTest.
+**OBSERVED:** [run 40261216579](https://github.com/legitimate-apps/dulcet/actions/runs/40261216579)
+ran head `0bc8771c` with `conformance_only=true` and `apsd_experiment=true`. Both device jobs
+failed before any intervention or test. The core conformance job passed. Both device results
+land in the original interpretation table's **inconclusive** row, not the row that rejects apsd
+as the driver. No permanent or proof-time quiescence is justified by this run.
 
-**ASSUMED, to test:** the identity loop generates enough log work to consume a material share of
-the small hosted VM, and removing that work frees time for accessibility queries. This branch
-adds a measurement and an opt-in experiment. It is not a starvation fix.
+**OBSERVED recommendation implemented in #395:** retain per-PID CPU attribution and upload its
+raw record on every verdict. Remove the experiment input, workflow invocation/cleanup,
+suspension tool, experimental test entry point and experiment-only control from the merge
+candidate. Required proofs have their normal behavior. A separate experimental ref is provided
+below for a corrected comparison; it is not intended for merge.
 
-## One scheduled dispatch
+## What failed on each device
 
-Run after hosted macOS capacity is available:
+**OBSERVED source:** device job logs fetched with
+`ghx api repos/legitimate-apps/dulcet/actions/jobs/<job-id>/logs`, and artifacts downloaded with
+`ghx run download 40261216579 --repo legitimate-apps/dulcet`.
+
+| Observation | iPhone | iPad |
+|---|---|---|
+| Job | [121373856471](https://github.com/legitimate-apps/dulcet/actions/runs/40261216579/job/121373856471) | [121373856508](https://github.com/legitimate-apps/dulcet/actions/runs/40261216579/job/121373856508) |
+| Guard failure, UTC | 03:03:48.795 | 02:59:52.873 |
+| Job log line of error | 8401 | 8410 |
+| Completed idle windows | 0 | 0 |
+| Completed A/B/A proof arms | 0 | 0 |
+| Experiment result bundles | 0 | 0 |
+| apsd persisted event rate | unavailable | unavailable |
+| Accessibility query durations | unavailable | unavailable |
+| Raw sampler samples | 112 | 72 |
+| Sampler errors | 1 TimeoutExpired | 1 TimeoutExpired |
+
+**OBSERVED:** both errors are `apsd PID does not have the selected runtime executable`.
+The guard expected the selected runtime's `usr/libexec/apsd`. The actual process executable in
+both raw records was:
+
+```text
+/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/ApplePushService.framework/apsd
+```
+
+**OBSERVED:** the guard rejected the PID before saving a target or reaching `set_suspended`.
+There was no STOP/CONT operation, idle window, warm-up, test arm or full My Library execution
+in either device job. Cleanup records have `suspended: null`; the always-run restore steps
+succeeded because no suspension state existed. Missing query durations are not zero-duration
+queries. The failure is a harness defect, not an application failure or evidence that stopping
+apsd helps or harms the proof.
+
+**OBSERVED implementation error:** the original guard and its offline control shared the same
+incorrect `usr/libexec/apsd` path assumption. The control established the guard's implementation,
+not that path's validity on this runtime. The guard did not retain the selected launchctl PID
+or its expected root, so an additional lookup race cannot be excluded. The corrected experimental ref tests the framework
+path actually retained by this run and logs expected/observed target details before signaling.
+
+**ASSUMED, still unresolved:** earlier retained archives' identity-failure loop might drive
+logging work and starvation. This run measures apsd CPU but collects no loop event rate and
+performs no intervention. It therefore neither supports nor refutes that causal chain, and
+says nothing about the safety of running the browse proof with apsd suspended.
+
+## Why the attribution is worth retaining
+
+**OBSERVED:** per-PID executable paths distinguish simulator diagnosticd from host diagnosticd.
+The following are cumulative own user+system CPU deltas over a common interval in which all
+listed identities were observed, using the raw `cpuProcesses` and `cpuObservedMillis` fields.
+They are not the old peak percent-CPU snapshots, nor costs during a My Library test.
+
+| Common observation window, UTC | iPhone | iPad |
+|---|---:|---:|
+| Start | 03:00:35.251 | 02:57:22.408 |
+| End | 03:04:08.068 | 02:59:58.982 |
+| Observed seconds | 212.817 | 156.574 |
+| Simulator diagnosticd CPU-seconds | 67.56 (PID 15364) | 34.50 (PID 9485) |
+| Host diagnosticd CPU-seconds | 38.78 (PID 15370) | 20.97 (PID 9487) |
+| Simulator apsd CPU-seconds | 26.36 (PID 15380) | 7.41 (PID 9488) |
+| Simulator logd CPU-seconds | 2.45 (PID 15316) | 1.54 (PID 9442) |
+| Host logd CPU-seconds | 0.47 (PID 86) | 0.28 (PID 86) |
+
+**OBSERVED paths:** host daemons are `/usr/libexec/diagnosticd` and `/usr/libexec/logd`.
+Simulator diagnosticd/logd paths are the runtime root above followed by
+`usr/libexec/diagnosticd` and `usr/libexec/logd`. The complete path, PID and launch identity are
+kept in each raw record and CPU-TIME summary row. No listed identity had a CPU reset in these
+common windows; each daemon's observed coverage equals the table's interval.
+
+**OBSERVED distinction:** basename aggregation hid both diagnosticd processes and their
+separate cumulative costs. The simulator instance consumed more CPU than the host instance
+on each VM in these windows. **ASSUMED:** either instance's work could matter to starvation;
+these costs alone do not identify the live consumer, the messages causing its work or the
+bottleneck for accessibility. No XCTest comparison ran. Even the recorded job load peaks
+cannot bridge that missing intervention.
+
+**OBSERVED retained implementation:** `host-pressure` records cumulative own CPU, PID, launch
+identity, parent PID, state and untruncated executable per sample and at phase boundaries.
+`stop` adds a closing CPU snapshot. Existing HOST PRESSURE, TOP, CPU and STACK line formats
+remain intact. New `HOST PRESSURE CPU-TIME {json}` records carry `cpuLowerBoundSeconds`,
+`observedSeconds`, interval/reset counts and boundary presence. A new always-run upload keeps
+`dulcet-host-pressure.log` for passing and failing platform/core/device jobs.
+
+**OBSERVED limits:** processes born and exited between readings are invisible; unsampled
+initial/final CPU is excluded. Launch identity has `ps lstart` precision. Missing coverage,
+reused identities and reset counters cannot establish quiet. Normalize cost by the reported
+observed seconds and inspect paths. Load1 is delayed and the existing peak remains a peak.
+The common windows above cross boot and failure-reporting phases, not an accessibility phase.
+
+To reproduce the table after downloading each `dulcet-apsd-experiment-<device>-40261216579-1`
+artifact, apply this from the repository root with `PRESSURE` pointing at its raw log:
+
+```sh
+PRESSURE=evidence/dulcet-host-pressure.log python3 - <<'PY'
+import json, os, runpy
+m = runpy.run_path('tools/ci/host-pressure')
+r = [json.loads(line) for line in open(os.environ['PRESSURE']) if line.strip()]
+s = [x for x in r if x.get('cpuProcesses')]
+key = lambda p: (p['pid'], p['started'], p['executable'])
+names = {'diagnosticd', 'apsd', 'logd'}
+ids = {key(p) for p in s[-1]['cpuProcesses'] if p['name'] in names}
+i = next(i for i, x in enumerate(s) if ids <= {key(p) for p in x['cpuProcesses']})
+print(s[i]['cpuObservedMillis'], s[-1]['cpuObservedMillis'])
+for p in m['cpu_deltas'](s[i:]):
+    if key(p) in ids:
+        print(p['pid'], p['cpuLowerBoundSeconds'], p['observedSeconds'], p['executable'])
+PY
+```
+
+## A follow-up that can answer the missing questions
+
+**OBSERVED scope:** the merge candidate contains no apsd suspension or experiment switch.
+The separate ref `ci/apsd-pressure-rerun-343` retains the explicit opt-in A/B/A protocol,
+corrects the guard to the observed runtime framework executable and emits target-check
+witnesses before any signal. It retains exact PID/start/path checks, single-device isolation,
+restoration and fresh fixtures. Its control includes the observed framework path, a host path,
+a different runtime path and a wrong PID. The repeated browse method and required full suite
+share the main branch's current device allowance; the experiment does not increase it.
+
+**ASSUMED next test:** the corrected path must pass the new target witness before this run
+can answer either causal question. Schedule this only after hosted capacity is free:
 
 ```sh
 ghx workflow run apple-ci.yml --repo legitimate-apps/dulcet \
-  --ref ci/diagnosticd-pressure-343 \
+  --ref ci/apsd-pressure-rerun-343 \
   -f conformance_only=true -f apsd_experiment=true
 ```
 
-The default is `apsd_experiment=false`. Only an explicitly opted-in `workflow_dispatch` enables
-it, in each iPhone/iPad device job. The core conformance leg runs normally. No additional jobs,
-simulator boots between arms, test retries, changed assertions or larger test allowances are
-introduced. Existing job/step deadlines remain in force; exhaustion is an incomplete experiment.
+**ASSUMED interpretation:** running/suspended/restored idle windows would first establish
+whether the loop reproduces and whether suppression lowers apsd and diagnosticd/logd CPU.
+Consecutive fresh-fixture browse A/B/A arms would then compare exact query activities and
+first automation offsets without interposing the rest of the suite. The original full suite
+runs restored afterward; no pass replaces a failure, and comparison bundles supply no parity
+evidence. Offline log replay occurs after idle measurements, without a new live consumer.
 
-Each device job does this on its own VM:
+- **ASSUMED support criterion:** B suppresses the loop and daemon cost, host CPU/paging improves,
+  matched query durations shorten and A2 reverses the change. That supports a contribution on
+  these VMs, not a permanent quiesce or a flake-rate claim.
+- **ASSUMED negative criterion:** valid suppression leaves host pressure and starved queries
+  unchanged. That argues against apsd driving those stalls. CPU relief without query relief
+  identifies work without establishing it as the bottleneck.
+- **ASSUMED inconclusive criterion:** no reproduced loop/starved queries, invalid identity or
+  restoration, missing coverage, timeout, different assertion path, or monotone improvement
+  through A2. Natural decay/caching and the extra pre-proof time remain confounds.
 
-1. Boot only its selected device and require stable service counts. Before warm-up or any
-   accessibility test, select `com.apple.apsd` through that device's `launchctl list`.
-2. Require that PID's executable to equal the selected `SIMULATOR_ROOT/usr/libexec/apsd`,
-   that exactly the selected device is booted, and that the process is not already stopped.
-   Keep PID, launch time and full executable path. Never target the host launchd or host apsd.
-3. Measure equal idle windows A1/B/A2, each nominally 60 seconds: running, `SIGSTOP`, `SIGCONT`.
-   Record actual window lengths, CPU snapshots, paging, swap, load and state witnesses. There
-   is no quiet-window selection within this sequence. Transitions and collection have separate
-   phase markers. After all three windows, replay each bounded interval with device-scoped
-   `log show --info --debug --loss`, not `log stream`. Collection work cannot contaminate the
-   measured idle windows. A zero in a running arm fails the positive log control, rather than
-   establishing quiet. The comparison still runs so the CPU and XCTest evidence is retained;
-   the overall experimental verdict fails when measurement controls are invalid.
-4. Run the existing in-memory connect-screen warm-up and pressure admission. Then run the
-   unchanged `testBrowseAddRemoveRelaunchAndOfflineReplay` consecutively in A1/B/A2, each
-   against a fresh Dulcet Server/proxy fixture, with a new test account UUID. Only B has apsd
-   suspended. The test selector, test allowance, app, simulator and Xcode invocation options
-   are shared across these three comparisons. There is no extra admission selection between
-   them. Each finite comparison command has a 900-second outer cleanup bound; a bound expiry
-   aborts the comparison and restores apsd, rather than running another test beside an orphan.
-5. With apsd restored, run the original full My Library suite against a fourth fresh fixture,
-   including its original warm-up and pressure prerequisite. Its normal bundle and JUnit
-   paths supply required parity evidence. Comparison bundles never supply parity evidence.
-   Any failed comparison or required suite makes the step fail. A later pass never replaces
-   an earlier failure. Later playback, scrobble, lyrics and other conformance proofs run only
-   after restoration.
-6. Restore the exact launch in `finally`, including SIGINT/SIGTERM, and in a separate always-run
-   CI cleanup step. Persist suspension intent before STOP. Missing/reused identities are never
-   signaled; a process replacement invalidates the comparison. No launchd disable state,
-   runtime file, application setting or production configuration changes. A forcibly destroyed
-   runner may not execute cleanup; subsequent proofs cannot proceed past its failed step.
-
-**ASSUMED:** suspension of this daemon is tolerable for the isolated browse comparison. Even
-without explicit app dependencies, simulator clients may wait for apsd. This experiment observes
-that behavior rather than assuming a suspended daemon is safe as a permanent CI configuration.
-
-## Measurement and artifacts
-
-**OBSERVED in the implementation:** `host-pressure` now records unaggregated `ps` own user+system
-cumulative CPU time, PID, start identity, parent PID, state and untruncated executable on every
-sample and at phase boundaries. `stop` closes the last phase with a final CPU snapshot. Existing
-`HOST PRESSURE`, `TOP`, `CPU` and `STACK` lines keep their formats and meaning. New
-`HOST PRESSURE CPU-TIME {json}` records give each identity's `cpuLowerBoundSeconds`,
-`observedSeconds`, interval/reset counts and presence at both boundaries. Same-named host and
-runtime processes remain separate, including diagnosticd, logd, apsd and XCTest helpers.
-
-These are lower bounds, not an exact ledger of all CPU: a process born and exited between reads
-is invisible, initial/final unsampled lifetime CPU is excluded, and a reset is a gap. Launch time
-has the precision reported by `ps lstart`. Normalize daemon cost by its observed seconds and
-inspect missing coverage. Compare full executable paths, not basenames or lifetime totals.
-Kernel paging counters and load retain their existing cumulative/peak semantics. Load1 lags
-changes, so examine interval CPU and paging alongside its trajectory; do not infer an effect
-from a peak moving to a different phase.
-
-The always-uploaded `dulcet-apsd-experiment-<device>-<run>-<attempt>` artifact includes:
-
-- `experiment.jsonl`: target identity, transitions, actual window lengths, persisted log counts,
-  certificate-abort/identity message counts, arm exits and measurement validity.
-- `idle-<arm>.json`: full readings and CPU deltas for every observed identity, with the paths.
-- `idle-<arm>-apsd.ndjson` and replay stderr: bounded offline messages and reported losses.
-- `<arm>/my-library.xcresult`, `<arm>/my-library.log`: all comparison evidence, on any verdict.
-- `<arm>/browse-activities-legacy.json` and `browse-metrics.json`: exact XCTest activity start
-  and finish times, first automation offset for that method, its duration/status and query
-  durations. Activities are nested; do not sum their durations. Missing exports are explicit.
-- The raw host-pressure record and original full My Library log/bundle, including on success.
-
-Persisted log rates are a subset of emitted traffic. Info/debug retention and loss can differ
-between arms. Replay CLI bounds round outward to whole seconds; event timestamps are filtered back to the
-recorded millisecond window. Unparseable target timestamps invalidate that rate. Zero matching
-loss records does not
-prove no logging was lost. Inspect both running-arm positive controls before interpreting B.
-
-**OBSERVED offline validation:** applying `activity_metrics` to the retained iPhone result
-bundle from job 121330195594 yields a 252.678638-second failed browse test and its slowest query
-at 19.255 seconds. That distinguishes the query itself from its enclosing 20-second wait. Its
-first automation offset for this method is 4.379 seconds; the whole suite's first automation is
-a separate observation in the original full log. The dispatch will preserve the same data for
-all three comparison arms.
-
-## Dependencies and proof meaning
-
-**OBSERVED source audit:** searching Apple sources/configuration for `registerForRemote`,
-`aps-environment`, `remote-notification`, `CloudKit`, `CKContainer`, `NSUbiquitous` and `iCloud`
-finds no registration, entitlement or integration. The browse method uses loopback REST,
-production membership/download/offline playback, relaunch and accessibility assertions
-(`apple/DulcetMyLibraryUITestSupport/DulcetMyLibraryUITests.swift`). Its fixture selects the
-**Threshold Boundary** album, not the **UI Playback Canary** used by later scrobble proofs.
-Each fixture root is created without reuse (`tools/ci/with-my-library-fixture`).
-
-**OBSERVED:** `DulcetSystemMediaControls.swift` uses `MPRemoteCommandCenter`. Apple describes
-[that API](https://developer.apple.com/documentation/mediaplayer/mpremotecommandcenter) as handling
-media remote-control events. Apple separately documents [APNs registration and its push
-entitlement](https://developer.apple.com/documentation/usernotifications/registering-your-app-with-apns).
-**ASSUMED:** these local media controls do not need apsd for this browse flow. The suspended
-comparison retains its actual offline playback and all assertions; it would fail if suspension
-breaks a dependency. The full required suite and subsequent media-control proofs run restored.
-This audit supports a bounded experiment, not a claim that all simulator services are independent
-of apsd or a decision to disable it for every proof.
-
-## Reading the result
-
-- **Supports the proposed chain:** running idle arms reproduce the identity loop; B suppresses
-  its event rate and apsd CPU; diagnosticd/logd and host CPU/paging costs fall below both running
-  arms and rebound on restoration. In consecutive browse comparisons, the same query activities
-  and automation setup shorten in B and worsen again in A2, with matching CPU relief and no
-  assertion change. This would support a causal contribution on these VMs, not estimate the
-  flake rate or justify a permanent fix by itself.
-- **Producer is real, but not the starvation cause in this run:** the B manipulation is valid
-  and apsd traffic/cost drops, but diagnosticd/host pressure or starved query durations do not.
-  If diagnosticd cost falls but queries stay slow, the logging work contributes CPU without
-  evidence it is the bottleneck for this proof. Investigate other measured processes.
-- **Favors ordinary decay/caching:** A1 to B to A2 improves monotonically, with no restoration
-  rebound. Attribute no fix to apsd on that evidence. A2's later position deliberately gives
-  decay/caching a chance to outperform B. The first measurement windows also add post-boot
-  idle time; a passing required suite can result from that delay alone.
-- **Inconclusive:** no running-arm loop, no starved queries, missing log/CPU coverage, replaced
-  daemon, failed restoration, test not executed, timeout, or changed query path after a failed
-  assertion. Report that limitation. Successful execution of different assertions is not a
-  matched query comparison. One A/B/A pair can still coincide with an unrelated background
-  burst, so inspect aligned timestamps and each device independently.
-
-Local validation commands are `tools/test-host-pressure`, `python3 tools/test-apsd-experiment`,
-`python3 tools/verify_ci_policy.py`, `python3 tools/parity_gate.py` and
-`python3 tools/test-plan-apple-legs`. The new controls use mocks and one owned disposable host
-`sleep` process; they do not boot or drive an iOS simulator. Only the scheduled hosted dispatch
-can validate the daemon manipulation and its effect on real accessibility queries.
+**OBSERVED merge recommendation:** merge only the attribution improvement after required CI;
+keep any further intervention on the experimental ref. This failed experiment supplies no
+basis for permanent quiescence. A quiet pressure gate or a passing restored suite alone must
+not be described as an apsd fix.

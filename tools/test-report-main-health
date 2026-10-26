@@ -177,6 +177,20 @@ class MainHealthControls(unittest.TestCase):
         self.assertLess(api.calls.index(comments[0]), branch_read_indices[-1])
         self.assertLess(branch_read_indices[-1], api.calls.index(closes[0]))
 
+    def test_proven_tree_push_with_skipped_macos_legs_closes_on_required_contexts(self) -> None:
+        checks = green_checks() + [
+            check_run(name, "skipped", 300 + index)
+            for index, name in enumerate(("apple-platform", "apple-conformance-core",
+                                           "apple-conformance-${{ matrix.device }}"))
+        ]
+        api = FakeGitHub(checks, current_heads=[SHA, SHA])
+        invoke(FULL, api)
+        self.assertEqual(len([call for call in api.calls if call[0] == "PATCH"]), 1)
+        comment = next(call[2]["body"] for call in api.calls
+                       if call[0] == "POST" and call[1].endswith("/comments"))
+        self.assertIn("apple-ci", comment)
+        self.assertNotIn("apple-platform", comment)
+
     def test_missing_required_check_context_cannot_close_even_when_workflow_succeeds(self) -> None:
         checks = [item for item in green_checks() if item["name"] != "parity-gate"]
         api = FakeGitHub(checks)

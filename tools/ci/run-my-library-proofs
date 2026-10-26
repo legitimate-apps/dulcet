@@ -6,34 +6,6 @@ set -euo pipefail
 mode="${1:?macos|tvos|iphone|ipad}"
 case "$mode" in macos|tvos|iphone|ipad) ;; *) exit 2 ;; esac
 
-# The opt-in apsd experiment repeats one existing method in separate result bundles. These
-# are predeclared comparisons, never replacements for the original full-suite verdict.
-device_test_allowance=300
-if [ -n "${DULCET_APSD_PROBE_ARM:-}" ]; then
-    case "$mode:${DULCET_APSD_PROBE_ARM}" in iphone:a1|iphone:b|iphone:a2|ipad:a1|ipad:b|ipad:a2) ;; *) exit 2 ;; esac
-    : "${DULCET_APSD_PROBE_UDID:?}" "${DULCET_APSD_PROBE_OUTPUT:?}"
-    if [ "$mode" = iphone ]; then
-        probe_derived="$RUNNER_TEMP/DulcetiOSDerivedData"
-    else
-        probe_derived="$RUNNER_TEMP/DulcetiPadOSDerivedData"
-    fi
-    # No admission wait between comparison arms: that would select different load windows.
-    # The experiment has already warmed/settled this exact device. No assertion changes.
-    xcodebuild test-without-building \
-        -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
-        -destination "platform=iOS Simulator,id=$DULCET_APSD_PROBE_UDID" \
-        -derivedDataPath "$probe_derived" \
-        -resultBundlePath "$DULCET_APSD_PROBE_OUTPUT/my-library.xcresult" \
-        -parallel-testing-enabled NO \
-        -test-timeouts-enabled YES -default-test-execution-time-allowance "$device_test_allowance" -maximum-test-execution-time-allowance "$device_test_allowance" \
-        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
-        2>&1 | tee "$DULCET_APSD_PROBE_OUTPUT/my-library.log"
-    python3 tools/verify-xcode-test-execution \
-        "$DULCET_APSD_PROBE_OUTPUT/my-library.xcresult" DulcetiOSUITests.DulcetMyLibraryUITests \
-        testBrowseAddRemoveRelaunchAndOfflineReplay
-    exit 0
-fi
-
 if [ "$mode" = macos ]; then
     xcodebuild test \
         -project apple/Dulcet.xcodeproj -scheme DulcetMac -configuration Debug \
@@ -100,13 +72,16 @@ if [ "$mode" = iphone ]; then
     # renewed pressure on first launch in 40153793474. No production account/library is opened.
     python3 tools/ci/isolate-simulator --phase my-library-iphone --keep-name "iPhone 17 Pro" --settle --require-settle --settle-pressure --require-isolation \
         --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
+    # 600 s per test on iPhone and iPad (docs/TRAPS.md 56): after admission, one accessibility query
+    # can still take 17-30 s, and the browse/relaunch/offline test was cut off at 300 s while it was
+    # still progressing (40232687092). The allowance remains a hang guard, not a retry.
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
         -destination "platform=iOS Simulator,name=iPhone 17 Pro,OS=latest" \
         -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
         -parallel-testing-enabled NO \
-        -test-timeouts-enabled YES -default-test-execution-time-allowance "$device_test_allowance" -maximum-test-execution-time-allowance "$device_test_allowance" \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
@@ -139,13 +114,16 @@ if [ "$mode" = ipad ]; then
         echo "Booted iPad destination changed: expected=$IPAD_UDID resolved=$confirmed_ipad" >&2
         exit 1
     fi
+    # 600 s per test on iPhone and iPad (docs/TRAPS.md 56): after admission, one accessibility query
+    # can still take 17-30 s, and the browse/relaunch/offline test was cut off at 300 s while it was
+    # still progressing (40232687092). The allowance remains a hang guard, not a retry.
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
         -destination "platform=iOS Simulator,id=${IPAD_UDID:?}" \
         -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
         -parallel-testing-enabled NO \
-        -test-timeouts-enabled YES -default-test-execution-time-allowance "$device_test_allowance" -maximum-test-execution-time-allowance "$device_test_allowance" \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \

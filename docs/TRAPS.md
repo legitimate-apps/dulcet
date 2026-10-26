@@ -563,14 +563,26 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     device evidence above remains valid; it has no completed core result. Wait for the whole
     first run when collecting multiple complete comparisons on one branch.
 
-    **Opt-in measurement, Refs #343:** `apple-ci` dispatch input `apsd_experiment=true` adds
-    simulator-scoped running/suspended/restored CPU and persisted-log windows before warm-up,
-    followed by three separate, consecutive browse-method comparisons against fresh fixtures.
-    Only the middle comparison suspends apsd. These are predeclared experimental repetitions,
-    excluded from parity evidence; no pass replaces any failure. The original full My Library
-    suite then runs restored with its original admission, assertions and allowance. This is
-    an explicit exception to the absence of repetitions above, not a retry mechanism or a fix.
-    Extra post-boot time can itself reduce pressure, so neither a quiet gate nor a passing full
-    suite attributes an improvement to apsd. Require aligned CPU/query evidence and restoration
-    controls. The default remains off. Protocol, dependency audit, coverage limits and negative
-    interpretations: [apsd experiment](investigations/2026-10-26-apsd-pressure-experiment.md).
+    **OBSERVED after #391 merged (2026-10-25 UTC); the device allowance is now 600 seconds.** With
+    admission and warm-up in place, the browse/relaunch/offline test still exhausted its
+    300-second allowance on both devices of dispatch [40232687092](https://github.com/legitimate-apps/dulcet/actions/runs/40232687092)
+    (iPhone job 121287619992, iPad job 121287620055), as it had on iPad in 40202061025. In the
+    iPhone case XCTest was still issuing a step about once a second when the allowance fired,
+    during the check after relaunch. Two single existence checks earlier in the test took 17.6
+    and 29.5 seconds. That is a slow test on a starved host, not a hang. The 30 passes of this
+    test in the retained device logs took 138.7 to 265.2 seconds, plus one at 379.8. The iPhone
+    and iPad My Library proofs now allow 600 seconds per test, which still fails a test that
+    stops making progress. macOS and tvOS keep 300. No proof is retried, and the admission gate
+    is unchanged.
+
+    **OBSERVED in [run 40261216579](https://github.com/legitimate-apps/dulcet/actions/runs/40261216579),
+    Refs #343:** an apsd A/B/A experiment aborted on both devices before any measurement window
+    or test arm. Its guard expected `RuntimeRoot/usr/libexec/apsd`; the retained process path
+    instead ends in `RuntimeRoot/System/Library/PrivateFrameworks/ApplePushService.framework/apsd`.
+    No suspension or accessibility comparison occurred. This is inconclusive, not evidence for
+    or against apsd causing starvation. The merge candidate removes the experiment and retains
+    per-PID/start/executable CPU-time deltas and raw records on every verdict. On common observed
+    intervals, simulator/host diagnosticd consumed 67.56/38.78 CPU-seconds over 212.817 seconds
+    (iPhone) and 34.50/20.97 over 156.574 seconds (iPad). These distinguish actual cumulative
+    costs hidden by basename peak summaries; they do not name the consumer or establish cause.
+    Protocol, coverage and result: [apsd investigation](investigations/2026-10-26-apsd-pressure-experiment.md).

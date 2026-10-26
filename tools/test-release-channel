@@ -128,6 +128,17 @@ full = green + [{"name": name, "conclusion": "success", "app": "github-actions",
 expect("passed" in plan.full_run_gate("true", "false", full, required), "a full green run passes")
 passed += 1
 expect("passed" in plan.full_run_gate("false", "false", full, required), "a dry run is gated too")
+# A successful push aggregator with every macOS leg planned out is health, not release proof.
+skipped_push = [dict(run, conclusion="skipped") if run["name"] in plan.FULL_RUN_JOBS else run
+                for run in full]
+for upload in ("true", "false"):
+    refused(lambda: plan.full_run_gate(upload, "false", skipped_push, required),
+            "apple-platform=skipped", "a proven-tree skipped main push cannot qualify for release")
+new_push = [dict(run, id=run["id"] + 100, check_suite_id=2)
+            for run in skipped_push if run["name"].startswith("apple-")]
+for runs in (full + new_push, new_push + full):
+    refused(lambda: plan.full_run_gate("true", "false", runs, required),
+            "apple-platform=skipped", "older full dispatch cannot fill in a skipped main push")
 conformance_only = [dict(run, conclusion="skipped") if run["name"] == "apple-platform" else run
                     for run in full]
 for upload in ("true", "false"):
