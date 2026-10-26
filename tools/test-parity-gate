@@ -1347,6 +1347,9 @@ passing_cases = """\
 # The fixed passing-report fixture includes each newly cited platform alias explicitly;
 # never derive these cases from FEATURES, which could make a bad citation prove itself.
 for alias, methods in (
+    ("DulcetMacPlaybackSystemLiveTests", (
+        "testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay",
+    )),
     ("DulcetKitTests", (
         "serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged",
         "learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt",
@@ -1412,6 +1415,20 @@ with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory
         raise AssertionError(f"executed passing evidence rejected: {result.stdout}")
 
 execution_rejections = {
+    "durationless Mac playback observation did not execute": (
+        passing_report.replace(
+            'name="testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay"',
+            'name="unrelatedPlaybackTest"',
+        ),
+        "evidence test did not execute",
+    ),
+    "durationless Mac playback observation failed": (
+        passing_report.replace(
+            'name="testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay" time="0.1" />',
+            'name="testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay" time="0.1"><failure /></testcase>',
+        ),
+        "evidence test did not pass",
+    ),
     "offline settings observation did not execute": (
         passing_report.replace(
             'name="testOfflineMusicSettingsPersistAcrossRelaunch"',
