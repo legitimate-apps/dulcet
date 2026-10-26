@@ -471,7 +471,7 @@ enum DulcetStrings {
     // MARK: The library reader (§16.14, §16.15). Words the person sees are "Available offline",
     // "Downloaded" and "Not available offline"; never "cached" or "sync".
 
-    static let readerUntitled = text("reader.untitled", "Unknown")
+    static let readerUntitled = text("reader.untitled", "Untitled")
     /// Where a track's length would read had the server stated it: it never did (§16.11).
     static let readerTrackDurationUnknown = text("reader.track.durationUnknown", "\u{2013}")
     static let readerHome = text("reader.section.home", "Home")

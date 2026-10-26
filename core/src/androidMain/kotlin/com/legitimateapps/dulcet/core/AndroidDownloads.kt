@@ -309,7 +309,7 @@ public class AndroidDownloadController internal constructor(
      * metadata pinned against seen-cache eviction (§16.13), before any file exists: the pin's track
      * row exists from then on, as an identity alone until its metadata is read. A track the library
      * never read — asked for by its id alone — has its metadata read with `getSong` when its task
-     * runs, before the transfer, so every downloaded track has a title to show offline. It returns once
+     * runs, before the transfer, to keep metadata for offline display. It returns once
      * scheduling has settled: the next download's task is started, or a wake is requested, whichever
      * scheduling pass made that decision.
      */
@@ -559,9 +559,9 @@ public class AndroidDownloadController internal constructor(
         if (!awaitReconciled()) return null
         return withContext(database) {
             if (closed || !engine.isMediaBindingCurrent() || engine.records(account.providerInstanceId).none { it.identity.rawId == rawId }) return@withContext null
-            val record = cache().track(rawId)?.record?.takeIf { it.title.isNotBlank() } ?: return@withContext null
+            val record = cache().track(rawId)?.record ?: return@withContext null
             AndroidTrack(account.providerInstanceId, rawId, record.title, record.credits.firstOrNull()?.name,
-                record.albumTitle, record.durationMilliseconds, record.artworkKey)
+                record.albumTitle, record.durationMilliseconds, record.artworkKey, albumRawId = record.albumRawId)
         }
     }
 

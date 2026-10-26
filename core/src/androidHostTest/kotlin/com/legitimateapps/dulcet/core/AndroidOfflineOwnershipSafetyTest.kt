@@ -54,6 +54,16 @@ class AndroidOfflineOwnershipSafetyTest {
 
     @Test fun clearCacheBetweenResolutionAndPrepareCannotRemoveTheSelectedPlaybackFile() = runBlocking {
         Fixture().use { f ->
+            // The production adapter now reads real cache metadata. Admit this positive playback
+            // fixture before exercising Clear Cache between local resolution and Prepare.
+            val metadata = f.newStore()
+            try {
+                val cache = SeenCacheStore(metadata, SeenCacheWallClock { 1_000L })
+                    .bind(CacheBinding(PROVIDER, f.account().normalizedBaseUrl, f.account().username))
+                cache.writeEntities(CacheWriteStamp(cache.issue(), 1_000L, null), CacheEntitySource.Detail,
+                    CacheEntities(tracks = listOf(CacheTrackRecord("song:opaque", "album:cached",
+                        "Local song", durationMilliseconds = 6_000, sourceContainer = AudioContainer.Wav))))
+            } finally { metadata.close() }
             val downloads = f.open()
             val local = f.cache(downloads)
             var clearsAtResolution = 0
@@ -61,7 +71,7 @@ class AndroidOfflineOwnershipSafetyTest {
             var selectedFileSurvivedClear = false
             val source = object : AndroidLocalPlaybackSource {
                 override fun isLocallyPlayable(rawId: String) = downloads.isLocallyPlayable(rawId)
-                override suspend fun localTrack(rawId: String) = AndroidTrack(PROVIDER, rawId, "Local song", null, null, 6_000, null)
+                override suspend fun localTrack(rawId: String) = downloads.localTrack(rawId)
                 override suspend fun localPlan(rawId: String): LocalPlaybackPlan? {
                     val plan = downloads.localPlan(rawId) ?: return null
                     downloads.clearStreamCache() // legacy controller uses this unleased path
@@ -99,6 +109,54 @@ class AndroidOfflineOwnershipSafetyTest {
                 downloads.clearStreamCache()
                 assertFalse(File(local.absolutePath).exists(), "Stop must release the attempt lease so cache can be cleared")
             } finally { player.close(); store.close() }
+        }
+    }
+
+    @Test fun downloadedSongKeepsItsRealCachedAlbumInTheQueueAndAfterRestore() = runBlocking {
+        Fixture().use { f ->
+            f.explicit("song:opaque")
+            val seed = f.newStore()
+            try {
+                val cache = SeenCacheStore(seed, SeenCacheWallClock { 1_000L })
+                    .bind(CacheBinding(PROVIDER, f.account().normalizedBaseUrl, f.account().username))
+                cache.writeEntities(CacheWriteStamp(cache.issue(), 1_000L, null), CacheEntitySource.Detail,
+                    CacheEntities(tracks = listOf(CacheTrackRecord("song:opaque", "album:downloaded",
+                        "Downloaded song", durationMilliseconds = 6_000, sourceContainer = AudioContainer.Wav))))
+            } finally { seed.close() }
+            val downloads = f.open()
+            val source = object : AndroidLocalPlaybackSource {
+                override fun isLocallyPlayable(rawId: String) = downloads.isLocallyPlayable(rawId)
+                override suspend fun localTrack(rawId: String) = downloads.localTrack(rawId)
+                override suspend fun localPlan(rawId: String) = downloads.localPlan(rawId)
+                override suspend fun acquireLocalPlan(rawId: String) = downloads.acquireLocalPlan(rawId)
+                override fun setProtectedRawIds(rawIds: Set<String>) = downloads.setProtectedRawIds(rawIds)
+            }
+            var preparations = 0
+            fun coldPlayer(store: DulcetDatabaseStore) = AndroidPlaybackController(f.context, f.account(),
+                AndroidPlaybackControllerBoundaries(store, PlayerProbe().player,
+                    { fail("downloaded playback must not prepare a remote plan") },
+                    { fail("downloaded playback must not read server metadata") }, null, {}, localPlans = source,
+                    prepareLocalSource = { preparations++ }))
+            val store = f.newStore()
+            val player = coldPlayer(store)
+            try {
+                player.setAutoplay(false)
+                player.playSong(PROVIDER, "song:opaque", "Selection without album metadata")
+                eventually { preparations == 1 }
+                val queued = PersistentQueueStore(store.database).load(ServerId(PROVIDER)).entries.single()
+                assertEquals("album:downloaded", queued.albumRawId, "The production download adapter must populate the durable row")
+                assertEquals(6_000L, queued.duration?.inWholeMilliseconds)
+            } finally { player.close() }
+
+            val reopened = f.newStore()
+            val restored = coldPlayer(reopened)
+            try {
+                eventually { preparations == 2 }
+                val entry = PersistentQueueStore(reopened.database).load(ServerId(PROVIDER)).entries.single()
+                assertEquals("album:downloaded", entry.albumRawId, "A new controller must restore the persisted album")
+                assertEquals(6_000L, entry.duration?.inWholeMilliseconds)
+                assertEquals("album:downloaded", restored.state.value.queue.single().track.albumRawId)
+            } finally { restored.close() }
         }
     }
 
@@ -144,13 +202,13 @@ class AndroidOfflineOwnershipSafetyTest {
             withTimeout(5_000) { while (!downloads.isLocallyPlayable("song:opaque")) delay(5) }
             return plan
         }
-        fun explicit(): LocalPlaybackPlan {
+        fun explicit(rawId: String = "explicit"): LocalPlaybackPlan {
             val store = newStore()
             try {
                 val engine = DownloadPolicyEngine(store.database, DownloadFileStore(root.path, okio.FileSystem.SYSTEM))
                 engine.bindMedia(DownloadMediaBinding(PROVIDER, "http://127.0.0.1:9", "alice"))
                 engine.reconcile(emptyList(), mapOf(PROVIDER to 1L))
-                val row = engine.enqueue(DownloadRequest(DownloadIdentity(PROVIDER, "explicit", "original"), AudioContainer.Wav,
+                val row = engine.enqueue(DownloadRequest(DownloadIdentity(PROVIDER, rawId, "original"), AudioContainer.Wav,
                     PlaybackContentLength.Exact(AUDIO.size.toLong()), DownloadServerSnapshot(null, null), 1, 1))
                 engine.writeCompletedTemporaryFile(row.downloadId, AUDIO)
                 assertIs<DownloadPromotionResult.Promoted>(engine.promote(row.downloadId,

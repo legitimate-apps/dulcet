@@ -210,6 +210,7 @@ public protocol DulcetPlaybackControlling: AnyObject {
     func setPresentationHandler(
         _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
     )
+    func setAuthenticationFailureHandler(_ handler: @escaping @MainActor () -> Void)
     func configure(account: DulcetPlaybackAccount)
     /// Called only after successful saved-credential authentication and durable media adoption.
     func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) -> Bool
@@ -230,6 +231,7 @@ public protocol DulcetPlaybackControlling: AnyObject {
 }
 
 public extension DulcetPlaybackControlling {
+    func setAuthenticationFailureHandler(_ handler: @escaping @MainActor () -> Void) {}
     func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) -> Bool { false }
     func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool { false }
     func configureOffline(account: DulcetPlaybackAccount) {}

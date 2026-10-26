@@ -32,6 +32,7 @@ public data class SearchResultItem(
     val sourceContainer: AudioContainer?,
     val mediaSourceId: String?,
     val artworkKey: String?,
+    val albumRawId: String? = null,
 )
 
 public data class SearchPageRequest(
@@ -733,6 +734,7 @@ private fun parseResults(
             sourceContainer = track.searchAudioContainer(),
             mediaSourceId = null,
             artworkKey = track.searchOptionalOpaqueId("coverArt"),
+            albumRawId = track.searchOptionalOpaqueId("albumId"),
         )
     }
     return ParsedSearchResults(

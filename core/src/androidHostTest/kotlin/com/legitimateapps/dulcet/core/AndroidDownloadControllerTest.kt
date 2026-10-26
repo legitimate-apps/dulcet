@@ -128,7 +128,7 @@ class AndroidDownloadControllerTest {
             // Offline: the network clients are closed and the server is gone.
             controller.closeNetworkAccess()
             server.close()
-            assertEquals(AndroidTrack(SERVER_ID, RAW_ID, TITLE, "Canary Artist", "Canary Album", 3_000, "cover:opaque"),
+            assertEquals(AndroidTrack(SERVER_ID, RAW_ID, TITLE, "Canary Artist", "Canary Album", 3_000, "cover:opaque", "album:opaque"),
                 controller.localTrack(RAW_ID))
             assertNull(controller.localTrack("song:never-downloaded"), "only a downloaded track is answered")
         }
@@ -363,15 +363,15 @@ class AndroidDownloadControllerTest {
 
     /**
      * The lookup is best effort (spec §16.13): a download needs only `stream`. A song with a blank
-     * title leaves the identity-only row; one with an empty `coverArt` and `albumId` keeps what reads.
+     * title keeps its duration for untitled playback; empty `coverArt` and `albumId` stay absent.
      * Each file downloads, once, either way.
      */
-    @Test fun aLookupTheStrictParserWouldRefuseNeverStopsTheDownload() = runBlocking {
+    @Test fun aBlankTitleLookupKeepsMetadataForUntitledOfflinePlayback() = runBlocking {
         val blank = "song:untagged"
         val sparse = "song:sparse-fields"
         WireServer(lookup = { request ->
             val id = request.query["id"].orEmpty().single()
-            val song = if (id == blank) """{"id":"$id","title":"","suffix":"wav"}"""
+            val song = if (id == blank) """{"id":"$id","title":"","duration":3,"suffix":"wav"}"""
                 else """{"id":"$id","title":"$TITLE","album":"","albumId":"","coverArt":"","artist":"Canary Artist","duration":3,"suffix":"wav"}"""
             WireReply(200, """{"subsonic-response":{"status":"ok","version":"1.16.1","song":$song}}""".toByteArray(),
                 contentType = "application/json")
@@ -386,8 +386,8 @@ class AndroidDownloadControllerTest {
             assertEquals(2, server.lookups.size, "each track's metadata was asked for once")
             assertEquals(2, server.requests.size, "and each file transferred once")
             assertEquals(listOf("complete", "complete"), rows().map { it.state })
-            assertEquals(1L, assertNotNull(track(blank)).metadata_missing, "a blank title leaves the placeholder")
-            assertNull(controller.localTrack(blank))
+            assertEquals(0L, assertNotNull(track(blank)).metadata_missing, "a blank title is known metadata")
+            assertEquals(AndroidTrack(SERVER_ID, blank, "", null, null, 3_000, null), controller.localTrack(blank))
             val kept = assertNotNull(controller.localTrack(sparse))
             assertEquals(AndroidTrack(SERVER_ID, sparse, TITLE, "Canary Artist", null, 3_000, null), kept,
                 "empty optional fields are absent, and the rest is kept")
@@ -395,7 +395,7 @@ class AndroidDownloadControllerTest {
     }
 
     /**
-     * A refused lookup never touches a kept partial file. The first run's lookup names no title, so
+     * A refused lookup never touches a kept partial file. The first run's lookup omits its song identity, so
      * the track keeps its placeholder, as a partial started before downloads read metadata does; its
      * transfer is cut off and keeps resume data. The relaunched run's lookup is refused with a 503 or
      * a 429, and the partial is still there for the run's `Range` request, which completes it.
@@ -411,7 +411,7 @@ class AndroidDownloadControllerTest {
         val lookups = java.util.concurrent.atomic.AtomicInteger(0)
         WireServer(lookup = {
             if (lookups.getAndIncrement() == 0) WireReply(200,
-                """{"subsonic-response":{"status":"ok","version":"1.16.1","song":{"id":"$RAW_ID","title":" "}}}""".toByteArray(),
+                """{"subsonic-response":{"status":"ok","version":"1.16.1","song":{"title":" "}}}""".toByteArray(),
                 contentType = "application/json")
             else refusal
         }) { request ->

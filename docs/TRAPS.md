@@ -470,3 +470,107 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     Pass the destination through the step's `env` and read `$IPAD_UDID` in the shell instead;
     the accepted replacement [38918766366](https://github.com/legitimate-apps/dulcet/actions/runs/38918766366)
     started its jobs. A passing local CI policy check alone does not prove GitHub accepted a workflow.
+
+56. **Stable simulator service counts do not establish that the post-boot paging burst ended.**
+    OBSERVED 2026-10-24 in [run 40117378423](https://github.com/legitimate-apps/dulcet/actions/runs/40117378423),
+    attempt 2 iPad: after `--settle` succeeded, My Library recorded `pageins_mb=8263`,
+    `swap_used_max_mb=1087.19`, `load1_max=671.4` on a 3-CPU, 7 GiB standard runner. Its first
+    cold launch failed inside XCTest's accessibility snapshot query, before the enclosing
+    `waitForExistence(timeout: 90)` could help. The pressure record names News, Health widgets,
+    poster extensions and SpringBoard; the app's three-second stack capture collected only nine
+    main-thread samples. This supports host starvation, not an app deadlock. The 33 completed
+    iPad/iPhone jobs in the 2026-10-20..24 census include five failures of the first My Library
+    test, four at the first connected query; load alone does not separate passes from failures.
+    `run-my-library-proofs` now requires `--settle-pressure` after service stability, before the
+    first iPhone/iPad proof and the booted iPad destination confirmation. The platform leg also
+    waits before its first iPhone native test and before its booted iPad destination confirmation
+    (the latter query timed out in [run 40083176763](https://github.com/legitimate-apps/dulcet/actions/runs/40083176763)). The sampler's kernel
+    counters must show a full minute with every interval at <=20 MiB/s page-ins, <=1 MiB/s combined
+    swap I/O, and load <=120 without a renewed rise (>10% across the window). A missing, reset or
+    stale reading cannot establish readiness. The 900-second cap logs `settled=false` and fails
+    the prerequisite; no proof is skipped, retried or given a larger allowance. Waiting has its
+    own `post-boot-pressure-*` phase, so moving the burst out of the proof stays visible. Free
+    pages and resident swap are logged but do not independently establish active I/O.
+
+    **OBSERVED in [platform run 40142840023](https://github.com/legitimate-apps/dulcet/actions/runs/40142840023)
+    (2026-10-25 UTC):** both pressure gates and every platform proof passed. The table describes
+    the final 60-second admission window; elapsed time covers the whole pressure gate.
+
+    | Measurement | iPhone | iPad |
+    |---|---:|---:|
+    | Gate elapsed seconds | 340.8 | 392.9 |
+    | Maximum page-ins, MiB/s | 18.81 | 19.34 |
+    | Maximum combined swap I/O, MiB/s | 0.17 | 0.07 |
+    | Maximum load1 | 106.8 | 110.5 |
+    | Minimum free memory, MiB | 60.0 | 57.8 |
+    | Maximum resident swap, MiB | 861.75 | 959.0 |
+
+    The booted iPad's same-device Xcode destination confirmation then passed in 22 seconds.
+    Requiring abundant free pages or empty swap would have rejected these passing controls.
+    The workflow leaves two minutes of shell/process startup margin around the unchanged
+    900-second pressure deadline: run 40083176763 had spent 63 seconds starting its shell.
+    Explicit marks after iPad settling, before its layout proof and before tvOS keep the wait,
+    destination query and subsequent device tests in separate summary phases. In the first
+    implementation, the iPad wait's mark extended through later proofs and reported 30,896 MiB
+    of page-ins over 1,720 seconds; that was not the wait's own pressure.
+    **OBSERVED in [conformance run 40153793474](https://github.com/legitimate-apps/dulcet/actions/runs/40153793474),
+    iPad job 121050704506:** an idle-device quiet window was insufficient. Admission passed after
+    320.1 seconds, with maximum page-ins 3.17 MiB/s, swap I/O 0.07 MiB/s and load1 62.4. The
+    first My Library phase nevertheless reached `pageins_mb=11019`, `swap_used_max_mb=435.81`,
+    `load1_max=354.9`. First automation setup was at t=24.96s, followed by the 60-second app-idle
+    warning; the connected query completed, but the browse/relaunch/offline test exhausted its
+    unchanged 300-second allowance. The first app stack sample contains just two main-thread
+    samples in XCTest snapshot work. Later My Library tests passed. Do not describe this as a
+    successful fix just because the gate found a quiet window.
+
+    Device conformance now also installs and launches the already-built Debug shell before the
+    pressure window, keeps it alive while the first rendering work settles, and requires its
+    termination before `xcodebuild`. This uses the existing `-dulcet-account-connect-layout-fixture`
+    path: `DulcetiOSApp.init` returns with an in-memory `DulcetDeterministicDataSource` in
+    `.accountConnectIdle` before constructing the production composition, credential store or
+    downloads. It supplies no server credentials and performs no account/library operation.
+    The original proof launches a new production process with its original arguments and fresh
+    account UUID. This warms first installation/rendering without seeding any proof's state.
+    **OBSERVED in [conformance run 40164687903](https://github.com/legitimate-apps/dulcet/actions/runs/40164687903)
+    on implementation head `20bd6cac` (2026-10-25 UTC):** warm-up launch and termination succeeded
+    on both devices, all seven iPhone and five iPad My Library methods passed, and both complete
+    device conformance jobs passed. No proof was retried or given a larger allowance.
+
+    | First My Library phase | iPhone | iPad |
+    |---|---:|---:|
+    | Phase seconds | 891 | 527 |
+    | Page-ins, MiB | 8403 | 7911 |
+    | Maximum resident swap, MiB | 331.69 | 744.69 |
+    | Maximum load1 | 234.4 | 139.9 |
+    | First automation marker, seconds | 12.69 | 7.61 |
+    | Browse/relaunch/offline test, seconds | 264.376 | 149.933 |
+
+    Pressure admission took 240.3/220.1 seconds; its accepted windows had page-in maxima
+    18.61/6.64 MiB/s, combined swap I/O maxima 0.14/0.14 MiB/s, and load maxima 118.2/119.5.
+    The separately logged waiting phases reached load 524.9/547.9, keeping the burst's cost
+    visible outside the proofs. The failed idle-gate-only iPad phase above had load 354.9,
+    11019 MiB of page-ins and first automation at 24.96 seconds. The combined method's iPad
+    phase had less paging and load, and completed the original assertions within their bounds.
+    Both device phase loads were below the supplied census's approximately 240..671 range.
+    Paging remained substantial, and the iPhone was slower than the earlier idle-gate-only
+    passing control (load 222.9, 8653 MiB, first automation 7.76 seconds). Runner variability
+    prevents attributing every difference to warm-up. These are first-phase pressure and
+    execution observations; one passing pair does not estimate the one-in-seven flake rate.
+
+    Proof dispatches on the same branch share the workflow's concurrency group. Dispatching
+    the second before the first core job finished canceled that first core job: run 40153793474
+    concluded canceled, with iPhone success, iPad failure and core canceled. Its completed
+    device evidence above remains valid; it has no completed core result. Wait for the whole
+    first run when collecting multiple complete comparisons on one branch.
+
+    **OBSERVED after #391 merged (2026-10-25 UTC); the device allowance is now 600 seconds.** With
+    admission and warm-up in place, the browse/relaunch/offline test still exhausted its
+    300-second allowance on both devices of dispatch [40232687092](https://github.com/legitimate-apps/dulcet/actions/runs/40232687092)
+    (iPhone job 121287619992, iPad job 121287620055), as it had on iPad in 40202061025. In the
+    iPhone case XCTest was still issuing a step about once a second when the allowance fired,
+    during the check after relaunch. Two single existence checks earlier in the test took 17.6
+    and 29.5 seconds. That is a slow test on a starved host, not a hang. The 30 passes of this
+    test in the retained device logs took 138.7 to 265.2 seconds, plus one at 379.8. The iPhone
+    and iPad My Library proofs now allow 600 seconds per test, which still fails a test that
+    stops making progress. macOS and tvOS keep 300. No proof is retried, and the admission gate
+    is unchanged.

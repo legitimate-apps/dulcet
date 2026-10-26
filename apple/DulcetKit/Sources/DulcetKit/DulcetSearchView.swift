@@ -358,7 +358,7 @@ struct DulcetSearchView: View {
                         // the row's title text inside the Table.
                         .accessibilityIdentifier("dulcet.search.result.\(index)")
                         .accessibilityLabel(DulcetStrings.searchResultAccessibility(
-                            title: result.title,
+                            title: result.displayTitle,
                             subtitle: result.subtitle,
                             kind: result.kind.displayTitle
                         ))
@@ -455,14 +455,14 @@ private struct DulcetSearchRowQueueDrag: ViewModifier {
             content.dulcetDeferredQueueDragSource(
                 store: store,
                 artwork: result.artwork,
-                title: result.title,
+                title: result.displayTitle,
                 isEnabled: !isUnavailableOffline
             ) { completion in
                 store.resolveReaderAddition(
                     query: .album(rawID: result.id.rawID),
                     kind: .album,
                     id: result.id,
-                    title: result.title,
+                    title: result.displayTitle,
                     completion: completion
                 )
             }
@@ -470,7 +470,7 @@ private struct DulcetSearchRowQueueDrag: ViewModifier {
             content.dulcetQueueDragSource(
                 store: store,
                 artwork: result.artwork,
-                title: result.title,
+                title: result.displayTitle,
                 isEnabled: result.playableTrack != nil && !isUnavailableOffline
             ) { result.playableTrack.map(DulcetQueueAddition.searchResult) }
         }
@@ -577,7 +577,7 @@ private struct DulcetSearchResultIdentity: View {
             )
 
             VStack(alignment: .leading, spacing: 0) {
-                Text(result.title)
+                Text(result.displayTitle)
                     .font(.callout.weight(.medium))
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
@@ -610,7 +610,7 @@ private struct DulcetSearchResultIdentity: View {
 
     private var accessibilityLabel: String {
         var label = DulcetStrings.searchResultAccessibility(
-            title: result.title,
+            title: result.displayTitle,
             subtitle: result.subtitle,
             kind: result.kind.displayTitle
         )

@@ -1,5 +1,7 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.ui.semantics.disabled
+import com.legitimateapps.dulcet.library.trackDisplayTitle
 import com.legitimateapps.dulcet.library.playPlaylist
 import com.legitimateapps.dulcet.library.queuePlaylistTrack
 import com.legitimateapps.dulcet.library.playlistEditLine
@@ -1131,8 +1133,7 @@ private fun TvAlbumScreen(
                             }
                         }
                         if (current != null && album != null) {
-                            val playable = current.itemsState == AndroidLibraryItemsState.Present &&
-                                current.items.any { (it as? AndroidLibraryItem.Track)?.playability != AndroidLibraryPlayability.UnavailableOffline }
+                            val playable = current.playableTracks(provider).isNotEmpty()
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 if (playable) {
                                     TvAction(stringResource(R.string.tv_play), "album.play", icon = DulcetIcons.Play, default = true) {
@@ -1385,8 +1386,8 @@ internal fun tvTrackAddition(
             else queuePlaylistTrack(playback, provider, track, playlist, insertion)
         if (!accepted) queueEditRefused(context)
     }
-    return TvQueueAddition(track.title.orEmpty(), { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) },
-        TvPlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty()))
+    return TvQueueAddition(context.resources.trackDisplayTitle(track.title), { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) },
+        TvPlaylistAddition.Songs(listOf(track.rawId), context.resources.trackDisplayTitle(track.title)))
 }
 
 /**
@@ -1401,12 +1402,12 @@ internal fun tvSearchAddition(
     playability: AndroidLibraryPlayability?,
 ): TvQueueAddition? {
     if (playback == null || provider == null || result.type != SearchResultType.Track) return null
-    if (playability == AndroidLibraryPlayability.UnavailableOffline || result.title.isBlank()) return null
+    if (playability == AndroidLibraryPlayability.UnavailableOffline || result.duration == null) return null
     val search = context.getString(R.string.tv_nav_search)
     fun add(insertion: AndroidQueueInsertion) {
         if (!queueSearchResult(playback, provider, result, insertion, search)) queueEditRefused(context)
     }
-    return TvQueueAddition(result.title, { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) })
+    return TvQueueAddition(context.resources.trackDisplayTitle(result.title), { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) })
 }
 
 @Composable
@@ -1453,6 +1454,7 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
 private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
                            onUnavailable: () -> Unit, tagPrefix: String, default: Boolean, modifier: Modifier,
                            byPosition: Boolean = false, download: AndroidDownloadStatus? = null) {
+    val durationUnknown = track.durationMilliseconds == null
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val select = if (unavailable) onUnavailable else onPlay
     val resources = libraryResources()
@@ -1465,16 +1467,17 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
             // texts, so this does. A row that cannot play is described as such.
             .semantics(mergeDescendants = true) {
                 if (unavailable) {
-                    contentDescription = "${track.title.orEmpty()}, ${resources.getString(SharedR.string.library_not_available_offline)}"
+                    contentDescription = "${resources.trackDisplayTitle(track.title)}, ${resources.getString(SharedR.string.library_not_available_offline)}"
                 }
+                if (durationUnknown) disabled()
                 selected = playing
-                onClick { select(); true }
+                onClick { if (!durationUnknown) select(); !durationUnknown }
             }
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
                 val centre = event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter
                 if (centre && event.type == KeyEventType.KeyUp) {
-                    select()
+                    if (!durationUnknown) select()
                     true
                 } else {
                     false
@@ -1489,15 +1492,16 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
     ) {
         val content = when {
             focused -> colors.inverseOnSurface
-            unavailable -> colors.onSurface.copy(alpha = 0.45f)
+            unavailable || durationUnknown -> colors.onSurface.copy(alpha = 0.45f)
             else -> colors.onSurface
         }
         Box(Modifier.width(32.dp)) {
             if (playing) Icon(DulcetIcons.Play, nowPlaying, Modifier.size(20.dp).testTag("$tagPrefix.$position.playing"), tint = content)
             else Text((if (byPosition) position + 1 else track.trackNumber ?: position + 1).toString(), color = content)
         }
-        Text(track.title.orEmpty(), Modifier.weight(1f), color = content, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(resources.trackDisplayTitle(track.title), Modifier.weight(1f), color = content, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (unavailable) Text(resources.getString(SharedR.string.library_not_available_offline), color = content)
+        else if (durationUnknown) Text(resources.getString(SharedR.string.library_duration_required), color = content)
         else if (download != null && !download.playsOffline) LocalContext.current.resources.downloadLine(download)?.let {
             Text(it, Modifier.testTag("$tagPrefix.$position.download.status"), color = content)
         }
@@ -1597,7 +1601,7 @@ private fun TvPlaylistScreen(
                         }
                         if (current != null && playlist != null) {
                             val playable = current.itemsState == AndroidLibraryItemsState.Present && current.items.any {
-                                it is AndroidLibraryItem.Track && !it.metadataMissing && it.playability != AndroidLibraryPlayability.UnavailableOffline
+                                it is AndroidLibraryItem.Track && it.canBeQueued()
                             }
                             if (playable || playlist.editable) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 if (playable) {
@@ -1726,7 +1730,7 @@ private fun TvGenreScreen(
                 if (count != null && count > 0) TvStatement(resources.getQuantityString(SharedR.plurals.library_count_tracks,
                     count, count.toString()), "genre.count")
                 val playable = current?.itemsState == AndroidLibraryItemsState.Present &&
-                    tracks.any { !it.metadataMissing && it.playability != AndroidLibraryPlayability.UnavailableOffline }
+                    tracks.any { it.canBeQueued() }
                 if (playable) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     TvAction(stringResource(R.string.tv_play), "genre.play", icon = DulcetIcons.Play, default = true) { play(null, false) }
                     TvAction(stringResource(R.string.tv_shuffle), "genre.shuffle", icon = DulcetIcons.Shuffle) { play(null, true) }

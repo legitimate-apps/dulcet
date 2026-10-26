@@ -33,6 +33,13 @@ import kotlin.test.assertTrue
  */
 class LibrarySyncTransportTest {
     @Test
+    fun enumeratedTracksKeepTheirAlbumInThePlayableRecord() {
+        val rows = parseEnumeratedTracks(SERVER, libraryFixture().songPageResponse(0, 3))
+        assertTrue(rows.isNotEmpty())
+        rows.forEach { assertEquals(it.albumRawId, it.track.albumRawId) }
+    }
+
+    @Test
     fun fullSyncRequestCountDoesNotGrowWithTheNumberOfAlbums() = runTest {
         val small = syncCallCounts(albumCount = 8)
         val large = syncCallCounts(albumCount = 400)
@@ -101,7 +108,7 @@ class LibrarySyncTransportTest {
                 assertEquals(album.artworkKey, actual.artworkKey, "artwork of ${album.id.rawId}")
                 assertEquals(album.mediaSourceId, actual.mediaSourceId, "source of ${album.id.rawId}")
                 assertEquals(
-                    album.tracks.sortedBy { it.id.rawId },
+                    album.tracks.map { it.copy(albumRawId = it.albumRawId ?: album.id.rawId) }.sortedBy { it.id.rawId },
                     actual.tracks.sortedBy { it.id.rawId },
                     "tracks of ${album.id.rawId}",
                 )
@@ -464,7 +471,9 @@ class LibrarySyncTransportTest {
         assertEquals(listShape, walkShape)
 
         val album = fixture.albumResponse(listShape.first().id.rawId)
+        // Album detail supplies the parent identity even if a child omits albumId.
         val detailTracks = parseAlbum(SERVER, listShape.first(), album).tracks
+            .map { it.copy(albumRawId = it.albumRawId ?: listShape.first().id.rawId) }
         val walkTracks = parseEnumeratedTracks(SERVER, fixture.songPageResponse(0, 100))
             .filter { it.albumRawId == listShape.first().id.rawId }
             .map(LibraryTrackRow::track)

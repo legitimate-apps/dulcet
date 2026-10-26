@@ -29,6 +29,34 @@ one pull request in flight this **serialises**: merging one invalidates the othe
 status and each must re-run. Land them deliberately in dependency order, and tell the other branches
 when `main` moves so they rebase once instead of twice.
 
+**Conformance proof before an Apple merge.** A PR run executes `apple-platform` when Apple inputs
+change, and skips Darwin conformance (§21.6). Once that platform check succeeds, dispatch only the
+three conformance jobs on the same PR head to avoid repeating the platform build:
+
+```sh
+gh workflow run apple-ci.yml --ref <pr-branch> -f conformance_only=true
+```
+
+Check that the dispatched run's head SHA equals the PR head and that `apple-conformance-core`,
+`apple-conformance-ipad` and `apple-conformance-iphone` all concluded `success`, along with the
+`apple-ci` aggregator. `apple-platform` must be `skipped` in this mode. A run ID or green PR check
+alone does not prove conformance. The separate dispatch is maintainer merge evidence; the required
+PR check still comes from the PR run. A new head needs fresh evidence.
+
+Omitting the input (or passing `-f conformance_only=false`) runs every leg. On push to `main`,
+`plan-apple-legs` can reuse the merged PR's same-tree, exact-head PR platform and dispatch
+conformance proof. It plans no macOS legs only after checking repository-owned workflow identities,
+successful latest attempts and all required proof jobs; every uncertainty runs every leg. The run
+summary names the PR, head, tree and both proof runs. Its successful `apple-ci` check means the
+planned skips were valid, which is sufficient for main-health's required-context check.
+
+A reused push does not resolve Apple FEATURES identities against combined JUnit. That resolution
+runs on full runs, including the plain full dispatch required on the release commit. Use that full
+run for a release: a conformance-only dispatch cannot satisfy the release full-run
+gate, which requires every Apple leg successful in the latest `apple-ci` check suite on the release
+commit. A main push with skipped legs cannot satisfy it either. Full parity evidence is resolved
+only when every leg was planned.
+
 **History, so nobody re-derives the two-account dance.** There really was a wall here: on 2026-08-20
 an approving review from a pull request's own author was refused with
 `422 Unprocessable Entity — "Review Can not approve your own pull request"`, and the workaround was

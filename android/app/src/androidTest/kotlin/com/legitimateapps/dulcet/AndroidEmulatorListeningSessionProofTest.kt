@@ -31,10 +31,21 @@ class AndroidEmulatorListeningSessionProofTest {
             ActivityScenario.launch<MainActivity>(launch).use {
                 observer.bind()
                 requireMediaTimeAdvances(observer, "listening-session")
+                // Navigation can outlast this 31-second fixture on a busy emulator. Hold
+                // the prepared entry while choosing options; only the Home observation
+                // and natural-end observation below need it to advance.
+                tapLabel("Pause")
+                await("The canary is paused before navigation") { !observer.state().playWhenReady }
                 await("AutoPlay server candidates after the user's entry") { observer.state().queue.any { it.isAutoplay } }
                 val initial = observer.state()
                 check(initial.queue.first().track.rawId == rawId && !initial.queue.first().isAutoplay)
                 check(initial.queue.drop(1).all { it.isAutoplay })
+                // Deliberately exceed the canary's entire duration. The proof must still
+                // own this entry when navigation is slower than a natural track boundary.
+                SystemClock.sleep(checkNotNull(initial.durationMilliseconds) + 1_000)
+                check(observer.state().let { it.currentIndex == 0 && !it.playWhenReady }) {
+                    "The canary advanced during paused navigation"
+                }
                 tapLabel("Up Next")
                 await("AutoPlay heading in Up Next") { nodes().count { it.text?.toString() == "AutoPlay" } >= 2 }
                 evidence("AUTOPLAY section", observer)
@@ -48,6 +59,8 @@ class AndroidEmulatorListeningSessionProofTest {
                 tapLabel("Sleep timer")
                 tapLabel("15 minutes")
                 await("Timed sleep choice reaches service") { observer.state().sleepTimer == SleepTimerChoice.Minutes15 }
+                observer.onController { it.play() }
+                requireMediaTimeAdvances(observer, "sleep timer before Home")
                 val beforeHome = checkNotNull(observer.state().sleepRemainingMilliseconds)
                 evidence("SLEEP TIMER selected", observer)
                 observer.requireForegroundNotification("sleep before Home")
@@ -58,6 +71,7 @@ class AndroidEmulatorListeningSessionProofTest {
                 check(background.sleepTimer == SleepTimerChoice.Minutes15 && background.playWhenReady)
                 check(checkNotNull(background.sleepRemainingMilliseconds) < beforeHome - 1_000)
                 println("SLEEP TIMER OBSERVED background=true remaining-before=$beforeHome remaining-after=${background.sleepRemainingMilliseconds} playback=${background.phase}")
+                observer.onController { it.pause() }
             }
             // Each scenario owns one launch intent. The service survives the original activity;
             // reopen through the production Now Playing entry without changing a scenario's intent.
@@ -74,9 +88,14 @@ class AndroidEmulatorListeningSessionProofTest {
                 evidence("SLEEP TIMER stop point selected", observer)
                 observer.onController { controller ->
                     // The real timed choice was driven above; seeking shortens only the natural-end wait.
-                    val duration = checkNotNull(controller.state.value.durationMilliseconds)
-                    check(controller.state.value.seekable)
+                    val state = controller.state.value
+                    check(state.currentIndex == 0 && state.queue.first().track.rawId == rawId) {
+                        "The paused canary must still own the stop point: index=${state.currentIndex}, phase=${state.phase}"
+                    }
+                    val duration = checkNotNull(state.durationMilliseconds)
+                    check(state.seekable) { "The prepared direct canary must be seekable: phase=${state.phase}, duration=$duration" }
                     controller.seek((duration - 2_000).coerceAtLeast(0))
+                    controller.play()
                 }
                 await("Natural boundary spends sleep timer and pauses the next selected entry", 45_000) {
                     observer.state().let { it.sleepTimer == null && !it.playWhenReady && it.currentIndex == 1 }
@@ -95,12 +114,17 @@ class AndroidEmulatorListeningSessionProofTest {
         visit(root)
         return all
     }
-    private fun tapLabel(label: String) = tap { it.text?.toString() == label || it.contentDescription?.toString() == label }
-    private fun tapLabelStarting(prefix: String) = tap { it.text?.toString()?.startsWith(prefix) == true }
-    private fun tapSwitch() = tap { it.isCheckable }
-    private fun tap(matches: (AccessibilityNodeInfo) -> Boolean) {
+    private fun tapLabel(label: String) = tap(label) { it.text?.toString() == label || it.contentDescription?.toString() == label }
+    private fun tapLabelStarting(prefix: String) = tap(prefix) { it.text?.toString()?.startsWith(prefix) == true }
+    private fun tapSwitch() = tap("AutoPlay switch") { it.isCheckable }
+    private fun tap(label: String, matches: (AccessibilityNodeInfo) -> Boolean) {
         var selected: AccessibilityNodeInfo? = null
-        await("UI control to appear") { selected = nodes().firstOrNull(matches); selected != null }
+        try {
+            await("UI control '$label' to appear") { selected = nodes().firstOrNull(matches); selected != null }
+        } catch (timeout: IllegalStateException) {
+            val visible = nodes().mapNotNull { it.text?.toString() ?: it.contentDescription?.toString() }
+            error("${timeout.message}; visible controls=${visible.joinToString(" | ")}")
+        }
         var node = checkNotNull(selected)
         while (!node.isClickable && node.parent != null) node = node.parent
         check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "The UI control refused its click" }
@@ -113,6 +137,8 @@ class AndroidEmulatorListeningSessionProofTest {
             val bounds = Rect(); node.getBoundsInScreen(bounds)
             "text=$text bounds=$bounds"
         }
-        println("AX $label ${lines.joinToString(" | ")} phase=${observer.state().phase} wanted=${observer.state().playWhenReady}")
+        val state = observer.state()
+        println("AX $label ${lines.joinToString(" | ")} phase=${state.phase} wanted=${state.playWhenReady} " +
+            "index=${state.currentIndex} position=${state.positionMilliseconds} duration=${state.durationMilliseconds} seekable=${state.seekable}")
     }
 }

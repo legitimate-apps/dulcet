@@ -13,7 +13,8 @@ Usage:
   isolate-simulator --phase NAME --none
   isolate-simulator --phase NAME --keep UDID
   isolate-simulator --phase NAME --keep-name "iPhone 17 Pro"     # newest runtime, as OS=latest does
-  isolate-simulator --phase NAME --keep UDID --settle             # and wait out the post-boot burst
+  isolate-simulator --phase NAME --keep UDID --settle             # wait for stable service counts
+  isolate-simulator --phase NAME --keep UDID --settle --settle-pressure # require quiet memory/CPU
   isolate-simulator --devices-json FILE --plan ...               # offline: print the plan, touch nothing
 
 Prints `SIMULATOR ISOLATION phase=... keep=... shut_down=N booted_after=[...] isolated=true|false`.
@@ -24,6 +25,7 @@ Failing to boot the device the phase needs IS raised: that phase cannot run.
 import argparse
 import json
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -112,6 +114,56 @@ def booted(all_devices: dict) -> list[str]:
     return sorted(d["udid"] for ds in all_devices.values() for d in ds if d.get("state") == "Booted")
 
 
+def settle_pressure(phase: str) -> bool:
+    command = [sys.executable, os.path.join(os.path.dirname(__file__), "host-pressure"),
+               "settle", "--phase", phase]
+    log = os.environ.get("DULCET_HOST_PRESSURE_LOG")
+    if log:
+        command += ["--output", log]
+    try:
+        return subprocess.run(command, timeout=930).returncode == 0
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"SIMULATOR PRESSURE FAILED phase={phase} error={type(error).__name__}", flush=True)
+        return False
+
+
+def warm_first_launch(phase: str, udid: str, app: str) -> bool:
+    """Pay simulator app-install/render work without constructing a production account store.
+
+    The Debug shell's existing layout-fixture argument returns from DulcetiOSApp.init before
+    makeIOSComposition(), using an in-memory account-connect-idle source and no downloads.
+    The proof still launches a new process with its own arguments and UUID account namespace.
+    Keep the warm-up alive through the quiet window so its first rendering work is included;
+    always terminate it before any proof, including when pressure admission fails.
+    """
+    try:
+        with open(os.path.join(app, "Info.plist"), "rb") as info:
+            bundle = plistlib.load(info)["CFBundleIdentifier"]
+        if bundle != "com.legitimateapps.dulcet.dev":
+            raise ValueError("warm-up requires the Debug iOS shell")
+        installed = simctl("install", udid, app)
+        if installed.returncode:
+            print(f"SIMULATOR WARMUP FAILED phase={phase} operation=install exit={installed.returncode}", flush=True)
+            return False
+        try:
+            launched = simctl("launch", "--terminate-running-process", udid, bundle,
+                              "-dulcet-account-connect-layout-fixture")
+            if launched.returncode:
+                print(f"SIMULATOR WARMUP FAILED phase={phase} operation=launch exit={launched.returncode}", flush=True)
+                return False
+            print(f"SIMULATOR WARMUP phase={phase} udid={udid} bundle={bundle} "
+                  "source=account-connect-idle production-account=false launched=true", flush=True)
+            ready = settle_pressure(phase)
+        finally:
+            stopped = simctl("terminate", udid, bundle)
+            print(f"SIMULATOR WARMUP phase={phase} terminated={'true' if stopped.returncode == 0 else 'false'}",
+                  flush=True)
+        return ready and stopped.returncode == 0
+    except (OSError, ValueError, KeyError, plistlib.InvalidFileException, subprocess.TimeoutExpired) as error:
+        print(f"SIMULATOR WARMUP FAILED phase={phase} error={type(error).__name__}", flush=True)
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--phase", required=True)
@@ -127,11 +179,18 @@ def main() -> int:
                         help="after booting the kept device, wait for its services to hold steady")
     parser.add_argument("--require-settle", action="store_true",
                         help="fail if the requested service-count settle condition was not observed")
+    parser.add_argument("--settle-pressure", action="store_true",
+                        help="require a quiet host-pressure window after service settling")
+    parser.add_argument("--warmup-app", help="install/launch the built Debug iOS shell's in-memory fixture before pressure settling")
     args = parser.parse_args()
     if args.require_settle and not args.settle:
         parser.error("--require-settle needs --settle")
     if args.settle and args.none:
         parser.error("--settle needs a device to keep")
+    if args.settle_pressure and not args.settle:
+        parser.error("--settle-pressure needs --settle")
+    if args.warmup_app and not args.settle_pressure:
+        parser.error("--warmup-app needs --settle-pressure")
 
     started = time.monotonic()
     before = devices(args.devices_json)
@@ -139,7 +198,8 @@ def main() -> int:
     to_shut = [udid for udid in booted(before) if udid != keep]
     if args.plan:
         print(f"SIMULATOR ISOLATION PLAN phase={args.phase} keep={keep or 'none'} "
-              f"shut_down={','.join(to_shut) or 'none'} settle={'yes' if args.settle else 'no'}")
+              f"shut_down={','.join(to_shut) or 'none'} settle={'yes' if args.settle else 'no'} "
+              f"pressure={'yes' if args.settle_pressure else 'no'}")
         return 0
 
     for udid in to_shut:
@@ -162,6 +222,11 @@ def main() -> int:
             did_settle = settle(args.phase, keep)
             if args.require_settle and not did_settle:
                 return 1
+        if args.warmup_app:
+            if not warm_first_launch(args.phase, keep, args.warmup_app):
+                return 1
+        elif args.settle_pressure and not settle_pressure(args.phase):
+            return 1
     after = booted(devices(None))
     expected = [keep] if keep else []
     print(f"SIMULATOR ISOLATION phase={args.phase} keep={keep or 'none'} shut_down={len(to_shut)} "

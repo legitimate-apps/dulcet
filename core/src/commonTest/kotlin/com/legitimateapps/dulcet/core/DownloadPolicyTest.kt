@@ -538,7 +538,7 @@ class DownloadPolicyTest {
             "INSERT INTO scrobble_outbox(server_id, raw_id, session_start_wall_clock, created_at_wall_clock, attempt_count) VALUES ('$SERVER_ID', 'scrobble', $NOW, $NOW, 0)",
             "INSERT INTO queue_state VALUES ('$SERVER_ID', NULL, 'off', 0)",
             "INSERT INTO active_queue VALUES (1, '$SERVER_ID')",
-            "INSERT INTO queue_entry VALUES ('$SERVER_ID', 'entry', 'track', 'library', NULL, 'Library', 'play_now', 0, 0)",
+            "INSERT INTO queue_entry(server_id, queue_entry_id, raw_id, source_context_kind, source_context_raw_id, source_context_display_name, added_by, original_position, playback_position) VALUES ('$SERVER_ID', 'entry', 'track', 'library', NULL, 'Library', 'play_now', 0, 0)",
             "INSERT INTO music_folder VALUES ('$SERVER_ID', 'folder', 'Folder', 'folder-key', 7, NULL)",
             "INSERT INTO artist(server_id, raw_id, name, media_source_id, content_key, valid_from_generation, valid_to_generation) VALUES ('$SERVER_ID', 'artist', 'Artist', NULL, 'artist-key', 7, NULL)",
             "INSERT INTO album(server_id, raw_id, title, artist_name, artist_raw_id, year, duration_milliseconds, media_source_id, artwork_key, content_key, valid_from_generation, valid_to_generation) VALUES ('$SERVER_ID', 'album', 'Album', 'Artist', 'artist', NULL, 1000, NULL, NULL, 'album-key', 7, NULL)",

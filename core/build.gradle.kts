@@ -26,6 +26,7 @@ kotlin {
     }
 
     android {
+        androidResources { enable = true }
         namespace = "com.legitimateapps.dulcet.core"
         compileSdk = libs.versions.android.compile.sdk.get().toInt()
         minSdk = libs.versions.android.min.sdk.get().toInt()

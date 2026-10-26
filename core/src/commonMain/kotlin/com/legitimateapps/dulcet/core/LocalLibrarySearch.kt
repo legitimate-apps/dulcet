@@ -31,10 +31,10 @@ public class LocalLibrarySearch internal constructor(private val store: DulcetDa
                     null, null, null, media, artwork)
             }.executeAsList()
             val tracks = queries.searchTracksAtGeneration(providerInstanceId, generation, normalized) {
-                    id, _, title, _, _, album, disc, track, duration, container, media, artwork ->
+                    id, albumId, title, _, _, album, disc, track, duration, container, media, artwork ->
                 SearchResultItem(ProviderItemId(providerInstanceId, id), SearchResultType.Track,
                     title, credits("track", id), album, null, duration.milliseconds,
-                    disc?.toInt(), track?.toInt(), container?.let(::audioContainerFromWireName), media, artwork)
+                    disc?.toInt(), track?.toInt(), container?.let(::audioContainerFromWireName), media, artwork, albumId)
             }.executeAsList()
             rankResults(query.trim(), artists + albums + tracks)
         }
@@ -127,6 +127,7 @@ internal fun CacheTrackRecord.toSearchResult(providerInstanceId: String) = Searc
     sourceContainer = sourceContainer,
     mediaSourceId = null,
     artworkKey = artworkKey,
+    albumRawId = albumRawId,
 )
 
 private fun List<CacheCredit>.toSearchCredits(providerInstanceId: String): List<Credit> = map { credit ->

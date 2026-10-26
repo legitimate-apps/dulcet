@@ -21,8 +21,9 @@ import com.legitimateapps.dulcet.playback.PlaybackBinding
 
 /**
  * The album in [publication] queued from the track with [trackRawId], or from its first playable
- * track when that one cannot play or is null. False, and nothing played, when [publication] is not
- * an album or when nothing in it can play. Pressed before the playback service is bound, the play is
+ * track when [trackRawId] is null. False, and nothing played, when [publication] is not an album,
+ * when nothing in it can play, or when the track with [trackRawId] cannot play: a chosen track that
+ * cannot play never starts a different one. Pressed before the playback service is bound, the play is
  * held by [playback] and made once it binds; [started] runs when the queue is handed to the controller.
  */
 public fun playAlbum(
@@ -36,7 +37,8 @@ public fun playAlbum(
     val album = publication.header as? AndroidLibraryItem.Album ?: return false
     val tracks = publication.playableTracks(providerInstanceId)
     if (tracks.isEmpty()) return false
-    val start = tracks.indexOfFirst { it.rawId == trackRawId }.takeIf { it >= 0 } ?: 0
+    val start = if (trackRawId == null) 0 else tracks.indexOfFirst { it.rawId == trackRawId }
+    if (start < 0) return false
     playback.play { controller ->
         controller.playQueue(tracks, start, AndroidQueueSource.Album, album.title, album.rawId, shuffle)
         started()
@@ -159,9 +161,9 @@ public fun AndroidLibraryItem.Track.queueSource(album: AndroidLibraryItem.Album?
     else QueueSourceOf(AndroidQueueSource.Album, albumTitle?.takeIf { it.isNotBlank() } ?: album?.title ?: libraryName, albumRawId)
 }
 
-/** Whether a row may offer Play Next and Add to Queue: the track can play now and has a title to show. */
+/** Whether a row may offer Play Next and Add to Queue: the track can play now and has a known duration. */
 public fun AndroidLibraryItem.Track.canBeQueued(): Boolean =
-    playability != AndroidLibraryPlayability.UnavailableOffline && !title.isNullOrBlank()
+    playability != AndroidLibraryPlayability.UnavailableOffline && durationMilliseconds != null
 
 /**
  * One search track added to the queue, attributed to the search (spec §14.1 `sourceContext`), exactly
@@ -175,19 +177,17 @@ public fun queueSearchResult(
     insertion: AndroidQueueInsertion,
     searchName: String,
 ): Boolean {
-    if (playback == null || result.type != SearchResultType.Track) return false
-    val title = result.title.takeIf { it.isNotBlank() } ?: return false
-    val artist = result.credits.singleOrNull { it.role == CreditRole.Artist }?.name?.takeIf { it.isNotBlank() }
-    val track = AndroidTrack(
-        providerInstanceId = providerInstanceId,
-        rawId = result.id.rawId,
-        title = title,
-        artist = artist,
-        album = result.albumTitle?.takeIf { it.isNotBlank() },
-        durationMilliseconds = result.duration?.inWholeMilliseconds,
-        artworkKey = result.artworkKey,
-    )
+    if (playback == null) return false
+    val track = result.toQueueTrack(providerInstanceId) ?: return false
     return playback.addToQueue(listOf(track), insertion, AndroidQueueSource.Search, searchName)
+}
+
+internal fun SearchResultItem.toQueueTrack(providerInstanceId: String): AndroidTrack? {
+    if (type != SearchResultType.Track) return null
+    val duration = duration ?: return null
+    val artist = credits.singleOrNull { it.role == CreditRole.Artist }?.name?.takeIf { it.isNotBlank() }
+    return AndroidTrack(providerInstanceId, id.rawId, title, artist, albumTitle?.takeIf { it.isNotBlank() },
+        duration.inWholeMilliseconds, artworkKey = artworkKey, albumRawId = albumRawId)
 }
 
 /** An album whose tracks this device cannot play only because it is offline (§16.14). */
