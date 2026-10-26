@@ -562,3 +562,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     concluded canceled, with iPhone success, iPad failure and core canceled. Its completed
     device evidence above remains valid; it has no completed core result. Wait for the whole
     first run when collecting multiple complete comparisons on one branch.
+
+    **Opt-in measurement, Refs #343:** `apple-ci` dispatch input `apsd_experiment=true` adds
+    simulator-scoped running/suspended/restored CPU and persisted-log windows before warm-up,
+    followed by three separate, consecutive browse-method comparisons against fresh fixtures.
+    Only the middle comparison suspends apsd. These are predeclared experimental repetitions,
+    excluded from parity evidence; no pass replaces any failure. The original full My Library
+    suite then runs restored with its original admission, assertions and allowance. This is
+    an explicit exception to the absence of repetitions above, not a retry mechanism or a fix.
+    Extra post-boot time can itself reduce pressure, so neither a quiet gate nor a passing full
+    suite attributes an improvement to apsd. Require aligned CPU/query evidence and restoration
+    controls. The default remains off. Protocol, dependency audit, coverage limits and negative
+    interpretations: [apsd experiment](investigations/2026-10-26-apsd-pressure-experiment.md).

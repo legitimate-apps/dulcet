@@ -27,7 +27,9 @@ seconds for symbol processing. At most three captures start in any ten-minute wi
 seconds between captures of the same launch; only the latest three call trees are retained.
 The stop command cuts off unfinished workers before diagnostics upload, recording why. A phase's
 pressure is the DELTA of the counters between its mark and the next one, so the sampler can run
-for the whole job without any phase needing to know about it. Stdlib only.
+for the whole job without any phase needing to know about it. CPU-TIME lines retain each PID/start/executable and cumulative own CPU deltas, with coverage.
+They are lower bounds for processes missed at birth/exit, not a complete host CPU ledger.
+Stdlib only.
 """
 import argparse
 import json
@@ -81,22 +83,84 @@ def booted_simulators() -> int | None:
         return None
 
 
+def cpu_seconds(value: str) -> float:
+    """Darwin ps TIME: [[days-]hours:]minutes:seconds.hundredths, including >24h."""
+    days, clock = value.split("-", 1) if "-" in value else ("0", value)
+    parts = [float(part.replace(",", ".")) for part in clock.split(":")]
+    if len(parts) not in (2, 3) or any(part < 0 for part in parts):
+        raise ValueError("unrecognized ps TIME")
+    return int(days) * 86400 + sum(part * 60 ** i for i, part in enumerate(reversed(parts)))
+
+
 def process_snapshot() -> list[dict]:
-    """Keep PID identity and unaggregated CPU for stack triggers, plus names for summaries."""
-    out = subprocess.run(["ps", "-axo", "pid=,rss=,%cpu=,lstart=,comm="],
+    """Untruncated executable, launch identity and own user+system CPU (no child CPU)."""
+    out = subprocess.run(["ps", "-ww", "-axo", "pid=,ppid=,rss=,%cpu=,time=,state=,lstart=,comm="],
                          capture_output=True, text=True, timeout=10, check=True).stdout
     processes = []
     for line in out.splitlines():
-        fields = line.strip().split(None, 8)
-        if len(fields) != 9:
+        fields = line.strip().split(None, 11)
+        if len(fields) != 12:
             continue
         try:
-            processes.append(dict(pid=int(fields[0]), rss=int(fields[1]),
-                                  cpu=float(fields[2].replace(",", ".")),
-                                  started=" ".join(fields[3:8]), name=os.path.basename(fields[8])))
+            processes.append(dict(pid=int(fields[0]), ppid=int(fields[1]), rss=int(fields[2]),
+                                  cpu=float(fields[3].replace(",", ".")),
+                                  cpuSeconds=cpu_seconds(fields[4]), state=fields[5],
+                                  started=" ".join(fields[6:11]), executable=fields[11],
+                                  name=os.path.basename(fields[11])))
         except ValueError:
             continue
+    if not processes:
+        raise ValueError("ps returned no readable processes")
     return processes
+
+
+def cpu_snapshot() -> dict:
+    try:
+        processes = process_snapshot()
+        return dict(cpuProcesses=processes, cpuObservedMillis=time.time_ns() // 1_000_000)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return dict(cpuError=type(error).__name__)
+
+
+def cpu_deltas(readings: list[dict]) -> list[dict]:
+    """Lower bounds: only subtract matching PID/start/path across consecutive observations.
+
+    A process born/exited between reads is invisible; its lifetime CPU is never invented. New
+    identities start at their first observation. Counter resets are gaps, never negative work.
+    Keep zero-cost PIDs, observed coverage and boundary presence so absent data is not quiet.
+    """
+    readings = sorted(readings, key=lambda r: r.get("cpuObservedMillis", r["wallTimeMillis"]))
+    totals = {}
+    def keyed(reading):
+        return {(p["pid"], p["started"], p["executable"]): p
+                for p in reading.get("cpuProcesses", []) if "cpuSeconds" in p}
+    for reading in readings:
+        for key, process in keyed(reading).items():
+            totals.setdefault(key, dict(pid=process["pid"], started=process["started"],
+                executable=process["executable"], cpuLowerBoundSeconds=0.0,
+                observedSeconds=0.0, intervals=0, resets=0))
+    for left, right in zip(readings, readings[1:]):
+        dt = (right.get("cpuObservedMillis", right["wallTimeMillis"]) -
+              left.get("cpuObservedMillis", left["wallTimeMillis"])) / 1000
+        if dt <= 0:
+            continue
+        old, new = keyed(left), keyed(right)
+        for key in old.keys() & new.keys():
+            delta = new[key]["cpuSeconds"] - old[key]["cpuSeconds"]
+            row = totals[key]
+            if delta < 0:
+                row["resets"] += 1
+                continue
+            row["cpuLowerBoundSeconds"] += delta
+            row["observedSeconds"] += dt
+            row["intervals"] += 1
+    first, last = keyed(readings[0]) if readings else {}, keyed(readings[-1]) if readings else {}
+    for key, row in totals.items():
+        row["cpuLowerBoundSeconds"] = round(row["cpuLowerBoundSeconds"], 3)
+        row["observedSeconds"] = round(row["observedSeconds"], 3)
+        row["presentAtStart"] = key in first
+        row["presentAtEnd"] = key in last
+    return sorted(totals.values(), key=lambda row: (-row["cpuLowerBoundSeconds"], row["pid"]))
 
 
 def top_processes(processes: list[dict], limit: int = 8) -> tuple[list[list], list[list]]:
@@ -213,6 +277,7 @@ def sample(path: str, interval: float) -> int:
                       "load1": os.getloadavg()[0]}
             processes = process_snapshot()
             record["top"], record["cpuTop"] = top_processes(processes)
+            record.update(cpuProcesses=processes, cpuObservedMillis=time.time_ns() // 1_000_000)
             append(path, record)
             captures.observe(processes)
         except Exception as error:  # noqa: BLE001 -- keep sampling; record why one sample failed
@@ -286,12 +351,14 @@ def stop(path: str, grace: float = 2) -> int:
                 status = "job-end-signal-unavailable"
         append(path, dict(event="stack-capture-end", pid=capture["pid"], status=status,
                           output=capture["output"]))
+    append(path, dict(event="cpu-snapshot", **cpu_snapshot()))
     append(path, dict(event="sampler-stop"))
     return 0
 
 
 def mark(path: str, name: str) -> int:
-    append(path, {"event": "phase", "name": name, "bootedSimulators": booted_simulators()})
+    append(path, {"event": "phase", "name": name, "bootedSimulators": booted_simulators(),
+                  **cpu_snapshot()})
     return 0
 
 
@@ -400,6 +467,13 @@ def summarize(path: str) -> int:
     for index, phase in enumerate(phases):
         begin = phase["wallTimeMillis"]
         end = phases[index + 1]["wallTimeMillis"] if index + 1 < len(phases) else end_time
+        endpoint = phases[index + 1] if index + 1 < len(phases) else next(
+            (r for r in reversed(records) if r.get("event") == "cpu-snapshot"), samples[-1])
+        cpu_reads = [phase] + [s for s in samples if begin < s["wallTimeMillis"] < endpoint["wallTimeMillis"]] + [endpoint]
+        for row in cpu_deltas(cpu_reads):
+            print("HOST PRESSURE CPU-TIME " + json.dumps(dict(phase=phase["name"], **row), separators=(",", ":")))
+        if not any(r.get("cpuProcesses") for r in cpu_reads):
+            print(f"HOST PRESSURE CPU-TIME UNAVAILABLE phase={phase['name']}")
         window = [s for s in samples if begin <= s["wallTimeMillis"] <= end]
         before = [s for s in samples if s["wallTimeMillis"] <= begin]
         base = before[-1] if before else (window[0] if window else None)
