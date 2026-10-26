@@ -7124,8 +7124,23 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 
 **Normative:**
 
-1. **`apple-plan` decides the legs**, on `ubuntu-latest`, with `tools/ci/plan-apple-legs`. A push to
-   `main`, a plain manual dispatch and any other event plan every leg. The boolean dispatch input
+1. **`apple-plan` decides the legs**, on `ubuntu-latest`, with `tools/ci/plan-apple-legs`.
+   **Amended 2026-10-25 (#390):** a push to `main` plans no macOS legs only when exactly one
+   associated, merged PR produced that pushed SHA, its base is `main`, its head belongs to this
+   repository, and the pushed commit and PR head have identical Git trees. That exact head must
+   have successful latest attempts of this repository's own `apple-ci.yml` runs: a `pull_request`
+   run with `apple-platform` successful and a `workflow_dispatch` run with `apple-conformance-core`,
+   `apple-conformance-ipad` and `apple-conformance-iphone` successful. Each run and its `apple-ci`
+   aggregator must also succeed. Plain full dispatches count as conformance proof. The reader
+   selects the newest run of each event on that head, checks the workflow's numeric id and path,
+   reads attempt-specific jobs and rechecks run freshness. It cannot reuse old job attempts,
+   fork runs or `pull_request_target` runs. Missing, ambiguous, stale, malformed, non-success or
+   unreadable evidence plans every leg. API pagination is bounded and fails closed on truncation.
+   Only `apple-plan` receives `contents: read`, `pull-requests: read` and `actions: read` through
+   `GITHUB_TOKEN`; no write permission or external token is needed. The run summary names the PR,
+   head, tree and both proof run IDs when it skips. `--proof-fixture` replays recorded REST responses
+   through the same push reader without a network request. Plain manual dispatches and other
+   events plan every leg. The boolean dispatch input
    `conformance_only` defaults to `false`; setting it to `true` plans both conformance jobs and
    skips `apple-platform`. It affects only `workflow_dispatch`, never push or pull requests.
    A pull request never plans the
@@ -7150,22 +7165,32 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 3. **`apple-ci` checks each leg against the plan:** the plan job must succeed, a planned leg must
    report `success`, and an unplanned leg must report `skipped`. Anything else fails, including an
    empty plan output. It downloads and resolves `FEATURES.yml` evidence only on a run that planned
-   every leg, so a pull request's Apple citations are resolved after merge, on `main`.
+   every leg: an unproven main push or a plain full dispatch. A push that reuses proof does not
+   download JUnit or resolve Apple `FEATURES.yml` identities across the two proof runs. Its summary
+   explicitly says evidence was not resolved. Full resolution runs before release in the release
+   commit's required plain full dispatch. A full run reports resolution as pending until the
+   blocking verifier executes; its success remains necessary for a green aggregator.
 4. **A release build requires the full run.** `release.yml` runs `tools/release_plan.py
    full-run-gate` before any step reads a secret. It refuses unless every required check and
    `apple-platform`, `apple-conformance-core`, `apple-conformance-ipad` and
    `apple-conformance-iphone` all concluded `success` on the exact commit being archived. All Apple
    legs must belong to the latest `apple-ci` aggregator's check suite; results from separate PR
    and dispatch runs cannot be combined. Check IDs determine recency, not API response order.
-   A skipped leg reports `skipped`, so a conformance-only dispatch cannot satisfy it. Only a dry run may
+   A skipped leg reports `skipped`, so neither a conformance-only dispatch nor a main push that
+   reuses PR proof can satisfy it. A release still requires a plain full dispatch on its commit. Only a dry run may
    waive it, and only with the explicit `skip_full_run_gate` input, which defaults to `false`.
 5. **`core-ci` is unchanged**, including `conformance-env-linux` on every pull request (about 3.5
    minutes), so the Linux and Android live-server conformance still gates every merge.
 
 **What this gives up, stated so it is not rediscovered as a defect.** A pull request can merge with
 a change that breaks Darwin conformance, a conformance-only control (`tools/test-darwin-*` and the
-other steps in that leg) or an Apple `FEATURES.yml` citation; `main`'s push run finds it, `main-health`
-reports it, and no release can ship it. A pull request that changes the conformance leg's own
+other steps in that leg) or an Apple `FEATURES.yml` citation. An unproven `main` push runs all
+legs and exposes these failures to `main-health`. A proven same-tree push reuses the successful PR
+and conformance proof but defers combined Apple FEATURES resolution to the next full dispatch,
+required before release. Its `apple-ci` aggregator concludes `success` after validating the planned
+skips, so main-health can close when the other required contexts also succeed on main's exact head;
+that health result does not claim a full run or FEATURES resolution. No release can ship without
+full evidence resolution. A pull request that changes the conformance leg's own
 machinery can be proved before merge by dispatching `apple-ci` on its branch. A plain dispatch
 plans every leg; `conformance_only=true` proves just conformance after the same head's PR platform
 check has succeeded, saving one macOS job. The command and required conclusions are in `docs/MERGING.md`.
@@ -7927,6 +7952,26 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-25 — Reuse exact-tree Apple merge proof on main pushes (§21.6, #390).**
+
+A main push can plan no macOS legs when one merged, same-repository PR produced it, its tree
+matches the PR head, and that exact head has successful latest `apple-ci.yml` PR platform and
+dispatch conformance proof. The planner reads only repository-owned workflow runs and their
+latest attempt's jobs, with read-only `GITHUB_TOKEN` permissions. Every uncertainty runs all legs.
+The Actions summary records the PR, head, tree and two run IDs. The always-running `apple-ci`
+aggregator accepts the planned skips and reports success for required-context main-health checks.
+
+Apple FEATURES identity resolution runs only when every leg is planned. A reused push explicitly
+reports that it did not resolve those identities; the release's plain full dispatch still resolves
+them before shipping. The release gate is unchanged: skipped jobs in the latest Apple suite cannot
+qualify, even alongside an older full green suite. `tools/test-plan-apple-legs` replays projected
+GitHub REST responses recorded from #389: head `4b4e4b04`, main `03e48c1e`, tree `b603c224`, PR run
+40127671219 and dispatch 40127671088. Its positive and fall-back controls exercise the production
+push code path, including latest attempts, provenance, pagination and API failures. The release
+and main-health controls distinguish successful required checks from full release evidence.
+**OBSERVED:** recorded-response planner controls and local policy checks. A real push skip remains
+**ASSUMED** until this change merges and a qualifying main push runs it.
 
 **2026-10-24 — Conformance-only Apple dispatch without repeating the platform build (§21.6).**
 

@@ -562,3 +562,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     concluded canceled, with iPhone success, iPad failure and core canceled. Its completed
     device evidence above remains valid; it has no completed core result. Wait for the whole
     first run when collecting multiple complete comparisons on one branch.
+
+    **OBSERVED after #391 merged (2026-10-25 UTC); the device allowance is now 600 seconds.** With
+    admission and warm-up in place, the browse/relaunch/offline test still exhausted its
+    300-second allowance on both devices of dispatch [40232687092](https://github.com/legitimate-apps/dulcet/actions/runs/40232687092)
+    (iPhone job 121287619992, iPad job 121287620055), as it had on iPad in 40202061025. In the
+    iPhone case XCTest was still issuing a step about once a second when the allowance fired,
+    during the check after relaunch. Two single existence checks earlier in the test took 17.6
+    and 29.5 seconds. That is a slow test on a starved host, not a hang. The 30 passes of this
+    test in the retained device logs took 138.7 to 265.2 seconds, plus one at 379.8. The iPhone
+    and iPad My Library proofs now allow 600 seconds per test, which still fails a test that
+    stops making progress. macOS and tvOS keep 300. No proof is retried, and the admission gate
+    is unchanged.
