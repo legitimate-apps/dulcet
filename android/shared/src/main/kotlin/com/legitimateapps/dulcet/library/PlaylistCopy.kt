@@ -112,7 +112,7 @@ public data class PlaylistQueue(val name: String, val tracks: List<AndroidTrack>
 
 /**
  * The playlist in [publication] as a queue from the entry at [position] (an index into its items), in
- * the playlist's order, duplicates kept. Entries this device cannot play now, or knows only by id, are
+ * the playlist's order, duplicates kept. Entries this device cannot play now, or whose duration is unknown, are
  * left out; a start on one of those begins at the next entry that can play. Null when the publication
  * is not a playlist with its entries present, or nothing in it can play.
  */
@@ -120,8 +120,7 @@ public fun AndroidLibraryPublication.playlistQueue(providerInstanceId: String, p
     val playlist = header as? AndroidLibraryItem.Playlist ?: return null
     if (itemsState != AndroidLibraryItemsState.Present) return null
     val playable = items.withIndex().filter { (_, item) ->
-        item is AndroidLibraryItem.Track && !item.metadataMissing && !item.title.isNullOrBlank() &&
-            item.playability != AndroidLibraryPlayability.UnavailableOffline
+        item is AndroidLibraryItem.Track && item.canBeQueued()
     }
     val tracks = playable.mapNotNull { (it.value as AndroidLibraryItem.Track).toTrack(providerInstanceId) }
     if (tracks.isEmpty()) return null

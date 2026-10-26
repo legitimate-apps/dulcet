@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.tv
 
+import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -89,7 +90,7 @@ internal fun TvMyLibraryHome(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TvAction(stringResource(SharedR.string.library_downloaded), "mylibrary.view.downloaded") { navigator.open(ROUTE_DOWNLOADED) }
-                TvAction(stringResource(SharedR.string.library_shuffle_all), "mylibrary.shuffleAll", enabled = publication?.songs?.isNotEmpty() == true) {
+                TvAction(stringResource(SharedR.string.library_shuffle_all), "mylibrary.shuffleAll", enabled = publication?.songs?.any { it.toTrack().canBeQueued() } == true) {
                     playTracks(plays, account.providerInstanceId, publication?.songs.orEmpty().map(MyLibrarySong::toTrack), null, "My Library", true) { showNowPlaying(context) }
                 }
             }
@@ -245,7 +246,7 @@ internal fun TvMySongsList(
                 }
                 Text(title, style = MaterialTheme.typography.displaySmall)
                 TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added", "artist" to "Artist"))
-                TvAction(stringResource(SharedR.string.library_shuffle_all), "mylibrary.songs.shuffleAll", enabled = tracks.isNotEmpty()) {
+                TvAction(stringResource(SharedR.string.library_shuffle_all), "mylibrary.songs.shuffleAll", enabled = tracks.any { it.canBeQueued() }) {
                     playTracks(plays, account.providerInstanceId, tracks, null, title, true) { showNowPlaying(context) }
                 }
             }

@@ -17,6 +17,25 @@ struct SearchPresentationTests {
 
     private let seen = DulcetReaderSeenCounts(artists: 3, albums: 4, tracks: 5)
 
+    @Test func missingSearchTitlesUseTheReaderFallbackInRowsAndPlayback() {
+        for title in ["", "  ", "\n\t", "A real title"] {
+            let result = DulcetSearchResult(
+                id: DulcetProviderItemID(providerInstanceID: "fixture", rawID: "track"),
+                title: title, kind: .track, credits: [], albumTitle: nil, year: nil,
+                duration: .seconds(60), mediaSourceID: nil,
+                artwork: DulcetArtwork(seed: "track", palette: .indigoCoral)
+            )
+            let expected = title == "A real title" ? title : DulcetStrings.readerUntitled
+            #expect(result.displayTitle == expected)
+            #expect(result.playableTrack?.title == expected)
+            let unknownDuration = DulcetSearchResult(
+                id: result.id, title: title, kind: .track, credits: [], albumTitle: nil,
+                year: nil, duration: nil, mediaSourceID: nil, artwork: result.artwork
+            )
+            #expect(unknownDuration.playableTrack == nil)
+        }
+    }
+
     @Test func aTimedOutServerSearchWithNothingOnTheDeviceIsAFailureNotNoMatches() {
         #expect(content("Thirty One Seconds", .deviceServerFailed(.timeout, seen)).presentation == .failed(.timeout))
         #expect(content("Thirty One Seconds", .deviceServerFailed(.timeout, nil)).presentation == .failed(.timeout))

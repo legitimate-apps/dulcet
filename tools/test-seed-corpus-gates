@@ -3,6 +3,7 @@
 """Negative controls for the corpus evidence gates."""
 
 from pathlib import Path
+import sys
 
 
 def _load_source(name, path):
@@ -20,6 +21,8 @@ def _load_source(name, path):
 
 
 seed_corpus = _load_source("seed_corpus", str(Path(__file__).with_name("seed-corpus")))
+sys.path.insert(0, str(Path(__file__).with_name("conformance-env")))
+health_check = _load_source("health_check", str(Path(__file__).with_name("conformance-env") / "health-check"))
 
 
 class ProbeTools:
@@ -66,6 +69,27 @@ def require_rejection(
 
 
 def main() -> None:
+    class CorpusClient:
+        def __init__(self, songs):
+            self.songs = songs
+
+        def subsonic(self, endpoint, *, parameters):
+            assert endpoint == "search3"
+            start = int(parameters["songOffset"])
+            return {"searchResult3": {"song": self.songs[start:start + 200]}}
+
+    # All pages must carry real durations, including the page after a full first page.
+    songs = [{"id": str(index), "duration": 2} for index in range(201)]
+    assert health_check.require_playback_durations(CorpusClient(songs), 201) == 201
+    for duration in (None, 0):
+        invalid = songs[:-1] + [{"id": "last", **({"duration": duration} if duration is not None else {})}]
+        try:
+            health_check.require_playback_durations(CorpusClient(invalid), 201)
+        except SystemExit as error:
+            assert "no positive server duration: last" in str(error), str(error)
+        else:
+            raise SystemExit("playback corpus duration gate accepted an unqueueable second-page track")
+    print("PLAYBACK CORPUS CONTROL PASS known=201 missing-duration=rejected zero-duration=rejected")
     require_rejection(
         "mislabeled_container",
         {"format": {"format_name": "wav", "duration": "1.0", "tags": {}}, "streams": []},

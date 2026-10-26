@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.tv
 
+import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -111,7 +112,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                 TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)", "artist" to "Artist", "mostPlayed" to "Most Played"))
                 if (!downloaded && !offline) TvStatement(stringResource(SharedR.string.library_shuffle_server_hint), "library.$key.shuffle.scope")
                 TvAction(stringResource(if (offline && !downloaded) SharedR.string.library_shuffle_available else SharedR.string.library_shuffle_all), "library.$key.shuffleAll",
-                    enabled = !shuffle.busy && (!downloaded && !offline || tracks.any { it.playability != AndroidLibraryPlayability.UnavailableOffline })) {
+                    enabled = !shuffle.busy && (!downloaded && !offline || tracks.any { it.canBeQueued() })) {
                     if (downloaded || offline) playTracks(plays, account.providerInstanceId, tracks, null, title, true) { context.startActivity(PlaybackIntents.showNowPlaying(context)) }
                     else shuffle.start { playTracks(plays, account.providerInstanceId, it, null, title, true) { context.startActivity(PlaybackIntents.showNowPlaying(context)) } }
                 }

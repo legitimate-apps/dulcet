@@ -6524,6 +6524,11 @@ offset and a blank line, a sidecar `.txt`, embedded lyrics in three languages (t
 plain lyrics, and the health probe with none. **No copyrighted audio and no binary blobs in the
 repository.**
 
+Positive playback fixtures have a positive whole-second duration in the server response, checked
+across every `search3` page before conformance runs. Sub-second media is unsuitable here because
+Navidrome truncates its duration to zero and omits the field. Missing-duration admission is covered
+separately by the reader and playback negative controls.
+
 ### 20.3 Three test layers, each with an honest name
 
 Revision 1 claimed a fixture-replay suite proved "transport parity." It does not: an in-process Ktor
@@ -8023,6 +8028,28 @@ its timer before starting the paused successor, just as a playback-event transit
 The directly exported sleep countdown clamps negative fades to zero and nonpositive lengths to
 an immediate deadline; arithmetic saturates at the clock range instead of throwing or wrapping.
 
+
+
+**2026-10-24 - Android untitled playback and queue admission.**
+
+Android phone and TV library queues accept tracks with a known duration regardless of whether
+there is a title, matching the Apple reader adapter. Missing, empty and whitespace-only titles
+use the localized Android `playback_untitled` string, "Untitled", in the queue, Now Playing,
+Media3 session and notification. Reader and search rows apply the same localized display fallback
+at presentation; cached and fresh records preserve the server title. A later real title updates
+the active Media3 item without restarting playback. New Android queue admissions require a known
+duration, including raw-ID selections after metadata resolution. Existing and restored queue
+entries remain playable when duration is absent; the admission rule does not invalidate saved plays.
+Admission can use duration already learned by playback or retained with a protected local file,
+even when a caller supplies only identity and title. It filters unknown-duration neighbors and
+preserves the selected track's identity; an explicitly selected unknown-duration track is refused.
+Durationless reader and search rows show why playback is unavailable, and an explicit filtered
+selection never substitutes another track.
+Play and Shuffle use the exact `playableTracks` list that starts playback; Play Next, Add to
+Queue, playlists and system media browsing use the same duration and offline availability
+requirements. Android continues to exclude tracks unavailable offline from a new queue, while
+Apple's adapter labels them `metadataOnly` for its queue's offline policy. Apple reader and search use their shared localized `reader.untitled` value, with English
+"Untitled". Both platforms treat whitespace-only titles as absent display text.
 
 
 **2026-10-23 — Retain Android Play across a chosen connection's transient validation loss.**
