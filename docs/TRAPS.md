@@ -586,3 +586,17 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     (iPhone) and 34.50/20.97 over 156.574 seconds (iPad). These distinguish actual cumulative
     costs hidden by basename peak summaries; they do not name the consumer or establish cause.
     Protocol, coverage and result: [apsd investigation](investigations/2026-10-26-apsd-pressure-experiment.md).
+
+    **OBSERVED in corrected [run 40272074448](https://github.com/legitimate-apps/dulcet/actions/runs/40272074448),
+    Refs #343:** the framework-path guard and same-launch restoration passed on both devices.
+    Idle persisted apsd events/s changed A1/B/A2 from 3112/0/6182 (iPhone) and 2767/3.78/1722
+    (iPad), with simulator and host diagnosticd CPU falling in B and returning in A2. iPad's
+    unchanged browse test took 200.087/151.654/195.548 seconds, with maximum query activities
+    3.970/2.748/7.784 seconds. Its complete comparison supports a performance contribution on
+    that VM; it did not reproduce the earlier approximately 19-second query stalls. iPhone A1
+    had a 17.617-second query, but B and A2 failed fixture port preflight before XCTest, so
+    its query comparison is inconclusive. Both restored canonical suites passed, which does
+    not replace the failed arms or prove suspension safe for every assertion. #395 remains
+    measurement-only; no permanent quiescence or starvation fix is established. Full CPU
+    coverage, matched-query controls, residual-message limits and the proposed fixture repair
+    are recorded in the investigation above.

@@ -21,7 +21,7 @@ class MusicBrainzClient(private val http:PoliteHttp,private val cache:DiscoverCa
     init { http.configureOrigin(settings.musicBrainzUrl,settings.musicBrainzMinGapMillis) }
     private suspend fun <T> load(path:String,query:Map<String,String> = emptyMap(),ttl:Long=DiscoverCache.DAY,decode:(JsonObject)->T):Cached<T> {
         val params=query+mapOf("fmt" to "json")
-        return cache.read(CacheKey(settings.musicBrainzUrl,path,params),ttl,{ decode(Json.parseToJsonElement(it.decodeToString()).obj()) }) { if(!settings.enabled)throw UpstreamUnavailable(); http.get(settings.musicBrainzUrl,path,params) }
+        return cache.read(CacheKey(settings.musicBrainzUrl,path,params),ttl,{ decode(Json.parseToJsonElement(it.decodeToString()).obj()) }) { if(!settings.enabled)throw UpstreamUnavailable(reason=UpstreamFailure.CacheOnly); http.get(settings.musicBrainzUrl,path,params) }
     }
     suspend fun search(kind:DiscoverKind,query:String,offset:Int,limit:Int):Cached<UpstreamPage<DiscoverItem>> {
         require(offset>=0 && limit in 1..100 && query.isNotBlank() && query.length<=1000)

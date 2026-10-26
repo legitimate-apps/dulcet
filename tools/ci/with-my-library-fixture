@@ -71,6 +71,20 @@ def wait_for_readiness(children, timeout: float = 60) -> None:
             time.sleep(.2)
 
 
+def require_available_ports(ports) -> None:
+    # Sequential fresh fixtures reuse these ports. Match the HTTP listeners' reusable
+    # bind so closed connections do not look like a live fixture. A live listener still
+    # rejects the bind; retain the port/errno so a hosted failure can be attributed.
+    for port in ports:
+        with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind(('127.0.0.1', port))
+            except OSError as error:
+                raise RuntimeError(f'fixture port preflight failed: 127.0.0.1:{port} '
+                                   f'errno={error.errno} {error.strerror}') from None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True, type=Path)
@@ -86,9 +100,7 @@ def main() -> int:
     args.root.mkdir(parents=True)
     if not (args.music / 'corpus-manifest.json').is_file():
         parser.error('--music must be the generated disposable corpus')
-    for port in range(4783, 4789):
-        with socket.socket() as probe:
-            probe.bind(('127.0.0.1', port))
+    require_available_ports(range(4783, 4789))
     # Positive fallback control, before launching anything. Never let an absent server prove no split.
     if not rest(4533, 'getAlbumList2', type='alphabeticalByName', size='1')['albumList2'].get('album'):
         raise RuntimeError('Navidrome fallback corpus is empty')

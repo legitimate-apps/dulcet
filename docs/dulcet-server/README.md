@@ -192,3 +192,57 @@ errors, settings and durable offline operation sequences for client implementati
 Server-only verification for these contracts is recorded in
 [Discover and Wishlist evidence](../evidence/discover-wishlist-server.md). The seven feature rows
 retain planned app cells until the later core and native lanes supply their own evidence.
+
+### Scan identity and upgrade adoption
+
+The scanner compares each audio file's path, size, precise mtime, Unix inode change time and
+file key, in addition to the existing sidecar and audio-fingerprint checks. This detects tag and
+embedded-picture edits that preserve size and mtime. Its versioned `track_file_identity_v1`
+table is separate from catalog rows so an older scanner cannot reset the stronger baseline.
+Failed probes retain the previous identity and retry on the next scan.
+
+On upgrade, an existing file that passes the old unchanged checks adopts its current identity
+without a tag read or catalog event. This intentionally cannot discover a same-size,
+preserved-mtime edit made before that file's first baseline capture, including one racing that
+capture. Reading every tag would be required to recover that information. Subsequent identity
+changes are detected normally. Ordinary size/mtime changes and missing fingerprints still
+require reads during adoption.
+
+`chmod`, `chown` and hard-link changes can advance ctime without changing audio. Each affected
+catalog path is conservatively re-probed once; the new identity then becomes its baseline.
+Reads, atime updates and edits to a different sidecar do not change the audio inode's ctime.
+A bulk permission/ownership operation can therefore require a library-wide re-read. When Unix ctime is unavailable, track detection falls back to the previous size, millisecond
+mtime, sidecar and missing-fingerprint predicate. A metadata-only stamp is retained for artwork
+source invalidation, but that untrusted identity never forces a tag probe or hashes audio during
+scanning. Same-size, preserved-mtime edits can remain undetected on these providers. Gaining
+ctime later adopts the stronger baseline without a library-wide probe. Standalone artwork files
+keep their content-digest fallback; on-demand embedded artwork extraction also keeps its existing
+cache identity behavior.
+
+Scanner logs include aggregate `tracks`, `tags_read` and `identities_adopted` work counts.
+Listen Now warms selected originals with four shared permits before serial resource rendering.
+It retains content-addressed artwork IDs and current per-user source checks; repeated references
+to one embedded source share extraction work.
+
+### Discover upstream diagnostics
+
+Logger `dulcet-discover-upstream` emits `discover_upstream` records with bounded per-origin
+counters. Known providers have fixed labels; custom/redirect origins have opaque labels,
+limited to 64 individual buckets plus overflow. Records contain no raw hostnames, paths,
+queries, search text, user IDs, response bodies, credentials or exception messages.
+
+`event` distinguishes HTTP completion, decode failure, refresh failure and stale serving.
+`outcome` distinguishes HTTP status failure, timeout, transport/DNS failure, active backoff,
+waiting-cap refusal, malformed body, parse failure, cancellation and local cache-write failure.
+Each record includes status class and duration where available, cumulative status classes and
+duration, applied/refused backoff counts, timeout counts, waiting-cap refusals, parse failures,
+refresh failures and stale serves. `attempts` includes refusals/cancellations; `requests` counts
+wire starts. HTTP timeouts and failed-refresh timeouts are separate counters, not additive.
+Intentional cache-only misses are not refresh failures; any stale fallback they serve is
+labeled `cache_only`. These process-local counters reset on restart. Cancellation propagates and never serves stale.
+
+A freshness gate should save the response's `stale` boolean and the allowlisted upstream records
+from the request's log window even on failure. `tools/server/discover_verification.py` supplies
+that projection. It deliberately omits response items and raw log lines. Concurrent or adjacent requests in an overlapping log window can contribute to the same
+origin's evidence, so it attributes an origin outcome, not a particular query. A log-read
+failure records diagnostics as unavailable without masking the primary HTTP outcome. A missing stale flag is reported as unknown rather than false.

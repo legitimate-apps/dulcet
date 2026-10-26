@@ -79,7 +79,11 @@ class CoverArtClient(private val http:PoliteHttp,private val cache:DiscoverCache
             val target=uri
             val addresses=withContext(Dispatchers.IO) {
                 try { CompletableFuture.supplyAsync { resolver(target.host) }.get(5,TimeUnit.SECONDS) }
-                catch(_:Exception) { throw UpstreamUnavailable() }
+                catch(e:kotlinx.coroutines.CancellationException) { throw e }
+                catch(e:Exception) {
+                    val cause=generateSequence(e as Throwable) { it.cause }.take(8).last()
+                    throw UpstreamUnavailable(reason=if(cause is java.util.concurrent.TimeoutException)UpstreamFailure.DnsTimeout else UpstreamFailure.DnsTransport)
+                }
             }
             // Every DNS answer is checked before selecting the pinned socket address, including
             // the configured origin. Only explicit fixture injection can admit loopback.
@@ -96,7 +100,7 @@ class CoverArtClient(private val http:PoliteHttp,private val cache:DiscoverCache
         try {
             val cached=cache.read(CacheKey(settings.coverArtArchiveUrl,path,emptyMap()),30*DiscoverCache.DAY,{ bytes ->
                 if(bytes.size>MAX_BYTES)throw UpstreamUnavailable(); imageType(bytes);bytes
-            }) { if(!settings.enabled)throw UpstreamUnavailable();fetch(path) }
+            }) { if(!settings.enabled)throw UpstreamUnavailable(reason=UpstreamFailure.CacheOnly);fetch(path) }
             return DiscoverImage(cached.value,imageType(cached.value),cached.age,false)
         } catch(_:UpstreamNotFound) { return placeholderImage() }
           catch(e:UpstreamUnavailable) { if(!settings.enabled)return placeholderImage();throw e }

@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import json
+import errno
+import socket
 import os
 import runpy
 import signal
@@ -208,3 +210,33 @@ assert metrics['testSeconds'] == 30.5 and metrics['firstAutomationSeconds'] == 7
 assert metrics['queryMaxSeconds'] == 19.3 and len(metrics['queryActivities']) == 1
 assert metrics['testStatus'] == 'Failure' and metrics['nestedActivities'] is True
 print('ACTIVITY CONTROL PASS exact query duration, automation offset and failed test retained')
+
+# Reproduce run 40272074448's fixture preflight class on an ephemeral local port.
+# A live listener remains a refusal; a closed reusable connection is not a listener.
+fixture = runpy.run_path(str(REPO / 'tools/ci/with-my-library-fixture'))
+with socket.socket() as listener:
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(('127.0.0.1', 0))
+    port = listener.getsockname()[1]
+    listener.listen()
+    try:
+        fixture['require_available_ports']([port])
+    except RuntimeError as error:
+        assert str(port) in str(error) and f'errno={errno.EADDRINUSE}' in str(error), error
+    else:
+        raise AssertionError('preflight accepted live listener')
+    with socket.create_connection(('127.0.0.1', port), timeout=2) as client:
+        accepted, _ = listener.accept()
+        with accepted:
+            accepted.shutdown(socket.SHUT_WR)
+            assert client.recv(1) == b''
+# Positive witness: the old plain-bind preflight rejects the closed-connection port.
+with socket.socket() as plain:
+    try:
+        plain.bind(('127.0.0.1', port))
+    except OSError as error:
+        assert error.errno == errno.EADDRINUSE, error
+    else:
+        raise AssertionError('closed-connection control did not reproduce plain-bind failure')
+fixture['require_available_ports']([port])
+print('FIXTURE PORT CONTROL PASS live listener refused, closed reusable connection accepted')
