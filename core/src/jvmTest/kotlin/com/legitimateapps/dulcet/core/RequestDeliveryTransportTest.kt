@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
  * Whether a request that got no answer may have reached the server, through the real HTTP stack
  * against real sockets (spec §18.3, §18.6). Both cases below are unreachable to the person; only
  * a connection never made proves the request never arrived, so only then may an outbox take a write
- * back and send it again as if it had never gone. Android's HTTP client is the same CIO engine and
+ * back and send it again as if it had never gone. Android's nonmedia HTTP client uses the same CIO engine and
  * its classification the same code (`RequestDelivery.android.kt`).
  */
 class RequestDeliveryTransportTest {
@@ -38,6 +38,22 @@ class RequestDeliveryTransportTest {
             assertEquals(DomainError.Transport.Unreachable, failure.asReaderError(), "$failure")
             assertFalse(provesNeverConnected(failure), "a connection made and then closed was read as never made: $failure")
         }
+    }
+
+    @Test
+    fun aServiceUnavailableWithImmediateRetryDoesNotReplayAStateChangingRequest() = SilentServer(
+        "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    ).use { server ->
+        val responses = transport(server.port) { transport ->
+            listOf(
+                transport.request("star", mapOf("id" to "song-1")),
+                transport.requestRepeated("createPlaylist", listOf("name" to "Road", "songId" to "song-1"), formPost = true),
+            )
+        }
+        assertEquals(listOf(503, 503), responses.map { it.statusCode })
+        assertEquals(listOf("GET /rest/star", "POST /rest/createPlaylist"), server.requestLines.map {
+            it.substringBefore('?').substringBefore(".view").substringBefore(" HTTP")
+        }, "The transport must return each refusal to shared retry policy without sending the write again")
     }
 
     @Test
@@ -86,8 +102,8 @@ class RequestDeliveryTransportTest {
         }
     }
 
-    /** Reads each request whole, then closes the connection without a byte of answer. */
-    private class SilentServer : Closeable {
+    /** Reads each request whole, then closes after [response], or without an answer when null. */
+    private class SilentServer(private val response: String? = null) : Closeable {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         val port: Int get() = socket.localPort
         val requestLines = CopyOnWriteArrayList<String>()
@@ -112,6 +128,9 @@ class RequestDeliveryTransportTest {
                         ?.substringAfter(':')?.trim()?.toIntOrNull() ?: 0
                     repeat(length) { input.read() }
                     requestLines += lines.first()
+                    response?.let { response ->
+                        client.getOutputStream().apply { write(response.toByteArray(Charsets.US_ASCII)); flush() }
+                    }
                 }
             }
         }

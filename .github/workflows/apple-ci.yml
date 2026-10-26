@@ -88,7 +88,7 @@ jobs:
       - name: Require partial promotion conditions to resolve or declare a block
         run: python3 tools/verify_promotion_conditions.py
       - name: Prove account-removal recovery rejects stale cleanup
-        run: python3 tools/test-account-removal-recovery
+        run: python3 tools/test-account-removal-recovery --self-test
       - name: Prove removed-download inbox cleanup is scoped and retryable
         run: python3 tools/test-download-inbox-recovery
       - name: Prove account-state text entry avoids hardware keyboard transitions
