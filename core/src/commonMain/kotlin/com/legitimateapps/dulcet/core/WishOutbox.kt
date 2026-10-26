@@ -77,6 +77,7 @@ internal class WishOutbox(
                 is DiscoverResult.Value -> {
                     val receipt=result.value
                     if(intent.mutation is WishMutation.Add && receipt.wish==null && !receipt.removed) {lastError=DiscoverFailure("invalid-response",null,true);return@withLock}
+                    backoff?.wishAccepted()
                     store.acknowledge(intent.mutation.operationId,receipt)
                     if(intent.mutation is WishMutation.Remove && receipt.removed) {
                         intent.mutation.addOperationId?.let {store.acknowledge(it,WishReceipt(false,null,true))}
@@ -85,7 +86,7 @@ internal class WishOutbox(
                 }
                 is DiscoverResult.Failed -> {
                     lastError=result.error
-                    backoff?.note(result.error)
+                    backoff?.wishFailed(result.error)
                     // Authentication or an ambiguous response is not proof a write was refused.
                     if(result.error.retryable || result.error.code in setOf("unauthorized","offline","rate-limited")) return@withLock
                     store.refuse(intent.mutation.operationId,result.error);changed()

@@ -10,6 +10,9 @@ internal class DiscoverSessionWire:LibraryEndpointTransport {
     val requests=mutableListOf<String>()
     val wishParameters=mutableListOf<Map<String,String>>()
     var retryAfter:String?=null
+    val retryHeaders=ArrayDeque<String?>()
+    val wishTimes=mutableListOf<Long>()
+    var now:()->Long={0L}
     var retryEndpoint="addToDulcetWishlist"
     var advertised=true
     var hold:String?=null
@@ -20,9 +23,10 @@ internal class DiscoverSessionWire:LibraryEndpointTransport {
         requests+=endpoint
         if(endpoint=="addToDulcetWishlist") {
             wishParameters+=parameters
+            wishTimes+=now()
         }
-        if(endpoint==retryEndpoint) retryAfter?.let { wait ->
-            retryAfter=null
+        if(endpoint==retryEndpoint && (retryHeaders.isNotEmpty() || retryAfter!=null)) {
+            val wait=if(retryHeaders.isNotEmpty())retryHeaders.removeFirst() else retryAfter.also {retryAfter=null}
             return LibraryEndpointResponse(429,"busy","https://fixture.invalid?<redacted>",retryAfter=wait)
         }
         if(endpoint==hold){entered.complete(Unit);withContext(NonCancellable){release.await()}}
@@ -105,6 +109,49 @@ class DiscoverAccountFenceTest {
         assertEquals(0L,parent.pendingChangeCount())
         advanceTimeBy(120_000);runCurrent();assertEquals(2,wire.wishParameters.size)
     }
+    /** #393 review: a finite 429 script exposes a hot loop without hanging virtual time. */
+    @Test fun repeatedZeroRetryAfterUsesGrowingBoundedFloorAndResetsAfterAcceptance()=readerTest {env ->
+        assertRetrySpacing(env,"0",listOf(2_000,4_000,8_000,16_000,32_000,64_000,128_000,256_000,300_000,300_000))
+    }
+    @Test fun repeatedPastRetryAfterUsesPositiveGrowingFloor()=readerTest {env ->
+        assertRetrySpacing(env,"Thu, 01 Jan 1970 00:00:00 GMT",listOf(2_000,4_000,8_000))
+    }
+    @Test fun missingRetryAfterKeepsSixtySecondFallbackUntilGrowingFloorIsLonger()=readerTest {env ->
+        assertRetrySpacing(env,null,listOf(60_000,60_000,60_000,60_000,60_000,64_000,128_000))
+    }
+    @Test fun serverRetryDeadlineLongerThanClientCapIsNeverShortened()=readerTest {env ->
+        assertRetrySpacing(env,"600",listOf(600_000))
+    }
+    private suspend fun TestScope.assertRetrySpacing(env:ReaderEnv,header:String?,waits:List<Long>) {
+        val wire=DiscoverSessionWire().apply {
+            now={testScheduler.currentTime}
+            repeat(waits.size){retryHeaders.addLast(header)}
+        }
+        val parent=open(env,wire);val client=parent.openDiscoverClient()
+        client.add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent()
+        assertEquals(1,wire.wishTimes.size,"429 must schedule a spaced retry, never a delay(0) loop")
+        val expectedTimes=mutableListOf(0L)
+        for((index,wait) in waits.withIndex()) {
+            advanceTimeBy(wait-1);runCurrent()
+            assertEquals(index+1,wire.wishTimes.size,"attempt ${index+2} fired before its effective deadline")
+            advanceTimeBy(1);runCurrent()
+            expectedTimes+=expectedTimes.last()+wait
+            assertEquals(expectedTimes,wire.wishTimes,"each actual 429 advances the floor once")
+        }
+        assertEquals(0L,parent.pendingChangeCount())
+        val acceptedCount=wire.wishTimes.size
+        advanceTimeBy(600_000);runCurrent();assertEquals(acceptedCount,wire.wishTimes.size)
+        // An accepted write resets the streak even after the floor reached its cap.
+        wire.retryHeaders.addLast("0")
+        client.add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent()
+        assertEquals(acceptedCount+1,wire.wishTimes.size)
+        advanceTimeBy(1_999);runCurrent();assertEquals(acceptedCount+1,wire.wishTimes.size)
+        advanceTimeBy(1);runCurrent();assertEquals(acceptedCount+2,wire.wishTimes.size)
+        assertEquals(2_000L,wire.wishTimes.last()-wire.wishTimes[acceptedCount])
+        assertEquals(0L,parent.pendingChangeCount())
+        advanceTimeBy(600_000);runCurrent();assertEquals(acceptedCount+2,wire.wishTimes.size)
+        client.close()
+    }
     @Test fun repeatedRateLimitReplacesWakeupAndKeepsOneRetryPerDeadline()=readerTest {env ->
         val wire=DiscoverSessionWire();val parent=open(env,wire)
         wire.retryAfter="120"
@@ -149,10 +196,13 @@ class DiscoverAccountFenceTest {
             wire.retryAfter="120"
             parent.openDiscoverClient().add(sampleDiscoverItem(),WishSource("search",null)){};runCurrent()
             assertEquals(1,wire.wishParameters.size)
+            val retry=assertNotNull(parent.reader.wishRetryJob)
+            assertTrue(retry.isActive,"the positive control must have a live delayed retry")
             if(close)parent.closeDiscoverClients() else {
                 epoch=null;parent.reader.rejectServerIdentity()
                 epoch=1 // An external accept alone must not authorize an old timer.
             }
+            assertTrue(retry.isCancelled,"${if(close) "close" else "identity rejection"} must cancel the job immediately")
             advanceTimeBy(120_000);runCurrent()
             assertEquals(1,wire.wishParameters.size)
             assertEquals(1L,parent.pendingChangeCount())

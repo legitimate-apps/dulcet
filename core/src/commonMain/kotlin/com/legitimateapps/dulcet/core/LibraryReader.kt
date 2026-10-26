@@ -1009,6 +1009,8 @@ internal class LibraryReader(
     private var busyUntil: ComparableTimeMark? = null
     private var busyRetry: Job? = null
     private var wishRetry: Job? = null
+    /** The scheduled handle lets internal tests distinguish cancellation from a fenced send. */
+    internal val wishRetryJob: Job? get() = wishRetry
 
     /** Like the busy retry, owned by the reader scope, but using Discover's shared deadline. */
     internal fun retryWishesAfter(wait: Duration) {

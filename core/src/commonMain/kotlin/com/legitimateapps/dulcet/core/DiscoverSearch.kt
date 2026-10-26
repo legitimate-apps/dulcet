@@ -9,20 +9,34 @@ import kotlin.time.ComparableTimeMark
 import kotlin.time.TimeSource
 import kotlin.time.Duration.Companion.milliseconds
 
-/** Shared per account, so changing query or surface cannot bypass server backoff. */
+/**
+ * Shared per account, so changing query or surface cannot bypass server backoff.
+ * Wish 429s double the 2-second client floor up to 5 minutes; an accepted wish resets it.
+ * Missing/invalid Retry-After keeps the 60-second fallback. Longer server waits are not capped.
+ */
 internal class DiscoverBackoff(private val wall: () -> Long, private val monotonic: TimeSource.WithComparableMarks = TimeSource.Monotonic, private val deadlineChanged: (Duration) -> Unit = {}) {
     private var until: ComparableTimeMark? = null
     private var failure: DiscoverFailure? = null
+    private var wishFloor=LIBRARY_BUSY_FLOOR
     fun note(error: DiscoverFailure) {
         if (error.code != "rate-limited") return
-        val delay=(error.retryAtMillis?.let { (it - wall()).coerceAtLeast(0) } ?: 60000).milliseconds
+        val now=wall()
+        val serverWait=(error.retryAtMillis?.let { (it - now).coerceAtLeast(0) } ?: 60000).milliseconds
+        // Bound the client floor, never a longer deadline requested by the server.
+        val delay=maxOf(serverWait,wishFloor)
         val deadline=monotonic.markNow()+delay
         if (until == null || deadline > until!!) {
             until=deadline
-            failure=error.copy(retryAtMillis=error.retryAtMillis ?: (wall()+60000))
+            failure=error.copy(retryAtMillis=now+delay.inWholeMilliseconds)
             deadlineChanged(delay)
         }
     }
+    /** Count once per actual wish attempt, not again in the session/read wrappers. */
+    fun wishFailed(error: DiscoverFailure) {
+        note(error)
+        if(error.code=="rate-limited")wishFloor=(wishFloor*2).coerceAtMost(LIBRARY_BUSY_CAP)
+    }
+    fun wishAccepted() {wishFloor=LIBRARY_BUSY_FLOOR}
     fun remaining(): Duration? = until?.let { -it.elapsedNow() }?.takeIf { it.isPositive() }
     fun allowed(): Boolean = until?.let { monotonic.markNow() >= it } ?: true
     fun error(): DiscoverFailure? = if (allowed()) null else failure
