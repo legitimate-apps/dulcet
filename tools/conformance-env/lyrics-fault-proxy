@@ -115,7 +115,9 @@ from urllib.parse import parse_qs, urlsplit
 LYRICS_ENDPOINTS = {"getLyricsBySongId", "getLyricsBySongId.view"}
 PLAYLIST_ENDPOINTS = {"getPlaylist", "getPlaylist.view"}
 CREATE_ENDPOINTS = {"createPlaylist", "createPlaylist.view"}
-# Longer than any proof keeps a read waiting, shorter than the app's own request timeout.
+# Finite fixture safety bound, not a client-liveness guarantee: the production playlist
+# reader has a 30 s request timeout. Prepare slow UI before holding its foreground reread,
+# release promptly, and require the page to consume the gone answer before confirming Rename.
 HOLD_LIMIT_SECONDS = 45
 # Hop-by-hop headers (RFC 9110 §7.6.1) are this connection's, never forwarded.
 HOP_BY_HOP = {

@@ -154,6 +154,9 @@ class Journal(private val db: Db, dataFolder: Path) {
         // Most metadata/cache commits append no journal rows. When there is a tail, seek by
         // sequence: the entity index starts with type and otherwise scans retained history.
         if (nextHead <= recorded) return@with
+        // An entity-free tail is fully accounted for too. Keep this watermark in the same
+        // transaction as the visibility work below, so any later failure rolls both back.
+        execute("INSERT INTO meta(key,value) VALUES('api_visibility_head',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",nextHead.toString())
         if (long("SELECT COUNT(*) FROM api_journal NOT INDEXED WHERE seq>? AND type IN ('track','album','artist','genre','source')",recorded) == 0L) return@with
         execute("CREATE TEMP TABLE IF NOT EXISTS api_live_visibility(type TEXT NOT NULL,id TEXT NOT NULL,source_id TEXT NOT NULL,PRIMARY KEY(type,id,source_id))")
         execute("DELETE FROM api_live_visibility")
@@ -171,8 +174,6 @@ class Journal(private val db: Db, dataFolder: Path) {
             FROM api_journal j NOT INDEXED WHERE j.seq>? AND j.type IN ('track','album','artist','genre','source')
             AND EXISTS(SELECT 1 FROM api_catalog_visibility v WHERE v.type=j.type AND v.id=j.id)""",recorded)
         execute("INSERT OR IGNORE INTO api_journal_visibility SELECT seq,json_array(id) FROM api_journal NOT INDEXED WHERE seq>? AND type='source'",recorded)
-        // Use a persisted watermark: updating an in-memory one here would survive a failed commit.
-        execute("INSERT INTO meta(key,value) VALUES('api_visibility_head',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",nextHead.toString())
     }
 
     private fun prune(session: Db.Session, now: Long) = with(session) {
