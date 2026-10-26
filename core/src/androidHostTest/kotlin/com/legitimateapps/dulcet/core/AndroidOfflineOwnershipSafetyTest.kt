@@ -54,6 +54,16 @@ class AndroidOfflineOwnershipSafetyTest {
 
     @Test fun clearCacheBetweenResolutionAndPrepareCannotRemoveTheSelectedPlaybackFile() = runBlocking {
         Fixture().use { f ->
+            // The production adapter now reads real cache metadata. Admit this positive playback
+            // fixture before exercising Clear Cache between local resolution and Prepare.
+            val metadata = f.newStore()
+            try {
+                val cache = SeenCacheStore(metadata, SeenCacheWallClock { 1_000L })
+                    .bind(CacheBinding(PROVIDER, f.account().normalizedBaseUrl, f.account().username))
+                cache.writeEntities(CacheWriteStamp(cache.issue(), 1_000L, null), CacheEntitySource.Detail,
+                    CacheEntities(tracks = listOf(CacheTrackRecord("song:opaque", "album:cached",
+                        "Local song", durationMilliseconds = 6_000, sourceContainer = AudioContainer.Wav))))
+            } finally { metadata.close() }
             val downloads = f.open()
             val local = f.cache(downloads)
             var clearsAtResolution = 0

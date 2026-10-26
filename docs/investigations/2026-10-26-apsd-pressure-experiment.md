@@ -1,6 +1,204 @@
 # apsd experiment results and retained CPU attribution, Refs #343
 
-## Corrected dispatch 40272074448
+## Repaired dispatch 40327052864 and combined verdict
+
+**OBSERVED outcome:** all six comparison arms reached XCTest and passed. Suppression and
+restoration were valid on both devices. apsd's contribution to simulator and host diagnosticd
+CPU repeats across all four VMs. A reversible iPad browse-duration effect repeats on its
+second VM. On the new iPhone VM, restored A2 is as fast as suspended B despite daemon CPU
+returning. Neither new VM reproduces the earlier 17 to 19-second queries.
+
+**OBSERVED recommendation:** close the experiment as a mitigation candidate and keep #395
+measurement-only. Preserve the experimental ref and artifacts as historical evidence, with
+no further dispatch requested. This is not a finding that apsd has no effect. It establishes
+avoidable CPU work and an iPad performance contribution, but does not establish that apsd is
+the bottleneck causing the proof failures. A further unchanged dispatch is not justified by
+these results. No proof-scoped suspension is added to the merge candidate.
+
+### Evidence and preflight completion
+
+**OBSERVED sources:** [run 40327052864](https://github.com/legitimate-apps/dulcet/actions/runs/40327052864),
+head `a3f92d4f`, `conformance_only=true`, `apsd_experiment=true`;
+[iPhone job 121586410046](https://github.com/legitimate-apps/dulcet/actions/runs/40327052864/job/121586410046)
+and [iPad job 121586410626](https://github.com/legitimate-apps/dulcet/actions/runs/40327052864/job/121586410626).
+Fetch logs with `ghx api repos/legitimate-apps/dulcet/actions/jobs/<job-id>/logs` and artifacts
+with `ghx run download 40327052864 --repo legitimate-apps/dulcet`.
+Tables use `dulcet-apsd-experiment-<device>-40327052864-1`, its
+`dulcet-apsd-experiment/experiment.jsonl`, `idle-<arm>.json`, `<arm>/browse-metrics.json` and
+raw `dulcet-host-pressure.log`. Values separated by slashes are A1 / B / A2.
+
+**OBSERVED:** each device emitted proof exits `[0,0,0,0]` for A1/B/A2/canonical, and each of
+the three browse bundles contains a successful method with timed nested activities.
+Every fixture preflight succeeded. There is no failed port, errno or socket owner to report.
+The repair logs port and errno on refusal; it does not collect socket ownership. No claim
+about ownership can be made from that reporting, including for the earlier plain-bind error.
+The new success is consistent with the repaired preflight and does not prove the earlier
+failure was TIME_WAIT.
+
+**OBSERVED guard/restoration:** iPhone apsd PID 15826 started 13:09:36 UTC; iPad PID 16032
+started 13:10:33 UTC. Each scoped launchctl PID matches the recorded framework executable
+under the iOS 26.5 build 23F77 runtime root. Idle state witnesses and all proof endpoint
+identity/state checks pass. B's observed apsd CPU is zero. Each A2 restores the same launch;
+messages and daemon CPU return. Both final `restore.json` files record `suspended=false`,
+cleanup records `targetExited=false`, and workflow restore steps pass. This is observed
+identity/state coverage, not a claim of continuous proof-time polling between endpoints.
+
+### Idle suppression and CPU
+
+**OBSERVED:** all three persisted replays on both devices exit 0, with zero reported loss
+records and malformed target timestamps. Running arms provide positive controls for the
+loop; suspended arms have zero in-window target events and zero identity events. These
+counts are the persisted subset, not a census of every emitted message.
+
+| Measurement | iPhone A1 / B / A2 | iPad A1 / B / A2 |
+|---|---:|---:|
+| Target events | 99929 / 0 / 149490 | 277295 / 0 / 349444 |
+| Target events/s | 1656.648 / 0.000 / 2481.327 | 4597.066 / 0.000 / 5809.060 |
+| Certificate-abort/identity events | 482 / 0 / 545 | 1337 / 0 / 1467 |
+
+| Measurement | iPhone A1 / B / A2 | iPad A1 / B / A2 |
+|---|---:|---:|
+| Observed seconds | 60.320 / 60.322 / 60.246 | 60.320 / 60.176 / 60.155 |
+| Simulator apsd CPU-s | 9.380 / 0.000 / 9.270 | 19.790 / 0.000 / 24.390 |
+| Simulator diagnosticd CPU-s | 23.790 / 6.570 / 21.320 | 31.260 / 8.090 / 37.370 |
+| Host diagnosticd CPU-s | 13.460 / 3.500 / 11.810 | 18.570 / 4.440 / 21.040 |
+| Simulator logd CPU-s | 0.630 / 0.270 / 0.610 | 0.890 / 0.400 / 1.080 |
+| Host logd CPU-s | 0.170 / 0.160 / 0.280 | 0.670 / 0.310 / 0.250 |
+| All observed process CPU-s, lower bound | 132.410 / 91.680 / 126.560 | 143.650 / 84.910 / 127.570 |
+| Above normalized to CPU cores | 2.195 / 1.520 / 2.101 | 2.381 / 1.411 / 2.121 |
+| Maximum load1 | 422.233 / 263.613 / 124.073 | 583.638 / 304.163 / 120.389 |
+| End load1 | 285.603 / 124.073 / 84.855 | 330.205 / 120.389 / 61.693 |
+| Page-ins MiB | 631.797 / 1291.062 / 1011.531 | 987.281 / 1271.453 / 409.938 |
+
+**OBSERVED coverage:** every listed daemon spans its entire idle interval without reset.
+Simulator/host diagnosticd PIDs are 15815/15820 (iPhone) and 16010/16018 (iPad);
+simulator logd PIDs 15768/15963 and host logd PID 86. Full paths remain in raw snapshots.
+The observed-process total excludes unobserved birth/exit work and is a lower bound, not
+exact VM utilization. CPU falls in B and returns in A2; idle load continues decaying through
+A2, while page-ins increase in B. apsd does not explain every pressure metric.
+
+### Proof durations, matched queries and test-window CPU
+
+**OBSERVED:** the same browse/relaunch/offline method and unchanged assertions pass in all
+arms. Full fixture-command time includes setup and result processing; it is distinct from
+XCTest method duration below.
+
+| Measurement | iPhone A1 / B / A2 | iPad A1 / B / A2 |
+|---|---:|---:|
+| XCTest method seconds | 192.776 / 156.405 / 155.810 | 213.338 / 158.825 / 186.492 |
+| First automation offset seconds | 9.342 / 8.226 / 6.118 | 12.037 / 7.410 / 5.876 |
+| Maximum query activity seconds | 3.981 / 1.652 / 2.830 | 5.358 / 0.957 / 2.550 |
+| Query activity count | 104 / 104 / 104 | 91 / 90 / 90 |
+
+**OBSERVED matched operations:** group timed query activities by exact title, retaining
+counts and occurrence order. Titles can repeat for different UI occurrences; neither a
+per-title median nor a maximum is a unique query identity. The following fixed operations
+have the same occurrence counts across all arms of their device. Nested durations overlap
+and are not summed.
+
+| Measurement | iPhone A1 / B / A2 | iPad A1 / B / A2 |
+|---|---:|---:|
+| Album Find count | 12 / 12 / 12 | 8 / 8 / 8 |
+| Album Find median seconds | 0.3865 / 0.1335 / 0.1610 | 0.3460 / 0.2455 / 0.2110 |
+| Album Find first seconds | 0.664 / 0.147 / 0.217 | 0.396 / 0.194 / 0.628 |
+| Album existence count | 10 / 10 / 10 | 7 / 7 / 7 |
+| Album existence median seconds | 0.8830 / 0.3605 / 0.6230 | 0.854 / 0.415 / 0.817 |
+| Album existence first seconds | 1.281 / 1.652 / 2.282 | 3.379 / 0.709 / 0.947 |
+
+**OBSERVED long-query control:** the earlier iPhone's 17.617-second activity was the first
+`Checking existence of` the `"Browse" Button`. Its two existence occurrences in this new
+run take 0.041/0.479 seconds (A1), 0.052/0.159 (B), 0.034/0.056 (A2). Thus the formerly long
+operation is already fast with apsd running and remains fast after restoration. It is not a
+reproduced long stall relieved by B. New per-arm maxima name different operations: iPhone
+mini-player existence / album existence / album existence, and iPad sidebar-library
+existence / album existence / mini-player existence. Do not treat their maxima as a single
+matched query.
+
+**OBSERVED test-window CPU:** only CPU snapshots inside the XCTest activity window are
+subtracted. Endpoints are sampled inside the test, so observed seconds are shorter than
+method duration. Every listed daemon spans each observed interval without reset.
+
+| Measurement | iPhone A1 / B / A2 | iPad A1 / B / A2 |
+|---|---:|---:|
+| Observed seconds | 184.645 / 146.617 / 146.824 | 208.110 / 148.470 / 179.164 |
+| Simulator apsd CPU-s | 28.870 / 0.000 / 21.600 | 28.370 / 0.000 / 28.320 |
+| Simulator diagnosticd CPU-s | 57.210 / 18.640 / 45.280 | 57.800 / 17.650 / 55.490 |
+| Host diagnosticd CPU-s | 33.020 / 10.300 / 26.190 | 32.630 / 9.580 / 31.810 |
+| Simulator logd CPU-s | 1.870 / 0.870 / 1.410 | 1.960 / 0.850 / 1.820 |
+| Host logd CPU-s | 0.610 / 0.380 / 0.430 | 0.780 / 0.360 / 0.530 |
+| All observed process CPU-s, lower bound | 420.790 / 246.380 / 309.190 | 479.330 / 250.460 / 394.780 |
+| Above normalized to CPU cores | 2.279 / 1.680 / 2.106 | 2.303 / 1.687 / 2.203 |
+| Maximum load1 | 157.196 / 47.834 / 50.244 | 165.378 / 32.013 / 65.562 |
+| Page-ins MiB | 2481.312 / 1563.844 / 1420.359 | 2607.641 / 1778.281 / 1592.516 |
+
+**OBSERVED full fixture-arm measurements:** these include setup/processing and are kept
+separate from the test windows above. All CPU entries use the same per-identity lower-bound
+method and have full listed-daemon coverage without resets.
+
+| Measurement | iPhone A1 / B / A2 | iPad A1 / B / A2 |
+|---|---:|---:|
+| Observed seconds | 353.929 / 239.034 / 241.401 | 409.321 / 282.149 / 318.534 |
+| Simulator apsd CPU-s | 52.310 / 0.000 / 26.790 | 96.310 / 0.000 / 50.170 |
+| Simulator diagnosticd CPU-s | 95.530 / 23.670 / 55.010 | 158.880 / 21.270 / 90.270 |
+| Host diagnosticd CPU-s | 55.040 / 12.870 / 31.790 | 89.340 / 11.410 / 51.540 |
+| Simulator logd CPU-s | 3.010 / 1.130 / 1.780 | 5.080 / 1.160 / 2.910 |
+| Host logd CPU-s | 1.020 / 0.620 / 0.640 | 1.760 / 0.800 / 1.030 |
+| All observed process CPU-s, lower bound | 819.730 / 347.960 / 381.310 | 892.150 / 348.820 / 564.530 |
+| Above normalized to CPU cores | 2.316 / 1.456 / 1.580 | 2.180 / 1.236 / 1.772 |
+| Maximum load1 | 157.196 / 108.526 / 50.244 | 165.378 / 83.887 / 72.479 |
+| Page-ins MiB | 5187.203 / 4039.781 / 3139.453 | 5875.531 / 4722.562 / 4431.781 |
+
+**OBSERVED fixture-command wall times:** iPhone 357.843/239.109/244.559 seconds;
+iPad 414.205/284.183/323.251 seconds. The restored canonical commands take 830.244/856.466
+seconds (iPhone/iPad) and pass seven/five My Library methods. Both complete conformance jobs
+and the aggregate run pass. Canonical and later full-conformance evidence is with apsd
+restored; it is not full-conformance evidence under suspension.
+
+### Interpretation across both runs
+
+**OBSERVED device classifications:**
+
+- **New iPhone: CPU contribution supported; whole-test/query-starvation relief inconclusive.**
+  CPU and load rise again in A2, but method duration 192.776/156.405/155.810 seconds does not
+  reverse. B is 18.9% faster than A1 but 0.4% slower than A2. First automation improves
+  monotonically 9.342/8.226/6.118 seconds. Some typical album queries rebound, but the formerly
+  long Browse operation is fast in both running arms. This lands in the inconclusive
+  decay/caching/no-severe-stall row for the failure mechanism. It is not a valid demonstration
+  of persistent severe stalls under suppression, so it does not establish the negative
+  bottleneck criterion either.
+- **New iPad: performance contribution supported again; severe-starvation prevention
+  inconclusive.** B is 25.6% faster than A1 and 14.8% faster than restored A2. Daemon/aggregate
+  CPU, load maximum and method duration reverse in A2. Median album existence
+  0.854/0.415/0.817 seconds also reverses. Album Find medians 0.346/0.2455/0.211 seconds and
+  first automation 12.037/7.410/5.876 seconds improve monotonically, so not every query or
+  first-launch cost follows the intervention. No approximately 19-second query is reproduced.
+
+**OBSERVED combined evidence:** both runs reproduce idle suppression and daemon CPU reversal
+on all four VMs. Both iPad VMs provide complete browse comparisons and reversible method
+relief: 200.087/151.654/195.548 seconds in 40272074448 and 213.338/158.825/186.492 here.
+The first iPhone VM has no B/A2 XCTest; its 17.617-second A1 query remains unmatched under
+suppression. The repaired iPhone comparison completes, but its B/A2 method times are
+essentially equal. There are three complete browse A/B/A comparisons, not four, and none
+compares a reproduced 17 to 19-second stall with suppression and restored recurrence.
+
+**OBSERVED conclusion:** apsd traffic is a repeatable source of diagnosticd CPU work and
+contributes to iPad browse cost. **ASSUMED/unproven:** it is the bottleneck behind the severe
+accessibility-query failures. These two propositions must remain separate. The intervention
+does not identify diagnosticd's live consumer, nor attribute all host paging or load.
+
+**OBSERVED recommendation and remaining merge threshold:** close this experiment as a
+mitigation candidate; retain the record and measurement improvement. No additional dispatch
+is requested and no branch deletion is needed. The existing source audit found no APNs
+registration, push entitlement, CloudKit or ubiquity use; MPRemoteCommandCenter is present.
+However, only the browse method ran suspended. Add/remove/relaunch/offline and its local
+playback assertions have one suspended pass per complete comparison; full My Library and
+all later conformance run restored. There is no assertion-dependency/full-conformance
+proof for suspending all proofs, and the observed severe failure has not been causally
+reproduced. A narrow permanent change is therefore not proposed. #395 can merge its
+measurement-only diff after required CI. Earlier requests for another run below are
+historical and superseded by this verdict.
+
+## Previous corrected dispatch 40272074448
 
 **OBSERVED outcome:** the corrected guard passed on both devices. Suspending the selected
 simulator apsd suppressed its identity-failure loop and reduced CPU work in both simulator

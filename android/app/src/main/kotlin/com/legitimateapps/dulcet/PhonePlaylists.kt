@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import com.legitimateapps.dulcet.library.canBeQueued
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -246,7 +247,7 @@ internal fun PlaylistScreen(
         if (current == null) return@Column
         val entries = current.items
         val anyPlayable = current.itemsState == AndroidLibraryItemsState.Present && entries.any {
-            it is AndroidLibraryItem.Track && !it.metadataMissing && it.playability != AndroidLibraryPlayability.UnavailableOffline
+            it is AndroidLibraryItem.Track && it.canBeQueued()
         }
         LazyColumn(Modifier.fillMaxSize().testTag("playlist.entries")) {
             item {

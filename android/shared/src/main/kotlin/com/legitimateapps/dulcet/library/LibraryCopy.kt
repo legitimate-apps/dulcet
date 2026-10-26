@@ -235,3 +235,7 @@ private fun Long.toQuantity(): Int = coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
 /** Composable access to the app's resources, for the functions above. */
 @Composable
 public fun libraryResources(): Resources = LocalContext.current.resources
+
+/** Display metadata preserves real titles and localizes missing titles at the UI boundary. */
+public fun Resources.trackDisplayTitle(title: String?): String =
+    title?.takeIf { it.isNotBlank() } ?: getString(com.legitimateapps.dulcet.core.R.string.playback_untitled)

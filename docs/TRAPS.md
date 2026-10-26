@@ -600,3 +600,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     measurement-only; no permanent quiescence or starvation fix is established. Full CPU
     coverage, matched-query controls, residual-message limits and the proposed fixture repair
     are recorded in the investigation above.
+
+    **OBSERVED in repaired [run 40327052864](https://github.com/legitimate-apps/dulcet/actions/runs/40327052864),
+    Refs #343:** all six comparison arms reached XCTest and passed. Idle suppression and
+    diagnosticd CPU reversal now repeat on four VMs. iPad browse duration again falls in B
+    and rises in A2 (213.338/158.825/186.492 seconds), but iPhone A2 stays as fast as B
+    (192.776/156.405/155.810 seconds). New maximum queries are 3.981/1.652/2.830 seconds
+    (iPhone) and 5.358/0.957/2.550 (iPad); these are different activities, not one matched
+    query. Neither new VM reproduces the earlier 17 to 19-second stalls. apsd is a repeatable
+    CPU contributor and an iPad performance contributor, but is not established as the
+    bottleneck for those failures. Close the experiment as a mitigation candidate, preserving
+    its evidence; no further unchanged dispatch or permanent suspension is proposed. #395
+    stays measurement-only. Full coverage and matched operations are in the investigation.
