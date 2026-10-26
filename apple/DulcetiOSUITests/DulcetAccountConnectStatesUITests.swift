@@ -334,35 +334,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.launchArguments = []
         launchInInteractionScope(app)
         let window = app.windows.element(boundBy: 0)
-        // A live frame fetch has its own 30-second AX timeout. The former 15-second predicate
-        // waiter interrupted that fetch on a loaded runner before it could return (40065138225).
-        // Capture the frame in the snapshot, and allow a slow query plus another attempt.
-        let started = ProcessInfo.processInfo.systemUptime
-        let timeout: TimeInterval = 60
-        var readyFrame: CGRect?
-        var attempts = 0
-        repeat {
-            attempts += 1
-            let queryStarted = ProcessInfo.processInfo.systemUptime
-            let captured = try? window.snapshot()
-            let frame = captured?.frame
-            print("DULCET ACCOUNT WINDOW attempt=\(attempts) query-seconds=\(ProcessInfo.processInfo.systemUptime - queryStarted)"
-                + " elapsed=\(ProcessInfo.processInfo.systemUptime - started) frame=\(String(describing: frame))")
-            if let frame, frame.origin.x.isFinite, frame.origin.y.isFinite,
-               frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 {
-                readyFrame = frame
-                break
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while ProcessInfo.processInfo.systemUptime - started < timeout
-        guard let frame = readyFrame else {
-            XCTFail("The app window must have finite, nonzero bounds within \(timeout) seconds; attempts=\(attempts)")
-            return
-        }
-        let compact = frame.width < 700
-        print("DULCET ACCOUNT STATES destination=\(compact ? "compact" : "regular") window=\(frame)")
+        guard let width = settledWindowWidth(window) else { return }
+        let compact = width < 700
+        print("DULCET ACCOUNT STATES destination=\(compact ? "compact" : "regular") width=\(width)")
         guard compact == expectedCompact else {
-            XCTFail("This proof expected a \(expectedCompact ? "compact" : "regular") window, got \(frame)")
+            XCTFail("This proof expected a \(expectedCompact ? "compact" : "regular") window, got width=\(width)")
             return
         }
 

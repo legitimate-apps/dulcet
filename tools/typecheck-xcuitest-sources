@@ -289,6 +289,8 @@ def discover() -> tuple[list[tuple[str, Platform, list[Path]]], list[str]]:
         sources = sorted(directory.glob("*.swift"))
         if directory.name in {"DulcetSignedIPadUITests", "DulcetSignedIPhoneUITests"}:
             sources += sorted((APPLE / "DulcetSignedDeviceUITestSupport").glob("*.swift"))
+        if directory.name in {"DulcetiOSUITests", "DulcetSignedIPadUITests", "DulcetSignedIPhoneUITests"}:
+            sources += sorted((APPLE / "DulcetWindowUITestSupport").glob("*.swift"))
         if directory.name in {"DulcetiOSUITests", "DulcetTVUITests"}:
             sources += sorted((APPLE / "DulcetMyLibraryUITestSupport").glob("*.swift"))
         if not sources:
