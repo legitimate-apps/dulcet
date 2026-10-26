@@ -519,16 +519,20 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-first-run-title.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
             testTheFirstRunLibraryTitleWrapsOnIPhone
-      - name: Release the platform iPhone before iPadOS boot
-        timeout-minutes: 5
+      - name: Resolve the platform iPadOS destination
+        timeout-minutes: 6
         id: ipados_layout_destination
         run: |
           set -euo pipefail
           IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
+          echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
+      - name: Release the platform iPhone before iPadOS boot
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
           # The native and title proofs leave the iPhone booted. Release its services before
           # the iPad's first boot, and require the empty booted-device list before proceeding.
           python3 tools/ci/isolate-simulator --phase platform-before-ipad --none --require-isolation
-          echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
       - name: Boot iPadOS simulator before the layout launch
         timeout-minutes: 6
         env:
@@ -562,7 +566,8 @@ jobs:
           python3 tools/ci/host-pressure settle --phase platform-ipad-destination \
             --output "$DULCET_HOST_PRESSURE_LOG"
       - name: Confirm booted iPad remains an Xcode destination
-        timeout-minutes: 4
+        # Four-minute discovery budget, five-second timeout probe, plus process startup margin.
+        timeout-minutes: 6
         env:
           IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
         run: |
@@ -972,7 +977,7 @@ jobs:
       # roots the composite names. Nothing is tested by these steps and a build boots no simulator.
       # Not measured as steps of their own: the build half of the platform legs' first
       # `xcodebuild test` took about 2 to 4 minutes in run 36010624442. 10 bounds a hang.
-      # The resolver gives destination discovery its own 120-second deadline and reports the
+      # The resolver gives destination discovery its own 240-second deadline and reports the
       # attempts it made when that expires. Here it is the leg's first, cold xcodebuild call, so the
       # step cap is the 6 minutes of the platform step that hosts the same call; a cap equal to the
       # resolver's deadline would kill it before its own diagnostic printed.
@@ -2165,7 +2170,7 @@ jobs:
         run: >-
           ./gradlew --no-daemon
           :core:linkDebugFrameworkIosSimulatorArm64
-      # The resolver gives destination discovery its own 120-second deadline and reports the
+      # The resolver gives destination discovery its own 240-second deadline and reports the
       # attempts it made when that expires. It is this job's first, cold xcodebuild call, so the step
       # cap is the 6 minutes of the platform step that hosts the same call.
       - name: Resolve the iPadOS simulator the conformance legs use
