@@ -23,7 +23,8 @@ internal object PinnedImageHttp {
         val guard=CoroutineScope(coroutineContext).launch(Dispatchers.IO,start=CoroutineStart.UNDISPATCHED) {
             try { awaitCancellation() } finally { socket.close() }
         }
-        val deadline=object:TimerTask(){override fun run(){runCatching { socket.close() }}}
+        val timedOut=java.util.concurrent.atomic.AtomicBoolean(false)
+        val deadline=object:TimerTask(){override fun run(){timedOut.set(true);runCatching { socket.close() }}}
         deadlines.schedule(deadline,10_000)
         try {
             socket.use {
@@ -72,6 +73,10 @@ internal object PinnedImageHttp {
                     UpstreamResponse(status,headers,out.toByteArray())
                 }
             }
-        } finally { deadline.cancel();socket.close();guard.cancel() }
+        } catch(e:CancellationException) { throw e }
+          catch(e:Exception) {
+              if(timedOut.get() || e is java.net.SocketTimeoutException)throw UpstreamUnavailable(reason=UpstreamFailure.Timeout)
+              throw e
+          } finally { deadline.cancel();socket.close();guard.cancel() }
     }
 }
