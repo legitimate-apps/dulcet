@@ -21,7 +21,8 @@ concurrency:
 jobs:
   # spec §21.6: which legs this run needs. A pull request runs apple-platform only when it changes
   # something an Apple build reads, and never runs the two conformance jobs (`conformance=true`
-  # plans both); a push to main reuses proven same-tree PR runs or runs every leg. A plain dispatch
+  # plans both); an ordinary main push reuses same-tree PR runs, or proven parent results when
+  # it changes no Apple input, or runs every leg. A plain dispatch
   # runs every leg. A dispatch with
   # conformance_only=true skips apple-platform. The legs are skipped by a job condition, never by a workflow `paths:` filter:
   # a workflow that does not run leaves its required check pending forever, while a job skipped by
@@ -40,7 +41,7 @@ jobs:
       conformance: ${{ steps.plan.outputs.conformance }}
     steps:
       # Depth 2 reaches both parents of the merge commit a pull request checks out, which is all the
-      # diff needs. On push and dispatch the planner reads no diff.
+      # diff needs. Push comparisons and inherited proof are read from the API; dispatch reads no diff.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2

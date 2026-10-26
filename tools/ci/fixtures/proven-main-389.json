@@ -1,5 +1,5 @@
 {
-  "source": "GitHub REST API, recorded 2026-10-25; projected to fields consumed by the planner. No conclusions synthesized.",
+  "source": "GitHub REST API, recorded 2026-10-25; projected to fields consumed by the planner. No conclusions synthesized. Push context is an ordinary-update replay, not a captured webhook.",
   "repository": "legitimate-apps/dulcet",
   "sha": "03e48c1e2b02f81876c3212ce4987d17f962b6d0",
   "head": "4b4e4b04be3134de12992efb89c1fb5bdedcea90",
@@ -238,6 +238,74 @@
           "head_sha": "4b4e4b04be3134de12992efb89c1fb5bdedcea90"
         }
       ]
+    },
+    "/repos/legitimate-apps/dulcet/compare/b5ae930c7d15ad500ee40a9aadd9c9ce2341d00a...03e48c1e2b02f81876c3212ce4987d17f962b6d0": {
+      "status": "ahead",
+      "ahead_by": 1,
+      "behind_by": 0,
+      "total_commits": 1,
+      "base_commit": {
+        "sha": "b5ae930c7d15ad500ee40a9aadd9c9ce2341d00a"
+      },
+      "merge_base_commit": {
+        "sha": "b5ae930c7d15ad500ee40a9aadd9c9ce2341d00a"
+      },
+      "commits": [
+        {
+          "sha": "03e48c1e2b02f81876c3212ce4987d17f962b6d0",
+          "parents": [
+            {
+              "sha": "b5ae930c7d15ad500ee40a9aadd9c9ce2341d00a"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "filename": ".github/workflows/apple-ci.yml",
+          "status": "modified"
+        },
+        {
+          "filename": "CLAUDE.md",
+          "status": "modified"
+        },
+        {
+          "filename": "docs/MERGING.md",
+          "status": "modified"
+        },
+        {
+          "filename": "docs/superpowers/specs/2026-08-18-dulcet-design.md",
+          "status": "modified"
+        },
+        {
+          "filename": "tools/ci/plan-apple-legs",
+          "status": "modified"
+        },
+        {
+          "filename": "tools/release_plan.py",
+          "status": "modified"
+        },
+        {
+          "filename": "tools/test-plan-apple-legs",
+          "status": "modified"
+        },
+        {
+          "filename": "tools/test-release-channel",
+          "status": "modified"
+        },
+        {
+          "filename": "tools/verify_release_policy.py",
+          "status": "modified"
+        }
+      ]
     }
+  },
+  "push": {
+    "before": "b5ae930c7d15ad500ee40a9aadd9c9ce2341d00a",
+    "after": "03e48c1e2b02f81876c3212ce4987d17f962b6d0",
+    "ref": "refs/heads/main",
+    "forced": false,
+    "created": false,
+    "deleted": false
   }
 }

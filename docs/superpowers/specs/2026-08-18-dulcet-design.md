@@ -7125,9 +7125,17 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 **Normative:**
 
 1. **`apple-plan` decides the legs**, on `ubuntu-latest`, with `tools/ci/plan-apple-legs`.
-   **Amended 2026-10-25 (#390):** a push to `main` plans no macOS legs only when exactly one
-   associated, merged PR produced that pushed SHA, its base is `main`, its head belongs to this
-   repository, and the pushed commit and PR head have identical Git trees. That exact head must
+   **Amended 2026-10-26 (Refs #390):** a push can reuse proof only for one ordinary commit
+   on existing `main`: its event has `forced`, `created` and `deleted` false, its `after` is the
+   pushed SHA, and the API comparison proves exactly one commit with exactly one parent equal to
+   the event's `before`. Missing event context, multi-commit pushes, merge commits, force pushes,
+   malformed or truncated comparisons run all legs. Both sides of renames and every added,
+   modified or removed path use the existing Apple-input classifier; comparisons at the API's
+   300-file cap run all legs. An empty comparison needs identical base and head tree evidence.
+
+   If the change has an Apple input, the exact-tree PR rule introduced 2026-10-25 applies:
+   exactly one associated, merged PR produced that pushed SHA, its base is `main`, its head belongs
+   to this repository, and the pushed commit and PR head have identical Git trees. That exact head must
    have successful latest attempts of this repository's own `apple-ci.yml` runs: a `pull_request`
    run with `apple-platform` successful and a `workflow_dispatch` run with `apple-conformance-core`,
    `apple-conformance-ipad` and `apple-conformance-iphone` successful. Each run and its `apple-ci`
@@ -7136,9 +7144,27 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    reads attempt-specific jobs and rechecks run freshness. It cannot reuse old job attempts,
    fork runs or `pull_request_target` runs. Missing, ambiguous, stale, malformed, non-success or
    unreadable evidence plans every leg. API pagination is bounded and fails closed on truncation.
+
+   If no path is an Apple input, the push may inherit its parent's proven Apple result on that
+   exact SHA. The parent's newest own `apple-ci.yml` push run must be on `main`, completed and
+   successful in its latest attempt. Its successful `apple-plan` and `apple-ci` jobs, recorded
+   planner log and actual leg results must agree. A full-plan parent needs successful platform,
+   core, iPad and iPhone jobs in that attempt. A skipped parent needs a recognized recorded
+   proof: either the original same-tree PR receipt, whose exact-head runs are reverified, or a
+   parent receipt, whose event, no-input comparison and original proof are walked again. A green
+   aggregator alone is not proof. Missing/expired logs, stale attempts, unrecognized or changed
+   receipts, pending or failed parents and API errors run every leg. Run freshness is rechecked
+   after inherited proof is read. Chains allow at most four inherited no-input edges including the
+   current push; their summary records every SHA, each completed push run and the full-proof base
+   (a full main run or reverified platform and conformance PR proof). Requests share a 120-second
+   API time budget and bounded response sizes, within the planner job's five-minute timeout.
+   Server sources remain Apple inputs: the conformance jobs build and run the disposable Dulcet
+   Server. Shared Kotlin, Gradle inputs and unknown paths remain Apple inputs too.
+
    Only `apple-plan` receives `contents: read`, `pull-requests: read` and `actions: read` through
    `GITHUB_TOKEN`; no write permission or external token is needed. The run summary names the PR,
-   head, tree and both proof run IDs when it skips. `--proof-fixture` replays recorded REST responses
+   head, tree and both proof run IDs for exact-tree PR reuse, or the full inherited chain and
+   proof base for parent reuse. `--proof-fixture` replays recorded REST responses
    through the same push reader without a network request. Plain manual dispatches and other
    events plan every leg. The boolean dispatch input
    `conformance_only` defaults to `false`; setting it to `true` plans both conformance jobs and
@@ -7166,8 +7192,8 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    report `success`, and an unplanned leg must report `skipped`. Anything else fails, including an
    empty plan output. It downloads and resolves `FEATURES.yml` evidence only on a run that planned
    every leg: an unproven main push or a plain full dispatch. A push that reuses proof does not
-   download JUnit or resolve Apple `FEATURES.yml` identities across the two proof runs. Its summary
-   explicitly says evidence was not resolved. Full resolution runs before release in the release
+   download JUnit or resolve Apple `FEATURES.yml` identities across proof runs or parent chains.
+   Its summary explicitly says evidence was not resolved. Full resolution runs before release in the release
    commit's required plain full dispatch. A full run reports resolution as pending until the
    blocking verifier executes; its success remains necessary for a green aggregator.
 4. **A release build requires the full run.** `release.yml` runs `tools/release_plan.py
@@ -7177,16 +7203,16 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    legs must belong to the latest `apple-ci` aggregator's check suite; results from separate PR
    and dispatch runs cannot be combined. Check IDs determine recency, not API response order.
    A skipped leg reports `skipped`, so neither a conformance-only dispatch nor a main push that
-   reuses PR proof can satisfy it. A release still requires a plain full dispatch on its commit. Only a dry run may
-   waive it, and only with the explicit `skip_full_run_gate` input, which defaults to `false`.
+   reuses PR or parent proof can satisfy it. A release still requires a plain full dispatch on its
+   commit. Only a dry run may waive it, and only with the explicit `skip_full_run_gate` input, which defaults to `false`.
 5. **`core-ci` is unchanged**, including `conformance-env-linux` on every pull request (about 3.5
    minutes), so the Linux and Android live-server conformance still gates every merge.
 
 **What this gives up, stated so it is not rediscovered as a defect.** A pull request can merge with
 a change that breaks Darwin conformance, a conformance-only control (`tools/test-darwin-*` and the
 other steps in that leg) or an Apple `FEATURES.yml` citation. An unproven `main` push runs all
-legs and exposes these failures to `main-health`. A proven same-tree push reuses the successful PR
-and conformance proof but defers combined Apple FEATURES resolution to the next full dispatch,
+legs and exposes these failures to `main-health`. A proven same-tree push reuses successful PR
+and conformance proof; a no-input push may reuse revalidated parent proof but defers combined Apple FEATURES resolution to the next full dispatch,
 required before release. Its `apple-ci` aggregator concludes `success` after validating the planned
 skips, so main-health can close when the other required contexts also succeed on main's exact head;
 that health result does not claim a full run or FEATURES resolution. No release can ship without
@@ -7953,6 +7979,27 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-26 — Inherit revalidated parent Apple proof for ordinary no-input main pushes (Refs #390).**
+
+A one-commit, non-force update of existing main can reuse a successful parent push when the API
+comparison contains no Apple input under the existing classifier. The event's before must be the
+commit's sole parent. Full-plan parent proof needs every Apple job successful in its latest push
+attempt. Skipped parent proof needs its recorded plan and original receipt revalidated against
+current API evidence. At most four no-input edges can be inherited, including the current edge;
+the summary names all SHAs and completed runs back to the full-proof base. Every uncertainty,
+expired log, unfinished parent, stale attempt, input change or exceeded bound runs every leg.
+Release policy and FEATURES resolution remain unchanged; a reused run explicitly reports that
+FEATURES evidence was not resolved. The shared API budget is 120 seconds and responses are capped.
+
+**OBSERVED:** recorded positive control uses Android-only main `6b496ec2` over `ec1cca6d` and its
+successful full push run 39986874794. The proposed `9cbfeb33` over `2763c845` example changes server
+sources, which are Apple inputs because conformance builds and runs that server; PR #387 actually
+passed `apple-platform`. That real comparison remains a negative control. A synthetic excluded-file
+variant over the recorded #394 parent tests revalidation of its original PR and dispatch receipt.
+Synthetic longer chains test the four-edge limit and changed receipts. Fixtures distinguish actual
+REST records from modeled ordinary-push context and synthetic variants. The no-input parent skip
+on a future hosted main push remains **ASSUMED** until merge and observation.
+
 **2026-10-25 — Reuse exact-tree Apple merge proof on main pushes (§21.6, #390).**
 
 A main push can plan no macOS legs when one merged, same-repository PR produced it, its tree
@@ -7970,8 +8017,10 @@ GitHub REST responses recorded from #389: head `4b4e4b04`, main `03e48c1e`, tree
 40127671219 and dispatch 40127671088. Its positive and fall-back controls exercise the production
 push code path, including latest attempts, provenance, pagination and API failures. The release
 and main-health controls distinguish successful required checks from full release evidence.
-**OBSERVED:** recorded-response planner controls and local policy checks. A real push skip remains
-**ASSUMED** until this change merges and a qualifying main push runs it.
+**OBSERVED:** main push run [40265202378](https://github.com/legitimate-apps/dulcet/actions/runs/40265202378)
+on `2763c845` succeeded with every macOS leg skipped. Its planner recorded "Reused Apple proof for
+PR #394", citing PR run 40246835069 and dispatch 40246865463. This establishes the hosted exact-tree
+skip and workflow-token API access; parent inheritance added below still needs its own hosted proof.
 
 **2026-10-24 — Conformance-only Apple dispatch without repeating the platform build (§21.6).**
 

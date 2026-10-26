@@ -1,0 +1,163 @@
+{
+  "source": "Real REST responses and planner log line recorded 2026-10-26. PR #368 main commit over #365 main commit, with successful parent push run. Event context replays an ordinary main push; it is not a captured webhook.",
+  "repository": "legitimate-apps/dulcet",
+  "sha": "6b496ec2c7cdcf77cf29694526133facd0403bf1",
+  "parent": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+  "push": {
+    "before": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+    "after": "6b496ec2c7cdcf77cf29694526133facd0403bf1",
+    "ref": "refs/heads/main",
+    "forced": false,
+    "created": false,
+    "deleted": false
+  },
+  "responses": {
+    "/repos/legitimate-apps/dulcet/compare/ec1cca6dab164e2fc24d6e3fde82d299451823b6...6b496ec2c7cdcf77cf29694526133facd0403bf1": {
+      "status": "ahead",
+      "ahead_by": 1,
+      "behind_by": 0,
+      "total_commits": 1,
+      "base_commit": {
+        "sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6"
+      },
+      "merge_base_commit": {
+        "sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6"
+      },
+      "commits": [
+        {
+          "sha": "6b496ec2c7cdcf77cf29694526133facd0403bf1",
+          "parents": [
+            {
+              "sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "filename": "android/emulator-conformance/ComposeLayoutThreadEmulatorProofTest.kt",
+          "status": "added"
+        },
+        {
+          "filename": "android/emulator-conformance/HomeProofComposeRule.kt",
+          "status": "added"
+        },
+        {
+          "filename": "android/emulator-conformance/ListenNowEmulatorProofTest.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "android/emulator-conformance/PlaylistPlayContextEmulatorProofTest.kt",
+          "status": "modified"
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/actions/workflows/apple-ci.yml": {
+      "id": 341254656,
+      "path": ".github/workflows/apple-ci.yml"
+    },
+    "/repos/legitimate-apps/dulcet/actions/workflows/341254656/runs?head_sha=ec1cca6dab164e2fc24d6e3fde82d299451823b6&per_page=100&page=1": {
+      "total_count": 1,
+      "workflow_runs": [
+        {
+          "id": 39986874794,
+          "workflow_id": 341254656,
+          "path": ".github/workflows/apple-ci.yml",
+          "event": "push",
+          "head_sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+          "head_branch": "main",
+          "run_attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          },
+          "head_repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          }
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/actions/runs/39986874794": {
+      "id": 39986874794,
+      "workflow_id": 341254656,
+      "path": ".github/workflows/apple-ci.yml",
+      "event": "push",
+      "head_sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+      "head_branch": "main",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      },
+      "head_repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      }
+    },
+    "/repos/legitimate-apps/dulcet/actions/runs/39986874794/attempts/1/jobs?per_page=100&page=1": {
+      "total_count": 6,
+      "jobs": [
+        {
+          "id": 120529625020,
+          "name": "apple-plan",
+          "run_id": 39986874794,
+          "run_attempt": 1,
+          "head_sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 120529685309,
+          "name": "apple-platform",
+          "run_id": 39986874794,
+          "run_attempt": 1,
+          "head_sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 120529686058,
+          "name": "apple-conformance-core",
+          "run_id": 39986874794,
+          "run_attempt": 1,
+          "head_sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 120529686603,
+          "name": "apple-conformance-ipad",
+          "run_id": 39986874794,
+          "run_attempt": 1,
+          "head_sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 120529690735,
+          "name": "apple-conformance-iphone",
+          "run_id": 39986874794,
+          "run_attempt": 1,
+          "head_sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 120589478447,
+          "name": "apple-ci",
+          "run_id": 39986874794,
+          "run_attempt": 1,
+          "head_sha": "ec1cca6dab164e2fc24d6e3fde82d299451823b6",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/actions/jobs/120529625020/logs": "2026-10-23T16:30:07.4649822Z APPLE LEG PLAN platform=true conformance=true: event 'push' runs every leg\n"
+  }
+}

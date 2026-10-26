@@ -1,0 +1,603 @@
+{
+  "source": "GitHub REST responses recorded 2026-10-26, projected to consumed fields and planner log lines. Push replay context models an ordinary main update between the recorded commits; it is not a captured webhook. Server files remain Apple inputs, so this real case must fall back.",
+  "repository": "legitimate-apps/dulcet",
+  "sha": "9cbfeb33cdeff3abd9df9bc35eaa1a11ea250997",
+  "parent": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+  "push": {
+    "before": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+    "after": "9cbfeb33cdeff3abd9df9bc35eaa1a11ea250997",
+    "ref": "refs/heads/main",
+    "forced": false,
+    "created": false,
+    "deleted": false
+  },
+  "responses": {
+    "/repos/legitimate-apps/dulcet/commits/9cbfeb33cdeff3abd9df9bc35eaa1a11ea250997": {
+      "sha": "9cbfeb33cdeff3abd9df9bc35eaa1a11ea250997",
+      "commit": {
+        "tree": {
+          "sha": "40f14c79ea68161411c18c0ed617127559a75426"
+        }
+      }
+    },
+    "/repos/legitimate-apps/dulcet/commits/2763c84576ea85e8cdcaf1376719f7749c775de6": {
+      "sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+      "commit": {
+        "tree": {
+          "sha": "b8d9d01df659f9e130f56243f7872342e79060ac"
+        }
+      }
+    },
+    "/repos/legitimate-apps/dulcet/commits/bcae65038b1c385f39179493fb056ab0738a594b": {
+      "sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+      "commit": {
+        "tree": {
+          "sha": "b8d9d01df659f9e130f56243f7872342e79060ac"
+        }
+      }
+    },
+    "/repos/legitimate-apps/dulcet/compare/2763c84576ea85e8cdcaf1376719f7749c775de6...9cbfeb33cdeff3abd9df9bc35eaa1a11ea250997": {
+      "status": "ahead",
+      "ahead_by": 1,
+      "behind_by": 0,
+      "total_commits": 1,
+      "base_commit": {
+        "sha": "2763c84576ea85e8cdcaf1376719f7749c775de6"
+      },
+      "merge_base_commit": {
+        "sha": "2763c84576ea85e8cdcaf1376719f7749c775de6"
+      },
+      "commits": [
+        {
+          "sha": "9cbfeb33cdeff3abd9df9bc35eaa1a11ea250997",
+          "parents": [
+            {
+              "sha": "2763c84576ea85e8cdcaf1376719f7749c775de6"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "filename": ".github/workflows/core-ci.yml",
+          "status": "modified"
+        },
+        {
+          "filename": "docs/dulcet-server/README.md",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/discover/CoverArtClient.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/discover/DiscoverCache.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/discover/DiscoverDiagnostics.kt",
+          "status": "added"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/discover/ListenBrainzClient.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/discover/MusicBrainzClient.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/discover/PinnedImageHttp.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/discover/PoliteHttp.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/media/Artwork.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/media/ArtworkFileIdentity.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/scan/Scanner.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/v1/Api.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/v1/Journal.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/main/kotlin/com/legitimateapps/dulcet/server/v1/Media.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/test/kotlin/com/legitimateapps/dulcet/server/ArtworkMetadataRegressionTest.kt",
+          "status": "modified"
+        },
+        {
+          "filename": "server/src/test/kotlin/com/legitimateapps/dulcet/server/DiscoverDiagnosticsRegressionTest.kt",
+          "status": "added"
+        },
+        {
+          "filename": "server/src/test/kotlin/com/legitimateapps/dulcet/server/DiscoverDiagnosticsTest.kt",
+          "status": "added"
+        },
+        {
+          "filename": "server/src/test/kotlin/com/legitimateapps/dulcet/server/HomeArtworkConcurrencyTest.kt",
+          "status": "added"
+        },
+        {
+          "filename": "server/src/test/kotlin/com/legitimateapps/dulcet/server/JournalVisibilityTailTest.kt",
+          "status": "added"
+        },
+        {
+          "filename": "server/src/test/kotlin/com/legitimateapps/dulcet/server/TrackFileIdentityTest.kt",
+          "status": "added"
+        },
+        {
+          "filename": "server/src/test/kotlin/com/legitimateapps/dulcet/server/TrackNoCtimeTest.kt",
+          "status": "added"
+        },
+        {
+          "filename": "tools/server/discover_verification.py",
+          "status": "added"
+        },
+        {
+          "filename": "tools/server/test_discover_verification.py",
+          "status": "added"
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/commits/2763c84576ea85e8cdcaf1376719f7749c775de6/pulls?per_page=100&page=1": [
+      {
+        "number": 394
+      }
+    ],
+    "/repos/legitimate-apps/dulcet/pulls/394": {
+      "number": 394,
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+      "head": {
+        "sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+        "ref": "ci/skip-proven-main-legs-390",
+        "repo": {
+          "id": 1344982159,
+          "full_name": "legitimate-apps/dulcet"
+        }
+      },
+      "base": {
+        "sha": "e2ca8fcb87f4fe8fa446952e53250aa23ae40617",
+        "ref": "main",
+        "repo": {
+          "id": 1344982159,
+          "full_name": "legitimate-apps/dulcet"
+        }
+      }
+    },
+    "/repos/legitimate-apps/dulcet/actions/workflows/apple-ci.yml": {
+      "id": 341254656,
+      "path": ".github/workflows/apple-ci.yml"
+    },
+    "/repos/legitimate-apps/dulcet/actions/workflows/341254656/runs?head_sha=2763c84576ea85e8cdcaf1376719f7749c775de6&per_page=100&page=1": {
+      "total_count": 1,
+      "workflow_runs": [
+        {
+          "id": 40265202378,
+          "workflow_id": 341254656,
+          "path": ".github/workflows/apple-ci.yml",
+          "event": "push",
+          "head_sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+          "head_branch": "main",
+          "run_attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          },
+          "head_repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          }
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/actions/workflows/341254656/runs?head_sha=bcae65038b1c385f39179493fb056ab0738a594b&per_page=100&page=1": {
+      "total_count": 2,
+      "workflow_runs": [
+        {
+          "id": 40246865463,
+          "workflow_id": 341254656,
+          "path": ".github/workflows/apple-ci.yml",
+          "event": "workflow_dispatch",
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "head_branch": "ci/skip-proven-main-legs-390",
+          "run_attempt": 2,
+          "status": "completed",
+          "conclusion": "success",
+          "repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          },
+          "head_repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          }
+        },
+        {
+          "id": 40246835069,
+          "workflow_id": 341254656,
+          "path": ".github/workflows/apple-ci.yml",
+          "event": "pull_request",
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "head_branch": "ci/skip-proven-main-legs-390",
+          "run_attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          },
+          "head_repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          }
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/actions/runs/40265202378": {
+      "id": 40265202378,
+      "workflow_id": 341254656,
+      "path": ".github/workflows/apple-ci.yml",
+      "event": "push",
+      "head_sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+      "head_branch": "main",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      },
+      "head_repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      }
+    },
+    "/repos/legitimate-apps/dulcet/actions/runs/40265202378/attempts/1/jobs?per_page=100&page=1": {
+      "total_count": 5,
+      "jobs": [
+        {
+          "id": 121385981557,
+          "name": "apple-plan",
+          "run_id": 40265202378,
+          "run_attempt": 1,
+          "head_sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121386028612,
+          "name": "apple-ci",
+          "run_id": 40265202378,
+          "run_attempt": 1,
+          "head_sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121386029563,
+          "name": "apple-conformance-core",
+          "run_id": 40265202378,
+          "run_attempt": 1,
+          "head_sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 121386029747,
+          "name": "apple-conformance-${{ matrix.device }}",
+          "run_id": 40265202378,
+          "run_attempt": 1,
+          "head_sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 121386029809,
+          "name": "apple-platform",
+          "run_id": 40265202378,
+          "run_attempt": 1,
+          "head_sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+          "status": "completed",
+          "conclusion": "skipped"
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/actions/jobs/121385981557/logs": "2026-10-26T03:40:19.4728099Z APPLE LEG PLAN platform=false conformance=false: Reused Apple proof for PR #394: head `bcae65038b1c385f39179493fb056ab0738a594b`, tree `b8d9d01df659f9e130f56243f7872342e79060ac`, PR run [40246835069](https://github.com/legitimate-apps/dulcet/actions/runs/40246835069), dispatch run [40246865463](https://github.com/legitimate-apps/dulcet/actions/runs/40246865463). No macOS legs planned. FEATURES evidence is not resolved on this run; it requires a full run, including the release's plain full dispatch.\n",
+    "/repos/legitimate-apps/dulcet/actions/runs/40246835069": {
+      "id": 40246835069,
+      "workflow_id": 341254656,
+      "path": ".github/workflows/apple-ci.yml",
+      "event": "pull_request",
+      "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+      "head_branch": "ci/skip-proven-main-legs-390",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      },
+      "head_repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      }
+    },
+    "/repos/legitimate-apps/dulcet/actions/runs/40246835069/attempts/1/jobs?per_page=100&page=1": {
+      "total_count": 5,
+      "jobs": [
+        {
+          "id": 121330070495,
+          "name": "apple-plan",
+          "run_id": 40246835069,
+          "run_attempt": 1,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121330092299,
+          "name": "apple-platform",
+          "run_id": 40246835069,
+          "run_attempt": 1,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121330093330,
+          "name": "apple-conformance-core",
+          "run_id": 40246835069,
+          "run_attempt": 1,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 121330093744,
+          "name": "apple-conformance-${{ matrix.device }}",
+          "run_id": 40246835069,
+          "run_attempt": 1,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 121349037731,
+          "name": "apple-ci",
+          "run_id": 40246835069,
+          "run_attempt": 1,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/actions/runs/40246865463": {
+      "id": 40246865463,
+      "workflow_id": 341254656,
+      "path": ".github/workflows/apple-ci.yml",
+      "event": "workflow_dispatch",
+      "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+      "head_branch": "ci/skip-proven-main-legs-390",
+      "run_attempt": 2,
+      "status": "completed",
+      "conclusion": "success",
+      "repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      },
+      "head_repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      }
+    },
+    "/repos/legitimate-apps/dulcet/actions/runs/40246865463/attempts/2/jobs?per_page=100&page=1": {
+      "total_count": 6,
+      "jobs": [
+        {
+          "id": 121361547217,
+          "name": "apple-conformance-iphone",
+          "run_id": 40246865463,
+          "run_attempt": 2,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121361548167,
+          "name": "apple-plan",
+          "run_id": 40246865463,
+          "run_attempt": 2,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121361548816,
+          "name": "apple-platform",
+          "run_id": 40246865463,
+          "run_attempt": 2,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 121361548996,
+          "name": "apple-conformance-core",
+          "run_id": 40246865463,
+          "run_attempt": 2,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121361579370,
+          "name": "apple-conformance-ipad",
+          "run_id": 40246865463,
+          "run_attempt": 2,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121385671904,
+          "name": "apple-ci",
+          "run_id": 40246865463,
+          "run_attempt": 2,
+          "head_sha": "bcae65038b1c385f39179493fb056ab0738a594b",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/pulls/387": {
+      "number": 387,
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "9cbfeb33cdeff3abd9df9bc35eaa1a11ea250997",
+      "head": {
+        "sha": "8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392",
+        "ref": "fix/server-scan-followups",
+        "repo": {
+          "id": 1344982159,
+          "full_name": "legitimate-apps/dulcet"
+        }
+      },
+      "base": {
+        "sha": "2763c84576ea85e8cdcaf1376719f7749c775de6",
+        "ref": "main",
+        "repo": {
+          "id": 1344982159,
+          "full_name": "legitimate-apps/dulcet"
+        }
+      }
+    },
+    "/repos/legitimate-apps/dulcet/commits/9cbfeb33cdeff3abd9df9bc35eaa1a11ea250997/pulls?per_page=100&page=1": [
+      {
+        "number": 387
+      }
+    ],
+    "/repos/legitimate-apps/dulcet/commits/8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392": {
+      "sha": "8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392",
+      "commit": {
+        "tree": {
+          "sha": "40f14c79ea68161411c18c0ed617127559a75426"
+        }
+      }
+    },
+    "/repos/legitimate-apps/dulcet/actions/workflows/341254656/runs?head_sha=8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392&per_page=100&page=1": {
+      "total_count": 1,
+      "workflow_runs": [
+        {
+          "id": 40265284382,
+          "workflow_id": 341254656,
+          "path": ".github/workflows/apple-ci.yml",
+          "event": "pull_request",
+          "head_sha": "8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392",
+          "head_branch": "fix/server-scan-followups",
+          "run_attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          },
+          "head_repository": {
+            "id": 1344982159,
+            "full_name": "legitimate-apps/dulcet"
+          }
+        }
+      ]
+    },
+    "/repos/legitimate-apps/dulcet/actions/runs/40265284382": {
+      "id": 40265284382,
+      "workflow_id": 341254656,
+      "path": ".github/workflows/apple-ci.yml",
+      "event": "pull_request",
+      "head_sha": "8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392",
+      "head_branch": "fix/server-scan-followups",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      },
+      "head_repository": {
+        "id": 1344982159,
+        "full_name": "legitimate-apps/dulcet"
+      }
+    },
+    "/repos/legitimate-apps/dulcet/actions/runs/40265284382/attempts/1/jobs?per_page=100&page=1": {
+      "total_count": 5,
+      "jobs": [
+        {
+          "id": 121386231497,
+          "name": "apple-plan",
+          "run_id": 40265284382,
+          "run_attempt": 1,
+          "head_sha": "8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121386259075,
+          "name": "apple-platform",
+          "run_id": 40265284382,
+          "run_attempt": 1,
+          "head_sha": "8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 121386260435,
+          "name": "apple-conformance-core",
+          "run_id": 40265284382,
+          "run_attempt": 1,
+          "head_sha": "8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 121386260806,
+          "name": "apple-conformance-${{ matrix.device }}",
+          "run_id": 40265284382,
+          "run_attempt": 1,
+          "head_sha": "8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 121405781970,
+          "name": "apple-ci",
+          "run_id": 40265284382,
+          "run_attempt": 1,
+          "head_sha": "8cb0b1358c2dc68f4a0055a6fa4b2b47b6456392",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    }
+  }
+}
