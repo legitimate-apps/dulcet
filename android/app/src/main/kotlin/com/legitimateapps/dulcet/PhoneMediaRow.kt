@@ -18,6 +18,7 @@ internal fun PhoneMediaRow(
     trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     titleMaxLines: Int = 1,
+    enabled: Boolean = true,
 ) {
     ListItem(
         headlineContent = { Text(title, maxLines = titleMaxLines, overflow = TextOverflow.Ellipsis) },
@@ -25,7 +26,7 @@ internal fun PhoneMediaRow(
         leadingContent = leading,
         trailingContent = trailing,
         modifier = modifier.fillMaxWidth().let { base ->
-            if (onClick != null) base.clickable(onClick = onClick) else base
+            if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base
         },
     )
 }

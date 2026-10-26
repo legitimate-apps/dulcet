@@ -1114,7 +1114,8 @@ internal fun TrackRow(
                 }
             }
         },
-        onClick = if (durationUnknown) null else { { if (unavailable) onUnavailable() else onClick() } },
+        enabled = !durationUnknown,
+        onClick = { if (unavailable) onUnavailable() else onClick() },
     )
 }
 

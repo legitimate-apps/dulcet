@@ -262,7 +262,8 @@ private fun MobileSearchResult(
             }
         },
         modifier = Modifier.testTag("search.result.$index"),
-        onClick = onActivate.takeIf { result.type != SearchResultType.Track || (!unavailableOffline && result.duration != null) },
+        enabled = result.type != SearchResultType.Track || (!unavailableOffline && result.duration != null),
+        onClick = onActivate,
     )
 }
 

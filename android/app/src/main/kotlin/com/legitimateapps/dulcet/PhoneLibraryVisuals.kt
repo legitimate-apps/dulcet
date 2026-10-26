@@ -182,6 +182,7 @@ internal fun TrackRowVisual(
     trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     titleMaxLines: Int = 1,
+    enabled: Boolean = true,
 ) {
     val accent = when {
         playing -> MaterialTheme.colorScheme.primary
@@ -199,6 +200,6 @@ internal fun TrackRowVisual(
             }
         },
         trailingContent = trailing,
-        modifier = modifier.let { base -> if (onClick != null) base.clickable(onClick = onClick) else base },
+        modifier = modifier.let { base -> if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base },
     )
 }
