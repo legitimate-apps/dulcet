@@ -111,15 +111,53 @@ for remaining, strict, expected in [(False, True, 0), (True, True, 1), (True, Fa
     print(f"SHUTDOWN ACK CONTROL PASS leftover={remaining} required={strict} exit={expected}")
 
 workflow = (Path(TOOL).parents[2] / ".github/workflows/apple-ci.yml").read_text()
-release = workflow.split("      - name: Release the platform iPhone before iPadOS boot", 1)[1].split("      - name: ", 1)[0]
-boot = workflow.split("      - name: Boot iPadOS simulator before the layout launch", 1)[1].split("      - name: ", 1)[0]
-assert "set -euo pipefail" in release
-assert "--none --require-isolation" in release
-assert release.index("--require-isolation") < release.index('echo "udid=')
-assert "timeout-minutes: 6" in boot
-assert "steps.ipados_layout_destination.outputs.udid" in boot
-assert "resolve-ipad-destination" not in boot
-print("PLATFORM IPAD ORDER CONTROL PASS verified shutdown precedes unchanged six-minute boot")
+# Discovery can publish before shutdown; Actions must still acknowledge shutdown before boot.
+# Inspect step order directly, since the output now belongs to the separate discovery step.
+import re
+
+def require_platform_ipad_order(candidate):
+    platform = candidate.split("  apple-platform:", 1)[1]
+    platform = re.split(r"(?m)^  [A-Za-z0-9_-]+:\s*$", platform, maxsplit=1)[0]
+    def named(name):
+        matches = list(re.finditer(r"(?m)^      - name: " + re.escape(name) + r"$", platform))
+        assert len(matches) == 1, f"expected one platform step: {name}"
+        start = matches[0].start()
+        return start, platform[start:].split("\n      - ", 1)[0]
+    resolve_index, resolve = named("Resolve the platform iPadOS destination")
+    release_index, release = named("Release the platform iPhone before iPadOS boot")
+    boot_index, boot = named("Boot iPadOS simulator before the layout launch")
+    assert resolve_index < release_index < boot_index, "destination resolution and required shutdown must precede iPad boot"
+    for step in [resolve, release, boot]:
+        properties = step.split("        run:", 1)[0]
+        allowed_failure = re.search(r"(?m)^        continue-on-error:[ \t]*(.*)$", properties)
+        assert allowed_failure is None or allowed_failure[1] == "false", "platform prerequisites must fail closed"
+        condition = re.search(r"(?m)^        if:\s*(.*)$", properties)
+        assert condition is None or condition[1] in ["success()", "${{ success() }}"], "platform prerequisites require prior success"
+        assert "set -euo pipefail" in step, "platform prerequisite shell must stop on failure"
+    assert "id: ipados_layout_destination" in resolve
+    assert resolve.index("resolve-ipad-destination --print udid") < resolve.index('echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"')
+    assert "--none --require-isolation" in release, "shutdown requires an empty booted-device acknowledgment"
+    assert "timeout-minutes: 6" in boot
+    assert "IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}" in boot, "boot must consume the published destination"
+    assert 'xcrun simctl bootstatus "$IPAD_UDID" -b' in boot
+    assert "resolve-ipad-destination" not in boot, "boot must not rediscover its destination"
+    return release, boot
+
+release, boot = require_platform_ipad_order(workflow)
+print("PLATFORM IPAD ORDER CONTROL PASS resolve publishes udid; required shutdown precedes six-minute boot using that output")
+
+for mutation, changed in [
+    ("boot-before-shutdown", workflow.replace(release, "RELEASE_STEP_PLACEHOLDER").replace(boot, release).replace("RELEASE_STEP_PLACEHOLDER", boot)),
+    ("shutdown-continue-on-error", workflow.replace(release, release.replace("        run:", "        continue-on-error: true\n        run:"))),
+    ("boot-wrong-output", workflow.replace(boot, boot.replace("steps.ipados_layout_destination.outputs.udid", "steps.other_destination.outputs.udid"))),
+]:
+    assert changed != workflow, f"mutation changed nothing: {mutation}"
+    try:
+        require_platform_ipad_order(changed)
+    except AssertionError as error:
+        print(f"PLATFORM IPAD ORDER NEGATIVE CONTROL PASS {mutation} rejected: {error}")
+    else:
+        raise AssertionError(f"platform ordering control accepted {mutation}")
 
 # Service-count stability is a prerequisite in a device member, not a best-effort sleep.
 for did_settle in [True, False]:
