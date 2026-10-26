@@ -8,11 +8,13 @@ Only external collaborators are fake. --source-ref replays a historical implemen
 from pathlib import Path
 import argparse
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument('--source-ref')
+parser.add_argument('--self-test', action='store_true', help='Also require stale-cleanup mutants to fail at runtime')
 CONTROLS = ['superseded', 'cancelled', 'timeout-reconnect', 'keep-account', 'success', 'reader-closes-first']
 parser.add_argument('--control', choices=CONTROLS)
 parser.add_argument('--mutant', choices=['generation', 'cancellation', 'reconfigure', 'reader-close'])
@@ -32,7 +34,10 @@ def method(text, name):
     return text[start:end].replace('    private func ', '    func ', 1)
 
 
-download = method(source('apple/DulcetAppleShared/DulcetCoreDownloads.swift'), 'removeAccountData')
+download_source = source('apple/DulcetAppleShared/DulcetCoreDownloads.swift')
+download = method(download_source, 'removeAccountData')
+framing = (method(download_source, 'cancelFramingVerifications')
+           if '    private func cancelFramingVerifications(' in download_source else '')
 presentation = source('apple/DulcetKit/Sources/DulcetKit/AccountConnectionPresentation.swift')
 methods = '\n'.join(method(presentation, name) for name in
                     ['removeAccount', 'failAccountRemoval', 'cancelAccountRemoval', 'dismissAccountRemovalFailure'])
@@ -63,6 +68,10 @@ import Foundation
     var cancellations = 0
     func cancel() { cancellations += 1 }
 }
+@MainActor final class FramingSession {
+    var cancellations = 0
+    func invalidateAndCancel() { cancellations += 1 }
+}
 struct Outcome { var errorKind: String? = nil }
 @MainActor final class Client {
     var removals = 0
@@ -78,6 +87,8 @@ struct Outcome { var errorKind: String? = nil }
 }
 @MainActor final class Downloads: DulcetDownloadControlling {
     struct CacheWrite { let identifier: String }
+    struct FramingTransfer { let session: FramingSession }
+    var framingVerificationSessions: [String: FramingTransfer] = [:]
     var reconciliationGeneration = 0
     var reconciled = true
     var cacheWrites: [String: CacheWrite] = [:]
@@ -109,6 +120,7 @@ struct Outcome { var errorKind: String? = nil }
     func seedPlayback() {
         cacheWrites["resource"] = CacheWrite(identifier: "\(account!)-write")
         protectedPlayback["resource"] = "\(account!)-track"
+        framingVerificationSessions["resource"] = FramingTransfer(session: FramingSession())
     }
     func cancelRetry() {}
     func removeSecuredDownloadInbox() { inboxRemovals += 1 }
@@ -119,6 +131,7 @@ struct Outcome { var errorKind: String? = nil }
     func resume() { let saved = continuation; continuation = nil; saved?.resume(returning: [sessionTask]) }
     // Production body follows, without copied or simulated removal logic.
 __DOWNLOAD__
+__FRAMING__
 }
 @MainActor protocol DulcetArtworkCacheRemoving: AnyObject {
     func removeCachedArtwork(serverID: String) async
@@ -221,10 +234,15 @@ struct Failure: Error, CustomStringConvertible { var description: String }
             downloads.seedPlayback()
             if name == "superseded" || name == "cancelled" {
                 let old = downloads.client!
+                let oldFraming = downloads.framingVerificationSessions["resource"]!.session
                 let worker = Task { await downloads.removeAccountData() }
                 try await until { downloads.continuation != nil }
                 try require(old.abortedWrites == ["kept-write"] && downloads.cacheWrites.isEmpty &&
                             downloads.protectedPlayback.isEmpty, "removal did not release old playback cache state")
+                if __HAS_FRAMING__ {
+                    try require(oldFraming.cancellations == 1 && downloads.framingVerificationSessions.isEmpty,
+                                "removal did not cancel and release the old framing verification")
+                }
                 if name == "superseded" { downloads.configure(account: "new"); downloads.seedPlayback() }
                 else { worker.cancel() }
                 let active = downloads.client!
@@ -239,6 +257,8 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                     try require(active.abortedWrites.isEmpty && downloads.cacheWrites["resource"]?.identifier == "new-write" &&
                                 downloads.protectedPlayback["resource"] == "new-track",
                                 "stale cleanup cleared a new account's cache write or playback protection")
+                    try require(downloads.framingVerificationSessions["resource"]?.session.cancellations == 0,
+                                "stale cleanup cancelled a new account's framing verification")
                 }
             } else if name == "timeout-reconnect" {
                 let presentation = Presentation()
@@ -315,7 +335,8 @@ struct Failure: Error, CustomStringConvertible { var description: String }
         }
     }
 }
-'''.replace('__DOWNLOAD__', download).replace('__PRESENTATION__', methods)
+'''.replace('__DOWNLOAD__', download).replace('__FRAMING__', framing).replace(
+    '__HAS_FRAMING__', 'true' if framing else 'false').replace('__PRESENTATION__', methods)
 with tempfile.TemporaryDirectory(prefix='dulcet-removal-control-') as directory:
     root = Path(directory)
     fixture = root / 'control.swift'
@@ -326,3 +347,17 @@ with tempfile.TemporaryDirectory(prefix='dulcet-removal-control-') as directory:
         result = subprocess.run([str(root / 'control'), control])
         if result.returncode:
             raise SystemExit(result.returncode)
+
+if args.self_test:
+    assert args.mutant is None and args.control is None
+    for mutant, control in [('generation', 'superseded'), ('cancellation', 'cancelled')]:
+        command = [sys.executable, str(Path(__file__).resolve()), '--mutant', mutant, '--control', control]
+        if args.source_ref:
+            command += ['--source-ref', args.source_ref]
+        result = subprocess.run(command, capture_output=True, text=True)
+        # A compile error is a broken instrument, not proof that the runtime guard works.
+        expected = f'{control}: FAIL: stale cleanup mutated active account/client/tasks/inbox'
+        assert result.returncode == 1 and expected in result.stdout, (
+            f'{mutant} did not fail the stale-cleanup assertion:\n{result.stdout}\n{result.stderr}'
+        )
+        print(f'{mutant} mutant: rejected at runtime ({control})')
