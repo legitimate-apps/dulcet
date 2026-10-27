@@ -569,13 +569,41 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 ready
             }
             awaitTag(page)
-            // Keyboard activation exercises the same native semantic click target.
+            // Buttons use system-defined focusability: touch mode rejects RequestFocus.
+            // Enter keyboard mode through Android input before asking the native target to focus.
             ensureDisplayed("discover.back")
+            val keyboardReceipt=JSONObject()
+            activity.onActivity {
+                keyboardReceipt.put("touchModeBefore",it.window.decorView.isInTouchMode)
+                    .put("configurationKeyboard",it.resources.configuration.keyboard)
+                    .put("configurationHardKeyboardHidden",it.resources.configuration.hardKeyboardHidden)
+            }
+            var initialFocusAccepted=false
+            compose.onNodeWithTag("discover.back").performSemanticsAction(SemanticsActions.RequestFocus) {
+                initialFocusAccepted=it()
+            }
+            keyboardReceipt.put("focusRequestBeforeKeyAccepted",initialFocusAccepted)
+            val proofDirectory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
+            val keyboardFile=File(proofDirectory,"keyboard-focus.json")
+            keyboardFile.writeText(keyboardReceipt.toString(2))
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_TAB)
+            await("Tab leaves Android touch mode") {
+                var keyboardMode=false
+                activity.onActivity { keyboardMode=it.hasWindowFocus() && !it.window.decorView.isInTouchMode }
+                keyboardMode
+            }
+            keyboardReceipt.put("touchModeAfterTab",false)
+            keyboardFile.writeText(keyboardReceipt.toString(2))
             compose.onNodeWithTag("discover.back").performSemanticsAction(SemanticsActions.RequestFocus)
             await("Back receives keyboard focus") {nodeConfig("discover.back").getOrNull(SemanticsProperties.Focused)==true}
+            keyboardReceipt.put("backFocusedBeforeEnter",true)
+            keyboardFile.writeText(keyboardReceipt.toString(2))
             instrumentation.waitForIdleSync()
             instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_ENTER)
             awaitTag("discover.playlists")
+            keyboardReceipt.put("enterOpenedPlaylistList",true)
+            keyboardFile.writeText(keyboardReceipt.toString(2))
+            println("DISCOVER SHELVES keyboard-focus=$keyboardReceipt")
             click("discover.back");awaitTag("discover.home")
             ensureDisplayed("discover.credit");check(text("discover.credit").contains("Data from MusicBrainz and ListenBrainz"))
             ensureDisplayed("discover.suggestionsCredit");check(text("discover.suggestionsCredit").contains("Suggestions use ListenBrainz"))

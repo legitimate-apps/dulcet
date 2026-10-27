@@ -162,6 +162,19 @@ class Runner:
         self.old_scale=self.shell('settings','get','system','font_scale')
         self.old_night=self.shell('settings','get','secure','ui_night_mode')
         metadata={'serial':self.serial,'api':self.shell('getprop','ro.build.version.sdk'),'model':self.shell('getprop','ro.product.model'),'head':self.run(['git','rev-parse','HEAD'],capture_output=True,text=True).stdout.strip(),'class':CLASS,'redBaseline':self.args.red_baseline}
+        # Retain only non-sensitive AVD input settings, so keyboard proof failures can be
+        # compared across architectures without publishing runner paths or full configs.
+        avd_name=self.adb_run('emu','avd','name',capture_output=True,text=True).stdout.splitlines()[0].strip()
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+',avd_name):raise RuntimeError('invalid emulator AVD name')
+        avd_home=Path(os.environ.get('ANDROID_AVD_HOME',str(Path.home()/'.android/avd')))
+        metadata['avdInputSettings']={}
+        for name in ('config.ini','hardware-qemu.ini'):
+            config=avd_home/(avd_name+'.avd')/name
+            if config.is_file():
+                metadata['avdInputSettings'][name]={key.strip():value.strip()
+                    for line in config.read_text().splitlines() if '=' in line
+                    for key,value in [line.split('=',1)]
+                    if key.strip() in {'hw.keyboard','hw.keyboard.lid','hw.dPad','hw.device.name','hw.cpu.arch'}}
         (self.out/'device.json').write_text(json.dumps(metadata,indent=2))
     def invoke(self,method,phase,theme,scale):
         label=method+'-'+phase
