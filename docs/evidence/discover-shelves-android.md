@@ -74,3 +74,58 @@ Both 20-repetition runs were dispatched on `feat/discover-shelves` at `80f68fde`
 
 The Apple and Android shells are combined in the [step-3 integration evidence](discover-shelves-integration.md),
 which records merged-tree checks, feature cells, CI proof wiring and the one-time soak status read.
+
+## Hosted Android keyboard focus correction
+
+The hosted x86_64 Google APIs API 34 proof and the local ARM64 Google Play API 34 proof both
+use AVDs with hardware keyboards disabled. Hardware-keyboard presence is therefore not evidence
+that a particular window has left touch mode. The former proof requested Back focus after touch
+navigation and rotation, before sending any key event. The hosted failure tree retains Back as an
+enabled button with RequestFocus, but Focused=false.
+
+The exact [Compose UI 1.11.4 sources](https://dl.google.com/dl/android/maven2/androidx/compose/ui/ui-android/1.11.4/ui-android-1.11.4-sources.jar)
+and [Foundation 1.11.4 sources](https://dl.google.com/dl/android/maven2/androidx/compose/foundation/foundation-android/1.11.4/foundation-android-1.11.4-sources.jar)
+give clickable controls Focusability.SystemDefined; those
+controls can focus only outside InputMode.Touch. AndroidComposeView maps its view touch-mode
+changes to that input mode. The proof now sends native Tab, waits for the focused window to
+leave touch mode, requires the same Back Focused=true assertion, sends native Enter and requires
+navigation to the public playlist list. The app and hosted AVD configuration are unchanged.
+Keyboard receipts retain the pre-key mode and focus-request result, the post-Tab mode, Back focus
+before Enter and the resulting destination. The device artifact now retains selected AVD input
+settings, excluding runner paths and unrelated configuration.
+
+Observed in [core-ci run 40466317288, Android job 122062470698](https://github.com/legitimate-apps/dulcet/actions/runs/40466317288/job/122062470698)
+on source `f80066cbf912fe7e0e770e041295017d5b8fd038`: the original ten phases and all six shelf
+phases pass with zero failures, errors or skips, independently summed from the artifact XML.
+
+| Phase | Touch mode before key | Pre-key focus request accepted | Touch mode after Tab | Back focused before Enter | Enter opened playlist list |
+| --- | --- | --- | --- | --- | --- |
+| Light | true | false | false | true | true |
+| Dark | false | true | false | true | true |
+| Largest | false | true | false | true | true |
+
+The light phase observes the previously failing precondition directly, then proves the native
+key changes it and the unchanged app target takes focus. Later phases retain keyboard mode across
+app resets. The old local run did not retain its input-mode state, so its precise initial state
+cannot be reconstructed. The hosted configuration still records `hw.keyboard=no` in `config.ini`
+and `hw.keyboard=false` in `hardware-qemu.ini`; runtime configuration reports keyboard type 2
+and hard-keyboard-hidden value 1. Those settings do not substitute for observing current touch mode.
+
+The job emitted:
+
+```text
+DISCOVER ANDROID JUNIT {"tests": 10, "failures": 0, "errors": 0, "skipped": 0}
+DISCOVER ANDROID shelvesRoutesAndSourceWishes phase=normal: passed XML={'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}
+DISCOVER ANDROID shelvesMixedAndCachedOffline phase=normal: passed XML={'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}
+DISCOVER ANDROID shelvesNavidromeControl phase=normal: passed XML={'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}
+DISCOVER ANDROID shelvesAccessibilityAndRestoration phase=light: passed XML={'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}
+DISCOVER ANDROID shelvesAccessibilityAndRestoration phase=dark: passed XML={'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}
+DISCOVER ANDROID shelvesAccessibilityAndRestoration phase=largest: passed XML={'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}
+DISCOVER ANDROID JUNIT {"tests": 6, "failures": 0, "errors": 0, "skipped": 0}
+```
+
+The retained job artifact is `discover-wishlist-android-40466317288-1`; each accessibility phase
+contains `captures/keyboard-focus.json`. Both fixture cleanup receipts confirm five owned children
+reaped and the temporary root deleted. Instrumentation compilation, runner controls, parity and
+CI policy pass locally. No Android host-test class changed, so no new host soak was dispatched.
+The subsequent evidence commit changes documentation only.
