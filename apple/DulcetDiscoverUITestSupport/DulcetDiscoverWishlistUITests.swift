@@ -139,15 +139,31 @@ import UIKit
         XCTAssertTrue(button.waitForExistence(timeout: 30), "Saved account must appear before checking whether it is enabled: " + app.debugDescription)
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 30), .completed)
-        print("DISCOVER_SAVED_ACCOUNT identifier=\(button.identifier) exists=true enabled=true")
+        let identifier = button.identifier
+        print("DISCOVER_SAVED_ACCOUNT identifier=\(identifier) exists=true enabled=true")
         activate(button)
-        // Connecting a saved account returns the real app to Listen Now. Reopen Connection
-        // before checking its current-account label; the departing button cannot stay visible.
-        let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false OR (label CONTAINS %@ AND enabled == true)", "Current server"), object: button)
-        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 45), .completed)
-        if !button.exists { select("settings") }
-        let committed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@ AND enabled == true", "Current server"), object: button)
-        XCTAssertEqual(XCTWaiter.wait(for: [committed], timeout: 45), .completed, "Saved account must commit before navigating: " + app.debugDescription)
+        let started = ProcessInfo.processInfo.systemUptime
+        repeat {
+            // One snapshot keeps the current-server label, enabled state and frame together.
+            if let root = try? app.snapshot() {
+                var pending: [XCUIElementSnapshot] = [root]
+                var displayed = false
+                while let node = pending.popLast() {
+                    if node.elementType == .button && node.identifier == identifier {
+                        let frame = node.frame
+                        let usable = !frame.isEmpty && frame.origin.x.isFinite && frame.origin.y.isFinite
+                            && frame.width.isFinite && frame.height.isFinite
+                        displayed = displayed || usable
+                        if usable && node.isEnabled && node.label.contains("Current server") { return }
+                    }
+                    pending.append(contentsOf: node.children)
+                }
+                // A retained Connection tab can keep an off-screen row in the accessibility tree.
+                if !displayed { select("settings") }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while ProcessInfo.processInfo.systemUptime - started < 180
+        XCTFail("Saved account must commit before navigating; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s: " + app.debugDescription)
     }
     func search(_ query: String = "Fixture") throws {
         var destination = select("search")
