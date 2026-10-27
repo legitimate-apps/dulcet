@@ -5,8 +5,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.legitimateapps.dulcet.core.*
 
-/** A mounted page owns its callbacks. Data survives Back in the account's phone navigation state. */
-internal class DiscoverPagedReader<T>(
+/** A mounted page owns its callbacks. Data survives Back in the account's navigation state. */
+class DiscoverPagedReader<T>(
     private val cursor: (T) -> String?,
     private val append: (T, T) -> T,
 ) {
@@ -61,7 +61,7 @@ internal class DiscoverPagedReader<T>(
     }
 }
 
-internal class DiscoverBrowseMemory {
+class DiscoverBrowseMemory {
     val shelves = mutableMapOf<String, DiscoverPagedReader<DiscoverShelfPage>>()
     val lists = mutableMapOf<String, DiscoverPagedReader<DiscoverPlaylistList>>()
     val playlists = mutableMapOf<String, DiscoverPagedReader<DiscoverPlaylist>>()

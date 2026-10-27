@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet.tv
 
 import com.legitimateapps.dulcet.library.canBeQueued
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -88,7 +90,8 @@ internal fun TvMyLibraryHome(
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvWishlistEntry(session.discoverWishlist, navigator)
                 TvAction(stringResource(SharedR.string.library_downloaded), "mylibrary.view.downloaded") { navigator.open(ROUTE_DOWNLOADED) }
                 TvAction(stringResource(SharedR.string.library_shuffle_all), "mylibrary.shuffleAll", enabled = publication?.songs?.any { it.toTrack().canBeQueued() } == true) {
                     playTracks(plays, account.providerInstanceId, publication?.songs.orEmpty().map(MyLibrarySong::toTrack), null, "My Library", true) { showNowPlaying(context) }

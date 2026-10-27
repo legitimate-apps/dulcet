@@ -63,7 +63,7 @@ class TvMyLibraryTest {
         context.getSharedPreferences("dulcet.ui", 0).edit().clear().commit()
     }
 
-    @Test fun tvCompositionDoesNotInstantiateFeature() {
+    @Test fun supportedServerDoesNotFetchDiscoverUntilOpened() {
         server.dulcetDiscoverWishlist = true
         // Prove the fixture's advertisement independently; the baseline TV need not discover
         // extensions when no feature facade is opened.
@@ -71,7 +71,8 @@ class TvMyLibraryTest {
             .toURL().readText()).getJSONObject("subsonic-response").getJSONArray("openSubsonicExtensions")
         val names = (0 until extensions.length()).map { extensions.getJSONObject(it).getString("name") }
         assertTrue(names.containsAll(listOf("dulcetDiscover", "dulcetWishlist")))
-        host(FakeMyLibrarySource(available = false))
+        val myLibrary = MyLibrarySession(FakeMyLibrarySource(available = false)).also { myLibrarySessions += it }
+        compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = null, myLibrary = myLibrary) { _, _ -> } } }
         await("positive baseline catalog response") { server.requests("getAlbumList2").isNotEmpty() }
         for (endpoint in listOf("searchDulcetDiscover", "getDulcetWishlist", "addToDulcetWishlist")) {
             assertTrue(server.requests(endpoint).isEmpty(), "TV must not create Discover: $endpoint")
@@ -88,7 +89,9 @@ class TvMyLibraryTest {
         repeat(6) { if(tabs.none(::focused)) key(Key.DirectionUp) }
         repeat(8) { if(!focused("listenNow.open")) key(Key.DirectionLeft) }
         assertFocused("listenNow.open")
-        key(Key.DirectionRight); key(Key.DirectionRight); key(Key.DirectionCenter)
+        key(Key.DirectionRight); key(Key.DirectionRight)
+        if (exists("discover.open")) key(Key.DirectionRight)
+        key(Key.DirectionCenter)
     }
 
     // ---- The split -----------------------------------------------------------------------------------

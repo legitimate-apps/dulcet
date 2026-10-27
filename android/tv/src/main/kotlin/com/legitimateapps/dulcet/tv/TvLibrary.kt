@@ -11,6 +11,8 @@ import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
@@ -248,6 +250,9 @@ internal fun TvLibraryEntry(
     val session = remember(account) { LibrarySession(context, account, foreground, restoredAccount) }
     // My Library (spec §29.4): with `dulcetLibrary` advertised, Library is the account's own library
     // and the catalog moves to Browse; without it, everything is exactly as it always was.
+    val discoverSession = session.discoverWishlist
+    val discoverPublication by discoverSession.publication.collectAsState()
+    val discoverMemory = remember(account) { com.legitimateapps.dulcet.DiscoverBrowseMemory() }
     val myLibrarySession = myLibrary ?: session.myLibrary
     val myLibraryPublication by myLibrarySession.state.collectAsState()
     val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
@@ -293,6 +298,8 @@ internal fun TvLibraryEntry(
                 onLibrary = { show(routes, states, memory, ROUTE_LIBRARY) },
                 onNowPlaying = { context.startActivity(PlaybackIntents.showNowPlaying(context)) },
                 onAccount = { if (routes.last() != ROUTE_ACCOUNT) routes += ROUTE_ACCOUNT },
+                discover = discoverPublication?.access?.discoverAvailable == true,
+                onDiscover = { show(routes, states, memory, ROUTE_DISCOVER) },
                 browse = split,
                 onBrowse = { show(routes, states, memory, ROUTE_BROWSE) })
             // Under the bar on the library's home, the screen that offers to reconnect the saved account:
@@ -308,6 +315,8 @@ internal fun TvLibraryEntry(
             }.focusGroup()) {
             states.SaveableStateProvider(top) {
                 CompositionLocalProvider(
+                    LocalTvDiscoverNavigator provides navigator,
+                    LocalTvDiscover provides discoverSession,
                     LocalTvRouteFocus provides memory.route(top),
                     // A text field keeps UP for its cursor; the navigation bar is above it.
                     LocalTvNavFocus provides navigation.current,
@@ -315,6 +324,7 @@ internal fun TvLibraryEntry(
                 ) {
                     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
                     when {
+                        top.startsWith("discover") || (top == ROUTE_WISHLIST || top.startsWith("wishlist:")) -> TvDiscoverRoute(discoverSession, discoverMemory, top, account, playback, navigator)
                         top == ROUTE_LISTEN_NOW -> TvListenNow(account, session, playback, navigator)
                         top == ROUTE_SEARCH -> search(navigator, playback)
                         top == ROUTE_LIBRARY && split ->
@@ -378,6 +388,7 @@ private fun show(routes: SnapshotStateList<String>, states: androidx.compose.run
 internal class TvNavigationFocus {
     val listenNow = FocusRequester()
     val search = FocusRequester()
+    val discover = FocusRequester()
     val library = FocusRequester()
     val browse = FocusRequester()
     val account = FocusRequester()
@@ -445,9 +456,12 @@ internal fun TvTopBar(
     browse: Boolean = false,
     onBrowse: () -> Unit = {},
     onListenNow: () -> Unit = {},
+    discover: Boolean = false,
+    onDiscover: () -> Unit = {},
 ) {
     focus.current = when {
         top == ROUTE_ACCOUNT -> focus.account
+        root == ROUTE_DISCOVER -> focus.discover
         root == ROUTE_LISTEN_NOW -> focus.listenNow
         root == ROUTE_LIBRARY -> focus.library
         root == ROUTE_BROWSE -> focus.browse
@@ -455,23 +469,25 @@ internal fun TvTopBar(
     }
     focus.currentTag = when {
         top == ROUTE_ACCOUNT -> "tv.account.open"
+        root == ROUTE_DISCOVER -> "discover.open"
         root == ROUTE_LISTEN_NOW -> "listenNow.open"
         root == ROUTE_LIBRARY -> "library.open"
         root == ROUTE_BROWSE -> "browse.open"
         else -> "search.open"
     }
     Row(
-        Modifier.fillMaxWidth().padding(start = 56.dp, top = 20.dp, end = 56.dp, bottom = 8.dp),
+        Modifier.fillMaxWidth().then(if (discover) Modifier.horizontalScroll(rememberScrollState()) else Modifier).padding(start = 56.dp, top = 20.dp, end = 56.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(DulcetIcons.LibraryMusic, null, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(
+        if (!discover) Text(
             stringResource(R.string.app_name),
-            Modifier.padding(start = 12.dp, end = 40.dp),
+            Modifier.padding(start = 12.dp, end = 16.dp),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
         )
         TvTab("Listen Now", root == ROUTE_LISTEN_NOW, "listenNow.open", focus.listenNow, focus, onClick = onListenNow)
+        if (discover) TvTab("Discover", root == ROUTE_DISCOVER, "discover.open", focus.discover, focus, onClick = onDiscover)
         TvTab(stringResource(R.string.tv_nav_search), root == ROUTE_SEARCH, "search.open", focus.search, focus,
             onClick = onSearch)
         TvTab(stringResource(if (browse) SharedR.string.library_my_library_title else R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library, focus,
@@ -649,7 +665,7 @@ internal fun EnterRoute() {
  * comes back ([TvRouteFocus.pending]), or when it is the screen's [default] and nothing else is to be.
  */
 @Composable
-internal fun Modifier.tvFocus(tag: String, default: Boolean = false): Modifier {
+internal fun Modifier.tvFocus(tag: String, default: Boolean = false, semanticsTag: String = tag): Modifier {
     val route = LocalTvRouteFocus.current
     val bar = LocalTvNavigation.current
     val requester = remember { FocusRequester() }
@@ -665,7 +681,7 @@ internal fun Modifier.tvFocus(tag: String, default: Boolean = false): Modifier {
     }
     return this.focusRequester(requester)
         .onFocusChanged { if (it.isFocused || it.hasFocus) route?.focused(tag) }
-        .testTag(tag)
+        .testTag(semanticsTag)
 }
 
 /** The position in a list whose tags start with [prefix] that the route is to return to, if any. */
@@ -709,9 +725,10 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TvAction(stringResource(SharedR.string.search_group_songs), "library.view.songs") { navigator.open(ROUTE_SONGS) }
                 TvAction(stringResource(SharedR.string.library_downloaded), "library.view.downloaded") { navigator.open(ROUTE_DOWNLOADED) }
+                TvWishlistEntry(session.discoverWishlist, navigator)
             }
         }
         item { TvLibraryPins(account, session, playback, navigator); TvConnectionNotices(session, accountNotices = true) }

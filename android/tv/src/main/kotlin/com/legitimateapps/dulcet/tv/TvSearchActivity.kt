@@ -162,7 +162,7 @@ private fun rememberSearchActivation(navigator: TvNavigator): (SearchResultItem)
 }
 
 @Composable
-internal fun TvSearchScreen(
+internal fun TvCatalogSearchScreen(
     presenter: SearchPresenter,
     /** Rows show cover art when the account is known; tests without one draw the placeholder. */
     account: SearchAccount? = null,
