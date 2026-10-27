@@ -97,7 +97,7 @@ Parity validates all 44 feature rows. CI policy validates 13 workflows; the poli
 include the TV fixture invocation. Runner self-tests cover exact phone, shelf and TV inventories and
 reject incomplete or wrong-class results. The generic proof-runner tests pass all 23 cases.
 
-The generic runner adds mode `android-tv`; combine that choice and dispatch branch with the Apple TV
-mode when integrating the two TV lanes. No core interface request is needed. No `FEATURES.yml` cell
-is promoted by this branch.
+The generic runner adds mode `android-tv`. The [combined TV integration](discover-tv-combined.md)
+also retains the Apple TV `tvos` mode and both sets of controls. No core interface request is needed.
+No `FEATURES.yml` cell is promoted by this branch.
 
