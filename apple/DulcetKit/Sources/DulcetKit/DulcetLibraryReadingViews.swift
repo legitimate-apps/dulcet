@@ -661,13 +661,7 @@ struct DulcetReaderTile: View {
             accessibleAction(styledAction).dulcetReaderItemContextMenu(item)
         }
 #else
-        // The complete interaction owns its accessibility element. On iOS 27 an album
-        // inserted into My Library remained visible but lost its inner button from AX.
-        // Wrapping the full interaction keeps its button contract outside both wrappers;
-        // hosted coverage checks the unchanged album query, activation and drag behavior.
-        accessibleAction(styledAction
-            .dulcetReaderItemContextMenu(item)
-            .dulcetReaderQueueDragSource(item))
+        accessibleAction(styledAction.dulcetReaderItemContextMenu(item))
 #endif
     }
 
@@ -688,7 +682,13 @@ struct DulcetReaderTile: View {
     private var tileButton: some View {
         Button {
             if let route = item.route { store.pushReaderPage(route) }
-        } label: { tileContent }
+        } label: {
+            // Keep the native Button outside the drag interaction. A draggable wrapper
+            // around the whole button can leave a visible album absent from iOS 27 AX,
+            // while the otherwise identical non-draggable artist remains accessible.
+            // The label still supplies the complete artwork/title drag surface.
+            tileContent.dulcetReaderQueueDragSource(item)
+        }
     }
 
     private var tileContent: some View {

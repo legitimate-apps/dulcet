@@ -182,3 +182,25 @@ The new pre-service phase has the same bounded pressure allowance. Existing whol
 phase limits still take precedence, including Discover's 30-minute aggregate
 startup admission and the conformance step's 125-minute envelope; component maxima
 are not summed into a larger grant. A fresh hosted witness must validate the order.
+
+
+## iPhone tile accessibility after relaunch
+
+[iPhone job 122442527613](https://github.com/legitimate-apps/dulcet/actions/runs/40575992017/job/122442527613)
+passed automatic offline album playback, then failed the album query after its
+first online relaunch (My Library test line 132). The failed-test recording shows
+Threshold Boundary completely visible at approximately x=16, y=380, width=150,
+height=190 points. The matching hierarchy has no album identifier, title or
+nonzero element in that slot. It does expose the artist directly below at
+x=16, y=587, width=150, height=172. This repeats the earlier run's visible-but-absent
+album symptom at a different stage; moving accessibility modifiers outside the
+whole interaction did not resolve it.
+
+Albums and artists use the same tile, but only albums receive the deferred queue
+drag wrapper. The tile now attaches that interaction to its complete label,
+keeping the native Button outside it. The context menu still uses the system
+preview for draggable items, and the deferred resolver still runs on drop. The
+drag wrapper interfering with button accessibility is the working mechanism,
+not an isolated framework reproduction. Hosted relaunch, activation, native-menu
+and real queue-drop checks must validate this change together; none of those
+assertions are relaxed.
