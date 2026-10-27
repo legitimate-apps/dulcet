@@ -16,7 +16,7 @@ Playlist entry positions and duplicate recordings remain intact. Missing MBIDs r
 
 All requests share existing reader admission, account identity authority, retirement, server backoff and credentials. Facade calls enter the reader owner, and publications/completions reach main through the existing delivery fence. Cancellation is one-shot, late results cannot cache or publish across retirement, and a newly requested home cancels older home shelf work. The new reads share the existing monotonic 429 deadline, including through a wall-clock rollback. No auth, playback, artwork-validation or outbox-delivery mechanism is replaced.
 
-## Server contracts and unresolved API adoption
+## Server contracts and approved transport
 
 OBSERVED in `server/api/DiscoverApi.kt`, `server/v1/Discover.kt` and the extension documentation:
 
@@ -26,7 +26,7 @@ OBSERVED in `server/api/DiscoverApi.kt`, `server/v1/Discover.kt` and the extensi
 | Public playlist list/search | `searchDulcetDiscoverPlaylists`, query/size/cursor | `/discover/playlists`, q/limit/cursor |
 | Public playlist page | `getDulcetDiscoverPlaylist`, mbid/size/cursor | `/discover/playlists/{mbid}`, limit/cursor |
 
-The server exposes all three through both contracts. Current app accounts and step-2 transports authenticate only `/rest`; discovery is used for server identity and does not supply API Bearer credentials. This implementation therefore uses advertised `dulcetDiscover` v1 and independently gates Wishlist v1. **Dulcet API selection/authentication is not implemented.** The plan records this unresolved scope decision; neither shell should create its own token or networking path. This is the remaining difference from the request for automatic API selection on discovery.
+The server exposes all three through both contracts. Apps use advertised `dulcetDiscover` v1 and independently gate Wishlist v1 through `/rest`, preserving existing authentication. This is the approved transport decision from 2026-10-23 (design §5, main spec §30.3). Dulcet API adoption belongs to a separate whole-app lane; shells add no login or networking path.
 
 Navidrome control first requires a successful login, non-empty catalog and an observed baseline request log. After that positive witness, production home and explicit shelf/list/playlist calls produce no Discover/Wishlist endpoint request and expose no shelf. The standard shared extension response supplies the confirmed absence.
 
@@ -55,4 +55,4 @@ Final counts are read from JUnit XML, with no skipped tests. The implementation 
 
 The new common `DiscoverShelvesTest` has eight tests. Android's existing `AndroidDiscoverTest` has ten, including shelf/playlist/home main delivery and cancellation. Apple facade/DTO tests add copied lists, nullable metadata, main delivery and cancellation checks. These run on macOS native; iOS is compile evidence only in this core part.
 
-`:core:allMetadataJar`, `:core:bundleAndroidMainAar`, `:core:licensee`, `:core:compileTestKotlinIosSimulatorArm64` and `:core:linkDebugFrameworkMacosArm64` pass. Parity and CI policy checks pass. None of these compile/package tasks has a test count. Linux Android soak is dispatched after pushing, with task `:core:testAndroidHostTest`, filters `*AndroidDiscoverTest,*DiscoverShelvesTest` and 20 repetitions; its outcome is not claimed here. Native shell proofs, API-authentication scope resolution and final platform support promotion remain integration work.
+`:core:allMetadataJar`, `:core:bundleAndroidMainAar`, `:core:licensee`, `:core:compileTestKotlinIosSimulatorArm64` and `:core:linkDebugFrameworkMacosArm64` pass. Parity and CI policy checks pass. None of these compile/package tasks has a test count. Linux Android soak is dispatched after pushing, with task `:core:testAndroidHostTest`, filters `*AndroidDiscoverTest,*DiscoverShelvesTest` and 20 repetitions; its outcome is not claimed here. Native shell proofs and final platform support promotion remain integration work.

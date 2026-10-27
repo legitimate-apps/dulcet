@@ -7973,7 +7973,7 @@ The Android and fixed Objective-C facades expose these reads through the existin
 identity, cancellation and main-thread delivery paths. The current client adapter uses advertised
 OpenSubsonic extensions as step 2 does; Dulcet API token authentication is not added by this core
 change. The [step-3 plan](../plans/2026-10-27-discover-shelves.md) locks the shell interface, copy,
-identifiers and routing, and records the API adoption scope question. The finite fixture provides
+identifiers and routing, and records the approved extension transport. The finite fixture provides
 paginated charts and playlists plus acknowledged mixed, empty, stale and unavailable shelf states.
 [Core evidence](../../evidence/discover-shelves-core.md) is distinct from the four native shell
 proofs, which remain integration work. No platform support cell is promoted by this change.

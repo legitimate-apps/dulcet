@@ -22,7 +22,7 @@
 
 **OBSERVED:** Server `api/DiscoverApi.kt` and `v1/Discover.kt` expose the same six shelf IDs and playlists through both contracts. `/rest/getDulcetDiscoverShelf` uses `id`, `size`, `cursor`; public playlists return `dulcetDiscoverPlaylists.playlist[]`, other shelves `dulcetDiscover.item[]`. `/rest/searchDulcetDiscoverPlaylists` uses `query`, `size`, `cursor`. `/rest/getDulcetDiscoverPlaylist` uses `mbid`, `size`, `cursor`, with `summary` and `entries.entry[]`.
 
-Dulcet API equivalents are `/discover/shelves/{shelfId}`, `/discover/playlists?q=`, `/discover/playlists/{mbid}`, with `limit`, `cursor` and JSON `items[]`; they require Bearer credentials. API discovery advertises availability, not authentication. The current app account transport has only OpenSubsonic username/password credentials; step 2 explicitly deferred API authentication and whole-app migration. The core delivered here uses the advertised OpenSubsonic extension, matching step 2 and Listen Now. **The request to select Dulcet API on discovery is unresolved pending a scope decision about API authentication/account migration.** Shell builders must not create a second login or networking path. The interfaces below do not depend on that choice.
+**Decided:** Apps use the advertised OpenSubsonic extensions through `/rest`, as approved on 2026-10-23 and specified in design §5 and main spec §30.3. Existing account authentication stays in use. Dulcet API adoption and authentication belong to a separate whole-app lane; neither shell adds a login or transport.
 
 ## Product decisions
 
@@ -118,7 +118,7 @@ Empty copy: trending **No trending artists/albums/songs right now.**; new releas
 - [x] Add visited-read cache entries with cursor/size/query isolation, last-good fallback and original age; reuse existing admission, retirement and backoff.
 - [x] Publish independent home shelves plus six recent wishes from default owner snapshot/outbox; preserve Library filters.
 - [x] Test opaque cursors, empty versus failed, stale/offline fallback, shared 429 deadline, late cancellation/identity, ordering, duplicates, missing MBIDs and both WishSource values.
-- [ ] Resolve protocol scope above before claiming API selection is complete.
+- [x] Keep the approved `/rest` extension transport; defer Dulcet API adoption to its whole-app lane.
 
 ### Task 2: Facades and fixture (core builder)
 
@@ -145,7 +145,7 @@ Empty copy: trending **No trending artists/albums/songs right now.**; new releas
 
 ### Task 5: Proofs and integration (integrator)
 
-- [ ] Reconcile both shell summaries, compile all integrations and run core gates once on final tree. Resolve the protocol decision and amend this contract explicitly if it changes.
+- [ ] Reconcile both shell summaries, compile all integrations and run core gates once on final tree. Preserve the approved `/rest` transport decision.
 - [ ] Wire/execute hosted Apple and Android proofs for each of the four surfaces. Non-empty shelves must include artist/album routing, shelf wishes, playlist page duplicate/missing-MBID rows and playlist wishes. Show cache age, failure with retained content, empty copy, pending acknowledgement, offline/reconnect and healthy Navidrome absence.
 - [ ] Assert fixture scenario revision/effect, account identity, platform/window class and actual test counts. Preserve artifacts with source SHA; compile-only and core tests are not UI evidence.
 - [ ] Promote only the proven `discover.shelves` and public-playlist portion of `discover.pages` cells, preserving existing search/pages/wishlist proof and TV deferrals. Update evidence and main-spec §28 for the final user-facing behavior.
