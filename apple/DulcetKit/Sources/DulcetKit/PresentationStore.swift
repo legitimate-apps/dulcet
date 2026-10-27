@@ -131,10 +131,8 @@ public enum DulcetReaderRoute: Hashable, Sendable {
     case downloaded
     /// A My Library section, pushed by the compact Library root's rows.
     case myLibrarySection(DulcetMyLibrarySection)
-#if !os(tvOS)
     case wishlist
     case discover(DulcetDiscoverDestination)
-#endif
 }
 
 /// The sign-out offer for changes that have not reached the server (§14.7 step 2).
@@ -211,14 +209,14 @@ public final class DulcetPresentationStore {
     }
     var discoverNavigation = DulcetDiscoverNavigation()
     var wishlistScrollKey: String?
-    #if !os(tvOS)
+    var discoverSearchPath: [DulcetDiscoverDestination] = []
     public func openWishlist(rowKey: String? = nil) {
         wishlistScrollKey = rowKey
         showReaderPage(.wishlist)
     }
-    #endif
     public func resetReaderNavigation() {
         discoverNavigation.close()
+        discoverSearchPath = []
         wishlistScrollKey = nil
         if selectedDestination == .discover { selectDestination(.library) }
         let previousWriter = navigationWriter
@@ -238,12 +236,8 @@ public final class DulcetPresentationStore {
     public var myLibraryAvailable: Bool { librarySession?.myLibrary.availability == .available }
     public var isReaderDestination: Bool { selectedDestination == .listenNow || selectedDestination == .library || selectedDestination == .browse }
     public func destinations(_ base: [DulcetSidebarDestination]) -> [DulcetSidebarDestination] {
-#if os(tvOS)
-        base.filter { $0 != .discover }.flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
-#else
         base.filter { $0 != .discover || librarySession?.discoverPublication?.access.discoverAvailable == true }
             .flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
-#endif
     }
     public private(set) var readerPath: [DulcetReaderRoute] = [] {
         didSet { navigationWrite(oldPath: String(describing: oldValue)) }
@@ -662,13 +656,11 @@ public final class DulcetPresentationStore {
         defer { navigationWriter = previousWriter }
         readerReturn = nil
         readerArrival = route
-#if !os(tvOS)
         if route == .wishlist {
             if selectedDestination != .library { selectDestination(.library) }
             readerPath = [.wishlist]
             return
         }
-#endif
         if isReaderDestination {
             if readerPath.last != route { readerPath.append(route) }
         } else {

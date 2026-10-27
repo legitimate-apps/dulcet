@@ -7,7 +7,7 @@ This implements Task 3 of the [Discover shelves plan](../superpowers/plans/2026-
 - iPhone uses the five music destinations in order: Listen Now, Discover, Library, Browse, Search when the account advertises both Discover and My Library. Connection is available from a toolbar sheet in that window class. Accounts without Discover retain their existing navigation.
 - iPad uses the existing sidebar at regular width and the phone tab shell at compact width. Discover paths, loaded list models, submitted playlist query and scroll targets live in the account-scoped presentation store, across shell reconstruction.
 - Mac uses its native sidebar, detail navigation and full-window player bar. Music rows and wish actions are native buttons with separate labels and keyboard activation.
-- TV excludes Discover navigation and never opens a Discover client. Its application and tests still compile with the additive Swift protocol.
+- TV now enables the shared Discover source and presentation in the [Apple TV implementation](discover-tv-apple.md). Its remote proof is prepared for hosted execution; the remaining evidence here describes the phone, tablet and Mac surfaces.
 
 Home presents Trending on ListenBrainz with Artists, Albums and Songs subrows, then New releases, Artists like yours, Public playlists and six Recent wishes. Native horizontal preview rows retain server order; each shelf owns its loading, empty, error, retry and cached-age presentation. Empty success never stands in for failure. Cached answers retain rows, fetched time and source age alongside a refresh failure. A retry deadline has visible explanatory copy. Credits name MusicBrainz and ListenBrainz, and suggestions separately credit ListenBrainz.
 

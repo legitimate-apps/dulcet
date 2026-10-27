@@ -1,4 +1,4 @@
-#if os(iOS) || os(macOS)
+#if os(iOS) || os(macOS) || os(tvOS)
 import SwiftUI
 
 public struct DulcetWishlistView: View {
@@ -164,7 +164,10 @@ struct DulcetDiscoverReaderDestinationView: View {
     var body: some View {
         if let session = store.librarySession, let reader = session.discover {
             DulcetDiscoverDetailView(reader: reader, destination: destination, openLibrary: store.openDiscoverLibrary,
-                                     openMetadata: { store.pushReaderPage(.discover($0)) })
+                                     openMetadata: {
+                                         if store.selectedDestination == .search { store.discoverSearchPath.append($0) }
+                                         else { store.pushReaderPage(.discover($0)) }
+                                     })
                 .id(session.readerGeneration)
         }
     }

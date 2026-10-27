@@ -1337,11 +1337,9 @@ struct DulcetReaderHomeView: View {
                 Text(DulcetStrings.libraryBrowseHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
             }
-#if !os(tvOS)
             if store.selectedDestination == .library, store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
                 DulcetReaderHomeLink(title: DulcetStrings.wishlist, symbolName: "bookmark", identifier: "wishlist.destination") { store.pushReaderPage(.wishlist) }
             }
-#endif
             DulcetLibraryDepthHome(width: width)
             if listsSections {
                 // A phone's Library, as the platform's own music app lays it out: every section as
@@ -1699,10 +1697,8 @@ struct DulcetReaderRouteView: View {
 
     var body: some View {
         switch route {
-#if !os(tvOS)
         case .wishlist: DulcetWishlistDestinationView()
         case let .discover(destination): DulcetDiscoverReaderDestinationView(destination: destination)
-#endif
         case .songs: DulcetLibrarySongsPage(downloaded: false)
         case .downloaded: DulcetLibrarySongsPage(downloaded: true)
         case let .section(section): DulcetReaderSectionView(section: section)
@@ -2148,7 +2144,7 @@ struct DulcetReaderSearchScreen: View {
 
     @State private var scope = DulcetDiscoverSearchScope.server
     var body: some View {
-#if os(iOS) || os(macOS)
+#if os(iOS) || os(macOS) || os(tvOS)
         VStack(spacing: 0) {
             if store.librarySession?.discoverPublication?.access.discoverAvailable == true {
                 Picker(DulcetStrings.discoverScope, selection: $scope) {
@@ -2158,7 +2154,7 @@ struct DulcetReaderSearchScreen: View {
             }
             if scope == .everywhere, let session = store.librarySession, let reader = session.discover,
                session.discoverPublication?.access.discoverAvailable == true {
-                DulcetDiscoverSearchView(reader: reader, openLibrary: store.openDiscoverLibrary).id(session.readerGeneration)
+                DulcetDiscoverSearchView(reader: reader, openLibrary: store.openDiscoverLibrary, openMetadata: { store.discoverSearchPath.append($0) }).id(session.readerGeneration)
             } else { serverSearch }
         }
         .onChange(of: store.librarySession?.readerGeneration) { _, _ in scope = .server }
@@ -2300,7 +2296,7 @@ private struct DulcetSignOutOfferDialog: ViewModifier {
 }
 #endif
 
-#if os(iOS) || os(macOS)
+#if os(iOS) || os(macOS) || os(tvOS)
 extension DulcetPresentationStore {
     func openDiscoverLibrary(_ reference: DulcetDiscoverLibraryRef) {
         guard let session = librarySession, let account = session.account,
