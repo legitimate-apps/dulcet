@@ -123,6 +123,18 @@ class TvDiscoverTest {
         assertEquals("stable-key", source.removed)
     }
 
+    @Test fun everywhereSubmitsTheEditedQueryByRemoteWithoutChangingServerSearch() {
+        surface = "discover.search"
+        source.filter = WishFilter(kind = "artist")
+        compose.setContent { MaterialTheme { TvDiscoverSearch(session, account, null, navigator) } }
+        click("discover.query")
+        compose.onNodeWithTag("discover.query").performTextReplacement("arrival")
+        compose.waitForIdle()
+        click("discover.submit")
+        assertEquals(listOf("arrival"), source.queries)
+        assertEquals(WishFilter(), source.filter)
+    }
+
     @Test fun unsupportedServerShowsNoDiscoverOrWishlist() {
         source.publish(source.state.copy(access = source.state.access.copy(discoverAvailable = false, wishlistAvailable = false)))
         host(ROUTE_DISCOVER)

@@ -38,10 +38,13 @@ private val shelfNames = linkedMapOf("trendingArtists" to "Artists", "trendingAl
     "newReleases" to "New releases", "similarArtists" to "Artists like yours", "publicPlaylists" to "Public playlists")
 
 @Composable
-private fun DiscoverButton(label: String, tag: String, enabled: Boolean = true, selected: Boolean = false, focusTag: String = tag, action: () -> Unit) {
+private fun DiscoverButton(label: String, tag: String, enabled: Boolean = true, selected: Boolean = false, focusTag: String = tag, spokenLabel: String = label, action: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
     Button(onClick = action, enabled = enabled,
         colors = if (selected) ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.primaryContainer) else ButtonDefaults.colors(),
-        modifier = Modifier.tvFocus(focusTag, default = tag.endsWith(".back"), semanticsTag = tag).semantics { contentDescription = label; this.selected = selected }) { Text(label) }
+        modifier = Modifier.tvFocus(focusTag, default = tag.endsWith(".back"), semanticsTag = tag).onFocusChanged { focused = it.hasFocus }
+            .then(if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.RoundedCornerShape(50)) else Modifier)
+            .semantics { contentDescription = spokenLabel; this.selected = selected }) { Text(label) }
 }
 
 @Composable
@@ -87,11 +90,13 @@ private fun DiscoverList(title: String, tag: String, navigator: TvNavigator, ini
     LaunchedEffect(initialPosition) { if (initialPosition != null) list.scrollToItem(initialPosition) }
     // Stable lazy keys preserve scrolling; restore the action before asking route memory for focus.
     LazyColumn(Modifier.fillMaxSize().testTag(tag), state = list,
-        contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(if (tag == "discover.home") 12.dp else 20.dp)) {
+        if (tag != "discover.home") {
         item("heading") { Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             DiscoverButton("Back", "$tag.back", action = navigator.back); Heading(title)
         } }
         item("credit") { Text("Data from MusicBrainz and ListenBrainz", Modifier.testTag("discover.credit"), style = MaterialTheme.typography.bodyMedium) }
+        }
         content()
     }
 }
@@ -110,7 +115,7 @@ private fun openLocal(ref: DiscoverLibraryRef, account: SearchAccount, playback:
 }
 
 @Composable
-private fun TvDiscoverArtwork(session: DiscoverWishlistSession, item: DiscoverItem) {
+private fun TvDiscoverArtwork(session: DiscoverWishlistSession, item: DiscoverItem, compact: Boolean = false, modifier: Modifier = Modifier) {
     var image by remember(session, item.artworkId) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
     DisposableEffect(session, item.artworkId) {
         val lifetime = TvDiscoverLifetime()
@@ -121,7 +126,7 @@ private fun TvDiscoverArtwork(session: DiscoverWishlistSession, item: DiscoverIt
         }) }
         onDispose(lifetime::close)
     }
-    Box(Modifier.size(140.dp).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+    Box(modifier.size(if (compact) 96.dp else 140.dp).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
         val bitmap = image
         if (bitmap != null) Image(bitmap, contentDescription = null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         else Text(item.title.take(1).uppercase(), style = MaterialTheme.typography.displayMedium,
@@ -131,7 +136,7 @@ private fun TvDiscoverArtwork(session: DiscoverWishlistSession, item: DiscoverIt
 
 @Composable
 internal fun TvDiscoverItem(session: DiscoverWishlistSession, item: DiscoverItem, tag: String, source: WishSource,
-    account: SearchAccount, playback: AndroidPlaybackController?, navigator: TvNavigator, modifier: Modifier = Modifier, openMetadata: Boolean = true) {
+    account: SearchAccount, playback: AndroidPlaybackController?, navigator: TvNavigator, modifier: Modifier = Modifier, openMetadata: Boolean = true, compact: Boolean = false) {
     val publication by session.publication.collectAsState()
     val lifetime = remember(session, item.id) { TvDiscoverLifetime() }
     DisposableEffect(lifetime) { onDispose(lifetime::close) }
@@ -139,7 +144,7 @@ internal fun TvDiscoverItem(session: DiscoverWishlistSession, item: DiscoverItem
     val wish = publication?.wishes?.firstOrNull { item.target != null && (it.wish?.target ?: it.pendingAdd?.target) == item.target }
     val local = tvDiscoverLibraryRoute(item, publication?.providerInstanceId)
     Column(modifier.testTag(tag), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (item.kind != "song") TvDiscoverArtwork(session, item)
+        if (item.kind != "song") TvDiscoverArtwork(session, item, compact, Modifier.align(Alignment.CenterHorizontally))
         Text(item.title, style = MaterialTheme.typography.titleMedium)
         Text(listOfNotNull(item.artist, item.releaseDate ?: item.year?.toString()).joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
         Text(when(item.availability.status) {
@@ -147,21 +152,25 @@ internal fun TvDiscoverItem(session: DiscoverWishlistSession, item: DiscoverItem
             "partlyHeld" -> "Partly in your library · ${item.availability.matchedTrackCount ?: 0} of ${item.availability.totalTrackCount ?: "?"} tracks"
             else -> "Not in your library"
         }, Modifier.testTag("$tag.availability"), style = MaterialTheme.typography.bodyMedium)
-        if (local != null) DiscoverButton("Open ${item.title} in Library", "$tag.open") { openLocal(local, account, playback, navigator) }
-        else if (openMetadata && item.target != null && item.kind in listOf("artist", "album")) DiscoverButton("Open ${item.title}", "$tag.open") {
+        val primaryActions: @Composable () -> Unit = {
+        if (local != null) DiscoverButton(if (compact) "Open Library" else "Open ${item.title} in Library", "$tag.open", spokenLabel = "Open ${item.title} in Library") { openLocal(local, account, playback, navigator) }
+        else if (openMetadata && item.target != null && item.kind in listOf("artist", "album")) DiscoverButton(if (compact) "Open" else "Open ${item.title}", "$tag.open", spokenLabel = "Open ${item.title}") {
             navigator.open("discover.${item.kind}:" + checkNotNull(item.target).mbid)
-        }
-        // Partial and ambiguous matches stay metadata pages; each scoped library match is explicit.
-        if (local == null) item.availability.libraryItems.filter { it.providerInstanceId == account.providerInstanceId }.forEachIndexed { i, ref ->
-            DiscoverButton("Open library match ${i + 1}", "$tag.library.$i") { openLocal(ref, account, playback, navigator) }
         }
         val remove = wish != null && publication?.access?.canRemoveWish == true
         if (remove || (publication?.access?.canAddWish == true && item.wishable && item.target != null && item.availability.status != "held")) {
-            DiscoverButton(if (remove) "Remove wish for ${item.title}" else "Wish for ${item.title}", "discover.wish.${item.id}", focusTag = "$tag.wish") {
+            DiscoverButton(if (compact) { if (remove) "Remove wish" else "Wish" } else { if (remove) "Remove wish for ${item.title}" else "Wish for ${item.title}" }, "discover.wish.${item.id}", focusTag = "$tag.wish", spokenLabel = if (remove) "Remove wish for ${item.title}" else "Wish for ${item.title}") {
                 error = null
                 val done: (DiscoverResult<WishEnqueued>) -> Unit = { if (lifetime.active) error = (it as? DiscoverResult.Failed)?.error }
                 lifetime.own(if (remove) session.remove(checkNotNull(wish).key, done) else session.add(item, source, done))
             }
+        }
+        }
+        if (compact) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { primaryActions() }
+        else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { primaryActions() }
+        // Partial and ambiguous matches stay metadata pages; each scoped library match is explicit.
+        if (local == null) item.availability.libraryItems.filter { it.providerInstanceId == account.providerInstanceId }.forEachIndexed { i, ref ->
+            DiscoverButton("Open library match ${i + 1}", "$tag.library.$i") { openLocal(ref, account, playback, navigator) }
         }
         if (publication?.access?.canRejectMatch == true) item.availability.libraryItems.filter { it.providerInstanceId == account.providerInstanceId }.forEachIndexed { i, ref ->
             DiscoverButton("Wrong match for ${item.title}", "$tag.reject.$i") {
@@ -227,20 +236,25 @@ private fun TvDiscoverHome(session: DiscoverWishlistSession, account: SearchAcco
     val publication by session.publication.collectAsState()
     LaunchedEffect(session) { session.refreshHome(); session.refreshWishlist(WishFilter()) }
     DiscoverList("Discover", "discover.home", navigator) {
-        item { DiscoverButton("Refresh Discover", "discover.refresh", action = session::refreshHome) }
-        item { Heading("Trending on ListenBrainz") }
+        item("credit") { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Data from MusicBrainz and ListenBrainz", Modifier.weight(1f).testTag("discover.credit"), style = MaterialTheme.typography.bodyMedium)
+            DiscoverButton("Refresh", "discover.refresh", spokenLabel = "Refresh Discover", action = session::refreshHome)
+        } }
         for ((id, title) in shelfNames) item(id) {
             val shelf = publication?.home?.shelves?.firstOrNull { it.id == id }; val page = shelf?.page
             Column(Modifier.testTag("discover.shelf.$id"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Heading(title)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (id.startsWith("trending")) "Trending on ListenBrainz · $title" else title,
+                        Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.headlineSmall)
+                    DiscoverButton("See all", "discover.shelf.$id.all", spokenLabel = "See all $title") { navigator.open(if (id == "publicPlaylists") "discover.playlists" else "discover.shelf:$id") }
+                }
                 if (id == "similarArtists") Text("Suggestions from ListenBrainz, based on artists in your library")
-                DiscoverButton("See all $title", "discover.shelf.$id.all") { navigator.open(if (id == "publicPlaylists") "discover.playlists" else "discover.shelf:$id") }
                 Notices(page?.age, shelf?.error ?: page?.refreshError, shelf?.loading ?: true,
                     page != null && page.items.isEmpty() && page.playlists.isEmpty(), session::refreshHome)
                 LazyRow(Modifier.testTag("discover.shelf.$id.items"), horizontalArrangement = Arrangement.spacedBy(32.dp), contentPadding = PaddingValues(8.dp)) {
                     items(page?.items.orEmpty(), key = { it.id }) { item ->
                         TvDiscoverItem(session, item, "discover.shelf.$id.item.${item.id}", WishSource("shelf", id), account, playback, navigator,
-                            Modifier.width(280.dp).background(MaterialTheme.colorScheme.surfaceVariant).padding(20.dp))
+                            Modifier.width(280.dp).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp), compact = true)
                     }
                     items(page?.playlists.orEmpty(), key = { it.id }) { playlist -> Column(Modifier.width(280.dp).padding(12.dp)) {
                         Text(playlist.title); playlist.creator?.let { Text(it) }
@@ -310,11 +324,20 @@ private fun TvDiscoverMetadata(session: DiscoverWishlistSession, route: String, 
 @Composable
 internal fun TvDiscoverQuery(value: String, change: (String) -> Unit, tag: String, submit: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    var editing by remember { mutableStateOf(false) }
+    LaunchedEffect(editing) { if (editing) { withFrameNanos { }; keyboard?.show() } }
     val navFocus = LocalTvNavFocus.current
     val manager = androidx.compose.ui.platform.LocalFocusManager.current
-    BasicTextField(value, change, modifier = Modifier.fillMaxWidth().tvFocus(tag).onFocusChanged { focused = it.isFocused }
+    BasicTextField(value, change, readOnly = !editing, modifier = Modifier.fillMaxWidth().tvFocus(tag).onFocusChanged {
+        focused = it.isFocused
+        if (!it.isFocused) { editing = false; keyboard?.hide() }
+    }
         .onPreviewKeyEvent { event ->
-            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+            if (event.type == KeyEventType.KeyDown && (event.key == Key.DirectionCenter || event.key == Key.Enter)) {
+                if (editing) keyboard?.show() else editing = true
+                true
+            } else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
                 runCatching { navFocus?.requestFocus() }; true
             } else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
                 manager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down); true
@@ -324,7 +347,9 @@ internal fun TvDiscoverQuery(value: String, change: (String) -> Unit, tag: Strin
         .semantics { contentDescription = "Search query" }, textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), singleLine = true,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
-        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { submit() }))
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = {
+            submit(); editing = false; keyboard?.hide(); manager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)
+        }))
 }
 
 @Composable
@@ -350,7 +375,7 @@ internal fun TvSearchScreen(presenter: SearchPresenter, account: SearchAccount? 
 internal val LocalTvDiscoverNavigator = staticCompositionLocalOf<TvNavigator?> { null }
 
 @Composable
-private fun TvDiscoverSearch(session: DiscoverWishlistSession, account: SearchAccount, playback: AndroidPlaybackController?, navigator: TvNavigator) {
+internal fun TvDiscoverSearch(session: DiscoverWishlistSession, account: SearchAccount, playback: AndroidPlaybackController?, navigator: TvNavigator) {
     LaunchedEffect(session) { if (session.publication.value?.access?.canReadWishlist == true) session.refreshWishlist(WishFilter()) }
     val publication by session.publication.collectAsState()
     var field by rememberSaveable { mutableStateOf(publication?.query.orEmpty()) }
