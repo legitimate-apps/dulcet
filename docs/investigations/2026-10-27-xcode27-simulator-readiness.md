@@ -27,8 +27,12 @@ measurement of data migration or a statistical percentile.
 The two older main core jobs report first-iPhone isolation totals of 102.9 and
 164.0 seconds, and first-iPad totals of 87.3 and 163.8 seconds. Their markers
 include inventory and, for the iPad, shutdown of the preceding iPhone. In Xcode 27
-run 40547199270, the core job's complete three-device first-boot prerequisite
-passed in 592 seconds (17:18:57 to 17:28:49 UTC).
+run 40547199270, [core job 122340970605](https://github.com/legitimate-apps/dulcet/actions/runs/40547199270/job/122340970605)
+reports first-iPhone isolation of 140.1 seconds, first-iPad isolation of 311.7
+seconds and first-tvOS isolation of 49.5 seconds. Its complete three-device
+first-boot prerequisite passed in 592 seconds (17:18:57 to 17:28:49 UTC).
+This successful iPad witness rules out a universally unbootable image. The
+sample does not separate runtime initialization cost from host scheduling.
 
 The failed Xcode 27 iPad's host-pressure artifact observes
 `com.apple.datamigrator`, `com.apple.migrationpluginwrapper` and `launchd_sim`
@@ -40,7 +44,8 @@ migration work ran, but does not identify the exact stage that delayed readiness
 
 `isolate-simulator` now uses one `simctl bootstatus <udid> -b` invocation, which
 boots a shut-down device itself, with a 660-second monotonic subprocess deadline.
-660 is `ceil(1.5 * 432.9 / 60) * 60`. The incomplete iPad observation is censored;
+660 is `ceil(1.5 * max(311.7, 432.9) / 60) * 60`, using both the successful
+iPad prerequisite and the failed attempt's later boundary. The incomplete iPad observation is censored;
 this budget is an allowance above the observed failure boundary, not a claim
 that a percentile or worst case has been established. Successful final-head
 execution must validate it. BEGIN and completion markers report elapsed time,
