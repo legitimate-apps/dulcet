@@ -12,6 +12,10 @@ on:
         description: Optional space-separated capture names for an affected-page reshoot
         type: string
         default: ''
+      supplement_only:
+        description: Reshoot the finite Library and Discover tour without the general tour
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -89,7 +93,7 @@ jobs:
           esac
           ./gradlew --no-daemon --max-workers=2 "$task"
       - name: Photograph real app pages against the disposable server
-        if: steps.selection.outputs.enabled == 'true'
+        if: steps.selection.outputs.enabled == 'true' && (!inputs.supplement_only || matrix.device == 'tvos')
         env:
           CAPTURE_DEVICE: ${{ matrix.device }}
           CAPTURE_VARIANT: ${{ matrix.variant }}
@@ -98,10 +102,11 @@ jobs:
           if [[ "$CAPTURE_DEVICE" == iphone || "$CAPTURE_DEVICE" == ipad ]]; then
             export DULCET_DESIGN_TOUR_VARIANT="$CAPTURE_VARIANT"
           fi
-          export DULCET_FFMPEG="$(command -v ffmpeg)"
+          DULCET_FFMPEG="$(command -v ffmpeg)"
+          export DULCET_FFMPEG
           tools/design-tour-apple "$RUNNER_TEMP/captures" --device "$CAPTURE_DEVICE"
       - name: Package review and report coverage gaps
-        if: always() && steps.selection.outputs.enabled == 'true'
+        if: always() && steps.selection.outputs.enabled == 'true' && (!inputs.supplement_only || matrix.device == 'tvos')
         run: tools/apple-restyle-review "$RUNNER_TEMP/captures" --revision "$GITHUB_SHA" --logs "$RUNNER_TEMP/design-tour/logs"
       - name: Capture personal Library and Discover fixture states
         if: always() && steps.selection.outputs.enabled == 'true'

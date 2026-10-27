@@ -18,7 +18,21 @@ import json,sys
 name=sys.argv[1]
 matches=[d["udid"] for runtime,ds in json.load(sys.stdin)["devices"].items() if ".iOS-27-" in runtime for d in ds if d["name"]==name]
 print(matches[0] if matches else "")' "$name")
-  [[ -n "$DULCET_DISCOVER_PROOF_UDID" ]] || { echo 'General tour must create the assigned iOS 27 device first' >&2; exit 1; }
+  if [[ -z "$DULCET_DISCOVER_PROOF_UDID" ]]; then
+    [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]] || {
+      echo 'General tour must create the assigned iOS 27 device first outside hosted captures' >&2; exit 1;
+    }
+    if [[ "$device" == iphone ]]; then
+      device_name='iPhone 18 Pro'
+    else
+      device_name='iPad Pro 13-inch (M5)'
+    fi
+    device_type=$(xcrun simctl list devicetypes --json | python3 -c '
+import json,sys
+name=sys.argv[1]
+print(next(d["identifier"] for d in json.load(sys.stdin)["devicetypes"] if d["name"]==name))' "$device_name")
+    DULCET_DISCOVER_PROOF_UDID=$(xcrun simctl create "$name" "$device_type" com.apple.CoreSimulator.SimRuntime.iOS-27-0)
+  fi
   export DULCET_DISCOVER_PROOF_UDID
 fi
 navidrome="${DULCET_DESIGN_TOUR_WORK:?}/server/bin/navidrome"
