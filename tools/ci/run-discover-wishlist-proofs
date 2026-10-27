@@ -9,7 +9,7 @@ from discover_process_owner import ProcessOwner
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--self-test',action='store_true')
 p.add_argument('--shelves',action='store_true',help='run the step-3 Discover shelf and public playlist proofs')
-p.add_argument('--build-for-testing',action='store_true',help='compile iPhone/iPad tests without a fixture or simulator boot')
+p.add_argument('--build-for-testing',action='store_true',help='compile iPhone/iPad/TV tests without a fixture or simulator boot')
 p.add_argument('mode',nargs='?',choices=['components','sessions','iphone','ipad','mac','macos','android','tvos'])
 a=p.parse_args()
 if a.self_test:

@@ -395,7 +395,7 @@ public struct DulcetWishEnqueued: Sendable, Hashable {
 
 public extension DulcetLibrarySession {
     var discover: (any DulcetDiscoverReading)? {
-(reader as? any DulcetDiscoverProviding)?.openDiscover()
+        (reader as? any DulcetDiscoverProviding)?.openDiscover()
     }
 }
 

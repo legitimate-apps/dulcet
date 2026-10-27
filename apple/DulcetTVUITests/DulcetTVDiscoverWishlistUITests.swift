@@ -105,9 +105,15 @@ import UIKit
         }
         XCTFail("Remote focus failed: " + target.identifier + " " + app.debugDescription)
     }
+    private func assertRestoredFocus(_ target: XCUIElement) {
+        let end = Date().addingTimeInterval(5)
+        while !focused(target), Date() < end { Thread.sleep(forTimeInterval: 0.1) }
+        XCTAssertTrue(focused(target), "Back must restore the originating control's remote focus")
+    }
     private func activate(_ target: XCUIElement) {
-        XCTAssertTrue(target.waitForExistence(timeout: 30))
+        _ = target.waitForExistence(timeout: 5)
         focus(target)
+        XCTAssertTrue(target.exists)
         XCTAssertTrue(focused(target), "Select must activate the intended focused control")
         XCUIRemote.shared.press(.select)
     }
@@ -150,6 +156,12 @@ import UIKit
         activate(button("discover.shelf.trendingArtists.all"))
         activate(firstButton(prefix: "discover.shelfList.trendingArtists.item.", suffix: ".wish"))
         try wishCount("Fixture Artist 00", 1)
+        let artist = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@ AND NOT (identifier ENDSWITH %@)", "discover.shelfList.trendingArtists.item.", "Fixture Artist 00", ".wish")).firstMatch
+        activate(artist)
+        XCTAssertTrue(firstButton(prefix: "discover.item.").waitForExistence(timeout: 30), "Discover artist must show its discography")
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(artist.waitForExistence(timeout: 15))
+        assertRestoredFocus(artist)
         activate(button("discover.shelfList.trendingArtists.more"))
         let tail = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "discover.shelfList.trendingArtists.item.", "Fixture Artist 23")).firstMatch
         focus(tail); XCTAssertTrue(focused(tail))
@@ -158,13 +170,16 @@ import UIKit
         activate(button("discover.shelf.trendingAlbums.all"))
         let album = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier ENDSWITH %@)", "discover.shelfList.trendingAlbums.item.", ".wish")).firstMatch
         activate(album)
-        XCTAssertTrue(button("discover.edition").waitForExistence(timeout: 30) || app.descendants(matching: .any)["discover.edition"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["discover.edition"].firstMatch.waitForExistence(timeout: 30))
         XCUIRemote.shared.press(.menu); XCUIRemote.shared.press(.menu)
         activate(button("discover.shelf.publicPlaylists.all"))
         let playlistID = "00000258-1111-4111-8111-111111111111"
         activate(button("discover.playlists.item." + playlistID))
         let prefix = "discover.playlist." + playlistID
+        XCTAssertTrue(button(prefix + ".entry.1").waitForExistence(timeout: 30))
+        focus(button(prefix + ".entry.2")); XCTAssertTrue(focused(button(prefix + ".entry.2")))
         XCTAssertEqual(button(prefix + ".entry.1").label, button(prefix + ".entry.2").label)
+        focus(button(prefix + ".entry.3")); XCTAssertTrue(focused(button(prefix + ".entry.3")))
         XCTAssertFalse(button(prefix + ".entry.3.wish").exists)
         activate(button(prefix + ".entry.4.wish"))
         try wishCount("Fixture Song 03", 1)
@@ -173,16 +188,25 @@ import UIKit
         try capture("TV-Public-Playlist")
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(button("discover.playlists.item." + playlistID).waitForExistence(timeout: 15), "Back returns to the parent list")
+        assertRestoredFocus(button("discover.playlists.item." + playlistID))
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(button("discover.home.refresh").waitForExistence(timeout: 15))
         let rows = try wishes()
-        XCTAssertTrue(rows.contains { ($0["source"] as? [String: Any])?["id"] as? String == "trendingArtists" })
-        XCTAssertTrue(rows.contains { ($0["source"] as? [String: Any])?["id"] as? String == playlistID })
+        XCTAssertTrue(rows.contains { ($0["source"] as? [String: Any])?["type"] as? String == "shelf" && ($0["source"] as? [String: Any])?["id"] as? String == "trendingArtists" })
+        XCTAssertTrue(rows.contains { ($0["source"] as? [String: Any])?["type"] as? String == "playlist" && ($0["source"] as? [String: Any])?["id"] as? String == playlistID })
         section("search")
         activate(app.buttons["Everywhere"].firstMatch)
         let query = app.textFields["discover.query"].firstMatch
-        activate(query); query.typeText("Fixture")
-        XCUIRemote.shared.press(.menu)
+        activate(query)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        query.typeText("Fixture")
+        let committed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Fixture"), object: query)
+        XCTAssertEqual(XCTWaiter.wait(for: [committed], timeout: 10), .completed)
+        let done = app.buttons["done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !done.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(done.hasFocus)
+        XCUIRemote.shared.press(.select)
         let song = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "discover.item.", "Fixture Song 01")).firstMatch
         activate(song); activate(button("discover.wish"))
         try wishCount("Fixture Song 01", 1)
