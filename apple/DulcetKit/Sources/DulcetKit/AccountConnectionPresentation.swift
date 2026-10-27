@@ -931,6 +931,10 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                     form: currentSnapshot.accountForm,
                     status: currentSnapshot.accountConnection
                 )
+            case .discover:
+                cancelSearchRequest()
+                cancelLibraryBrowse()
+                publish(state: .libraryBrowse, destination: .discover, form: currentSnapshot.accountForm, status: currentSnapshot.accountConnection)
             case .listenNow:
                 cancelSearchRequest()
                 publish(state: .libraryBrowse, destination: .listenNow, form: currentSnapshot.accountForm, status: currentSnapshot.accountConnection)
@@ -1455,7 +1459,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 switch self.currentSnapshot.selectedDestination {
                 case .library, .browse: self.openLibrary(reason: .connected)
                 case .search: self.openSearch()
-                case .listenNow, .nowPlaying, .settings: break
+                case .discover, .listenNow, .nowPlaying, .settings: break
                 }
             }
         case let .failed(failure) where failure.kind == .transportCancelled:

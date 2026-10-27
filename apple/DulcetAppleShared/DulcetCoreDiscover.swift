@@ -245,7 +245,8 @@ extension DulcetDiscoverPublication {
             wishlistLoading: v.wishlistLoading,
             wishlistError: v.wishlistError.map { DulcetDiscoverFailure(copy: $0) },
             wishlistSettled: v.wishlistSettled,
-            pendingChangeCount: v.pendingChangeCount?.int64Value
+            pendingChangeCount: v.pendingChangeCount?.int64Value,
+            home: v.home.map { DulcetDiscoverHome(copy: $0) }
         )
     }
 }
@@ -289,10 +290,54 @@ extension DulcetCoreLibraryReader: DulcetDiscoverProviding {
             let value = delivery.value
             guard let self, !self.closed else { return }
             for index in 0..<value.groupCount { if let page = value.groupAt(index: index)?.page { self.remember(page) } }
+            if let home = value.home {
+                for index in 0..<home.shelfCount {
+                    if let page = home.shelfAt(index: index)?.page {
+                        for i in 0..<page.itemCount { if let item = page.itemAt(index: i) { self.remember(item) } }
+                    }
+                }
+            }
             listener(DulcetDiscoverPublication(copy: value))
         }
         let subscription = client.observe(listener: bridge)
         return lifetime.operation { [bridge] in _ = bridge; subscription.close() }
+    }
+    func refreshHome() { guard !closed else { return }; client.refreshHome() }
+    func shelf(id: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverShelfPage, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
+        let deliver = lifetime.delivery(completion)
+        guard !closed else { return DulcetDiscoverCancellation {} }
+        let operation = client.shelf(id: id, cursor: cursor) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard let self, !self.closed else { return }
+                if let value = response.value { for i in 0..<value.itemCount { if let item = value.itemAt(index: i) { self.remember(item) } } }
+                deliver(self.result(response.value.map { DulcetDiscoverShelfPage(copy: $0) }, response.error))
+            }
+        }
+        return lifetime.operation { operation.cancel(); deliver(.failure(.init(code: "cancelled"))) }
+    }
+    func playlists(query: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPlaylistList, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
+        let deliver = lifetime.delivery(completion)
+        guard !closed else { return DulcetDiscoverCancellation {} }
+        let operation = client.playlists(query: query, cursor: cursor) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard let self, !self.closed else { return }
+
+                deliver(self.result(response.value.map { DulcetDiscoverPlaylistList(copy: $0) }, response.error))
+            }
+        }
+        return lifetime.operation { operation.cancel(); deliver(.failure(.init(code: "cancelled"))) }
+    }
+    func playlist(mbid: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPlaylist, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
+        let deliver = lifetime.delivery(completion)
+        guard !closed else { return DulcetDiscoverCancellation {} }
+        let operation = client.playlist(mbid: mbid, cursor: cursor) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard let self, !self.closed else { return }
+                if let value = response.value { for i in 0..<value.entryCount { if let entry = value.entryAt(index: i) { self.remember(entry.item) } } }
+                deliver(self.result(response.value.map { DulcetDiscoverPlaylist(copy: $0) }, response.error))
+            }
+        }
+        return lifetime.operation { operation.cancel(); deliver(.failure(.init(code: "cancelled"))) }
     }
     func setQuery(_ query: String) { guard !closed else { return }; client.setQuery(query: query) }
     func loadMore(kind: String) { guard !closed else { return }; client.loadMore(kind: kind) }
@@ -429,5 +474,41 @@ extension DulcetCoreLibraryReader: DulcetLibrarySongLookingUp {
             }
         }
         return DulcetDiscoverCancellation { operation.cancel() }
+    }
+}
+
+extension DulcetDiscoverPlaylistSummary {
+    init(copy v: AppleDiscoverPlaylistSummary) {
+        self.init(id: v.id, title: v.title, creator: v.creator, trackCount: v.trackCount?.intValue)
+    }
+}
+extension DulcetDiscoverPlaylistEntry {
+    init(copy v: AppleDiscoverPlaylistEntry) {
+        self.init(position: Int(v.position), item: .init(copy: v.item))
+    }
+}
+extension DulcetDiscoverPlaylistList {
+    init(copy v: AppleDiscoverPlaylistList) {
+        self.init(items: (0..<v.itemCount).compactMap { v.itemAt(index: $0) }.map { .init(copy: $0) }, nextCursor: v.nextCursor, age: .init(copy: v.age), refreshError: v.refreshError.map { .init(copy: $0) })
+    }
+}
+extension DulcetDiscoverPlaylist {
+    init(copy v: AppleDiscoverPlaylist) {
+        self.init(summary: .init(copy: v.summary), entries: (0..<v.entryCount).compactMap { v.entryAt(index: $0) }.map { .init(copy: $0) }, nextCursor: v.nextCursor, age: .init(copy: v.age), refreshError: v.refreshError.map { .init(copy: $0) })
+    }
+}
+extension DulcetDiscoverShelfPage {
+    init(copy v: AppleDiscoverShelfPage) {
+        self.init(id: v.id, items: (0..<v.itemCount).compactMap { v.itemAt(index: $0) }.map { .init(copy: $0) }, playlists: (0..<v.playlistCount).compactMap { v.playlistAt(index: $0) }.map { .init(copy: $0) }, nextCursor: v.nextCursor, age: .init(copy: v.age), refreshError: v.refreshError.map { .init(copy: $0) })
+    }
+}
+extension DulcetDiscoverShelfState {
+    init(copy v: AppleDiscoverShelfState) {
+        self.init(id: v.id, page: v.page.map { .init(copy: $0) }, loading: v.loading, error: v.error.map { .init(copy: $0) })
+    }
+}
+extension DulcetDiscoverHome {
+    init(copy v: AppleDiscoverHome) {
+        self.init(shelves: (0..<v.shelfCount).compactMap { v.shelfAt(index: $0) }.map { .init(copy: $0) }, recentWishes: (0..<v.recentWishCount).compactMap { v.recentWishAt(index: $0) }.map { .init(copy: $0) }, wishesLoading: v.wishesLoading, wishesSettled: v.wishesSettled, wishesError: v.wishesError.map { .init(copy: $0) })
     }
 }

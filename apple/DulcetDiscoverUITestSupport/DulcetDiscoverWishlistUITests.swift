@@ -117,6 +117,12 @@ import UIKit
 #endif
     }
     func select(_ section: String) {
+        if section == "settings", app.buttons["dulcet.connection"].firstMatch.exists {
+            activate(app.buttons["dulcet.connection"].firstMatch); return
+        }
+        if section != "settings", app.buttons["Done"].firstMatch.exists && app.buttons["dulcet.connection"].firstMatch.exists {
+            activate(app.buttons["Done"].firstMatch)
+        }
 #if os(macOS)
         let row = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #else
@@ -231,6 +237,112 @@ import UIKit
         XCTAssertEqual(ack["stored"] as? Bool, true)
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.jpeg")
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    func discover() {
+        var destination = app.descendants(matching: .any)["discover.destination"].firstMatch
+        if app.tabBars.firstMatch.exists {
+            destination = app.tabBars.buttons["Discover"].firstMatch
+        }
+        XCTAssertTrue(destination.waitForExistence(timeout: 30))
+        activate(destination)
+        XCTAssertTrue(app.buttons["discover.home.refresh"].waitForExistence(timeout: 30))
+    }
+    func shelfReveal(_ id: String) -> XCUIElement {
+        let element = app.descendants(matching: .any)[id].firstMatch
+        for _ in 0..<14 {
+            if element.exists && element.isHittable { return element }
+            app.swipeUp()
+        }
+        for _ in 0..<14 {
+            if element.exists && element.isHittable { return element }
+            app.swipeDown()
+        }
+        XCTFail("Discover control must be reachable: " + id + " " + app.debugDescription)
+        return element
+    }
+    func shelvesMixedPagesPlaylistAndWishes(largest: Bool = false) throws {
+        try launch(variant: largest ? "largest" : "light")
+        let revision = try scenario("shelves-mixed")
+        discover()
+        XCTAssertTrue(app.buttons["discover.shelf.trendingArtists.all"].waitForExistence(timeout: 30))
+        try effect("shelves-mixed", revision: revision)
+        _ = shelfReveal("discover.shelf.trendingAlbums.age")
+        _ = shelfReveal("discover.shelf.trendingSongs.error")
+        XCTAssertFalse(app.descendants(matching: .any)["discover.shelf.trendingSongs.empty"].exists)
+        _ = shelfReveal("discover.shelf.similarArtists.empty")
+        try capture(largest ? "Shelves-iPhone-Largest-Mixed" : "Shelves-iPad-Regular-Mixed")
+        activate(shelfReveal("discover.shelf.trendingArtists.all"))
+        let artistWish = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "discover.shelfList.trendingArtists.item.", ".wish")).firstMatch
+        XCTAssertTrue(artistWish.waitForExistence(timeout: 30))
+        XCTAssertTrue(artistWish.label.hasPrefix("Wish for "), "VoiceOver gets a separate title-specific wish action")
+        activate(artistWish)
+        activate(shelfReveal("discover.shelfList.trendingArtists.more"))
+        let tail = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "discover.shelfList.trendingArtists.item.", "Fixture Artist 23")).firstMatch
+        reveal(tail); XCTAssertTrue(tail.isHittable)
+        XCTAssertFalse(app.buttons["discover.shelfList.trendingArtists.more"].exists)
+        let back = app.navigationBars.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Discover", "Back")).firstMatch
+        XCTAssertTrue(back.isHittable); activate(back)
+        activate(shelfReveal("discover.shelf.publicPlaylists.all"))
+        let id = "00000258-1111-4111-8111-111111111111"
+        let playlist = app.buttons["discover.playlists.item." + id].firstMatch
+        XCTAssertTrue(playlist.waitForExistence(timeout: 30))
+        activate(shelfReveal("discover.playlists.more"))
+        let playlistTail = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "discover.playlists.item.", "Fixture Public Mix 23")).firstMatch
+        reveal(playlistTail); XCTAssertTrue(playlistTail.isHittable)
+        XCTAssertFalse(app.buttons["discover.playlists.more"].exists)
+        reveal(playlist); activate(playlist)
+        let prefix = "discover.playlist." + id
+        let first = app.buttons[prefix + ".entry.1"].firstMatch
+        let second = app.buttons[prefix + ".entry.2"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 30))
+        XCTAssertEqual(first.label, second.label)
+        _ = shelfReveal(prefix + ".entry.3")
+        XCTAssertFalse(app.buttons[prefix + ".entry.3.wish"].exists)
+        let songWish = shelfReveal(prefix + ".entry.4.wish")
+        XCTAssertTrue(songWish.label.contains("Fixture Song 03")); activate(songWish)
+        activate(shelfReveal(prefix + ".more"))
+        _ = shelfReveal(prefix + ".entry.24")
+        XCTAssertFalse(app.buttons[prefix + ".more"].exists)
+        try capture(largest ? "Shelves-iPhone-Largest-Playlist" : "Shelves-iPad-Regular-Playlist")
+        // Verify the authoritative server receipt, independent of the wish button's state.
+        let deadline = Date().addingTimeInterval(20)
+        var rows: [[String: Any]] = []
+        repeat {
+            rows = try wishes()
+            if rows.contains(where: { ($0["source"] as? [String: Any])?["type"] as? String == "playlist" }) { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        XCTAssertTrue(rows.contains { ($0["source"] as? [String: Any])?["type"] as? String == "shelf" && ($0["source"] as? [String: Any])?["id"] as? String == "trendingArtists" })
+        XCTAssertTrue(rows.contains { ($0["source"] as? [String: Any])?["type"] as? String == "playlist" && ($0["source"] as? [String: Any])?["id"] as? String == id })
+        print("DISCOVER_SHELVES_IOS mixed=true shelfPaging=24 playlistPositions=24 duplicate=true missingMbidUnwishable=true sources=shelf,playlist largest=\(largest)")
+    }
+    func shelvesEmptyFailureAndNavidrome() throws {
+        try launch()
+        let empty = try scenario("shelves-empty")
+        discover()
+        XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.empty"].waitForExistence(timeout: 30))
+        try effect("shelves-empty", revision: empty)
+        XCTAssertFalse(app.buttons["discover.shelf.trendingArtists.all"].exists)
+        try capture("Shelves-Empty")
+        let stale = try scenario("shelves-stale")
+        activate(shelfReveal("discover.home.refresh"))
+        XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.age"].waitForExistence(timeout: 30))
+        try effect("shelves-stale", revision: stale)
+        let failure = try scenario("shelves-unavailable")
+        activate(shelfReveal("discover.home.refresh"))
+        XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.error"].waitForExistence(timeout: 30))
+        try effect("shelves-unavailable", revision: failure)
+        XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.age"].exists)
+        XCTAssertFalse(app.staticTexts["discover.shelf.trendingArtists.empty"].exists)
+        try capture("Shelves-Cached-Failure")
+        app.terminate(); namespace = UUID().uuidString
+        try launch(server: required("NAVIDROME_URL"))
+        XCTAssertFalse(app.descendants(matching: .any)["discover.destination"].exists)
+        let log = try control("requests?since=0")["requests"] as? [[String: Any]] ?? []
+        let baseline = log.filter { $0["channel"] as? String == "navidrome" }
+        XCTAssertTrue(baseline.contains { $0["endpoint"] as? String == "getAlbumList2" })
+        XCTAssertFalse(baseline.contains { ($0["endpoint"] as? String ?? "").contains("Dulcet") })
     }
 
     func assertPlaybackReference(_ localId: String) {
@@ -525,6 +637,8 @@ import UIKit
 private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok = false }
 #if os(iOS)
 @MainActor final class DulcetDiscoverWishlistUITests: DulcetDiscoverWishlistProof {
+    func testIPhoneDiscoverShelvesLargestTextPagesAndSources() throws { try shelvesMixedPagesPlaylistAndWishes(largest: true) }
+    func testDiscoverShelvesEmptyCachedFailureAndNavidrome() throws { try shelvesEmptyFailureAndNavidrome() }
     func testEverywhereQueryPagesAndHeldRouting() throws { try everywherePagesAndHeldRouting() }
     func testOfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
     func testBusyStaleAndNavidromeControl() throws { try busyStaleAndNavidromeControl() }
@@ -532,6 +646,30 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     func testIPhoneLargestTextAndVoiceOverLabels() throws { try accessibilityVariants() }
 }
 @MainActor final class DulcetDiscoverWishlistIPadUITests: DulcetDiscoverWishlistProof {
+    func testDiscoverShelvesEmptyCachedFailureAndNavidrome() throws { try shelvesEmptyFailureAndNavidrome() }
+    func testIPadDiscoverShelvesSidebarCompactResizeAndBack() throws {
+        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .pad)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        try shelvesMixedPagesPlaylistAndWishes()
+        let id = "00000258-1111-4111-8111-111111111111"
+        let window = app.windows.firstMatch
+        let original = window.frame
+        let sidebar = app.descendants(matching: .any)["discover.destination"].firstMatch
+        XCTAssertTrue(sidebar.isSelected)
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -4, dy: -4))
+        corner.press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 590, dy: original.height - 20)))
+        let compact = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.width > 0 && window.frame.width <= 600 && self.app.tabBars.firstMatch.exists
+        }, object: window)
+        XCTAssertEqual(XCTWaiter.wait(for: [compact], timeout: 30), .completed)
+        _ = shelfReveal("discover.playlist." + id + ".entry.24")
+        try capture("Shelves-iPad-Compact-Playlist")
+        let back = app.navigationBars.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Public playlists", "Back")).firstMatch
+        XCTAssertTrue(back.isHittable); activate(back)
+        XCTAssertTrue(app.textFields["discover.playlists.query"].waitForExistence(timeout: 30))
+        try capture("Shelves-iPad-Compact-Back")
+        XCUIDevice.shared.orientation = .portrait
+    }
     func testEverywhereQueryPagesAndHeldRouting() throws { try everywherePagesAndHeldRouting() }
     func testOfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
     func testBusyStaleAndNavidromeControl() throws { try busyStaleAndNavidromeControl() }

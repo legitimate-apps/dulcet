@@ -1,6 +1,6 @@
 """A native report must distinguish execution and actual fixture effects from arming."""
 import copy
-from discover_proof_report import apple_report,expected_suite
+from discover_proof_report import apple_report,expected_suite,shelf_tests
 import unittest
 from discover_proof_report import validate_report, expected_tests, native_exit_status
 
@@ -11,6 +11,18 @@ class ReportTests(unittest.TestCase):
             effects=[dict(scenario=n,revision=i+1,**{flag:True}) for i,(n,flag) in enumerate([
                 ('rate-limit','served'),('scan-arrival','completed'),('lost-add-receipt','delivered')])],
             baseline=dict(login=True,albums=1,featureCalls=0),replay=dict(removed=True,applied=False))
+    def test_shelf_proof_requires_exact_tests_and_effect_receipts(self):
+        for mode,idiom in [('iphone','phone'),('ipad','pad'),('macos','mac')]:
+            names=shelf_tests(mode)
+            report=dict(mode=mode,idiom=idiom,finalized=True,proofKind='shelves',selected=names,
+                cases=[dict(name=n,status='passed') for n in names],
+                effects=[dict(scenario=n,revision=i+1,empty=False) for i,n in enumerate(['shelves-mixed','shelves-empty','shelves-stale','shelves-unavailable'])])
+            self.assertIsNone(validate_report(report).first_cause)
+            report['effects'][0]=dict(scenario='shelves-mixed',revision=1,armed=True)
+            self.assertEqual('shelf-fixture-effect-not-observed',validate_report(report).first_cause)
+            report['cases'].pop()
+            self.assertEqual('expected-test-not-executed',validate_report(report).first_cause)
+
     def test_positive(self):self.assertIsNone(validate_report(self.positive()).first_cause)
     def test_post_suite_interrupt_requires_a_finalized_passing_report(self):
         report=self.positive()
