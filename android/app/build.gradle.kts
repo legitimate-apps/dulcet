@@ -88,7 +88,14 @@ dependencies {
 // Live search and library lifecycle proofs run only inside the disposable-server workflow.
 // The broad core-build task excludes them; selecting live mode with no server fails in setup.
 val productionSearchConformance = providers.gradleProperty("dulcet.productionSearchConformance").isPresent
+val discoverWishlistConformance = providers.gradleProperty("dulcet.discoverWishlistConformance").isPresent
 tasks.withType<Test>().configureEach {
+    if (discoverWishlistConformance) {
+        // Enable the disposable-fixture class without narrowing the caller's --tests selection.
+        outputs.upToDateWhen { false }
+        usesService(gradle.sharedServices.registrations.getByName("disposableServerAccount").service)
+    }
+    if (!discoverWishlistConformance) filter { excludeTestsMatching("*PhoneWishlistIntegrationTest") }
     if (productionSearchConformance) {
         filter { includeTestsMatching("*ProductionSearchAppConformanceTest"); includeTestsMatching("*ProductionLibraryReaderAppConformanceTest") }
         outputs.upToDateWhen { false }

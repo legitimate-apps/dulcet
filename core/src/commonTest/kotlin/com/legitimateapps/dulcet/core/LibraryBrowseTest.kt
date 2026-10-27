@@ -18,6 +18,21 @@ import kotlin.time.Duration.Companion.seconds
 
 class LibraryBrowseTest {
     @Test
+    fun readerAndDownloadLookupsKeepUntitledTracksAndTheirDuration() {
+        for (titleField in listOf("", "\"title\":\"\",", "\"title\":\"   \",")) {
+            val song = """{"id":"song",${titleField}"duration":120,"suffix":"wav"}"""
+            val album = """{"subsonic-response":{"status":"ok","version":"1.16.1","album":{"id":"album","name":"Album","song":[$song]}}}"""
+            val track = parseReaderAlbum(album, "album").second.single()
+            assertTrue(track.title.isBlank())
+            assertEquals(120_000, track.durationMilliseconds)
+            val lookup = """{"subsonic-response":{"status":"ok","version":"1.16.1","song":$song}}"""
+            val downloaded = kotlin.test.assertNotNull(parseLookupSong(lookup, "song"))
+            assertEquals(track.title, downloaded.title)
+            assertEquals(track.durationMilliseconds, downloaded.durationMilliseconds)
+        }
+    }
+
+    @Test
     fun pagesOpaqueIdsAndCopiesDurationsCreditsAndMediaSourceIdentity() = runTest {
         val transport = RecordedLibraryTransport()
         val result = LibraryBrowser(

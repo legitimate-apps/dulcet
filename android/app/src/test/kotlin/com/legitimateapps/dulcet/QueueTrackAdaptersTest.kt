@@ -12,6 +12,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import kotlin.test.*
+import kotlin.time.Duration.Companion.seconds
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -26,6 +27,36 @@ class QueueTrackAdaptersTest {
         val track = assertNotNull(item.toQueueTrack("server"))
         assertEquals("album:opaque", track.albumRawId)
         assertEquals(40_000L, track.durationMilliseconds)
+    }
+
+    @Test fun untitledSearchTracksKeepAlbumIdentityAndStillRequireDuration() {
+        // Cached/local Search rows can carry a blank title even though remote Search requires one.
+        val item = SearchResultItem(ProviderItemId("server", "song:opaque"), SearchResultType.Track,
+            " \t", emptyList(), null, null, 40.seconds, null, null, null, null, null, "album:opaque")
+        val track = assertNotNull(item.toQueueTrack("server"))
+        assertTrue(track.title.isBlank(), "The playback controller supplies the localized fallback")
+        assertEquals("album:opaque", track.albumRawId)
+        assertEquals(40_000L, track.durationMilliseconds)
+        assertNull(item.copy(duration = null).toQueueTrack("server"))
+    }
+
+    @Test fun untitledSystemMediaTracksKeepAlbumIdentityAndStillRequireDuration() {
+        val scope = CoroutineScope(SupervisorJob())
+        try {
+            val callback = SystemMediaLibrary(RuntimeEnvironment.getApplication(), scope) { null }
+            for (title in listOf(null, "", " \t")) {
+                val item = AndroidLibraryItem.Track("song:opaque", title, "album:opaque", "Album", "Artist",
+                    null, null, null, 40_000, null, null, null, null, null, AndroidLibraryPlayability.Streamable, false)
+                with(callback) {
+                    val track = assertNotNull(item.toTrack("server"))
+                    assertTrue(track.title.isBlank())
+                    assertEquals("album:opaque", track.albumRawId)
+                    assertEquals(40_000L, track.durationMilliseconds)
+                    assertNull(item.copy(durationMilliseconds = null).toTrack("server"))
+                    assertNull(item.copy(playability = AndroidLibraryPlayability.UnavailableOffline).toTrack("server"))
+                }
+            }
+        } finally { scope.cancel() }
     }
 
     @Test fun systemMediaTrackAdapterKeepsTheLibraryAlbumsOpaqueIdentity() {

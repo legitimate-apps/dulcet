@@ -3,6 +3,9 @@ package com.legitimateapps.dulcet
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertCountEquals
@@ -24,6 +27,27 @@ import kotlin.test.assertNull
 @RunWith(RobolectricTestRunner::class)
 class MobileSearchPlayTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun aDurationlessUntitledSearchResultOffersNoPlayOrRowActivation() {
+        val account = SearchAccount("provider::opaque", "https://music.example.invalid", "u", "p", false)
+        val source = object : com.legitimateapps.dulcet.search.SearchSource {
+            override fun open(listener: (com.legitimateapps.dulcet.core.AndroidLibrarySearchPublication) -> Unit) =
+                RankedMergedFixtureSearchSource().open { publication -> listener(publication.copy(rows = publication.rows.map { row ->
+                    if (row.item.type == com.legitimateapps.dulcet.core.SearchResultType.Track)
+                        row.copy(item = row.item.copy(title = "   ", duration = null)) else row
+                })) }
+        }
+        val presenter = SearchPresenter(account, source)
+        val activated = mutableListOf<SearchResultItem>()
+        compose.setContent { MobileSearchScreen(presenter, { activated += it }, account, onPlay = { activated += it }) }
+        compose.onNodeWithTag("search.query").performTextInput("echo")
+        compose.waitUntil(5_000) { presenter.state.value.results.size == 3 }
+        compose.onNodeWithTag("search.result.2").performTouchInput { click() }
+        assertEquals(emptyList(), activated)
+        compose.onNodeWithTag("search.play.2").assertDoesNotExist()
+        compose.onNodeWithTag("search.result.2").assertTextContains(RuntimeEnvironment.getApplication().getString(com.legitimateapps.dulcet.core.R.string.playback_untitled))
+        presenter.close()
+    }
 
     @Test fun aTrackResultPlaysFromItsButtonAndFromItsRow() {
         val app = RuntimeEnvironment.getApplication()

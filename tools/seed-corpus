@@ -290,6 +290,8 @@ def main() -> None:
     encode(tools, ogg_probe, duration=plain_lyrics_duration, frequency=523, title="Ogg Probe", track="1")
     encode(tools, m4a_probe, duration=1.0, frequency=587, title="M4A Probe", track="2")
 
+    # The playback corpus needs whole seconds on the wire: Navidrome omits a
+    # sub-second track's truncated zero duration, so both reader adapters refuse it.
     multi_disc_paths: list[tuple[Path, int, int]] = []
     for disc in (1, 2):
         for track in (1, 2):
@@ -297,7 +299,7 @@ def main() -> None:
             encode(
                 tools,
                 path,
-                duration=0.5,
+                duration=2.0,
                 frequency=600 + disc * 40 + track * 10,
                 title=f"Disc {disc} Track {track}",
                 album="Double Lines",
@@ -311,7 +313,7 @@ def main() -> None:
     encode(
         tools,
         album_artist_probe,
-        duration=0.5,
+        duration=2.0,
         frequency=720,
         title="Shared Credit",
         album="Several Album Artists",
@@ -323,7 +325,7 @@ def main() -> None:
     encode(
         tools,
         no_album_probe,
-        duration=0.5,
+        duration=2.0,
         frequency=760,
         title="No Album",
         album=None,
@@ -334,7 +336,7 @@ def main() -> None:
     encode(
         tools,
         long_title_probe,
-        duration=0.5,
+        duration=2.0,
         frequency=800,
         title=long_title,
         album="Long Titles",
@@ -366,7 +368,7 @@ def main() -> None:
     encode(
         tools,
         template,
-        duration=0.25,
+        duration=2.0,
         frequency=880,
         title=None,
         artist=None,

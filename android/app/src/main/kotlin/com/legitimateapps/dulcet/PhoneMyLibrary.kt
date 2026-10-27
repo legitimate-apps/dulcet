@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -88,6 +89,7 @@ internal fun MyLibraryHome(
     myLibrary: MyLibrarySession,
     actions: PhoneActions,
     openBrowse: () -> Unit,
+    wishlist: (@Composable () -> Unit)? = null,
 ) {
     var view by rememberSaveable { mutableStateOf(MyLibraryView.Recent) }
     val publication by myLibrary.state.collectAsState()
@@ -105,6 +107,7 @@ internal fun MyLibraryHome(
                 }
             },
         )
+        wishlist?.invoke()
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (option in MyLibraryView.entries) FilterChip(
@@ -224,7 +227,7 @@ private fun MyLibrarySongs(myLibrary: MyLibrarySession, publication: MyLibraryPu
     val tracks = publication.songs.map(MyLibrarySong::toTrack)
     LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.songs")) {
         item {
-            TextButton(onClick = { actions.playTracksFrom(tracks, null, "My Library", true) }, enabled = tracks.isNotEmpty(),
+            TextButton(onClick = { actions.playTracksFrom(tracks, null, "My Library", true) }, enabled = tracks.any { it.canBeQueued() },
                 modifier = Modifier.testTag("mylibrary.songs.shuffleAll")) { Text(stringResource(SharedR.string.library_shuffle_all)) }
         }
         itemsIndexed(publication.songs, key = { _, song -> song.rawId }) { position, song ->

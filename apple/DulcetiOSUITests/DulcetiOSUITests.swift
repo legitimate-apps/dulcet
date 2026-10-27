@@ -138,7 +138,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertFalse(
-            app.staticTexts["dulcet.sidebar.library"].firstMatch.exists,
+            app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.exists,
             "A compact window must not fall back to the sidebar list"
         )
         // The fixture opens on the Connection tab. A compact window must not raise the keyboard
@@ -439,7 +439,7 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(nowPlayingTitle.waitForNonExistence(timeout: 10), "Close must dismiss the player")
         // Checks the experiment: the turn must actually have produced the regular shell.
         let regularShell = !app.tabBars.firstMatch.exists
-            && app.staticTexts["dulcet.sidebar.library"].firstMatch.waitForExistence(timeout: 5)
+            && app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.waitForExistence(timeout: 5)
         XCTAssertTrue(regularShell,
                       "Landscape must be a regular-width window (sidebar, no tab bar); a device that"
                         + " stays compact never crosses the boundary. width=\(landscapeWidth)")
@@ -831,7 +831,7 @@ final class DulcetiOSUITests: XCTestCase {
     /// sideways and so cannot bring a named album into view by scrolling the page.
     @MainActor
     private func openSidebarLibrarySection(_ section: String, in app: XCUIApplication) -> Bool {
-        let row = app.staticTexts["dulcet.sidebar.section.\(section)"].firstMatch
+        let row = app.descendants(matching: .any)["dulcet.sidebar.section.\(section)"].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else {
             XCTFail("The sidebar must list the library's \(section) section: " + app.debugDescription)
             return false
@@ -869,9 +869,9 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The \(tabTitle) tab must become selected: " + app.debugDescription)
             return false
         }
-        // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
-        // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
-        let row = app.staticTexts[sidebarIdentifier].firstMatch
+        // The explicit sidebar button owns the destination identifier. Its child label carries
+        // only the visible title, so resolve the actionable control rather than a text child.
+        let row = app.buttons[sidebarIdentifier].firstMatch
         guard row.waitForExistence(timeout: 5), row.isHittable else {
             XCTFail("The \(tabTitle) row must be visible in the sidebar: " + app.debugDescription)
             return false
@@ -2095,23 +2095,6 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // The row carries a context menu: the condition the drag below has to get out of.
-        var offered = false
-        withoutIdleWaits(app) {
-            let source = dragged.frame
-            dragged.press(forDuration: 1.2)
-            offered = app.buttons["Add to Playlist\u{2026}"].firstMatch.waitForExistence(timeout: 5)
-            self.closeContextMenu(marker: "Add to Playlist\u{2026}", openedFrom: source, in: app)
-        }
-        guard offered else {
-            XCTFail("The row must offer its context menu: " + app.debugDescription)
-            return
-        }
-        guard app.buttons["Add to Playlist\u{2026}"].firstMatch.waitForNonExistence(timeout: 10) else {
-            XCTFail("A tap outside the menu must close it: " + app.debugDescription)
-            return
-        }
-
         // The 31-second canary ended before the Pause touch in run 39301701884:
         // track touch at 141 s, Pause touch at 177 s. Restore its saved queue paused instead.
         // This proof needs a held queue, not a timed Play/Pause race on a busy UI runner.
@@ -2139,44 +2122,58 @@ final class DulcetiOSUITests: XCTestCase {
         }
         print("DULCET DRAG QUEUE PRECONDITION restored-canary=true paused=true")
         guard let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: true) else { return }
-        let queuedBefore = before.filter { $0.hasPrefix("Thirty One Seconds") }.count
-
-        // A second drag only if the first queued nothing: on one local run of ten the lifted
-        // track stayed where it was while the synthesized touch moved, and the menu closed. Under
-        // a custom preview both drags queue nothing, so the retry cannot hide the defect.
-        var after = before
-        var attempts = 0
-        var menuLeftOpen = 0
-        while attempts < 2, after.filter({ $0.hasPrefix("Thirty One Seconds") }).count == queuedBefore {
-            attempts += 1
-            withoutIdleWaits(app) {
-                dragged.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+        // In run 40065138225 both 0.8-second gestures showed the menu near/after scheduled
+        // arrival and never lifted. Open the named row's menu in this process, then lift its actual
+        // system Preview with a second touch, as the album-menu proof does. Each attempt must
+        // positively reach that menu before any drag; a menu action cannot satisfy the oracle.
+        var nativeMenuReady = 0
+        guard let result = dragOntoTheBar(
+            dragged, bar: bar, before: before, adding: 1, menuMarker: "Add to Playlist\u{2026}",
+            in: app, compact: true, prepareSource: { attempt in
+                guard let preview = self.nativeTrackMenuPreview(on: dragged, attempt: attempt, in: app) else { return nil }
+                nativeMenuReady += 1
+                return preview
             }
-            // A drag that never lifted out leaves the menu open where the touch ended (the
-            // defect's shape); close it so Up Next can be read.
-            let menu = app.buttons["Add to Playlist\u{2026}"].firstMatch
-            if menu.waitForExistence(timeout: 2) {
-                menuLeftOpen += 1
-                withoutIdleWaits(app) {
-                    self.closeContextMenu(marker: "Add to Playlist\u{2026}", openedFrom: dragged.frame, in: app)
-                }
-                _ = menu.waitForNonExistence(timeout: 10)
-            }
-            let deadline = Date().addingTimeInterval(10)
-            repeat {
-                RunLoop.current.run(until: Date().addingTimeInterval(1))
-                guard let read = upNextLabels(openingFrom: bar, in: app) else { return }
-                after = read
-            } while after.filter({ $0.hasPrefix("Thirty One Seconds") }).count == queuedBefore && Date() < deadline
-        }
+        ) else { return }
         attachScreenshot(named: "track-dragged-from-its-menu", app: app)
-        XCTAssertEqual(after.filter { $0.hasPrefix("Thirty One Seconds") }.count, queuedBefore + 1,
-                       "The dragged track must join Up Next once; before=\(before) after=\(after) drags=\(attempts)"
-                       + " menu-left-open-after=\(menuLeftOpen)")
+        XCTAssertGreaterThan(nativeMenuReady, 0, "The track's native context menu must actually open")
+        XCTAssertEqual(nativeMenuReady, result.drags, "Every drag must start from the observed open menu's Preview")
+        XCTAssertEqual(result.menuLeftOpen, 0, "Dragging the Preview must lift out of the context menu")
+        XCTAssertEqual(result.after.count, before.count + 1,
+                       "The drag must append exactly one track; before=\(before) after=\(result.after) drags=\(result.drags)"
+                       + " menu-left-open-after=\(result.menuLeftOpen)")
+        XCTAssertEqual(Array(result.after.prefix(before.count)), before, "The preexisting Up Next entries must stay in order")
+        XCTAssertTrue(result.after.last?.hasPrefix("Thirty One Seconds,") == true,
+                      "The appended entry must be the dragged track; after=\(result.after)")
         XCTAssertEqual(playPause.label, "Play", "The queue proof must keep playback paused")
         XCTAssertTrue(bar.label.contains("UI Playback Canary"),
                       "The drag must append to the held canary's queue; bar=\(bar.label)")
-        print("DULCET DRAG FROM MENU before=\(before) after=\(after) drags=\(attempts) menu-left-open-after=\(menuLeftOpen)")
+        print("DULCET DRAG FROM MENU before=\(before) after=\(result.after) drags=\(result.drags)"
+            + " menu-left-open-after=\(result.menuLeftOpen) native-menu-ready=\(nativeMenuReady)")
+    }
+
+    @MainActor
+    private func nativeTrackMenuPreview(on track: XCUIElement, attempt: Int, in app: XCUIApplication) -> XCUIElement? {
+        var ready: XCUIElement?
+        withoutIdleWaits(app) {
+            guard track.exists, track.isHittable else {
+                XCTFail("The named track must be hittable before opening its menu")
+                return
+            }
+            track.press(forDuration: 1.2)
+            let marker = app.buttons["Add to Playlist\u{2026}"].firstMatch
+            let previews = app.otherElements.matching(NSPredicate(format: "label == %@", "Preview"))
+            let preview = previews.element(boundBy: 0)
+            guard marker.waitForExistence(timeout: 10), marker.isHittable,
+                  preview.waitForExistence(timeout: 10), previews.count == 1, preview.isHittable,
+                  !marker.frame.intersects(preview.frame) else {
+                XCTFail("The track's native menu and separate hittable Preview must be open before every drag: " + app.debugDescription)
+                return
+            }
+            print("DULCET TRACK MENU READY attempt=\(attempt) preview=\(preview.frame) marker=\(marker.frame)")
+            ready = preview
+        }
+        return ready
     }
 
     /// Plays the album's last track, then restores that saved selection paused so a short
@@ -2382,16 +2379,14 @@ final class DulcetiOSUITests: XCTestCase {
     /// proofs count what the drag adds to them.
     @MainActor
     private func awaitSettledUpNext(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool) -> [String]? {
-        let deadline = Date().addingTimeInterval(45)
-        var previous: [String]?
-        repeat {
-            guard let read = upNextLabels(openingFrom: bar, in: app, compact: compact) else { return nil }
-            if read == previous { return read }
-            previous = read
-            RunLoop.current.run(until: Date().addingTimeInterval(1.5))
-        } while Date() < deadline
-        XCTFail("Up Next must settle before a drag is counted; it last read \(previous ?? [])")
-        return nil
+        var labels: [String]?
+        // A hosted open/read/dismiss cycle took the entire settling window and produced only
+        // one sample. Keep the player open while comparing actual queue snapshots, then close
+        // it once. The 45-second stability window starts with its first positively read list.
+        withoutIdleWaits(app) {
+            labels = self.readUpNextLabels(openingFrom: bar, in: app, compact: compact, requireStable: true)
+        }
+        return labels
     }
 
     /// Up Next's entries, read from the player opened from the bar, which is then closed again.
@@ -2408,7 +2403,9 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func readUpNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool) -> [String]? {
+    private func readUpNextLabels(
+        openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool, requireStable: Bool = false
+    ) -> [String]? {
         bar.tap()
         if compact {
             let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
@@ -2426,27 +2423,29 @@ final class DulcetiOSUITests: XCTestCase {
             format: "identifier == %@ OR identifier BEGINSWITH %@",
             "dulcet.upNext.empty", "dulcet.upNext.row."
         )).firstMatch
-        guard contents.waitForExistence(timeout: 2) else {
-            XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
-            return nil
-        }
         // Read through snapshots, which throw when a row has gone, instead of recording a failure
         // as a bare `.label` does: the queue can change between counting its rows and reading them
         // (OBSERVED: a restored queue replaced under the read, "No matches found for Element at
         // index 1"), and a read that raced is taken again.
-        var labels: [String] = []
-        var attempts = 0
-        while true {
-            attempts += 1
-            if let read = try? rows.allElementsBoundByIndex.map({ try $0.snapshot().label }) {
-                labels = read
-                break
-            }
-            guard attempts < 4 else {
-                XCTFail("Up Next's rows kept changing under the read: " + app.debugDescription)
+        guard var labels = currentUpNextLabels(rows, contents: contents, in: app) else { return nil }
+        if requireStable {
+            let deadline = Date().addingTimeInterval(45)
+            var stable = false
+            print("DULCET UP NEXT stability sample=\(labels)")
+            repeat {
+                RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+                guard let next = currentUpNextLabels(rows, contents: contents, in: app) else { return nil }
+                print("DULCET UP NEXT stability sample=\(next)")
+                if next == labels {
+                    stable = true
+                    break
+                }
+                labels = next
+            } while Date() < deadline
+            guard stable else {
+                XCTFail("Up Next must settle before a drag is counted; it last read \(labels)")
                 return nil
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(1))
         }
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
@@ -2466,6 +2465,27 @@ final class DulcetiOSUITests: XCTestCase {
         }
         print("DULCET UP NEXT read=\(labels)")
         return labels
+    }
+
+    @MainActor
+    private func currentUpNextLabels(
+        _ rows: XCUIElementQuery, contents: XCUIElement, in app: XCUIApplication
+    ) -> [String]? {
+        // Require a rendered empty state or row for every sample, including the second
+        // stability read. A missing list must never count as an agreeing empty queue.
+        guard contents.waitForExistence(timeout: 10) else {
+            XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
+            return nil
+        }
+        for attempt in 1...4 {
+            if let labels = try? rows.allElementsBoundByIndex.map({ try $0.snapshot().label }) {
+                return labels
+            }
+            guard attempt < 4 else { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        XCTFail("Up Next's rows kept changing under the read: " + app.debugDescription)
+        return nil
     }
 
     /// Drags `source` onto the now-playing bar until Up Next holds `count` more entries than
@@ -2922,29 +2942,36 @@ final class DulcetiOSUITests: XCTestCase {
             XCTAssertFalse((serverPlaylists(configuration: configuration) ?? []).contains { $0.name == doomedRenamed },
                 "The failed rename must not reach the server under any id")
 
-            // 9. A failed edit the page already knows: its read is held until the playlist is gone
-            // from the server and the rename prompt is open, then released.
-            guard let armed = proxyPlaylistHold(knownID, on: true, proxy: proxy), armed.holding else {
-                XCTFail("The fault proxy must hold the playlist's read")
-                return
-            }
+            // 9. A failed edit the page already knows. Prepare the prompt before starting the
+            // held read: a hosted AX query can outlast the production client's 30 s deadline.
+            // Returning to the foreground reconnects the real reader and revalidates its page.
             guard openLibraryPlaylists(in: app, compact: expectedCompact), openPlaylistRow(known, in: app) else { return }
-            guard let heldRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 15, until: { $0.isPending }) else {
-                XCTFail("The page must have asked for the playlist, and the proxy must be holding that read")
+            let knownEdit = app.buttons["dulcet.playlist.edit"].firstMatch
+            guard knownEdit.waitForExistence(timeout: 10), waitForEnabled(knownEdit, timeout: 30) else {
+                XCTFail("The initial playlist read must finish before preparing its foreground reread")
                 return
             }
             guard openRenamePrompt(in: app) else { return }
-            // A historical arrival does not prove that the read is still waiting. Run
-            // 39728604012 exhausted its hold during a slow Rename lookup. Refuse to call that
-            // the known-gone order, and retain the proxy's original safety limit.
-            guard let pending = playlistHoldObservations(proxyRequest("GET",
-                "/__dulcet/playlist-observations?playlist=\(knownID)", proxy: proxy)), pending.isPending else {
-                XCTFail("The playlist read must still be pending under the open Rename prompt")
+            XCUIDevice.shared.press(.home)
+            guard app.wait(for: .runningBackground, timeout: 10) else {
+                XCTFail("The app must be backgrounded before arming its foreground reread")
+                return
+            }
+            guard let armed = proxyPlaylistHold(knownID, on: true, proxy: proxy), armed.holding else {
+                XCTFail("The fault proxy must hold the playlist's read")
                 return
             }
             guard restCall("deletePlaylist", [URLQueryItem(name: "id", value: knownID)], configuration: configuration) != nil,
                   awaitServerPlaylistAbsent(knownID, configuration: configuration) else {
                 XCTFail("The other client's delete must reach the server before the held read")
+                return
+            }
+            let rereadStart = ContinuousClock.now
+            app.activate()
+            // No AX query between this request's arrival and release. Proxy counts alone do
+            // not prove the client consumed an answer; the unavailable page below must do so.
+            guard let heldRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 15, until: { $0.isPending }) else {
+                XCTFail("The foreground page reread must arrive and remain held until explicit release")
                 return
             }
             guard proxyPlaylistHold(knownID, on: false, proxy: proxy) != nil,
@@ -2954,11 +2981,17 @@ final class DulcetiOSUITests: XCTestCase {
                 XCTFail("Every held read must reach the server by explicit release, with none timing out")
                 return
             }
+            print("DULCET PLAYLIST known-gone foreground-to-release=\(rereadStart.duration(to: .now)) held=\(heldRead.held) released=\(releasedRead.released) timed-out=\(releasedRead.timedOut)")
             // The page says the playlist is gone before the rename is confirmed: the order is met,
             // not assumed.
             let statement = app.descendants(matching: .any)["dulcet.reader.unavailable"].firstMatch
             XCTAssertTrue(statement.waitForExistence(timeout: 20),
                 "The released read must tell the page the playlist is gone, under the open prompt: " + app.debugDescription)
+            let prompt = app.alerts.matching(identifier: "Rename").element(boundBy: 0)
+            guard prompt.waitForExistence(timeout: 5), prompt.textFields.element(boundBy: 0).exists else {
+                XCTFail("The original Rename prompt must remain open after the page learns the playlist is gone")
+                return
+            }
             guard submitNamePrompt(knownRenamed, confirm: "Rename", in: app) else { return }
             let knownProblem = app.descendants(matching: .any)["dulcet.playlist.problem"].firstMatch
             XCTAssertTrue(knownProblem.waitForExistence(timeout: 15),
@@ -4316,7 +4349,8 @@ final class DulcetiOSUITests: XCTestCase {
                 let frame = item.frame
                 return frame.origin.x.isFinite && frame.origin.y.isFinite
                     && frame.width.isFinite && frame.height.isFinite
-                    && frame.width > 0 && frame.height > 0 && item.isHittable
+                    && frame.width > 0 && frame.height > 0
+                    && app.windows.firstMatch.frame.contains(frame) && item.isHittable
             }, object: item)
             if XCTWaiter.wait(for: [ready], timeout: 30) == .completed {
                 usable = true
@@ -4338,7 +4372,10 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The picker must offer a hittable \(option) after two presentations: " + app.debugDescription)
             return false
         }
-        item.tap()
+        // A native menu row can report a usable frame and hittability while XCTest cannot
+        // compute its accessibility activation point. Send the same native tap at the checked
+        // row center; the selected value and subsequent stream assertion still prove its effect.
+        item.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let deadline = Date().addingTimeInterval(5)
         while !pickerShows(option, picker), Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
@@ -5218,7 +5255,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertFalse(
-            app.staticTexts["dulcet.sidebar.nowPlaying"].exists,
+            app.descendants(matching: .any)["dulcet.sidebar.nowPlaying"].exists,
             "Now Playing is presented from the bar on iPad, never listed as a sidebar place"
         )
 
@@ -5726,7 +5763,7 @@ final class DulcetiOSUITests: XCTestCase {
         // staticTexts, not descendants(matching: .any): the row's identifier is carried by BOTH its
         // SF Symbol image and its label (OBSERVED in the captured hierarchy), so an .any query is
         // ambiguous and resolves against the decorative image, whose isHittable is false.
-        let sidebar = app.staticTexts["dulcet.sidebar.library"].firstMatch
+        let sidebar = app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch
         let detail = app.staticTexts["dulcet.account-connect.title"].firstMatch
 
         XCTAssertTrue(sidebar.waitForExistence(timeout: 10), "The Library row must be in the sidebar")

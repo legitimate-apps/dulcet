@@ -63,7 +63,8 @@ class PhoneQueueEditingTest {
     @Test fun aTrackThatCannotPlayNowOffersNoQueueItems() {
         val offline = track("t1", AndroidLibraryPlayability.UnavailableOffline)
         assertFalse(offline.canBeQueued())
-        assertFalse(track("t2").copy(title = " ").canBeQueued(), "a track with no title to show cannot be queued")
+        assertTrue(track("t2").copy(title = " ").canBeQueued(), "a blank title gets a display fallback")
+        assertFalse(track("no-duration").copy(durationMilliseconds = null).canBeQueued(), "duration is required as on Apple")
         assertTrue(track("t3").canBeQueued())
         row(offline, TrackQueue({ error("not offered") }, { error("not offered") }))
         compose.onNodeWithTag("album.track.0.menu").performClick()

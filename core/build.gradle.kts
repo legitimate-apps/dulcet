@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 
 plugins {
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.kotlin.multiplatform.library)
     alias(libs.plugins.licensee)
@@ -26,6 +27,7 @@ kotlin {
     }
 
     android {
+        androidResources { enable = true }
         namespace = "com.legitimateapps.dulcet.core"
         compileSdk = libs.versions.android.compile.sdk.get().toInt()
         minSdk = libs.versions.android.min.sdk.get().toInt()
@@ -77,11 +79,13 @@ kotlin {
         }
         jvmMain.dependencies {
             implementation(libs.ktor.client.cio)
+            implementation(libs.ktor.client.okhttp)
             implementation(libs.sqldelight.sqlite.driver)
         }
         androidMain.dependencies {
             api(libs.media3.exoplayer)
             implementation(libs.ktor.client.cio)
+            implementation(libs.ktor.client.okhttp)
             implementation(libs.sqldelight.android.driver)
         }
         appleMain.dependencies {
@@ -111,6 +115,9 @@ licensee {
 // streams, so a green run's log is unchanged. AbstractTestTask, not Test, where Kotlin/Native
 // test tasks exist too (see core-conformance/build.gradle.kts for that trap).
 tasks.withType<AbstractTestTask>().configureEach {
+    if (this is Test && name == "testAndroidHostTest") {
+        systemProperty("dulcet.repositoryRoot", rootProject.projectDir.absolutePath)
+    }
     testLogging {
         events("failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL

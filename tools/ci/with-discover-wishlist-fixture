@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""Own a fresh finite Dulcet Server, upstream and Navidrome; run one command; reap only owned PIDs."""
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+# Extensionless module caches resemble controls to the recursive CI policy inventory.
+# Keep fixture/helper imports source-only, including independently launched children.
+sys.dont_write_bytecode = True
+import tempfile
+import time
+import urllib.request
+
+REPO=Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(REPO/'tools/ci'))
+sys.path.insert(0,str(REPO/'tools/discover-wishlist-fixtures'))
+from discover_process_owner import ProcessOwner
+from fixture import IDS,USER,OTHER,ADMIN,PASSWORD,mbid,request,rest,rest_url
+
+class DiscoverFixture:
+    def __init__(self,root=None,evidence=None,navidrome=None,ffmpeg=None):
+        self.root=Path(root) if root else None;self.evidence=Path(evidence) if evidence else None
+        self.navidrome=navidrome or os.environ.get('DULCET_DISCOVER_NAVIDROME_BIN') or shutil.which('navidrome')
+        self.ffmpeg=ffmpeg or os.environ.get('DULCET_DISCOVER_FFMPEG') or shutil.which('ffmpeg')
+        self.process_owner=ProcessOwner();self.children=[];self.handles=[];self.owned=False;self.urls={};self.ids=IDS;self.started=time.monotonic();self.defer_ready=False;self.deferring_signal=False;self.pending_signal=None
+    def start_process(self,name,argv):
+        handle=(self.root/(name+'.log')).open('w');self.handles.append(handle)
+        env={k:v for k,v in os.environ.items() if not k.startswith(('DULCET_','ND_'))};env['JAVA_OPTS']='-Xmx256m'
+        return self.spawn_tracked(name,argv,stdout=handle,stderr=subprocess.STDOUT,env=env)
+    def spawn_tracked(self,name,argv,**kwargs):
+        # Defer the Python handler, not the OS signal mask: children must inherit normal signals.
+        self.deferring_signal=True
+        try:
+            child=self.process_owner.spawn(argv,**kwargs);self.children.append((name,child));return child
+        finally:
+            self.deferring_signal=False
+            if self.pending_signal is not None:raise SystemExit(128+self.pending_signal)
+    def run_cli(self,*args,capture=False):
+        env={k:v for k,v in os.environ.items() if not k.startswith('DULCET_')};env['JAVA_OPTS']='-Xmx256m'
+        result=self.process_owner.run([str(self.server_binary),*args,*self.settings],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=45)
+        if result.returncode:raise RuntimeError('fixture CLI failed: '+args[0])
+        if capture:return result.stdout.strip().splitlines()[-1]
+    def wait(self,predicate):
+        deadline=time.monotonic()+60
+        while time.monotonic()<deadline:
+            if any(child.poll() is not None for _,child in self.children):raise RuntimeError('owned fixture child exited before readiness')
+            try:
+                result=predicate()
+                if result:return result
+            except Exception:pass
+            time.sleep(.1)
+        raise RuntimeError('fixture readiness deadline')
+    def start_proxy(self,role,config=None):
+        ready=self.root/(role+'-ready.json');args=[sys.executable,str(REPO/'tools/discover-wishlist-ui-proxy'),'--role',role,'--ready',str(ready)]
+        if config:
+            path=self.root/'proxy-config.json';path.write_text(json.dumps(config));path.chmod(0o600);args+=['--config',str(path)]
+        self.start_process(role,args);return self.wait(lambda:json.loads(ready.read_text()) if ready.exists() else None)['url']
+    def media(self,name,recording,album,release,track):
+        path=self.root/name
+        self.process_owner.run([self.ffmpeg,'-v','error','-nostdin','-y','-f','lavfi','-i','sine=frequency=440:duration=120','-threads','1',
+            '-metadata',f'title=Fixture Song {recording:02d}','-metadata','artist=Fixture Artist','-metadata',f'album=Fixture Album {album:02d}',
+            '-metadata','album_artist=Fixture Artist','-metadata',f'track={track}','-metadata','date=2026',
+            '-metadata',f'MUSICBRAINZ_TRACKID={mbid(recording)}','-metadata',f'MUSICBRAINZ_ARTISTID={IDS["artist"]}',
+            '-metadata',f'MUSICBRAINZ_ALBUMID={mbid(release)}',str(path)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        return path
+    def start(self):
+        try:return self.start_checked()
+        except BaseException:self.close();raise
+    def start_checked(self):
+        self.server_binary=REPO/'server/build/install/dulcet-server/bin/dulcet-server'
+        if not self.server_binary.is_file():raise RuntimeError('build :server:installDist once before starting the fixture')
+        if not self.navidrome or not self.ffmpeg:raise RuntimeError('supply a Navidrome binary and ffmpeg; no existing server is accepted')
+        version=subprocess.run([self.navidrome,'--version'],capture_output=True,text=True,check=True)
+        pin=json.loads((REPO/'tools/conformance-env/pins.json').read_text())['navidrome']['version']
+        if pin not in version.stdout+version.stderr:raise RuntimeError('Navidrome version differs from conformance pin')
+        if self.root:self.root.mkdir(parents=True,exist_ok=False)
+        else:self.root=Path(tempfile.mkdtemp(prefix='dulcet-discover-',dir=os.environ.get('DULCET_DISCOVER_TMPDIR')))
+        self.owned=True;(self.root/'.owned-discover-fixture').write_text('finite\n')
+        if self.evidence:self.evidence.mkdir(parents=True,exist_ok=False)
+        music=self.root/'music';music.mkdir()
+        for album,count in [(0,8),(1,12)]:
+            for i in range(count):self.media(f'music/{album}-{i}.flac',album*100+10+i,album,300+album,i+1)
+        arrival=self.media('arrival-staged.flac',1,4,304,1)
+        upstream=self.start_proxy('upstream')
+        # Allocate only loopback ports. A bind race fails readiness rather than contacting a known instance.
+        reservations=[]
+        for _ in range(2):
+            s=socket.socket();s.bind(('127.0.0.1',0));reservations.append(s)
+        dulcet_port,nav_port=[s.getsockname()[1] for s in reservations]
+        self.direct='http://127.0.0.1:'+str(dulcet_port);nav='http://127.0.0.1:'+str(nav_port)
+        self.settings=[f'--music={music}',f'--data={self.root/"server-data"}','--bind=127.0.0.1',f'--port={dulcet_port}',
+            '--lrclib=off','--scan-on-start=false','--test-mode=true',f'--ffmpeg={self.ffmpeg}',f'--ffprobe={Path(self.ffmpeg).with_name("ffprobe")}',
+            f'--musicbrainz-url={upstream}',f'--cover-art-archive-url={upstream}',f'--listenbrainz-url={upstream}',f'--listenbrainz-labs-url={upstream}','--musicbrainz-min-gap-ms=0']
+        for user in [ADMIN,USER,OTHER]:self.run_cli('user','add',user,PASSWORD,*(['--admin=true'] if user==ADMIN else []))
+        token=self.run_cli('user','token',ADMIN,'--scopes=admin,user:read,user:write',capture=True)
+        self.run_cli('scan')
+        template=(REPO/'tools/conformance-env/navidrome.toml.template').read_text()
+        substitutions={'MUSIC_FOLDER':str(music),'DATA_FOLDER':str(self.root/'nav-data'),'CACHE_FOLDER':str(self.root/'nav-cache'),'ADDRESS':'127.0.0.1','PORT':str(nav_port),'FFMPEG_PATH':self.ffmpeg}
+        for key,value in substitutions.items():template=template.replace('@'+key+'@',value)
+        config=self.root/'navidrome.toml';config.write_text(template)
+        for s in reservations:s.close()
+        server_child=self.start_process('server',[str(self.server_binary),'serve',*self.settings])
+        nav_child=self.start_process('navidrome',[self.navidrome,'--configfile',str(config)])
+        # Witness the listening PID before even the bootstrap write. An occupied port is not ours.
+        lsof=shutil.which('lsof')
+        if not lsof:raise RuntimeError('lsof is required to witness ownership of fixture listeners')
+        def owns_listener(child,port):
+            return subprocess.run([lsof,'-nP','-a','-p',str(child.pid),'-iTCP:'+str(port),'-sTCP:LISTEN'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
+        self.wait(lambda:owns_listener(server_child,dulcet_port) and owns_listener(nav_child,nav_port))
+        self.wait(lambda:rest(self.direct,'ping'))
+        self.wait(lambda:request(nav+'/auth/createAdmin',{'username':USER,'password':PASSWORD}))
+        self.wait(lambda:rest(nav,'getAlbumList2',type='alphabeticalByName',size='1')['albumList2'].get('album'))
+        api=lambda path,body=None,method=None:request(self.direct+'/dulcet/v1'+path,body,method,{'Authorization':'Bearer '+token})
+        api('/admin/test/settings',{'discoverArtworkAllowLoopback':True},'PUT')
+        for i in range(23):
+            result=rest(self.direct,'addToDulcetWishlist',kind='song',mbid=mbid(1000+i),title=f'Fixture Wish {i:02d}',sourceType='search',operationId=mbid(2000+i))['dulcetWishMutation']
+            if i<3:api('/admin/wishes/'+result['wish']['id'],{'state':['requested','searching','unavailable'][i],'note':'Fixture note <plain text>'},'PATCH')
+        rest(self.direct,'addToDulcetWishlist',user=OTHER,kind='song',mbid=mbid(5000),title='Other owner only',sourceType='search',operationId=mbid(5001))
+        for key in ['partial','held','unknown']:rest(self.direct,'getDulcetDiscoverAlbum',mbid=IDS[key])
+        checkpoint=api('/admin/test/checkpoints',{},'POST')['id']
+        proxy=self.start_proxy('proxy',dict(server=self.direct,navidrome=nav,token=token,checkpoint=checkpoint,admin=ADMIN,music=str(music),arrival=str(arrival)))
+        self.urls={'serverUrl':proxy,'navidromeUrl':proxy+'/navidrome','controlUrl':proxy}
+        advertised=self.rest('getOpenSubsonicExtensions')['openSubsonicExtensions']
+        if not all(any(e['name']==name and 1 in e['versions'] for e in advertised) for name in ['dulcetDiscover','dulcetWishlist']):raise RuntimeError('fixture extensions absent')
+        baseline=request(proxy+'/control/baseline')
+        self.cold_start_seconds=time.monotonic()-self.started
+        ready=dict(**self.urls,root=str(self.root),children=[{'name':n,'pid':p.pid} for n,p in self.children],coldStartSeconds=self.cold_start_seconds,baseline=baseline)
+        self.ready=ready
+        if not self.defer_ready:self.publish_ready()
+        print('DISCOVER FIXTURE ready coldStartSeconds='+str(round(self.cold_start_seconds,3)),flush=True)
+        return self
+    def publish_ready(self):
+        if self.evidence:(self.evidence/'ready.json').write_text(json.dumps(self.ready,indent=2))
+    def rest(self,endpoint,**parameters):
+        # Keep urllib's typed exception available to tests that deliberately lose a response.
+        with urllib.request.urlopen(rest_url(self.urls['serverUrl'],endpoint,**parameters),timeout=35) as r:body=json.load(r)['subsonic-response']
+        if body['status']!='ok':raise RuntimeError('fixture REST failed: '+endpoint+' code='+str(body.get('error',{}).get('code')))
+        return body
+    def binary(self,endpoint,**parameters):
+        with urllib.request.urlopen(rest_url(self.urls['serverUrl'],endpoint,**parameters),timeout=35) as r:return r.read()
+    def scenario(self,name):return request(self.urls['controlUrl']+'/control/scenario',{'name':name})
+    def discovery(self):return request(self.urls['serverUrl']+'/.well-known/dulcet')['server']
+    def environment(self):return {**os.environ,'DULCET_DISCOVER_SERVER_URL':self.urls['serverUrl'],'DULCET_DISCOVER_NAVIDROME_URL':self.urls['navidromeUrl'],
+        'DULCET_DISCOVER_CONTROL_URL':self.urls['controlUrl'],'DULCET_DISCOVER_USERNAME':USER,'DULCET_DISCOVER_PASSWORD':PASSWORD,
+        'DULCET_DISCOVER_OTHER_USERNAME':OTHER,'DULCET_DISCOVER_OTHER_PASSWORD':PASSWORD,'DULCET_DISCOVER_DISPOSABLE':'true'}
+    def close(self):
+        self.process_owner.stopping=True
+        self.process_owner.terminate_children()
+        report=[]
+        for name,child in reversed(self.children):
+            self.process_owner.stop(child,grace=180 if name=='command' else 20)
+            if child in self.process_owner.children:self.process_owner.children.remove(child)
+            report.append({'name':name,'pid':child.pid,'reaped':child.poll() is not None})
+        self.process_owner.close()
+        for handle in self.handles:handle.close()
+        if self.evidence and self.evidence.exists() and self.root and self.root.exists():
+            logs=self.evidence/'logs';logs.mkdir(exist_ok=True)
+            for path in self.root.glob('*.log'):shutil.copyfile(path,logs/path.name)
+        if self.owned and self.root and (self.root/'.owned-discover-fixture').read_text()=='finite\n':shutil.rmtree(self.root);self.owned=False
+        if self.evidence and self.evidence.exists():(self.evidence/'cleanup.json').write_text(json.dumps({'root':str(self.root),'rootDeleted':(self.root is None or not self.root.exists()),'children':report},indent=2))
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--root',type=Path);p.add_argument('--evidence',type=Path);p.add_argument('--navidrome');p.add_argument('--ffmpeg');p.add_argument('command',nargs=argparse.REMAINDER);args=p.parse_args()
+    command=args.command[1:] if args.command[:1]==['--'] else args.command
+    if not command:p.error('a command is required after --')
+    f=DiscoverFixture(args.root,args.evidence,args.navidrome,args.ffmpeg);f.defer_ready=True
+    def interrupted(signum,frame):
+        if f.process_owner.stopping:return
+        if f.deferring_signal:f.pending_signal=signum
+        else:raise SystemExit(128+signum)
+    f.process_owner.install()
+    signal.signal(signal.SIGTERM,interrupted);signal.signal(signal.SIGINT,interrupted)
+    try:
+        f.start()
+        child=f.spawn_tracked('command',command,env=f.environment());f.publish_ready()
+        return child.wait()
+    except Exception as error:print('DISCOVER FIXTURE failed: '+type(error).__name__+': '+str(error),file=sys.stderr);return 1
+    finally:f.close()
+if __name__=='__main__':sys.exit(main())

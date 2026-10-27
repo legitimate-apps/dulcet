@@ -60,7 +60,10 @@ The parent's latest main-push run on its exact SHA must be complete and successf
 plan and latest-attempt jobs must agree. A full plan needs every Apple leg successful; a skipped
 plan needs its original recorded proof reverified. Inherited chains can span at most four no-input
 edges including this push, and the summary lists every SHA and completed run back to the full-proof
-base. A green aggregator alone cannot authorize inheritance. Pending/failed parents, expired logs,
+base. Discover/Wishlist jobs follow the conformance plan on push, so proof reuse skips all three and
+full fallback runs them. Proof readers use the workflow at the proven SHA: Discover jobs defined
+there must succeed in full-run or dispatch proof, and be skipped in skipped-parent proof. Historical
+pre-Discover proof retains its original job shape. A green aggregator alone cannot authorize inheritance. Pending/failed parents, expired logs,
 stale attempts, altered receipts, chain limits and API uncertainty run every leg.
 
 A reused push, including parent inheritance, does not resolve Apple FEATURES identities against

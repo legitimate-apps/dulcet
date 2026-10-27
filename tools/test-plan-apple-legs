@@ -7,6 +7,7 @@ from importlib.machinery import SourceFileLoader
 import importlib.util
 from pathlib import Path
 import os
+import base64
 import copy
 import json
 import re
@@ -107,6 +108,14 @@ for changed in (["core/X.kt"], ["docs/a.md"], None, []):
     expect(planner.plan("pull_request", changed, True) == planner.plan("pull_request", changed),
            "conformance-only cannot change a pull request's plan")
 
+# A Discover-only dispatch is diagnostic. Automatic events cannot use it to reduce their plan.
+expect(planner.plan("workflow_dispatch", None, discover_only=True)[:2] == (False, False),
+       "Discover-only dispatch skips baseline jobs")
+for event in ("push", "pull_request", "schedule", "merge_group", ""):
+    expect(planner.plan(event, ["apple/project.yml"], discover_only=True) ==
+           planner.plan(event, ["apple/project.yml"]),
+           f"Discover-only input cannot suppress automatic event {event!r}")
+
 # --- require-leg: exactly two accepted pairs, everything else refused.
 ACCEPTED = {("true", "success"), ("false", "skipped")}
 for planned in ("true", "false", "", "TRUE", "1", "True"):
@@ -126,6 +135,9 @@ with tempfile.TemporaryDirectory() as directory:
         ("plain dispatch", "workflow_dispatch", "", [], True, True),
         ("explicit full dispatch", "workflow_dispatch", "", ["--conformance-only", "false"], True, True),
         ("conformance-only dispatch", "workflow_dispatch", "", ["--conformance-only", "true"], False, True),
+        ("Discover-only dispatch", "workflow_dispatch", "", ["--discover-only", "true"], False, False),
+        ("push ignores Discover-only", "push", "", ["--discover-only", "true"], True, True),
+        ("PR ignores Discover-only", "pull_request", "apple/project.yml\n", ["--discover-only", "true"], True, False),
         ("push ignores dispatch input", "push", "", ["--conformance-only", "true"], True, True),
     )
     for label, event, changed, options, platform, conformance in cases:
@@ -133,13 +145,16 @@ with tempfile.TemporaryDirectory() as directory:
         result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", event,
                                  "--changed-files", str(listing), *options],
                                 capture_output=True, text=True, check=True)
-        expected = f"platform={str(platform).lower()}\nconformance={str(conformance).lower()}\n"
+        discover = conformance or (event == "workflow_dispatch" and options == ["--discover-only", "true"])
+        expected = f"platform={str(platform).lower()}\nconformance={str(conformance).lower()}\ndiscover={str(discover).lower()}\n"
         expect(result.stdout == expected, f"{label} outputs: {result.stdout!r}")
         print(f"CLI EXECUTED {label}: {result.stdout.strip().replace(chr(10), ' ')}")
-    for value in ("TRUE", "1", "yes", ""):
-        result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "workflow_dispatch",
-                                 "--conformance-only", value], capture_output=True, text=True)
-        expect(result.returncode != 0 and not result.stdout, f"invalid input {value!r} must fail closed")
+    for option in ("--conformance-only", "--discover-only"):
+        for value in ("TRUE", "1", "yes", ""):
+            result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "workflow_dispatch",
+                                     option, value], capture_output=True, text=True)
+            expect(result.returncode != 0 and not result.stdout,
+                   f"invalid {option} input {value!r} must fail closed")
 
 # --- The diff read from a real merge commit, and the fail-safe on a checkout that is not one.
 with tempfile.TemporaryDirectory() as directory:
@@ -157,7 +172,7 @@ with tempfile.TemporaryDirectory() as directory:
     (Path(directory) / "README.md").write_text("base\n")
     git("add", ".")
     git("commit", "-q", "-m", "base")
-    expect(plan_here() == "platform=true\nconformance=false\n",
+    expect(plan_here() == "platform=true\nconformance=false\ndiscover=false\n",
            "a checkout that is not a merge commit must run the platform leg")
     git("checkout", "-q", "-b", "topic")
     (Path(directory) / "docs").mkdir()
@@ -170,7 +185,7 @@ with tempfile.TemporaryDirectory() as directory:
     git("commit", "-q", "-m", "main moved")
     git("merge", "-q", "--no-ff", "-m", "merge", "topic")
     expect(planner.merge_diff is not None, "merge_diff exists")
-    expect(plan_here() == "platform=false\nconformance=false\n",
+    expect(plan_here() == "platform=false\nconformance=false\ndiscover=false\n",
            "a docs-only merge commit runs no Apple leg")
     (Path(directory) / "core").mkdir()
     (Path(directory) / "core" / "X.kt").write_text("x\n")
@@ -179,7 +194,7 @@ with tempfile.TemporaryDirectory() as directory:
     git("commit", "-q", "-m", "core")
     git("checkout", "-q", "main")
     git("merge", "-q", "--no-ff", "-m", "merge 2", "topic")
-    expect(plan_here() == "platform=true\nconformance=false\n",
+    expect(plan_here() == "platform=true\nconformance=false\ndiscover=false\n",
            "a merge commit carrying a core change runs the platform leg")
 
 # --- Same-tree main proof: recorded REST responses, through the production reader and CLI.
@@ -213,8 +228,8 @@ for identity in ("#389", head, "b603c224a50ec9b23d0140ec501999cf84feebde",
 print("PROOF PASS: recorded #389 same-tree PR platform + conformance dispatch")
 
 
-def control(label, edit):
-    documents = copy.deepcopy(responses)
+def control(label, edit, original=responses):
+    documents = copy.deepcopy(original)
     edit(documents)
     actual = replay(documents)
     expect(actual[:2] == (True, True), f"{label} wrongly skipped: {actual}")
@@ -323,7 +338,7 @@ with tempfile.TemporaryDirectory() as directory:
     result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "push",
                              "--proof-fixture", str(fixture_path)], env=env,
                             text=True, capture_output=True, check=True)
-    expect(result.stdout == "platform=false\nconformance=false\n", "recorded CLI must skip")
+    expect(result.stdout == "platform=false\nconformance=false\ndiscover=false\n", "recorded CLI must skip")
     expect(positive[2] in summary.read_text(), "Actions summary must carry the audited proof")
 print("PROOF CLI PASS: same production push code path, recorded API, audited Actions summary")
 
@@ -339,7 +354,9 @@ def workflow_shell(name):
 with tempfile.TemporaryDirectory() as directory:
     summary = Path(directory) / "summary"
     env = {**os.environ, "APPLE_PLAN_RESULT": "success", "RUN_APPLE_PLATFORM": "false",
-           "RUN_APPLE_CONFORMANCE": "false", "APPLE_PLATFORM_RESULT": "skipped",
+           "RUN_APPLE_CONFORMANCE": "false", "RUN_APPLE_DISCOVER": "false",
+           "DISCOVER_MACOS_RESULT": "skipped", "DISCOVER_IPHONE_RESULT": "skipped",
+           "DISCOVER_IPAD_RESULT": "skipped", "APPLE_PLATFORM_RESULT": "skipped",
            "APPLE_CONFORMANCE_CORE_RESULT": "skipped",
            "APPLE_CONFORMANCE_IPAD_IPHONE_RESULT": "skipped", "GITHUB_STEP_SUMMARY": str(summary)}
     shell = workflow_shell("Require every planned Apple leg")
@@ -348,10 +365,25 @@ with tempfile.TemporaryDirectory() as directory:
     expect(result.returncode == 0 and "APPLE CI LEGS PASS" in result.stdout,
            f"real aggregator must accept planned skips: {result.stdout} {result.stderr}")
     for key, value in (("APPLE_PLAN_RESULT", "failure"), ("RUN_APPLE_PLATFORM", ""),
-                       ("APPLE_CONFORMANCE_CORE_RESULT", "failure")):
+                       ("APPLE_CONFORMANCE_CORE_RESULT", "failure"),
+                       ("DISCOVER_IPAD_RESULT", "failure"), ("RUN_APPLE_DISCOVER", "true")):
         bad = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT,
                              env={**env, key: value}, capture_output=True, text=True)
         expect(bad.returncode != 0, f"aggregator must refuse {key}={value!r}")
+    discover_results = ("DISCOVER_MACOS_RESULT", "DISCOVER_IPHONE_RESULT", "DISCOVER_IPAD_RESULT")
+    for planned in (False, True):
+        planned_env = {**env, "RUN_APPLE_DISCOVER": str(planned).lower(),
+                       **dict.fromkeys(discover_results, "success" if planned else "skipped")}
+        good = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT,
+                              env=planned_env, capture_output=True, text=True)
+        expect(good.returncode == 0, f"aggregator must accept Discover planned={planned}")
+        for key in discover_results:
+            for value in ("success", "skipped", "failure", "cancelled", ""):
+                if value == ("success" if planned else "skipped"):
+                    continue
+                bad = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT,
+                                     env={**planned_env, key: value}, capture_output=True, text=True)
+                expect(bad.returncode != 0, f"aggregator must refuse Discover planned={planned} {key}={value!r}")
     subprocess.run(["bash", "-e", "-o", "pipefail", "-c",
                     workflow_shell("Report whether this run resolves evidence")],
                    cwd=ROOT, env=env, check=True, capture_output=True, text=True)
@@ -482,6 +514,67 @@ expect(skipped_result[:2] == (False, False), f"recorded #394 skip must revalidat
 for identity in ("40265202378", "40246835069", "40246865463", "PR #394"):
     expect(identity in skipped_result[2], f"skipped-parent receipt omitted {identity}")
 print("PARENT PASS: synthetic excluded diff over recorded #394 skip, with original PR/dispatch rechecked")
+
+# Synthetic current-workflow variants of recorded REST evidence prove the integration without
+# claiming the older runs actually executed Discover jobs. Exact-SHA workflow reads choose the jobs.
+def with_discover(record):
+    record = copy.deepcopy(record)
+    source = workflow.encode()
+    for path, document in list(record["responses"].items()):
+        if "/contents/" in path:
+            document["content"] = base64.b64encode(source).decode()
+        elif "/attempts/" in path:
+            template = document["jobs"][-1]
+            for index, name in enumerate(sorted(planner.DISCOVER_JOBS)):
+                document["jobs"].append({**template, "id": template.get("id", 1000) + index + 1,
+                                         "name": name, "conclusion": "skipped" if all(j["conclusion"] == "skipped" for j in document["jobs"] if j["name"] not in {"apple-plan", "apple-ci"}) else "success"})
+            document["total_count"] = len(document["jobs"])
+    return record
+
+modern_parent = with_discover(parent_record)
+expect(parent_replay(modern_parent)[:2] == (False, False), "full Discover parent should qualify")
+modern_skip = with_discover(skipped_parent)
+modern_skip_log = next(path for path in modern_skip["responses"] if path.endswith("/logs"))
+modern_skip["responses"][modern_skip_log] = modern_skip["responses"][modern_skip_log].replace(
+    "conformance=false:", "conformance=false discover=false:")
+expect(parent_replay(modern_skip)[:2] == (False, False), "skipped Discover parent should revalidate")
+parent_control("contradictory skipped Discover plan", lambda d: d["responses"].__setitem__(modern_skip_log,
+               d["responses"][modern_skip_log].replace("discover=false:", "discover=true:")), modern_skip)
+modern_direct = with_discover({"responses": responses})["responses"]
+expect(replay(modern_direct)[:2] == (False, False), "same-tree Discover dispatch should qualify")
+for name in sorted(planner.DISCOVER_JOBS):
+    for conclusion in ("failure", "skipped", "cancelled", None):
+        control(f"Discover dispatch {name}={conclusion}",
+                job_edit(dispatch_jobs, name, "conclusion", conclusion), modern_direct)
+        parent_control(f"Discover full parent {name}={conclusion}",
+                       lambda d, name=name, conclusion=conclusion:
+                       job_edit(parent_jobs, name, "conclusion", conclusion)(d["responses"]), modern_parent)
+    def missing_job(documents, path, name):
+        document = documents[path]
+        document["jobs"] = [job for job in document["jobs"] if job["name"] != name]
+        document["total_count"] = len(document["jobs"])
+    control(f"missing Discover dispatch {name}", lambda d, name=name:
+            missing_job(d, dispatch_jobs, name), modern_direct)
+    parent_control(f"missing full-parent {name}", lambda d, name=name:
+                   missing_job(d["responses"], parent_jobs, name), modern_parent)
+    parent_control(f"executed skipped-parent {name}", lambda d, name=name:
+                   job_edit(next(p for p in d["responses"] if "/attempts/" in p), name,
+                            "conclusion", "success")(d["responses"]), modern_skip)
+modern_log = modern_parent["responses"][parent_log]
+modern_parent["responses"][parent_log] = modern_log.replace("conformance=true:", "conformance=true discover=true:")
+expect(parent_replay(modern_parent)[:2] == (False, False), "explicit full Discover plan should qualify")
+parent_control("contradictory Discover plan", lambda d: d["responses"].__setitem__(parent_log,
+               d["responses"][parent_log].replace("discover=true:", "discover=false:")), modern_parent)
+parent_workflow = f"/repos/{repository}/contents/{planner.WORKFLOW_PATH}?ref={parent_record['parent']}"
+parent_control("unreadable exact-SHA workflow", lambda d: d["responses"].pop(parent_workflow))
+parent_control("unknown proof workflow jobs", lambda d: d["responses"][parent_workflow].__setitem__(
+               "content", base64.b64encode((workflow + "\n  unknown-apple-job:\n").encode()).decode()))
+for label, source in (("quoted Discover key", workflow.replace("  discover-wishlist-macos:", '  "discover-wishlist-macos":')),
+                      ("inline Discover key", workflow.replace("  discover-wishlist-macos:", "  discover-wishlist-macos: {}")),
+                      ("underscore job key", workflow + "\n  extra_apple_job:\n")):
+    parent_control(label, lambda d, source=source: d["responses"][parent_workflow].__setitem__(
+                   "content", base64.b64encode(source.encode()).decode()), modern_parent)
+print("DISCOVER PROOF PASS: current workflow full/skip parents and dispatch proof, with per-job guards")
 skip_log = next(path for path in skipped_parent["responses"] if path.endswith("/logs"))
 parent_control("unrecognized skip receipt", lambda d: d["responses"].__setitem__(skip_log,
                d["responses"][skip_log].replace("Reused Apple proof for PR #394", "Unverified skip")), skipped_parent)
@@ -504,7 +597,9 @@ def child_of(record, index):
     result["responses"][f"/repos/{repository}/actions/workflows/341254656/runs?head_sha={parent_sha}&per_page=100&page=1"] = {
         "total_count": 1, "workflow_runs": [run]}
     jobs = []
-    for i, name in enumerate(("apple-plan", "apple-ci", "apple-platform", "apple-conformance-core", "apple-conformance-${{ matrix.device }}")):
+    proof_api = planner.GitHub("", str(parent_fixture)); proof_api.responses = record["responses"]
+    extra_jobs = planner.discover_jobs_at(proof_api, repository, record["parent"])
+    for i, name in enumerate(("apple-plan", "apple-ci", "apple-platform", "apple-conformance-core", "apple-conformance-${{ matrix.device }}") + tuple(sorted(extra_jobs))):
         jobs.append({"id": run_id + 100 + i, "name": name, "run_id": run_id, "run_attempt": 1,
                      "head_sha": parent_sha, "status": "completed", "conclusion": "success" if i < 2 else "skipped"})
     result["responses"][rp + "/attempts/1/jobs?per_page=100&page=1"] = {"total_count": len(jobs), "jobs": jobs}
@@ -514,9 +609,14 @@ def child_of(record, index):
     compare["base_commit"]["sha"] = parent_sha; compare["merge_base_commit"]["sha"] = parent_sha
     compare["commits"] = [{"sha": child_sha, "parents": [{"sha": parent_sha}]}]
     result["responses"][f"/repos/{repository}/compare/{parent_sha}...{child_sha}"] = compare
+    workflow_key = f"/repos/{repository}/contents/{planner.WORKFLOW_PATH}?ref="
+    result["responses"][workflow_key + parent_sha] = copy.deepcopy(record["responses"][workflow_key + record["parent"]])
     result["sha"] = child_sha
     result["push"] = {**record["push"], "before": parent_sha, "after": child_sha}
     return result
+
+modern_chain = child_of(modern_parent, 10)
+expect(parent_replay(modern_chain)[:2] == (False, False), "modern Discover inherited chain must revalidate")
 
 chain_record = parent_record
 for index in range(1, planner.MAX_PARENT_HOPS):
@@ -555,7 +655,7 @@ with tempfile.TemporaryDirectory() as directory:
     env.pop("GITHUB_EVENT_PATH", None)
     result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "push", "--proof-fixture", str(parent_fixture)],
                             env=env, text=True, capture_output=True, check=True)
-    expect(result.stdout == "platform=false\nconformance=false\n", "parent CLI must skip")
+    expect(result.stdout == "platform=false\nconformance=false\ndiscover=false\n", "parent CLI must skip")
     expect(positive_parent[2] in summary.read_text(), "parent CLI audit summary must name full chain")
 print("PARENT CLI PASS: recorded positive through production event parsing and summary")
 # Exercise real GITHUB_EVENT_PATH parsing without inheriting the fixture CLI option.
@@ -572,7 +672,7 @@ with tempfile.TemporaryDirectory() as directory:
                                     "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary")}), \
             contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
         expect(planner.main() == 0, "event file entrypoint should complete")
-    expect(stdout.getvalue() == "platform=false\nconformance=false\n", "event file must drive production push validation")
+    expect(stdout.getvalue() == "platform=false\nconformance=false\ndiscover=false\n", "event file must drive production push validation")
 
 # --- Closure: no excluded tool is named by anything the Apple legs read. An excluded tool that an
 # Apple-affecting file mentions in code (by path, file name or module stem) would let a pull request change

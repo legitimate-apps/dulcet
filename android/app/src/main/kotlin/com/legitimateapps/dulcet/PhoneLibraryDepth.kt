@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyRow
@@ -84,7 +85,7 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
                     if (downloaded || offline) actions.playTracksFrom(shown, null, title, true)
                     else shuffle.start { actions.playTracksFrom(it, null, title, true) }
                 },
-                    enabled = !shuffle.busy && (!downloaded && !offline || shown.any { it.playability != AndroidLibraryPlayability.UnavailableOffline }),
+                    enabled = !shuffle.busy && (!downloaded && !offline || shown.any { it.canBeQueued() }),
                     modifier = Modifier.testTag("library.$key.shuffleAll")) { Text(stringResource(if (offline && !downloaded) SharedR.string.library_shuffle_available else SharedR.string.library_shuffle_all)) }
                 if (shuffle.failed) StatementText(stringResource(SharedR.string.library_shuffle_failed), "library.$key.shuffle.failed")
                 publication?.let {

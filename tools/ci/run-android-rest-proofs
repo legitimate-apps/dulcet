@@ -11,12 +11,15 @@ fixture_class = (f'{package}.AndroidTvMyLibraryProofTest' if surface == 'tv'
                  else 'com.legitimateapps.dulcet.AndroidEmulatorMyLibraryProofTest')
 # This method requires dulcetLibrary. Exclude it entirely from the ordinary REST
 # invocation so parity evidence contains no skipped duplicate before its real fixture run.
-fixture_only = f'{fixture_class}#automaticLibraryRetentionAndSameResponseCachePlayOffline'
+fixture_only = [f'{fixture_class}#automaticLibraryRetentionAndSameResponseCachePlayOffline']
+if surface == 'phone':
+    # This suite has its own finite fixture, phase arguments and process-death runner.
+    fixture_only.append('com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest')
 try:
     subprocess.run(['./gradlew', '--no-daemon', '--max-workers=2', task,
                     '-Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4533',
                     '-Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true',
-                    f'-Pandroid.testInstrumentationRunnerArguments.notClass={fixture_only}'], check=True)
+                    f'-Pandroid.testInstrumentationRunnerArguments.notClass={",".join(fixture_only)}'], check=True)
 finally:
     subprocess.run(['adb', '-s', 'emulator-5554', 'pull',
                     f'/data/local/tmp/dulcet-listen-now-{package}',

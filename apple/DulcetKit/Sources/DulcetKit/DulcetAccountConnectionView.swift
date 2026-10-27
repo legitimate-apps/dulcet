@@ -163,6 +163,9 @@ struct DulcetAccountConnectionView: View {
                     .accessibilityIdentifier("dulcet.account.add-server")
                     .disabled(isConnecting)
             }
+            // Several buttons share one Form cell. Automatic style gives the cell all their
+            // actions; choosing a saved server must not also activate Add Server.
+            .buttonStyle(.borderless)
         }
     }
 

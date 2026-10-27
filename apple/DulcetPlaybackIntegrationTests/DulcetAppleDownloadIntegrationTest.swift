@@ -15,6 +15,218 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
+    func testChunkedStreamsRequireTheTerminatingChunkBeforeCachePromotion() async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let audio = try Data(contentsOf: audioURL)
+        for ending in ProductionPathLoopbackServer.MediaEnding.allCases {
+            let server = try ProductionPathLoopbackServer(audio: audio, answersIdentity: true, mediaEnding: ending)
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-chunked-cache-\(UUID())")
+            let databaseName = "dulcet-chunked-cache-\(UUID()).db"
+            let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                                                          sessionConfiguration: .ephemeral)
+            let context = DownloadIntegrationContext(controller: controller, downloadRoot: root,
+                baseURL: server.baseURL.absoluteString, databaseName: databaseName)
+            defer { context.tearDown(); server.stop(); removeAdapterTestDatabase(databaseName) }
+            controller.configure(account: DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+                normalizedServerURL: server.baseURL.absoluteString, username: fixtureUsername, password: fixturePassword,
+                allowLocalHTTP: true, credentialGeneration: 1))
+            controller.setAutomaticDownloadsEnabled(false)
+            try await waitUntil(timeout: .seconds(5), failureMessage: "cache policy did not reconcile") {
+                controller.offlineLibraryStorage.cacheBudgetBytes > 0
+            }
+            let track = DulcetTrack(id: .init(providerInstanceID: providerInstanceID, rawID: "chunked-cache"),
+                title: "Chunked cache", credits: [], albumTitle: nil, duration: .seconds(120),
+                sourceContainer: .mp3, mediaSourceID: nil, artwork: .init(seed: "chunked-cache", palette: .indigoCoral))
+            let wire = ApplePlaybackWireClient(account: PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+                normalizedBaseUrl: server.baseURL.absoluteString, username: fixtureUsername, password: fixturePassword,
+                allowLocalHttp: true))
+            defer { wire.close() }
+            let plan = try await resolveStreamingPlan(wire: wire, context: context, track: track)
+            let resource = try XCTUnwrap(plan.resource as? any DulcetPlaybackResourceLoading)
+            let outcome = await load(resource: resource, range: .init(start: 0, endInclusive: Int64(audio.count - 1)))
+            if ending == .complete {
+                guard case let .loaded(bytes, _) = outcome else { XCTFail("complete chunked stream failed"); continue }
+                XCTAssertEqual(bytes, audio)
+                try await waitUntil(timeout: .seconds(5), failureMessage: "complete chunked stream did not promote to cache") {
+                    controller.status(for: track.id) == .cached
+                }
+                XCTAssertEqual(controller.offlineLibraryStorage.cacheBytes, Int64(audio.count))
+                XCTAssertNotNil(controller.offlinePlaybackAsset(for: track))
+            } else {
+                if case .failed = outcome {}
+                else {
+                    XCTFail("a cut-off stream was accepted")
+                    try await waitUntil(timeout: .seconds(5), failureMessage: "accepted cut-off stream did not reach its cache writer") {
+                        controller.status(for: track.id) == .cached
+                    }
+                }
+                await Task.yield()
+                XCTAssertNil(controller.offlinePlaybackAsset(for: track))
+                XCTAssertEqual(controller.offlineLibraryStorage.cacheBytes, 0)
+            }
+            XCTAssertGreaterThan(server.requestQueries.count, 0)
+        }
+    }
+
+    func testChunkedDownloadsRequireTheTerminatingChunkBeforePromotion() async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let audio = try Data(contentsOf: audioURL)
+        for ending in ProductionPathLoopbackServer.MediaEnding.allCases {
+            let server = try ProductionPathLoopbackServer(audio: audio, answersIdentity: true, mediaEnding: ending)
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-chunked-download-\(UUID())")
+            let databaseName = "dulcet-chunked-download-\(UUID()).db"
+            let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                                                          sessionConfiguration: .ephemeral)
+            defer {
+                controller.disconnect(); server.stop()
+                try? FileManager.default.removeItem(at: root)
+                removeAdapterTestDatabase(databaseName)
+            }
+            controller.configure(account: DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+                normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+                allowLocalHTTP: true, credentialGeneration: 1))
+            controller.setAutomaticDownloadsEnabled(false)
+            let track = rejectionTrack("chunked-download")
+            controller.requestDownload(track)
+            try await waitUntil(timeout: .seconds(10), failureMessage: "chunked download never completed or failed") {
+                [.downloaded, .interrupted, .failed].contains(controller.status(for: track.id))
+            }
+            if ending == .complete {
+                XCTAssertEqual(controller.status(for: track.id), .downloaded)
+                XCTAssertNotNil(controller.offlinePlaybackAsset(for: track))
+                XCTAssertGreaterThanOrEqual(server.requestQueries.count, 1, "the fixture must serve the actual download")
+            } else {
+                XCTAssertEqual(controller.status(for: track.id), .interrupted)
+                XCTAssertNil(controller.offlinePlaybackAsset(for: track), "a cut-off song must never be playable offline")
+                XCTAssertEqual(controller.offlineLibraryStorage.downloadBytes, 0)
+            }
+        }
+    }
+
+    func testAnUnknownLengthDeliveryCannotStartReplacementBeforeAccountAuthority() async throws {
+        let server = try ProductionPathLoopbackServer(audio: Data("ID3socket-delivery".utf8), mediaEnding: .chunkBoundary)
+        defer { server.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-unowned-framing-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseName = "dulcet-unowned-framing-\(UUID()).db"
+        let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                                                      sessionConfiguration: .ephemeral)
+        let session = URLSession(configuration: .ephemeral)
+        defer {
+            controller.disconnect(); session.invalidateAndCancel()
+            try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(databaseName)
+        }
+        let holder = NativeFramingTaskHolder()
+        let delivered: URL = try await withCheckedThrowingContinuation { continuation in
+            let task = session.downloadTask(with: server.baseURL.appendingPathComponent("rest/download.view")) { location, _, error in
+                do {
+                    if let error { throw error }
+                    let saved = root.appendingPathComponent("os-delivery")
+                    try FileManager.default.copyItem(at: XCTUnwrap(location), to: saved)
+                    continuation.resume(returning: saved)
+                } catch { continuation.resume(throwing: error) }
+            }
+            holder.task = task
+            task.taskDescription = "unowned-download"
+            task.resume()
+        }
+        let task = try XCTUnwrap(holder.task)
+        controller.urlSession(session, downloadTask: task, didFinishDownloadingTo: delivered)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(server.requestQueries.count, 1, "unconfirmed OS delivery must not resend its credentials")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: delivered.path))
+    }
+
+    func testRestoredOwnedChunkedDeliveryValidatesIdentityBeforeItsReplacement() async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let server = try ProductionPathLoopbackServer(audio: Data(contentsOf: audioURL), answersIdentity: true, mediaEnding: .complete)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-restored-framing-\(UUID())")
+        let databaseName = "dulcet-restored-framing-\(UUID()).db"
+        let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                                                      sessionConfiguration: .ephemeral)
+        let session = URLSession(configuration: .ephemeral)
+        defer {
+            controller.disconnect(); session.invalidateAndCancel(); server.stop()
+            try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(databaseName)
+        }
+        var prepared: (() -> Void)?
+        controller.preparedDownloadDelivery = { prepared = $0 }
+        controller.configure(account: DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        controller.setAutomaticDownloadsEnabled(false)
+        let track = rejectionTrack("restored-framing")
+        controller.requestDownload(track)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "owned download was not prepared") { prepared != nil }
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(databaseName)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(database, "SELECT download_id FROM download WHERE raw_id='restored-framing'", -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+        let identifier = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 0)))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let holder = NativeFramingTaskHolder()
+        let delivered: URL = try await withCheckedThrowingContinuation { continuation in
+            let task = session.downloadTask(with: server.baseURL.appendingPathComponent("rest/download.view")) { location, _, error in
+                do {
+                    if let error { throw error }
+                    let saved = root.appendingPathComponent("restored-os-delivery")
+                    try FileManager.default.copyItem(at: XCTUnwrap(location), to: saved)
+                    continuation.resume(returning: saved)
+                } catch { continuation.resume(throwing: error) }
+            }
+            holder.task = task; task.taskDescription = identifier; task.resume()
+        }
+        server.holdIdentityAnswers()
+        controller.urlSession(session, downloadTask: try XCTUnwrap(holder.task), didFinishDownloadingTo: delivered)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "restored delivery skipped identity validation") {
+            server.hasHeldIdentityAnswer
+        }
+        XCTAssertEqual(server.requestQueries.count, 1, "replacement must wait for current identity confirmation")
+        XCTAssertNil(controller.offlinePlaybackAsset(for: track))
+        server.releaseIdentityAnswers()
+        try await waitUntil(timeout: .seconds(5), failureMessage: "confirmed restored delivery did not finish its strict replacement") {
+            controller.status(for: track.id) == .downloaded
+        }
+        XCTAssertEqual(server.requestQueries.count, 2)
+        XCTAssertNotNil(controller.offlinePlaybackAsset(for: track))
+    }
+
+    func testRejectingIdentityCancelsAnActiveStrictReplacement() async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let server = try ProductionPathLoopbackServer(audio: Data(contentsOf: audioURL), answersIdentity: true,
+            mediaEnding: .complete, holdAfterFirstStream: true)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-retired-framing-\(UUID())")
+        let databaseName = "dulcet-retired-framing-\(UUID()).db"
+        let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                                                      sessionConfiguration: .ephemeral)
+        defer {
+            controller.disconnect(); server.stop()
+            try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(databaseName)
+        }
+        controller.configure(account: DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+            normalizedServerURL: server.baseURL.absoluteString, username: "fixture", password: "fixture",
+            allowLocalHTTP: true, credentialGeneration: 1))
+        controller.setAutomaticDownloadsEnabled(false)
+        let track = rejectionTrack("held-framing")
+        controller.requestDownload(track)
+        try await waitUntil(timeout: .seconds(10), failureMessage: "strict replacement never reached the held socket") {
+            server.requestQueries.count == 2
+        }
+        controller.rejectServerIdentity()
+        try await waitUntil(timeout: .seconds(5), failureMessage: "identity rejection did not close the replacement socket") {
+            server.closedHeldStreams > 0
+        }
+        server.releaseStreams()
+        await Task.yield()
+        XCTAssertNil(controller.offlinePlaybackAsset(for: track))
+        XCTAssertEqual(controller.offlineLibraryStorage.downloadBytes, 0)
+    }
+
     func testAutomaticDownloadPreferenceIsNotLostDuringSameAccountReconciliation() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-pending-setting-\(UUID())")
         let databaseName = "dulcet-pending-setting-\(UUID()).db"
@@ -2295,6 +2507,8 @@ private final class RejectionPlaybackEngine: DulcetCorePlaybackEngine, @unchecke
 }
 
 final class ProductionPathLoopbackServer: @unchecked Sendable {
+    enum MediaEnding: CaseIterable { case complete, chunkBoundary, midChunk }
+    private let mediaEnding: MediaEnding?
     private let audio: Data
     private let answersIdentity: Bool
     private let autoplay: Bool
@@ -2311,7 +2525,21 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
     private var queryStorage: [String] = []
     private var pathStorage: [String] = []
     private var holdingStreams: Bool
+    private let holdAfterFirstStream: Bool
+    private var closedHeldStreamCount = 0
+    var closedHeldStreams: Int { lock.withLock { closedHeldStreamCount } }
     private var heldResponses: [@Sendable () -> Void] = []
+    private var holdingIdentity = false
+    private var heldIdentityResponses: [@Sendable () -> Void] = []
+    var hasHeldIdentityAnswer: Bool { lock.withLock { !heldIdentityResponses.isEmpty } }
+    func holdIdentityAnswers() { lock.withLock { holdingIdentity = true } }
+    func releaseIdentityAnswers() {
+        let answers = lock.withLock {
+            holdingIdentity = false
+            let answers = heldIdentityResponses; heldIdentityResponses = []; return answers
+        }
+        answers.forEach { $0() }
+    }
 
     var requestQueries: [String] { lock.withLock { queryStorage } }
     var requestPaths: [String] { lock.withLock { pathStorage } }
@@ -2336,7 +2564,10 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
         return rangeStorage
     }
 
-    init(audio: Data, answersIdentity: Bool = false, holdStreams: Bool = false, autoplay: Bool = false) throws {
+    init(audio: Data, answersIdentity: Bool = false, holdStreams: Bool = false, autoplay: Bool = false,
+         mediaEnding: MediaEnding? = nil, holdAfterFirstStream: Bool = false) throws {
+        self.holdAfterFirstStream = holdAfterFirstStream
+        self.mediaEnding = mediaEnding
         self.audio = audio
         self.answersIdentity = answersIdentity
         self.autoplay = autoplay
@@ -2373,6 +2604,7 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
 
     func stop() {
         releaseStreams()
+        releaseIdentityAnswers()
         listener.cancel()
     }
 
@@ -2410,7 +2642,15 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
             let body = Data(#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"test"}}"#.utf8)
             var response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
             response.append(body)
-            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            let responseBytes = response
+            let send: @Sendable () -> Void = {
+                connection.send(content: responseBytes, completion: .contentProcessed { _ in connection.cancel() })
+            }
+            let held = lock.withLock {
+                if holdingIdentity { heldIdentityResponses.append(send); return true }
+                return false
+            }
+            if !held { send() }
             return
         }
         if autoplay {
@@ -2439,6 +2679,30 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
         queryStorage.append(request.split(separator: " ").dropFirst().first.map(String.init) ?? "")
         lock.unlock()
 
+        if let mediaEnding {
+            var response = Data("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".utf8)
+            response.append(Data("\(String(audio.count, radix: 16))\r\n".utf8))
+            response.append(mediaEnding == .midChunk ? audio.prefix(audio.count / 2) : audio)
+            if mediaEnding != .midChunk { response.append(Data("\r\n".utf8)) }
+            if mediaEnding == .complete { response.append(Data("0\r\n\r\n".utf8)) }
+            let responseBytes = response
+            let send: @Sendable () -> Void = {
+                connection.send(content: responseBytes, contentContext: .finalMessage, isComplete: true,
+                    completion: .contentProcessed { _ in connection.cancel() })
+            }
+            let held = lock.withLock {
+                if holdingStreams || (holdAfterFirstStream && queryStorage.count > 1) {
+                    heldResponses.append(send); return true
+                }
+                return false
+            }
+            if held {
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { [weak self] _, _, eof, error in
+                    if eof || error != nil { self?.lock.withLock { self?.closedHeldStreamCount += 1 } }
+                }
+            } else { send() }
+            return
+        }
         let bounds = requestedBounds(from: rangeHeader)
         let body = audio.subdata(in: bounds.start..<(bounds.endInclusive + 1))
         let status = rangeHeader == nil ? "200 OK" : "206 Partial Content"
@@ -2516,4 +2780,8 @@ enum ProductionPathLoopbackError: Error {
     case missingPort
     case resolveFailed
     case startupTimedOut
+}
+
+private final class NativeFramingTaskHolder: @unchecked Sendable {
+    var task: URLSessionDownloadTask?
 }

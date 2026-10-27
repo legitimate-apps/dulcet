@@ -55,9 +55,6 @@ private data class AuthenticatedEndpointHttpSnapshot(
 internal data class AuthenticatedEndpointRequestOptions(
     /** An already-rendered HTTP byte range, for example `bytes=0-65535`. */
     val range: String? = null,
-    /** How a successful full response's Content-Length must be interpreted. */
-    val contentLengthKind: AuthenticatedEndpointContentLengthKind =
-        AuthenticatedEndpointContentLengthKind.Exact,
     /**
      * The most body bytes this request may read, or null for the whole body. Beyond it the request
      * fails with [bodyBeyondLimit] instead of reading on. For a whole GET only. How early it stops
@@ -73,27 +70,12 @@ internal data class AuthenticatedEndpointRequestOptions(
     init {
         require(range == null || BYTE_RANGE_PATTERN.matches(range))
         require(maxBodyBytes == null || maxBodyBytes > 0)
-        require(
-            maxBodyBytes == null ||
-                (range == null && contentLengthKind == AuthenticatedEndpointContentLengthKind.Exact),
-        )
+        require(maxBodyBytes == null || range == null)
     }
 
     private companion object {
         val BYTE_RANGE_PATTERN = Regex("bytes=[0-9]+-(?:[0-9]+)?")
     }
-}
-
-internal enum class AuthenticatedEndpointContentLengthKind {
-    Exact,
-
-    /**
-     * Unused in production since §28 2026-10-04: no request asks Navidrome for an estimated length,
-     * because a short estimate cuts a cold transcode off in a way no client can tell from its end.
-     * The read path behind it, and the Darwin delegate's matching rewrite, are kept only until they
-     * are removed as one change.
-     */
-    Estimated,
 }
 
 /** Signed request material for a platform loader. Rendering is deliberately redacted. */
@@ -103,15 +85,6 @@ internal data class AuthenticatedEndpointPreparedRequest(
     val rangeHeader: String?,
 ) {
     override fun toString(): String = "AuthenticatedEndpointPreparedRequest(<redacted>)"
-}
-
-private fun Throwable.isPrematureEndOfHttpBody(): Boolean {
-    var current: Throwable? = this
-    while (current != null) {
-        if (current::class.simpleName == "EOFException") return true
-        current = current.cause
-    }
-    return false
 }
 
 /**
@@ -130,16 +103,20 @@ internal class AuthenticatedEndpointClient(
     private val saltSource = saltSource ?: AccountConnectionContract.secureSaltSource()
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
     private val traceRecorder = RequestTraceRecorder(logSink, operationName)
-    private val client: HttpClient = createAccountHttpClient(clientTransport) {
-        expectSuccess = false
-        followRedirects = false
-        install(RequestTracePlugin) { observe = traceRecorder::observe }
-        install(HttpTimeout) {
-            connectTimeoutMillis = REQUEST_TIMEOUT_MILLIS
-            requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
-            socketTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+    private val client = endpointClient(strictMediaFraming = false)
+    private val mediaClient = lazy { endpointClient(strictMediaFraming = true) }
+
+    private fun endpointClient(strictMediaFraming: Boolean): HttpClient =
+        createAccountHttpClient(clientTransport, strictMediaFraming) {
+            expectSuccess = false
+            followRedirects = false
+            install(RequestTracePlugin) { observe = traceRecorder::observe }
+            install(HttpTimeout) {
+                connectTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+                requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+                socketTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+            }
         }
-    }
 
     suspend fun request(
         endpoint: String,
@@ -205,6 +182,9 @@ internal class AuthenticatedEndpointClient(
         formPost: Boolean = false,
     ): AuthenticatedEndpointResponse {
         require(!formPost || jsonBody == null)
+        // Only media GETs need a framing-aware engine. Account reads and mutations keep their
+        // existing transport and retry/status behavior. Redirects keep using this same client.
+        val client = if (jsonBody == null && !formPost && endpoint in MEDIA_ENDPOINTS) mediaClient.value else client
         val common = authenticatedParameters(parameters)
         var currentUrl = "${credentials.normalizedBaseUrl}/rest/$endpoint.view"
         var redirects = 0
@@ -216,31 +196,7 @@ internal class AuthenticatedEndpointClient(
                     client.prepareGet(target.url) {
                         applyRequestParts(target.hostHeader, common, options, repeated)
                     }.execute { response ->
-                        response.toSnapshot(response.bodyAsBytesWithin(maxBodyBytes), options)
-                    }
-                } else if (
-                    jsonBody == null && !formPost &&
-                    options.contentLengthKind == AuthenticatedEndpointContentLengthKind.Estimated &&
-                    options.range == null
-                ) {
-                    var completedSnapshot: AuthenticatedEndpointHttpSnapshot? = null
-                    try {
-                        client.prepareGet(target.url) {
-                            applyRequestParts(target.hostHeader, common, options, repeated)
-                        }.execute { response ->
-                            response.toSnapshot(
-                                body = if (response.status.value in 200..299) {
-                                    response.bodyAsBytesAllowingEstimatedEnd()
-                                } else {
-                                    response.bodyAsBytes()
-                                },
-                                options = options,
-                            ).also { completedSnapshot = it }
-                        }
-                    } catch (failure: Throwable) {
-                        completedSnapshot?.takeIf {
-                            it.body.isNotEmpty() && isPlatformEstimatedLengthCompletion(failure)
-                        } ?: throw failure
+                        response.toSnapshot(response.bodyAsBytesWithin(maxBodyBytes))
                     }
                 } else {
                     val response = if (formPost) {
@@ -266,7 +222,7 @@ internal class AuthenticatedEndpointClient(
                             setBody(jsonBody)
                         }
                     }
-                    response.toSnapshot(response.bodyAsBytes(), options)
+                    response.toSnapshot(response.bodyAsBytes())
                 }
             } catch (failure: Throwable) {
                 if (clientTransport.challengeTracker.consumeUnsupported()) {
@@ -326,13 +282,13 @@ internal class AuthenticatedEndpointClient(
 
     private fun io.ktor.client.statement.HttpResponse.toSnapshot(
         body: ByteArray,
-        options: AuthenticatedEndpointRequestOptions,
     ) = AuthenticatedEndpointHttpSnapshot(
         statusCode = status.value,
         body = body,
         headers = AuthenticatedEndpointResponseHeaders(
             contentType = headers[HttpHeaders.ContentType],
-            contentLength = playbackContentLength(options),
+            contentLength = headers[HttpHeaders.ContentLength]?.toLongOrNull()?.takeIf { it >= 0 }
+                ?.let(PlaybackContentLength::Exact),
             retryAfter = headers[HttpHeaders.RetryAfter],
             acceptRanges = headers[HttpHeaders.AcceptRanges],
             contentRange = headers[HttpHeaders.ContentRange],
@@ -340,57 +296,6 @@ internal class AuthenticatedEndpointClient(
         ),
         location = headers[HttpHeaders.Location],
     )
-
-    private fun io.ktor.client.statement.HttpResponse.playbackContentLength(
-        options: AuthenticatedEndpointRequestOptions,
-    ): PlaybackContentLength? = headers[HttpHeaders.ContentLength]
-        ?.toLongOrNull()
-        ?.takeIf { it >= 0 }
-        ?.let { byteCount ->
-            if (
-                options.contentLengthKind == AuthenticatedEndpointContentLengthKind.Estimated &&
-                options.range == null &&
-                status.value in 200..299
-            ) {
-                PlaybackContentLength.Estimated(byteCount)
-            } else {
-                PlaybackContentLength.Exact(byteCount)
-            }
-        }
-
-    /**
-     * Ktor correctly reports an exact Content-Length mismatch as a terminal read failure.
-     * Navidrome's estimateContentLength contract is different: all bytes already received are the
-     * complete representation even when the estimate overshoots. Read incrementally so those bytes
-     * survive CIO's EOF or Darwin's specifically typed completion; every other transport failure
-     * still propagates. On Darwin that completion is normally rewritten before Ktor sees it,
-     * because Ktor discards the unread body on any completion error (AccountHttpClient.apple.kt).
-     */
-    private suspend fun io.ktor.client.statement.HttpResponse.bodyAsBytesAllowingEstimatedEnd(): ByteArray {
-        val channel = bodyAsChannel()
-        val chunks = mutableListOf<ByteArray>()
-        var total = 0
-        val scratch = ByteArray(16 * 1024)
-        while (true) {
-            val count = try {
-                channel.readAvailable(scratch, 0, scratch.size)
-            } catch (failure: Throwable) {
-                if (
-                    total > 0 &&
-                    (failure.isPrematureEndOfHttpBody() ||
-                        isPlatformEstimatedLengthCompletion(failure))
-                ) {
-                    break
-                }
-                throw failure
-            }
-            if (count < 0) break
-            if (count == 0) continue
-            chunks += scratch.copyOf(count)
-            total += count
-        }
-        return concatenate(chunks, total)
-    }
 
     /**
      * The body, read no further than [limit] bytes (see [AuthenticatedEndpointRequestOptions.maxBodyBytes]).
@@ -458,10 +363,12 @@ internal class AuthenticatedEndpointClient(
 
     fun close() {
         client.close()
+        if (mediaClient.isInitialized()) mediaClient.value.close()
     }
 
     private companion object {
         const val CLIENT_NAME = "Dulcet"
+        val MEDIA_ENDPOINTS = setOf("stream", "download", "getTranscodeStream")
         const val REQUEST_TIMEOUT_MILLIS = 30_000L
         val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
         val SALT_PATTERN = Regex("[0-9a-f]{32}")

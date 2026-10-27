@@ -5,12 +5,13 @@ spec §21.6. A pull request runs `apple-platform` only when it changes something
 read, and never runs the two conformance jobs, `apple-conformance-core` and
 `apple-conformance-ipad-iphone`; an ordinary single-commit push to `main` reuses exact-tree PR proof,
 or proven parent results when its diff has no Apple inputs. Every uncertain proof and every plain
-dispatch runs every leg. A dispatch
-with --conformance-only true runs only the conformance jobs. The
+dispatch runs every leg. --conformance-only true runs conformance and Discover;
+--discover-only true runs only the three Discover jobs as a diagnostic, without qualifying as a
+full release run. The
 required `apple-ci` job always runs, because a check that never reports blocks a merge forever.
 
-  plan-apple-legs plan --event EVENT [--changed-files FILE] [--conformance-only true|false]
-      Prints `platform=true|false` and `conformance=true|false` as step outputs on stdout, and the
+  plan-apple-legs plan --event EVENT [--changed-files FILE] [--conformance-only true|false] [--discover-only true|false]
+      Prints `platform=true|false`, `conformance=true|false` and `discover=true|false` as step outputs on stdout, and the
       reason on stderr. On a pull request the changed paths come from FILE (one per line) or, when
       it is omitted, from `git diff --name-only HEAD^1 HEAD` on the merge commit Actions checks out.
       Unknown events plan every leg. An unreadable or empty PR diff plans the platform leg.
@@ -34,6 +35,7 @@ the Apple legs read.
 from __future__ import annotations
 
 import argparse
+import base64
 import fnmatch
 import http.client
 import json
@@ -127,8 +129,10 @@ def apple_affecting(path: str) -> bool:
     return not any(fnmatch.fnmatchcase(path, pattern) for pattern in NOT_APPLE)
 
 
-def plan(event: str, changed: list[str] | None, conformance_only: bool = False) -> tuple[bool, bool, str]:
+def plan(event: str, changed: list[str] | None, conformance_only: bool = False, discover_only: bool = False) -> tuple[bool, bool, str]:
     """(platform, conformance, reason). `changed` is None when the diff could not be read."""
+    if event == "workflow_dispatch" and discover_only:
+        return False, False, "manual dispatch requested Discover proofs only (not a full release run)"
     if event == "workflow_dispatch" and conformance_only:
         return False, True, "manual dispatch requested conformance only (not a full release run)"
     if event != "pull_request":
@@ -162,6 +166,7 @@ def merge_diff() -> list[str] | None:
 REPOSITORY = "legitimate-apps/dulcet"
 WORKFLOW_PATH = ".github/workflows/apple-ci.yml"
 CONFORMANCE_JOBS = {"apple-conformance-core", "apple-conformance-ipad", "apple-conformance-iphone"}
+DISCOVER_JOBS = {"discover-wishlist-macos", "discover-wishlist-ipad", "discover-wishlist-iphone"}
 
 
 class ProofUnavailable(ValueError):
@@ -228,6 +233,30 @@ class GitHub:
                 require(total is None or total == len(result), "API list truncated")
                 return result
         raise ProofUnavailable("API pagination limit reached")
+
+
+def discover_jobs_at(api: GitHub, repository: str, sha: str) -> set[str]:
+    """Read the workflow at the proven SHA, including historical pre-Discover proofs."""
+    document = api.get(f"/repos/{repository}/contents/{WORKFLOW_PATH}?ref={sha}")
+    require(document["type"] == "file" and document["path"] == WORKFLOW_PATH
+            and document["encoding"] == "base64", "unreadable proof workflow")
+    source = base64.b64decode("".join(document["content"].split()), validate=True).decode("utf-8")
+    sections = source.split("\njobs:\n")
+    require(len(sections) == 2, "unreadable proof workflow jobs")
+    # This deliberately supports the repository's block job syntax only. Do not silently
+    # ignore a quoted/inline/anchored key and mistake a newer workflow for the legacy shape.
+    names = []
+    for line in sections[1].splitlines():
+        require(not re.match(r"^[ \t]*\t", line), "unsupported proof workflow indentation")
+        if re.match(r"^  [^ #\s]", line):
+            match = re.fullmatch(r"  ([a-z][a-z0-9-]*):[ ]*(?:#.*)?", line)
+            require(match is not None, "unsupported proof workflow job syntax")
+            names.append(match[1])
+    baseline = {"apple-plan", "apple-ci", "apple-platform", "apple-conformance-core",
+                "apple-conformance-ipad-iphone"}
+    require(len(names) == len(set(names)) and set(names) in (baseline, baseline | DISCOVER_JOBS),
+            "unknown proof workflow job shape")
+    return set(names) & DISCOVER_JOBS
 
 
 def proven_main_push(api: GitHub, repository: str, sha: str, ref: str) -> str:
@@ -304,7 +333,7 @@ def proven_main_push(api: GitHub, repository: str, sha: str, ref: str) -> str:
         return current["id"]
 
     platform_run = proof("pull_request", {"apple-platform"})
-    dispatch_run = proof("workflow_dispatch", CONFORMANCE_JOBS)
+    dispatch_run = proof("workflow_dispatch", CONFORMANCE_JOBS | discover_jobs_at(api, repository, head))
     return (f"Reused Apple proof for PR #{number}: head `{head}`, tree `{pushed_tree}`, "
             f"PR run [{platform_run}](https://github.com/{repository}/actions/runs/{platform_run}), "
             f"dispatch run [{dispatch_run}](https://github.com/{repository}/actions/runs/{dispatch_run}). "
@@ -428,20 +457,23 @@ def proven_parent(api: GitHub, repository: str, sha: str, depth: int) -> dict:
     log = api.get(f'{base}/actions/jobs/{result("apple-plan")["id"]}/logs', log=True)
     require(isinstance(log, str), "parent plan log is unavailable")
     plans = re.findall(r"(?m)^\d{4}-\d\d-\d\dT[^\s]+ APPLE LEG PLAN "
-                       r"platform=(true|false) conformance=(true|false): (.+)$", log)
+                       r"platform=(true|false) conformance=(true|false)(?: discover=(true|false))?: (.+)$", log)
     require(len(plans) == 1, "parent has no unique recorded leg plan")
-    platform, conformance, reason = plans[0]
+    platform, conformance, discover, reason = plans[0]
+    # Older main-push logs omit discover; on push its output is exactly conformance.
+    require(not discover or discover == conformance, "parent Discover plan disagrees with conformance")
+    discover_jobs = discover_jobs_at(api, repository, sha)
     chain = [{"sha": sha, "run": current["id"]}]
     if (platform, conformance) == ("true", "true"):
-        for name in {"apple-platform"} | CONFORMANCE_JOBS:
+        for name in {"apple-platform"} | CONFORMANCE_JOBS | discover_jobs:
             require(result(name)["conclusion"] == "success", f"parent full-run {name} did not succeed")
         proof = {"chain": chain, "base": {"kind": "full", "sha": sha, "run": current["id"]}}
     else:
         require((platform, conformance) == ("false", "false"), "parent had a partial plan")
         # GitHub names an entirely skipped matrix by its unexpanded name.
         leg_names = {job["name"] for job in jobs} - {"apple-plan", "apple-ci"}
-        require(leg_names in ({"apple-platform", "apple-conformance-core", "apple-conformance-${{ matrix.device }}"},
-                              {"apple-platform"} | CONFORMANCE_JOBS), "unknown parent leg shape")
+        require(leg_names in ({"apple-platform", "apple-conformance-core", "apple-conformance-${{ matrix.device }}"} | discover_jobs,
+                              {"apple-platform"} | CONFORMANCE_JOBS | discover_jobs), "unknown parent leg shape")
         require(all(result(name)["conclusion"] == "skipped" for name in leg_names),
                 "parent skip plan does not match its jobs")
         if reason.startswith("Reused Apple proof for PR #"):
@@ -480,6 +512,7 @@ def main() -> int:
     plan_parser.add_argument("--event", required=True)
     plan_parser.add_argument("--changed-files")
     plan_parser.add_argument("--conformance-only", choices=("true", "false"), default="false")
+    plan_parser.add_argument("--discover-only", choices=("true", "false"), default="false")
     plan_parser.add_argument("--proof-fixture", help="Replay recorded REST responses without network access")
     require = commands.add_parser("require-leg")
     require.add_argument("planned")
@@ -503,7 +536,7 @@ def main() -> int:
                 changed = [line.strip() for line in handle if line.strip()]
         else:
             changed = merge_diff()
-    platform, conformance, reason = plan(arguments.event, changed, arguments.conformance_only == "true")
+    platform, conformance, reason = plan(arguments.event, changed, arguments.conformance_only == "true", arguments.discover_only == "true")
     if arguments.event == "push":
         try:
             api = GitHub(os.environ.get("GITHUB_TOKEN", ""), arguments.proof_fixture)
@@ -519,14 +552,16 @@ def main() -> int:
                 os.environ.get("GITHUB_REF", ""), push)
         except (OSError, ValueError, KeyError, TypeError, RecursionError):
             platform, conformance, reason = True, True, "push context or proof fixture unreadable; run every leg"
+    discover = conformance or (arguments.event == "workflow_dispatch" and arguments.discover_only == "true")
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary, "a", encoding="utf-8") as handle:
             handle.write(f"Apple leg plan: platform={str(platform).lower()}, "
-                         f"conformance={str(conformance).lower()}. {reason}\n\n")
+                         f"conformance={str(conformance).lower()}, discover={str(discover).lower()}. {reason}\n\n")
     print(f"APPLE LEG PLAN platform={str(platform).lower()} "
-          f"conformance={str(conformance).lower()}: {reason}", file=sys.stderr)
+          f"conformance={str(conformance).lower()} discover={str(discover).lower()}: {reason}", file=sys.stderr)
     print(f"platform={str(platform).lower()}")
     print(f"conformance={str(conformance).lower()}")
+    print(f"discover={str(discover).lower()}")
     return 0
 
 

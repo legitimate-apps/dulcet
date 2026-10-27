@@ -12,7 +12,14 @@ import Testing
 // MARK: - Fakes
 
 @MainActor
-private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading, DulcetLibraryDepthReading {
+private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading, DulcetLibraryDepthReading, DulcetLibrarySongLookingUp {
+    var songLookups: [DulcetDiscoverLibraryRef] = []
+    var songLookupCompletions: [@MainActor (DulcetReaderItem?) -> Void] = []
+    var songLookupCancelled = false
+    func lookupLibrarySong(_ reference: DulcetDiscoverLibraryRef, completion: @escaping @MainActor (DulcetReaderItem?) -> Void) -> any DulcetLibraryReaderCancellable {
+        songLookups.append(reference); songLookupCompletions.append(completion)
+        return RecordingCancellable { self.songLookupCancelled = true }
+    }
     var depthHandlers: [@MainActor (DulcetLibraryDepthState) -> Void] = []
     var depthCategories: [(String, String, String)] = []
     var depthPins: [(DulcetReaderItem, Bool)] = []
@@ -376,7 +383,7 @@ private let readerAccount = DulcetLibraryReaderAccount(
 private func item(
     _ kind: String = "track",
     _ rawID: String,
-    title: String = "Title",
+    title: String? = "Title",
     favourite: Bool? = nil,
     rating: Int? = nil,
     playability: String? = "streamable",
@@ -498,6 +505,17 @@ func queriesNameTheFacadeRequestKinds() {
     #expect(DulcetLibraryQuery.homeRow(.recentlyPlayed).request.listType == "recent")
     #expect(DulcetLibraryQuery.songsByGenre("Jazz").request.genre == "Jazz")
     #expect(DulcetLibraryQuery.album(rawID: "al-1").request.rawID == "al-1")
+}
+
+@Test
+func readerTitlesUseTheSameLocalizedFallbackAsSearch() {
+    for title: String? in [nil, "", "  ", "\t\n", "A real title"] {
+        let track = item("track", "untitled", title: title)
+        let expected = title == "A real title" ? "A real title" : DulcetStrings.readerUntitled
+        #expect(track.displayTitle == expected)
+        #expect(track.playableTrack?.title == expected)
+        #expect(item("track", "unknown-duration", title: title, duration: nil).playableTrack == nil)
+    }
 }
 
 @Test
@@ -2474,4 +2492,119 @@ func systemSurfacePinnedReplayRevalidatesOpaqueIdentityAndRejectsAnUnpin() async
     #expect(source.queues.count == 1)
     do { try await actions.playPinned(provider: "another-account", rawID: "opaque-song", kind: "track"); Issue.record("foreign pin played") }
     catch DulcetSystemActions.Failure.changedAccount {} catch { Issue.record("wrong account error: \(error)") }
+}
+
+#if os(iOS) || os(macOS)
+@Test @MainActor
+func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    store.navigate(to: .library)
+    store.pushReaderPage(.wishlist)
+    let metadata = DulcetReaderRoute.discover(.album(mbid: "external-album", releaseId: "selected-edition"))
+    store.pushReaderPage(metadata)
+    #expect(store.readerPath == [.wishlist, metadata])
+    store.navigate(to: .search)
+    #expect(store.readerPath(for: .library) == [.wishlist, metadata], "The hidden tab must not be told to pop its retained Wishlist/detail")
+    #expect(store.readerPath(for: .search).isEmpty)
+    store.navigate(to: .library)
+    #expect(store.readerPath == [.wishlist, metadata], "Changing the shell's column arrangement must retain the stored item and back route")
+    store.goBackInLibrary()
+    #expect(store.readerPath == [.wishlist])
+    #expect(store.canGoBackInLibrary)
+    store.goBackInLibrary()
+    #expect(store.readerPath.isEmpty)
+}
+#endif
+
+
+@Test @MainActor func aNewDetailStackCannotEraseAnUnpresentedReaderRoute() {
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    store.selectDestination(.search)
+    let album = DulcetReaderRoute.album(.init(providerInstanceID: "fixture", rawID: "held-album"))
+    // Native iPad NAV 12–17: Search -> Library -> [album], then a new stack writes [].
+    store.showReaderPage(album)
+    store.popReaderFromStack(to: [], presentedRoutes: [])
+    #expect(store.selectedDestination == .library)
+    #expect(store.readerPath == [album], "A new stack's initial write is not a person's Back")
+    // Once the destination has appeared, the same empty prefix is a real Back.
+    store.popReaderFromStack(to: [], presentedRoutes: [album])
+    #expect(store.readerPath.isEmpty)
+}
+
+#if os(iOS) || os(macOS)
+@Test @MainActor func wishlistAlwaysOpensInLibraryFromBrowseOrListenNow() throws {
+    let factory = RecordingReaderFactory()
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
+    let reader = try #require(factory.made.first)
+    reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
+    for origin in [DulcetSidebarDestination.browse, .listenNow] {
+        store.navigate(to: origin)
+        store.showReaderPage(.wishlist)
+        #expect(store.selectedDestination == .library, "Design §6: Library › Wishlist, including a sidebar choice from Browse")
+        #expect(store.readerPath.first == .wishlist)
+    }
+}
+
+
+@Test @MainActor func discoverSongPlaybackUsesAnExactScopedLookupWithoutATitleSearch() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let source = SystemActionTestSource(session)
+    let store = DulcetPresentationStore(source: source)
+    let reader = try #require(factory.made.first)
+    let ref = DulcetDiscoverLibraryRef(providerInstanceId: readerAccount.providerInstanceID, type: "song", id: "opaque-exact")
+    store.openDiscoverLibrary(ref)
+    #expect(reader.songLookups == [ref])
+    #expect(reader.searches.isEmpty, "No title or minimum query length is involved")
+    reader.songLookupCompletions[0](item("track", "wrong-id", title: "A"))
+    #expect(source.queues.isEmpty, "A different local ID must never play")
+    store.openDiscoverLibrary(ref)
+    store.openDiscoverLibrary(ref)
+    reader.songLookupCompletions[1](item("track", "opaque-exact", title: "Obsolete"))
+    #expect(source.queues.isEmpty, "A cancelled previous lookup cannot activate the player")
+    reader.songLookupCompletions[2](item("track", "opaque-exact", title: "A"))
+    #expect(source.queues.first?.tracks.first?.title == "A")
+    #expect(source.queues.first?.tracks.first?.id.rawID == "opaque-exact")
+    store.openDiscoverLibrary(ref)
+    let late = reader.songLookupCompletions[3]
+    session.close()
+    store.resetReaderNavigation()
+    #expect(reader.songLookupCancelled)
+    late(item("track", "opaque-exact", title: "A"))
+    #expect(source.queues.count == 1, "An account close revokes a late exact lookup too")
+}
+#endif
+
+@Test @MainActor func anAlbumPushNeverExposesAnEmptyPathWhileItsPresentationCatchesUp() {
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    store.selectDestination(.browse)
+    typealias Presentation = DulcetReaderStackPresentation<DulcetReaderRoute, String>
+    var presentation = Presentation()
+    let section = DulcetReaderRoute.section(.albums)
+    store.pushReaderPage(section)
+    presentation.request(.init(context: "account-A/browse", path: store.readerPath))
+    presentation.appeared(section)
+    let album = DulcetReaderRoute.album(.init(providerInstanceID: "provider-reader", rawID: "held-album"))
+    store.pushReaderPage(album)
+    let request = Presentation.Request(context: "account-A/browse", path: store.readerPath)
+    // SwiftUI reads the new body before onChange acknowledges the request. That read must
+    // not turn [albums, album] into a root, which later writes back a stale shorter path.
+    let displayed = presentation.displayedPath(for: request)
+    #expect(displayed == [section, album])
+    presentation.request(request)
+    presentation.appeared(album)
+    #expect(store.readerPath == [section, album])
+    #expect(presentation.displayedPath(for: request) == [section, album])
+    // A new account/destination still waits for its own request registration.
+    #expect(presentation.displayedPath(for: .init(context: "account-B/library", path: [album])).isEmpty)
+    // The ordinary Back transition remains accepted after actual presentation.
+    let accepted = presentation.wrote([section])
+    #expect(accepted)
+    store.popReaderFromStack(to: [section], presentedRoutes: presentation.presentedRoutes)
+    #expect(store.readerPath == [section])
 }

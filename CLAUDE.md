@@ -102,7 +102,9 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
   `apple-conformance-iphone`), run in parallel on unproven pushes to `main` and on dispatch. A main
   push can reuse exact-tree PR platform and dispatch conformance proof, or revalidated parent proof
   when its single ordinary commit changes no Apple input (spec §21.6). Parent inheritance is bounded
-  to four edges and records the whole chain. Server sources remain Apple inputs because conformance
+  to four edges and records the whole chain. The three Discover/Wishlist jobs follow the conformance
+  plan on push: proof reuse skips them, and a full fallback runs them. Proof readers require their
+  success whenever the workflow at the proven SHA defines them. Server sources remain Apple inputs because conformance
   builds the disposable server. A dispatch with
   `conformance_only=true` skips `apple-platform`; plain dispatches run every leg. A release build requires
   every leg and every required check green on its commit (spec §21.6).
