@@ -116,7 +116,7 @@ import UIKit
         element.tap()
 #endif
     }
-    func select(_ section: String) {
+    @discardableResult func select(_ section: String) -> XCUIElement {
 #if os(macOS)
         let row = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #else
@@ -133,6 +133,7 @@ import UIKit
         let reachable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: row)
         XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 30), .completed, "Destination must be reachable before activation")
         activate(row)
+        return row
     }
     func selectSavedServer(_ button: XCUIElement) {
         XCTAssertTrue(button.waitForExistence(timeout: 30), "Saved account must appear before checking whether it is enabled: " + app.debugDescription)
@@ -149,9 +150,23 @@ import UIKit
         XCTAssertEqual(XCTWaiter.wait(for: [committed], timeout: 45), .completed, "Saved account must commit before navigating: " + app.debugDescription)
     }
     func search(_ query: String = "Fixture") throws {
-        select("search")
+        var destination = select("search")
         let everywhere = app.buttons["Everywhere"].firstMatch
 #if os(iOS)
+        // The selected Search tab or sidebar row identifies the destination before using Back.
+        var selected = false
+        for attempt in 0..<3 {
+            if attempt > 0 { destination = select("search") }
+            let selection = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: destination)
+            if XCTWaiter.wait(for: [selection], timeout: 15) == .completed {
+                selected = true
+                break
+            }
+        }
+        guard selected else {
+            XCTFail("Search must become the selected destination before returning to its root: " + app.debugDescription)
+            return
+        }
         // Search retains its metadata stack when Open in Library changes destinations.
         // Use the same native Back controls as a person before entering another query.
         let back = app.navigationBars.buttons["BackButton"].firstMatch
