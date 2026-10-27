@@ -798,6 +798,14 @@ jobs:
         run: >-
           python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
           || echo "host-pressure record unavailable; see the summary line above"
+      - name: Upload host-pressure observations on every verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-host-pressure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-host-pressure.log
+          if-no-files-found: warn
+          retention-days: 14
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
       # the platform download and Keychain runs -- along with the JUnit directories
       # `verify-parity-evidence` consumes
@@ -2004,6 +2012,14 @@ jobs:
         run: >-
           python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
           || echo "host-pressure record unavailable; see the summary line above"
+      - name: Upload host-pressure observations on every verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-host-pressure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-host-pressure.log
+          if-no-files-found: warn
+          retention-days: 14
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
       # the platform download and Keychain runs -- along with the JUnit directories
       # `verify-parity-evidence` consumes
@@ -2773,6 +2789,14 @@ jobs:
         run: >-
           python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
           || echo "host-pressure record unavailable; see the summary line above"
+      - name: Upload host-pressure observations on every verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-host-pressure-${{ github.job }}-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-host-pressure.log
+          if-no-files-found: warn
+          retention-days: 14
       # Every Apple test step here writes an .xcresult and discards it with the runner -- including
       # the platform download and Keychain runs -- along with the JUnit directories
       # `verify-parity-evidence` consumes

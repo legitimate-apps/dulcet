@@ -581,3 +581,41 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     and iPad My Library proofs now allow 600 seconds per test, which still fails a test that
     stops making progress. macOS and tvOS keep 300. No proof is retried, and the admission gate
     is unchanged.
+
+    **OBSERVED in [run 40261216579](https://github.com/legitimate-apps/dulcet/actions/runs/40261216579),
+    Refs #343:** an apsd A/B/A experiment aborted on both devices before any measurement window
+    or test arm. Its guard expected `RuntimeRoot/usr/libexec/apsd`; the retained process path
+    instead ends in `RuntimeRoot/System/Library/PrivateFrameworks/ApplePushService.framework/apsd`.
+    No suspension or accessibility comparison occurred. This is inconclusive, not evidence for
+    or against apsd causing starvation. The merge candidate removes the experiment and retains
+    per-PID/start/executable CPU-time deltas and raw records on every verdict. On common observed
+    intervals, simulator/host diagnosticd consumed 67.56/38.78 CPU-seconds over 212.817 seconds
+    (iPhone) and 34.50/20.97 over 156.574 seconds (iPad). These distinguish actual cumulative
+    costs hidden by basename peak summaries; they do not name the consumer or establish cause.
+    Protocol, coverage and result: [apsd investigation](investigations/2026-10-26-apsd-pressure-experiment.md).
+
+    **OBSERVED in corrected [run 40272074448](https://github.com/legitimate-apps/dulcet/actions/runs/40272074448),
+    Refs #343:** the framework-path guard and same-launch restoration passed on both devices.
+    Idle persisted apsd events/s changed A1/B/A2 from 3112/0/6182 (iPhone) and 2767/3.78/1722
+    (iPad), with simulator and host diagnosticd CPU falling in B and returning in A2. iPad's
+    unchanged browse test took 200.087/151.654/195.548 seconds, with maximum query activities
+    3.970/2.748/7.784 seconds. Its complete comparison supports a performance contribution on
+    that VM; it did not reproduce the earlier approximately 19-second query stalls. iPhone A1
+    had a 17.617-second query, but B and A2 failed fixture port preflight before XCTest, so
+    its query comparison is inconclusive. Both restored canonical suites passed, which does
+    not replace the failed arms or prove suspension safe for every assertion. #395 remains
+    measurement-only; no permanent quiescence or starvation fix is established. Full CPU
+    coverage, matched-query controls, residual-message limits and the proposed fixture repair
+    are recorded in the investigation above.
+
+    **OBSERVED in repaired [run 40327052864](https://github.com/legitimate-apps/dulcet/actions/runs/40327052864),
+    Refs #343:** all six comparison arms reached XCTest and passed. Idle suppression and
+    diagnosticd CPU reversal now repeat on four VMs. iPad browse duration again falls in B
+    and rises in A2 (213.338/158.825/186.492 seconds), but iPhone A2 stays as fast as B
+    (192.776/156.405/155.810 seconds). New maximum queries are 3.981/1.652/2.830 seconds
+    (iPhone) and 5.358/0.957/2.550 (iPad); these are different activities, not one matched
+    query. Neither new VM reproduces the earlier 17 to 19-second stalls. apsd is a repeatable
+    CPU contributor and an iPad performance contributor, but is not established as the
+    bottleneck for those failures. Close the experiment as a mitigation candidate, preserving
+    its evidence; no further unchanged dispatch or permanent suspension is proposed. #395
+    stays measurement-only. Full coverage and matched operations are in the investigation.
