@@ -135,6 +135,26 @@ class TvDiscoverTest {
         assertEquals(WishFilter(), source.filter)
     }
 
+    @Test fun switchingToEverywhereDoesNotRestoreTheScopeOverQueryFocus() {
+        val presenter = com.legitimateapps.dulcet.search.SearchPresenter(account,
+            com.legitimateapps.dulcet.search.conformance.LibraryDepthSearchFixture())
+        try {
+            val route = TvRouteFocus()
+            compose.setContent { MaterialTheme {
+                CompositionLocalProvider(LocalTvRouteFocus provides route, LocalTvDiscover provides session,
+                    LocalTvDiscoverNavigator provides navigator) {
+                    TvSearchScreen(presenter, account, onActivate = {})
+                }
+            } }
+            compose.onNodeWithTag("discover.scope.everywhere").performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+            compose.onNodeWithTag("discover.scope.everywhere").performKeyInput { pressKey(Key.DirectionCenter) }
+            compose.waitForIdle()
+            compose.onNodeWithTag("discover.query").performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+            compose.waitForIdle()
+            compose.onNodeWithTag("discover.query").assertIsFocused()
+        } finally { presenter.close() }
+    }
+
     @Test fun unsupportedServerShowsNoDiscoverOrWishlist() {
         source.publish(source.state.copy(access = source.state.access.copy(discoverAvailable = false, wishlistAvailable = false)))
         host(ROUTE_DISCOVER)

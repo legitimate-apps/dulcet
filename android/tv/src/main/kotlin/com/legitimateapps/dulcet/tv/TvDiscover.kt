@@ -85,8 +85,8 @@ private fun Notices(age: DiscoverAge?, error: DiscoverFailure?, loading: Boolean
 }
 
 @Composable
-private fun DiscoverList(title: String, tag: String, navigator: TvNavigator, initialPosition: Int? = null, content: LazyListScope.() -> Unit) {
-    EnterRoute()
+private fun DiscoverList(title: String, tag: String, navigator: TvNavigator, initialPosition: Int? = null, manageRoute: Boolean = true, content: LazyListScope.() -> Unit) {
+    if (manageRoute) EnterRoute()
     val list = rememberLazyListState()
     LaunchedEffect(initialPosition) { if (initialPosition != null) list.scrollToItem(initialPosition) }
     // Stable lazy keys preserve scrolling; restore the action before asking route memory for focus.
@@ -373,12 +373,14 @@ internal fun TvDiscoverQuery(value: String, change: (String) -> Unit, tag: Strin
 
 @Composable
 internal fun TvSearchScreen(presenter: SearchPresenter, account: SearchAccount? = null, playback: AndroidPlaybackController? = null, onActivate: (SearchResultItem) -> Unit) {
+    // The search route persists while scopes change. Its children do not re-enter focus memory.
+    EnterRoute()
     val session = LocalTvDiscover.current
     val publication by (session?.publication ?: remember { kotlinx.coroutines.flow.MutableStateFlow<DiscoverPublication?>(null) }).collectAsState()
     var everywhere by rememberSaveable(session) { mutableStateOf(false) }
     val navigator = LocalTvDiscoverNavigator.current
     if (publication?.access?.discoverAvailable != true || session == null || account == null || navigator == null) {
-        TvCatalogSearchScreen(presenter, account, playback, onActivate); return
+        TvCatalogSearchScreen(presenter, account, playback, manageRoute = false, onActivate = onActivate); return
     }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(horizontal = 56.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -386,7 +388,7 @@ internal fun TvSearchScreen(presenter: SearchPresenter, account: SearchAccount? 
             DiscoverButton("Everywhere", "discover.scope.everywhere", selected = everywhere) { everywhere = true }
         }
         Box(Modifier.weight(1f)) {
-            if (!everywhere) TvCatalogSearchScreen(presenter, account, playback, onActivate)
+            if (!everywhere) TvCatalogSearchScreen(presenter, account, playback, manageRoute = false, onActivate = onActivate)
             else TvDiscoverSearch(session, account, playback, navigator)
         }
     }
@@ -398,7 +400,7 @@ internal fun TvDiscoverSearch(session: DiscoverWishlistSession, account: SearchA
     LaunchedEffect(session) { if (session.publication.value?.access?.canReadWishlist == true) session.refreshWishlist(WishFilter()) }
     val publication by session.publication.collectAsState()
     var field by rememberSaveable { mutableStateOf(publication?.query.orEmpty()) }
-    DiscoverList("Search Everywhere", "discover.search", navigator) {
+    DiscoverList("Search Everywhere", "discover.search", navigator, manageRoute = false) {
         item { TvDiscoverQuery(field, { field = it }, "discover.query") { session.setQuery(field) } }
         item { DiscoverButton("Search Everywhere", "discover.submit", publication?.access?.canSearch == true) { session.setQuery(field) } }
         for (group in publication?.groups.orEmpty()) {

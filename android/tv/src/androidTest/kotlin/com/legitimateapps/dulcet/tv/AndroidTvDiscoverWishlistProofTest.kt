@@ -182,9 +182,19 @@ class AndroidTvDiscoverWishlistProofTest {
 
     private fun select(tag:String) {
         ensureDisplayed(tag)
-        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
+        var requestAccepted:Boolean?=null
+        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus) { requestAccepted=it() }
         compose.waitForIdle()
-        if(tag=="discover.query" && !focused(tag)) {
+        fun queryFocusReceipt(stage:String) {
+            if(tag!="discover.query")return
+            val tags=compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Focused,true),useUnmergedTree=true)
+                .fetchSemanticsNodes().mapNotNull {it.config.getOrNull(SemanticsProperties.TestTag)}.distinct()
+            val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
+            File(directory,"query-focus.json").writeText(JSONObject().put("stage",stage)
+                .put("requestAccepted",requestAccepted ?: JSONObject.NULL).put("focused",focused(tag)).put("focusedTags",JSONArray(tags)).toString())
+        }
+        queryFocusReceipt("requested")
+        if(tag=="discover.query" && !focused(tag) && compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.Role)!=androidx.compose.ui.semantics.Role.Button) {
             var downs=0
             while(!focused(tag) && downs<4) {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
@@ -194,6 +204,7 @@ class AndroidTvDiscoverWishlistProofTest {
             File(directory,"query-focus.json").writeText(JSONObject().put("downKeys",downs).put("focused",focused(tag)).toString())
         }
         await("focus $tag"){focused(tag)}
+        queryFocusReceipt("settled")
         if(tag.startsWith("discover.shelf.trendingArtists.item.") && tag.endsWith(".open")) capture("focused-artist-action")
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
         compose.waitForIdle()

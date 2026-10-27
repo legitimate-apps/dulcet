@@ -168,6 +168,7 @@ internal fun TvCatalogSearchScreen(
     account: SearchAccount? = null,
     /** The playback controller, for Play Next and Add to Queue on a track result (spec §14.1). */
     playback: AndroidPlaybackController? = null,
+    manageRoute: Boolean = true,
     onActivate: (SearchResultItem) -> Unit,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
@@ -218,7 +219,7 @@ internal fun TvCatalogSearchScreen(
         if (editing) { withFrameNanos { }; keyboard?.show() }
     }
     var fieldFocused by remember { mutableStateOf(false) }
-    EnterRoute()
+    if (manageRoute) EnterRoute()
     val route = LocalTvRouteFocus.current
     LaunchedEffect(Unit) {
         if (route == null || route.claimDefault()) runCatching { navFocus?.requestFocus() }
