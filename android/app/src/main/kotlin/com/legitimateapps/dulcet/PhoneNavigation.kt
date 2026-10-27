@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 
@@ -17,8 +18,8 @@ import androidx.compose.ui.unit.sp
 internal fun PhoneNavigationLabel(text: String, onTextLayout: (TextLayoutResult) -> Unit = {}) {
     val density = LocalDensity.current
     CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale.coerceAtMost(1f))) {
-        BasicText(text, onTextLayout = onTextLayout, maxLines = 1,
-            style = LocalTextStyle.current.copy(color = LocalContentColor.current),
+        BasicText(text, onTextLayout = onTextLayout, maxLines = 1, softWrap = false,
+            style = LocalTextStyle.current.copy(color = LocalContentColor.current, textAlign = TextAlign.Center),
             autoSize = TextAutoSize.StepBased(minFontSize = 9.sp,
                 maxFontSize = LocalTextStyle.current.fontSize, stepSize = 0.5.sp))
     }
