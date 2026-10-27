@@ -7960,6 +7960,24 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-27: Discover shelf and public playlist client core.**
+
+Step 3 adds account-owned reads for the six Discover shelf IDs, public playlist search/list and
+playlist entries. The existing Discover publication gains an optional home snapshot with independent
+shelf loading/error state and six recent wishes from the default Wishlist snapshot and outbox.
+Home reads twelve rows per shelf; full lists use twenty and explicit opaque continuation cursors.
+Playlist positions preserve source ordering, duplicates and visible unwishable entries without
+recording MBIDs. Failed refreshes preserve cached content, its original age and a typed refresh
+error. Source-bearing wish intents reuse the existing outbox with `shelf` or `playlist` provenance.
+The Android and fixed Objective-C facades expose these reads through the existing reader admission,
+identity, cancellation and main-thread delivery paths. The current client adapter uses advertised
+OpenSubsonic extensions as step 2 does; Dulcet API token authentication is not added by this core
+change. The [step-3 plan](../plans/2026-10-27-discover-shelves.md) locks the shell interface, copy,
+identifiers and routing, and records the API adoption scope question. The finite fixture provides
+paginated charts and playlists plus acknowledged mixed, empty, stale and unavailable shelf states.
+[Core evidence](../../evidence/discover-shelves-core.md) is distinct from the four native shell
+proofs, which remain integration work. No platform support cell is promoted by this change.
+
 **2026-10-25 - Integrate Discover and Wishlist native clients and finite proof jobs.**
 
 Step 2 composes the existing REST extension reader and durable wish outbox with Search Everywhere,

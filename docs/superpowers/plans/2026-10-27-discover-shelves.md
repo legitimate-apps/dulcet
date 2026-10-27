@@ -27,7 +27,7 @@ Dulcet API equivalents are `/discover/shelves/{shelfId}`, `/discover/playlists?q
 ## Product decisions
 
 1. Show the five design sections in this order: Trending, New releases, Artists like yours, Public playlists, Recent wishes. Trending contains three separately titled subrows: Artists, Albums, Songs, in that order. All six server shelves have independent loading/error/empty state.
-2. Home reads **12 rows per server shelf**. Preserve server order, including new-release preference ordering and unknown metadata. Show **See all** only when `nextCursor != null`. See all starts its own 20-row first page; subsequent pages use its exact cursor and 20 rows. No automatic prefetch or timed refresh. A detail list can grow only through explicit Load more. Never deduplicate playlist recordings: use one-based entry position as row identity within a playlist.
+2. Home reads **12 rows per server shelf**. Preserve server order, including new-release preference ordering and unknown metadata. Show **See all** only when `nextCursor != null`. See all starts its own 20-row first page; subsequent pages use its exact cursor and 20 rows. Public playlists See all opens the public playlist list with an empty query; other See all actions open the corresponding full shelf list. No automatic prefetch or timed refresh. A detail list can grow only through explicit Load more. Never deduplicate playlist recordings: use one-based entry position as row identity within a playlist.
 3. Home refreshes on open and explicit refresh, and the existing account reconnect revalidates an already opened home. Reopening first shows visited cached shelf pages, then each refreshed result. Existing account LRU limits remain 16 MiB JSON and 32 MiB artwork. There is no whole-library mirror or background upstream polling.
 4. Six recent wishes come from the default existing owner-only wishlist snapshot plus pending outbox overlay. Sort by add/action time descending, stable key for ties. Do not fetch a new upstream recommendation for wishes. Home has its own default Wishlist reader so a Library filter cannot narrow Recent wishes. Route this section to Library > Wishlist; no new song-detail API is invented.
 5. Empty successful shelves remain visible, with contextual copy below. No signal for similar artists is an honest empty result. Failed uncached reads show failure and Retry, never the empty message. Failed cached reads keep rows, age and the failure. Loading keeps old rows when available. Loading indicators settle per shelf.
@@ -96,6 +96,7 @@ Use native headings, scroll containers, focus and accessibility semantics. Label
 | Shelf list | `discover.shelfList.{id}` | Same heading/copy, page operations; Load more `discover.shelfList.{id}.more` |
 | Public playlist list | `discover.playlists` | Public playlists; optional native query field `discover.playlists.query`, submit explicitly; empty query lists public playlists |
 | Playlist list row | `discover.playlists.item.{playlistId}` | Open public playlist page |
+| Public playlist list states | `discover.playlists.loading`, `.empty`, `.error`, `.retry`, `.age` | Separate loading, honest empty, error/retry and cached age controls |
 | Playlist list pagination | `discover.playlists.more` | Load more, only with cursor; distinct loading/error/empty/retry controls |
 | Playlist page | `discover.playlist.{playlistId}` | Title, creator, count; ordered entries, no bulk play or bulk wish |
 | Playlist entry | `discover.playlist.{playlistId}.entry.{position}` | Preserve duplicates and source position |
@@ -113,18 +114,18 @@ Empty copy: trending **No trending artists/albums/songs right now.**; new releas
 
 ### Task 1: Core reads and account home (core builder)
 
-- [ ] Add all six shelf reads and public playlist list/page read models, wire adapters and typed failures.
-- [ ] Add visited-read cache entries with cursor/size/query isolation, last-good fallback and original age; reuse existing admission, retirement and backoff.
-- [ ] Publish independent home shelves plus six recent wishes from default owner snapshot/outbox; preserve Library filters.
-- [ ] Test opaque cursors, empty versus failed, stale/offline fallback, shared 429 deadline, late cancellation/identity, ordering, duplicates, missing MBIDs and both WishSource values.
+- [x] Add all six shelf reads and public playlist list/page read models, wire adapters and typed failures.
+- [x] Add visited-read cache entries with cursor/size/query isolation, last-good fallback and original age; reuse existing admission, retirement and backoff.
+- [x] Publish independent home shelves plus six recent wishes from default owner snapshot/outbox; preserve Library filters.
+- [x] Test opaque cursors, empty versus failed, stale/offline fallback, shared 429 deadline, late cancellation/identity, ordering, duplicates, missing MBIDs and both WishSource values.
 - [ ] Resolve protocol scope above before claiming API selection is complete.
 
 ### Task 2: Facades and fixture (core builder)
 
-- [ ] Extend Android and Objective-C facades, safe DTOs and main/cancel/close tests. Save compiler-generated signatures and core handoff evidence.
-- [ ] Record 24-row chart/release/playlist answers with paginated entries, duplicate recordings and missing-MBID recording. Similar shelf has a no-signal empty control.
-- [ ] Add `shelves-mixed`, `shelves-empty`, `shelves-stale`, `shelves-unavailable` controls and revision-bound effect receipts. Require the fault actually fired.
-- [ ] Conformance uses real disposable server reads/outbox/cache and a positively observed healthy Navidrome control, with zero feature requests there.
+- [x] Extend Android and Objective-C facades, safe DTOs and main/cancel/close tests. Save compiler-generated signatures and core handoff evidence.
+- [x] Record 24-row chart/release/playlist answers with paginated entries, duplicate recordings and missing-MBID recording. Similar shelf has a no-signal empty control.
+- [x] Add `shelves-mixed`, `shelves-empty`, `shelves-stale`, `shelves-unavailable` controls and revision-bound effect receipts. Require the fault actually fired.
+- [x] Conformance uses real disposable server reads/outbox/cache and a positively observed healthy Navidrome control, with zero feature requests there.
 
 ### Task 3: Apple shells (Apple builder, independent of Task 4)
 
