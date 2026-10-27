@@ -235,7 +235,7 @@ internal fun PhoneApp(
             if (discoverAvailable) NavigationBarItem(
                 selected = tab == PhoneTab.Discover,
                 onClick = { tab = PhoneTab.Discover; routes.clear(); saveTab(preferences, PhoneTab.Discover) },
-                icon = { Icon(DulcetIcons.Browse, null) },
+                icon = { Icon(DiscoverCompass, null) },
                 label = { PhoneNavigationLabel(stringResource(R.string.discover_home_title)) },
                 modifier = Modifier.testTag("discover.destination"),
             )

@@ -25,6 +25,13 @@ import com.legitimateapps.dulcet.ui.DulcetIcons
 import kotlinx.coroutines.delay
 import kotlin.math.ceil
 
+/** Compass points distinguish Discover from Browse's catalog grid. */
+internal val DiscoverCompass = androidx.compose.ui.graphics.vector.ImageVector.Builder("Discover", 24.dp, 24.dp, 24f, 24f)
+    .addPath(androidx.compose.ui.graphics.vector.PathParser().parsePathString(
+        "M12 2L15 9L22 12L15 15L12 22L9 15L2 12L9 9Z").toNodes(),
+        fill = androidx.compose.ui.graphics.SolidColor(androidx.compose.ui.graphics.Color.Black))
+    .build()
+
 private val shelfIds = listOf("trendingArtists", "trendingAlbums", "trendingSongs", "newReleases", "similarArtists", "publicPlaylists")
 
 @Composable
