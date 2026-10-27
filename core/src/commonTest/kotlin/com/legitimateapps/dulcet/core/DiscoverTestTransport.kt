@@ -13,5 +13,11 @@ internal open class DiscoverTestTransport : DiscoverTransport {
     override suspend fun artistAlbums(mbid:String,cursor:String?,limit:Int)=DiscoverResult.Value(sampleDiscoverPage())
     override suspend fun album(mbid:String,releaseId:String?)=onAlbum(mbid,releaseId)
     override suspend fun albumTracks(mbid:String,releaseId:String,cursor:String?,limit:Int)=onTracks(mbid,releaseId,cursor)
+    var onShelf: suspend (String,String?,Int)->DiscoverResult<DiscoverShelfPage> = {id,_,_ -> DiscoverResult.Value(DiscoverShelfPage(id,sampleDiscoverPage().items,emptyList(),null,sampleDiscoverPage().age))}
+    var onPlaylists: suspend (String,String?)->DiscoverResult<DiscoverPlaylistList> = {_,_ -> DiscoverResult.Value(DiscoverPlaylistList(emptyList(),null,sampleDiscoverPage().age))}
+    var onPlaylist: suspend (String,String?)->DiscoverResult<DiscoverPlaylist> = {id,_ -> DiscoverResult.Value(DiscoverPlaylist(DiscoverPlaylistSummary(id,"Playlist",null,null),emptyList(),null,sampleDiscoverPage().age))}
+    override suspend fun shelf(id:String,cursor:String?,limit:Int)=onShelf(id,cursor,limit)
+    override suspend fun playlists(query:String,cursor:String?,limit:Int)=onPlaylists(query,cursor)
+    override suspend fun playlist(mbid:String,cursor:String?,limit:Int)=onPlaylist(mbid,cursor)
     override suspend fun artwork(artworkId:String):DiscoverResult<ByteArray> { artworkRequests += artworkId; return DiscoverResult.Value(byteArrayOf(-1,-40,-1)) }
 }

@@ -25,6 +25,29 @@ import platform.Foundation.runMode
 /** Real parent/session and native main dispatcher; owner polls deliberately never pump main. */
 @OptIn(ExperimentalAtomicApi::class)
 class AppleDiscoverFacadeTest {
+    @Test fun shelfPlaylistAndHomeCommandsUseMainAndCancellation()=facadeTest {h ->
+        val client=AppleDiscoverClient(h.reader)
+        val shelf=mutableListOf<AppleDiscoverShelfPageResult>()
+        val list=mutableListOf<AppleDiscoverPlaylistListResult>()
+        val playlist=mutableListOf<AppleDiscoverPlaylistResult>()
+        client.shelf("trendingSongs",null){assertTrue(NSThread.isMainThread);shelf+=it}
+        client.playlists("",null){assertTrue(NSThread.isMainThread);list+=it}
+        client.playlist("opaque",null){assertTrue(NSThread.isMainThread);playlist+=it}
+        pumpUntil("shelf and playlist errors"){shelf.size==1 && list.size==1 && playlist.size==1}
+        assertEquals("offline",shelf.single().error!!.code)
+        assertEquals("offline",list.single().error!!.code)
+        assertEquals("offline",playlist.single().error!!.code)
+        val pubs=mutableListOf<AppleDiscoverPublication>()
+        client.observe(object:AppleDiscoverListener {override fun onPublication(publication:AppleDiscoverPublication){pubs+=publication}})
+        client.refreshHome()
+        pumpUntil("settled home"){pubs.any {it.home?.let {home -> home.shelfCount==6 && (0 until home.shelfCount).none {home.shelfAt(it)!!.loading}}==true}}
+        val release=h.holdReader();val cancelled=mutableListOf<AppleDiscoverPlaylistResult>()
+        val op=client.playlist("opaque",null){cancelled+=it};op.cancel();release()
+        pumpUntil("cancelled playlist"){cancelled.size==1};h.onReader {};pumpFor(50.milliseconds)
+        assertEquals("cancelled",cancelled.single().error!!.code)
+        client.close()
+    }
+
     @Test fun callbackMainAndConstructionIsLazy()=facadeTest { h ->
         h.onReader { }
         val before=h.onReader {h.server.log.size}

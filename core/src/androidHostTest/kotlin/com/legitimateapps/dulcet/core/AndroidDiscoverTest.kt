@@ -11,6 +11,29 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
 class AndroidDiscoverTest {
+    @Test fun shelfPlaylistAndHomeCommandsDeliverOnMainAndCancelOnce() = withHarness {h ->
+        val client=AndroidDiscoverClient(h.reader)
+        val mainThread=Thread.currentThread()
+        val shelf=mutableListOf<DiscoverResult<DiscoverShelfPage>>()
+        val list=mutableListOf<DiscoverResult<DiscoverPlaylistList>>()
+        val playlist=mutableListOf<DiscoverResult<DiscoverPlaylist>>()
+        client.shelf("trendingSongs",null){assertSame(mainThread,Thread.currentThread());shelf+=it}
+        client.playlists("",null){assertSame(mainThread,Thread.currentThread());list+=it}
+        client.playlist("opaque",null){assertSame(mainThread,Thread.currentThread());playlist+=it}
+        h.main.drainUntil {shelf.size==1 && list.size==1 && playlist.size==1}
+        for(answer in listOf(shelf.single(),list.single(),playlist.single())) assertEquals("offline",assertIs<DiscoverResult.Failed>(answer).error.code)
+        val pubs=mutableListOf<DiscoverPublication>()
+        client.observe {pubs+=it};client.refreshHome()
+        h.main.drainUntil {pubs.any {it.home?.shelves?.size==6 && it.home.shelves.none {shelf -> shelf.loading}}}
+        assertTrue(h.server.log.isEmpty(),"offline home sends no request")
+        val release=h.holdReader()
+        val cancelled=mutableListOf<DiscoverResult<DiscoverPlaylist>>()
+        val op=client.playlist("opaque",null){cancelled+=it};op.cancel();release.countDown()
+        h.main.drainUntil {cancelled.size==1};h.barrier();h.main.drain()
+        assertEquals("cancelled",assertIs<DiscoverResult.Failed>(cancelled.single()).error.code)
+        client.close()
+    }
+
     @Test fun callbackMainAndConstructionIsLazy() = withHarness { h ->
         val discover=AndroidDiscoverClient(h.reader)
         assertNull(h.session.get(),"constructing Discover must not compose a session")

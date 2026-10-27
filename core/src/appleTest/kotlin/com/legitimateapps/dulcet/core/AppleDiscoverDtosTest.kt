@@ -13,6 +13,24 @@ import platform.posix.memcpy
 /** DTO-only checks; Task 8 also needs real owner/main-thread/close tests in its facade class. */
 @OptIn(ExperimentalForeignApi::class)
 class AppleDiscoverDtosTest {
+    @Test fun shelvesPlaylistsAndHomeCopyListsAndPreserveNullableMetadata() {
+        val summary=DiscoverPlaylistSummary("opaque","Mix",null,null)
+        val summaries=mutableListOf(summary)
+        val items=mutableListOf(sampleDiscoverItem())
+        val age=DiscoverAge(null,null,100,true,true)
+        val page=DiscoverShelfPage("publicPlaylists",items,summaries,"cursor",age,DiscoverFailure("offline",null,true)).appleDiscover()
+        items.clear();summaries.clear()
+        assertEquals(1,page.itemCount);assertEquals(1,page.playlistCount)
+        assertNull(page.itemAt(-1));assertNull(page.playlistAt(1))
+        assertNull(page.playlistAt(0)!!.trackCount);assertNull(page.playlistAt(0)!!.creator)
+        assertEquals("offline",page.refreshError!!.code)
+        val entries=mutableListOf(DiscoverPlaylistEntry(1,sampleDiscoverItem()),DiscoverPlaylistEntry(2,sampleDiscoverItem()))
+        val playlist=DiscoverPlaylist(summary,entries,null,age).appleDiscover();entries.clear()
+        assertEquals(2,playlist.entryCount);assertNull(playlist.entryAt(2));assertEquals(2,playlist.entryAt(1)!!.position)
+        val home=DiscoverHome(listOf(DiscoverShelfState("publicPlaylists",null,false,null)),emptyList(),false,true,null).appleDiscover()
+        assertEquals(1,home.shelfCount);assertNull(home.shelfAt(1));assertNull(home.recentWishAt(0))
+    }
+
     @Test
     fun nullableNumbersRemainNullAndZeroRemainsZero() {
         val unknown = sampleDiscoverItem().appleDiscover()

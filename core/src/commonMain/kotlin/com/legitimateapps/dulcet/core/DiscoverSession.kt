@@ -44,6 +44,9 @@ internal class DiscoverAccount(
         override suspend fun artistAlbums(mbid:String,cursor:String?,limit:Int)=gated({it.canSearch}) {restDiscover.artistAlbums(mbid,cursor,limit)}
         override suspend fun album(mbid:String,releaseId:String?)=gated({it.canSearch}) {restDiscover.album(mbid,releaseId)}
         override suspend fun albumTracks(mbid:String,releaseId:String,cursor:String?,limit:Int)=gated({it.canSearch}) {restDiscover.albumTracks(mbid,releaseId,cursor,limit)}
+        override suspend fun shelf(id:String,cursor:String?,limit:Int)=gated({it.canSearch}) {restDiscover.shelf(id,cursor,limit)}
+        override suspend fun playlists(query:String,cursor:String?,limit:Int)=gated({it.canSearch}) {restDiscover.playlists(query,cursor,limit)}
+        override suspend fun playlist(mbid:String,cursor:String?,limit:Int)=gated({it.canSearch}) {restDiscover.playlist(mbid,cursor,limit)}
         override suspend fun artwork(artworkId:String)=gated({it.canSearch}) {restDiscover.artwork(artworkId)}
     }
     val outbox=WishOutbox(store,wishlistTransport,::gates,::active,{reader.canSend},backoff=backoff,changed=::changed)
@@ -99,6 +102,13 @@ internal class DiscoverAccount(
         private var groups=emptyList<DiscoverGroup>()
         private val listeners=mutableSetOf<(DiscoverPublication)->Unit>()
         private val operations=mutableSetOf<CommandOperation<*>>()
+        private var visibleHome=false
+        private var homeTicket=0L
+        private var shelves=emptyList<DiscoverShelfState>()
+        private val homeOperations=mutableListOf<DiscoverOperation>()
+        private val homeWishes=WishlistReader(store,wishlistTransport,outbox,::gates,{!closed&&active()},changed=::publish)
+        private var homeWishlistJob:Job?=null
+        private fun home():DiscoverHome? = if(!visibleHome) null else DiscoverHome(shelves,recentDiscoverWishes(homeWishes.rows),homeWishes.loading,homeWishes.settled,homeWishes.error)
         private var visibleWishlist=false
         private var filter=WishFilter()
         private var refreshing:Job?=null
@@ -115,7 +125,7 @@ internal class DiscoverAccount(
             val publication=try {
                 DiscoverPublication(reader.cache.serverId,++generation,gates(),
                     if(reader.online && active())"online" else "offline",query,groups,
-                    wishlist.rows,wishlist.loading,wishlist.error,wishlist.settled,store.pendingCount())
+                    wishlist.rows,wishlist.loading,wishlist.error,wishlist.settled,store.pendingCount(),home())
             } catch(_:Exception){
                 val failure=DiscoverFailure("storage",null,true)
                 DiscoverPublication(reader.cache.serverId,++generation,
@@ -132,6 +142,45 @@ internal class DiscoverAccount(
         override fun artistAlbums(mbid:String,cursor:String?,completion:(DiscoverResult<DiscoverPage>)->Unit)=page(completion){pages.artistAlbums(mbid,cursor,it)}
         override fun album(mbid:String,releaseId:String?,completion:(DiscoverResult<DiscoverAlbum>)->Unit)=page(completion){pages.album(mbid,releaseId,it)}
         override fun albumTracks(mbid:String,releaseId:String,cursor:String?,completion:(DiscoverResult<DiscoverPage>)->Unit)=page(completion){pages.albumTracks(mbid,releaseId,cursor,it)}
+        override fun shelf(id:String,cursor:String?,completion:(DiscoverResult<DiscoverShelfPage>)->Unit)=page(completion){pages.shelf(id,cursor,it)}
+        override fun playlists(query:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylistList>)->Unit)=page(completion){pages.playlists(query,cursor,it)}
+        override fun playlist(mbid:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylist>)->Unit)=page(completion){pages.playlist(mbid,cursor,it)}
+        override fun refreshHome(){
+            reader.checkConfined();if(closed || !active())return
+            visibleHome=true
+            val ticket=++homeTicket
+            homeOperations.toList().forEach {it.cancel()};homeOperations.clear()
+            homeWishlistJob?.cancel()
+            scope.launch {
+              try {
+                detect()
+                if(closed || !active() || homeTicket!=ticket)return@launch
+                if(!gates().canSearch){shelves=emptyList();publish();return@launch}
+                shelves=discoverShelfIds.map {id -> DiscoverShelfState(id,shelves.firstOrNull {it.id==id}?.page?.let {it.copy(age=it.age.copy(fromDeviceCache=true))} ?: pages.cachedShelf(id),true,null)}
+                publish()
+                homeWishlistJob=scope.launch {homeWishes.refresh(WishFilter())}
+                for(id in discoverShelfIds) {
+                    if(closed || !active() || homeTicket!=ticket)break
+                    homeOperations+=pages.shelf(id,null,{result ->
+                        if(!closed && active() && homeTicket==ticket) {
+                            shelves=shelves.map {state -> if(state.id!=id) state else when(result) {
+                                is DiscoverResult.Value -> DiscoverShelfState(id,result.value,false,result.value.refreshError)
+                                is DiscoverResult.Failed -> state.copy(page=state.page?.let {it.copy(age=it.age.copy(fromDeviceCache=true))},loading=false,error=result.error)
+                            }}
+                            publish()
+                        }
+                    },12)
+                }
+              } catch(cancelled:CancellationException){throw cancelled}
+                catch(_:Exception){
+                    if(!closed && active() && homeTicket==ticket) {
+                        val failure=DiscoverFailure("storage",null,true)
+                        shelves=discoverShelfIds.map {id -> DiscoverShelfState(id,shelves.firstOrNull {it.id==id}?.page?.let {it.copy(age=it.age.copy(fromDeviceCache=true))},false,failure)}
+                        publish()
+                    }
+                }
+            }
+        }
         override fun artwork(artworkId:String,completion:(DiscoverResult<ByteArray>)->Unit)=page(completion){pages.artwork(artworkId,it)}
         private fun <T> page(completion:(DiscoverResult<T>)->Unit,start:((DiscoverResult<T>)->Unit)->DiscoverOperation):DiscoverOperation {
             reader.checkConfined()
@@ -170,9 +219,11 @@ internal class DiscoverAccount(
                 val unresolved=access.detection!="known"
                 if(query.isNotEmpty() && (unresolved || access.discoverAvailable))search.revalidate()
                 if(visibleWishlist && (unresolved || access.wishlistAvailable))refreshWishlist(filter)
+                if(visibleHome && (unresolved || access.discoverAvailable))refreshHome()
             }else {
                 if(!active()) {
-                    search.close();pages.close()
+                    search.close();pages.close();homeWishes.close()
+                    shelves=emptyList()
                     groups=groups.map {it.copy(loading=false,error=DiscoverFailure("identity-changed",null,false))}
                 }
                 publish()
@@ -181,7 +232,7 @@ internal class DiscoverAccount(
         override fun close(){
             if(closed)return
             closed=true;listeners.clear();operations.toList().forEach {it.cancel()}
-            search.close();pages.close();wishlist.close();scope.cancel();clients-=this
+            search.close();pages.close();wishlist.close();homeWishes.close();scope.cancel();clients-=this
         }
         private inner class CommandOperation<T>(private val completion:(DiscoverResult<T>)->Unit):DiscoverOperation {
             var job:Job?=null

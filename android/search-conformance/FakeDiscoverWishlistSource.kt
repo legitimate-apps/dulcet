@@ -21,6 +21,10 @@ class FakeDiscoverWishlistSource:DiscoverWishlistSource {
     override fun artistAlbums(mbid:String,cursor:String?,completion:(DiscoverResult<DiscoverPage>)->Unit)=operation.also{completion(DiscoverResult.Value(page(emptyList())))}
     override fun album(mbid:String,releaseId:String?,completion:(DiscoverResult<DiscoverAlbum>)->Unit)=operation.also {selected+=releaseId;completion(DiscoverResult.Value(albums[releaseId]?:DiscoverAlbum(item("album"),emptyList(),null,page(emptyList()))))}
     override fun albumTracks(mbid:String,releaseId:String,cursor:String?,completion:(DiscoverResult<DiscoverPage>)->Unit)=operation.also{completion(DiscoverResult.Value(page(emptyList())))}
+    override fun refreshHome() {}
+    override fun shelf(id:String,cursor:String?,completion:(DiscoverResult<DiscoverShelfPage>)->Unit)=operation.also {completion(DiscoverResult.Failed(DiscoverFailure("unsupported",null,false)))}
+    override fun playlists(query:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylistList>)->Unit)=operation.also {completion(DiscoverResult.Failed(DiscoverFailure("unsupported",null,false)))}
+    override fun playlist(mbid:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylist>)->Unit)=operation.also {completion(DiscoverResult.Failed(DiscoverFailure("unsupported",null,false)))}
     override fun artwork(artworkId:String,completion:(DiscoverResult<ByteArray>)->Unit)=operation.also{completion(DiscoverResult.Failed(DiscoverFailure("missing-art",null,false)))}
     override fun refreshWishlist(filter:WishFilter){this.filter=filter;publish()}
     override fun add(item:DiscoverItem,source:WishSource,completion:(DiscoverResult<WishEnqueued>)->Unit)=operation.also{added++;completion(DiscoverResult.Value(WishEnqueued("op","op")))}

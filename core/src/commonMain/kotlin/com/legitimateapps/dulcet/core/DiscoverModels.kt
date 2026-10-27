@@ -63,7 +63,7 @@ sealed interface DiscoverResult<out T> {
 data class WishSnapshot(val title: String, val artist: String?, val year: Int?, val artworkId: String?)
 @HiddenFromObjC
 @Serializable
-data class WishSource(val type: String, val id: String?) // search/artist/album now; shelf/playlist later
+data class WishSource(val type: String, val id: String?) // search/artist/album/shelf/playlist
 @HiddenFromObjC
 @Serializable
 data class DiscoverWish(val id: String, val userId: String, val target: DiscoverTarget?,
@@ -99,6 +99,9 @@ internal interface DiscoverTransport {
     suspend fun artistAlbums(mbid: String, cursor: String?, limit: Int = 20): DiscoverResult<DiscoverPage>
     suspend fun album(mbid: String, releaseId: String?): DiscoverResult<DiscoverAlbum>
     suspend fun albumTracks(mbid: String, releaseId: String, cursor: String?, limit: Int = 20): DiscoverResult<DiscoverPage>
+    suspend fun shelf(id: String, cursor: String?, limit: Int = 20): DiscoverResult<DiscoverShelfPage>
+    suspend fun playlists(query: String, cursor: String?, limit: Int = 20): DiscoverResult<DiscoverPlaylistList>
+    suspend fun playlist(mbid: String, cursor: String?, limit: Int = 20): DiscoverResult<DiscoverPlaylist>
     suspend fun artwork(artworkId: String): DiscoverResult<ByteArray>
 }
 internal interface WishlistTransport {
@@ -128,7 +131,7 @@ data class DiscoverPublication(val providerInstanceId: String, val generation: L
     val access: DiscoverFeatureAccess, val connection: String, val query: String,
     val groups: List<DiscoverGroup>, // connection: online/offline/validating
     val wishes: List<WishRow>, val wishlistLoading: Boolean, val wishlistError: DiscoverFailure?,
-    val wishlistSettled: Boolean, val pendingChangeCount: Long?)
+    val wishlistSettled: Boolean, val pendingChangeCount: Long?, val home: DiscoverHome? = null)
 @HiddenFromObjC
 @Serializable
 data class WishEnqueued(val operationId: String, val rowKey: String)
@@ -145,6 +148,10 @@ interface DiscoverClient {
     fun artistAlbums(mbid: String, cursor: String?, completion: (DiscoverResult<DiscoverPage>) -> Unit): DiscoverOperation
     fun album(mbid: String, releaseId: String?, completion: (DiscoverResult<DiscoverAlbum>) -> Unit): DiscoverOperation
     fun albumTracks(mbid: String, releaseId: String, cursor: String?, completion: (DiscoverResult<DiscoverPage>) -> Unit): DiscoverOperation
+    fun refreshHome()
+    fun shelf(id: String, cursor: String?, completion: (DiscoverResult<DiscoverShelfPage>) -> Unit): DiscoverOperation
+    fun playlists(query: String, cursor: String?, completion: (DiscoverResult<DiscoverPlaylistList>) -> Unit): DiscoverOperation
+    fun playlist(mbid: String, cursor: String?, completion: (DiscoverResult<DiscoverPlaylist>) -> Unit): DiscoverOperation
     fun artwork(artworkId: String, completion: (DiscoverResult<ByteArray>) -> Unit): DiscoverOperation
     fun refreshWishlist(filter: WishFilter)
     fun add(item: DiscoverItem, source: WishSource, completion: (DiscoverResult<WishEnqueued>) -> Unit): DiscoverOperation
