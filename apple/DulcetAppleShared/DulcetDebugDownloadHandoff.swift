@@ -232,7 +232,7 @@ struct DulcetDebugDownloadHandoffOverlay: View {
 /// must still find the account it connected. 🚨 Disposable canary credentials only: the proof
 /// connects the local disposable server, and the file is removed with the probe's directory.
 @MainActor
-final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialStoring {
+final class DulcetDebugHandoffCredentialStore: DulcetSavedServerCredentialStoring {
     private struct Record: Codable {
         let serverURL: String
         let username: String
@@ -240,6 +240,7 @@ final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialS
         let allowLocalHTTP: Bool
         let providerInstanceID: String
         let credentialGeneration: Int64
+        let serverIdentity: String?
     }
 
     private let fileURL: URL
@@ -275,6 +276,33 @@ final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialS
     }
 
     var providerInstanceID: String? { read()?.providerInstanceID }
+    var serverIdentity: String { read()?.serverIdentity ?? "" }
+    var savedProviderInstanceIDs: [String] {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: fileURL.deletingLastPathComponent().path)) ?? []
+        var ids = files.filter { $0.hasPrefix("saved-") && $0.hasSuffix(".json") }.map { String($0.dropFirst(6).dropLast(5)) }.sorted()
+        if let providerInstanceID, !ids.contains(providerInstanceID) { ids.append(providerInstanceID) }
+        return ids
+    }
+    private func savedURL(_ id: String) -> URL { fileURL.deletingLastPathComponent().appendingPathComponent("saved-" + id + ".json") }
+    private func read(_ id: String) throws -> Record {
+        if let active = read(), active.providerInstanceID == id { return active }
+        return try JSONDecoder().decode(Record.self, from: Data(contentsOf: savedURL(id)))
+    }
+    func load(providerInstanceID: String) throws -> DulcetAccountConnectRequest {
+        let record = try read(providerInstanceID)
+        return .init(serverURL: record.serverURL, username: record.username, password: record.password, allowLocalHTTP: record.allowLocalHTTP)
+    }
+    func serverIdentity(providerInstanceID: String) throws -> String { try read(providerInstanceID).serverIdentity ?? "" }
+    func activate(providerInstanceID: String) throws {
+        let record = try read(providerInstanceID)
+        try JSONEncoder().encode(record).write(to: fileURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        credentialGeneration = record.credentialGeneration
+    }
+    func delete(providerInstanceID: String) throws {
+        try? FileManager.default.removeItem(at: savedURL(providerInstanceID))
+        if self.providerInstanceID == providerInstanceID { try delete() }
+    }
 
     func load() throws -> DulcetAccountConnectRequest? {
         guard let record = read() else {
@@ -295,7 +323,10 @@ final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialS
     }
 
     func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
-        let previous = read()
+        try save(request, providerInstanceID: providerInstanceID, serverIdentity: (try? serverIdentity(providerInstanceID: providerInstanceID)) ?? "")
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String, serverIdentity: String) throws {
+        let previous = try? read(providerInstanceID)
         let unchanged = previous.map {
             $0.serverURL == request.serverURL && $0.username == request.username
                 && $0.password == request.password && $0.allowLocalHTTP == request.allowLocalHTTP
@@ -307,7 +338,7 @@ final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialS
             password: request.password,
             allowLocalHTTP: request.allowLocalHTTP,
             providerInstanceID: providerInstanceID,
-            credentialGeneration: generation
+            credentialGeneration: generation, serverIdentity: serverIdentity
         )
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
@@ -315,10 +346,13 @@ final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialS
         )
         try JSONEncoder().encode(record).write(to: fileURL, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        try JSONEncoder().encode(record).write(to: savedURL(providerInstanceID), options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: savedURL(providerInstanceID).path)
         credentialGeneration = generation
     }
 
     func delete() throws {
+        if let id = providerInstanceID { try? FileManager.default.removeItem(at: savedURL(id)) }
         try? FileManager.default.removeItem(at: fileURL)
         credentialGeneration = 0
     }
@@ -337,6 +371,7 @@ enum DulcetDebugLaunchAccount {
                   "-dulcet-debug-account-username", in: arguments),
               let password = DulcetDebugDownloadHandoff.launchArgumentValue(
                   "-dulcet-debug-account-password", in: arguments) else { return }
+        if arguments.contains("-dulcet-debug-add-account") { store.addServer() }
         store.accountServerURL = serverURL
         store.accountUsername = username
         store.accountPassword = password

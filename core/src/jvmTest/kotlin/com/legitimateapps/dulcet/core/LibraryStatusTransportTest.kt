@@ -21,6 +21,15 @@ import kotlin.time.Duration.Companion.seconds
  * classification reads, for a plain request and for a repeated-parameter one alike.
  */
 class LibraryStatusTransportTest {
+    @Test
+    fun binaryRequestPreservesBytesWithMislabeledContentType() = answering("200 OK", listOf("Content-Type: application/json"), "GIF89a\u0000\u007f") { transport ->
+        val response = transport.requestBinary("getDulcetDiscoverCoverArt", mapOf("id" to "opaque:%/"), 5_242_880)
+        kotlin.test.assertContentEquals("GIF89a\u0000\u007f".encodeToByteArray(), response.body)
+        assertEquals(200, response.statusCode)
+        assertEquals("getDulcetDiscoverCoverArt", response.requestTrace.endpoint)
+        kotlin.test.assertFalse(response.redactedUrl.contains("u="))
+    }
+
     private fun classified(response: LibraryEndpointResponse): DomainError =
         assertFailsWith<LibraryRequestFailure> {
             runBlocking { LibraryEndpointTransport { _, _ -> response }.checkedRequest("updatePlaylist") }

@@ -2,4 +2,6 @@
 <!-- The suite talks to the disposable server over the device's loopback (adb reverse). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Match the phone and TV apps: local HTTP is allowed; the core rejects HTTPS downgrades. -->
+    <application android:usesCleartextTraffic="true" />
 </manifest>

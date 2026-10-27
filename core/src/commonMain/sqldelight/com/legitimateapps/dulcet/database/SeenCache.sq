@@ -703,6 +703,11 @@ WHERE server_id = ? AND owner_kind = ? AND owner_raw_id = ? AND role = ? AND ord
 -- Binding purge (CONF-80): the whole namespace, in one transaction ---------------------------------
 
 purgeNamespace {
+  DELETE FROM discover_read WHERE server_id = :server_id;
+  DELETE FROM wishlist_snapshot WHERE server_id = :server_id;
+  DELETE FROM wish_intent WHERE server_id = :server_id;
+  DELETE FROM wish_receipt WHERE server_id = :server_id;
+  DELETE FROM wish_clock WHERE server_id = :server_id;
   DELETE FROM cache_lyrics_line WHERE server_id = :server_id;
   DELETE FROM cache_lyrics_layer WHERE server_id = :server_id;
   DELETE FROM cache_lyrics WHERE server_id = :server_id;
@@ -723,7 +728,13 @@ purgeNamespace {
 
 countNamespaceRows:
 SELECT sum(row_count) FROM (
-  SELECT count(*) AS row_count FROM cache_list_member WHERE server_id = :server_id
+  SELECT count(*) AS row_count FROM discover_read WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM wishlist_snapshot WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM wish_intent WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM wish_receipt WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM wish_clock WHERE server_id = :server_id
+  UNION ALL
+  SELECT count(*) FROM cache_list_member WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_list WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_credit WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_track WHERE server_id = :server_id

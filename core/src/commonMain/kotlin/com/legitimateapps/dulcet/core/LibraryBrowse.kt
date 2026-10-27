@@ -133,6 +133,10 @@ internal data class LibraryEndpointResponse(
 )
 
 internal fun interface LibraryEndpointTransport {
+    /** Byte-preserving request; JSON-only transports must explicitly opt in. */
+    suspend fun requestBinary(endpoint: String, parameters: Map<String, String>, maxBodyBytes: Int): AuthenticatedEndpointResponse =
+        throw LibraryRequestFailure(DomainError.Protocol.UnexpectedBinary)
+
     suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse
 
     /**
@@ -475,6 +479,10 @@ internal class KtorLibraryEndpointTransport(
         endpoint: String,
         parameters: Map<String, String>,
     ): LibraryEndpointResponse = client.request(endpoint, parameters).toLibraryResponse()
+
+    override suspend fun requestBinary(endpoint: String, parameters: Map<String, String>, maxBodyBytes: Int): AuthenticatedEndpointResponse =
+        client.request(endpoint, parameters, AuthenticatedEndpointRequestOptions(maxBodyBytes = maxBodyBytes))
+
 
     /** Stops reading at the limit: see [AuthenticatedEndpointRequestOptions.maxBodyBytes]. */
     override suspend fun request(

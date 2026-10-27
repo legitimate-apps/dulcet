@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "scenarios": {
+    "normal": "Pass through to the disposable server.",
+    "delayed-old-query": "Hold an old query until a new query is served, then delay 750 ms and prefix only old row titles with Obsolete old query; acknowledge distinct response payloads in order.",
+    "rate-limit-120": "Search answers HTTP 429 and Retry-After 120; each injection is counted.",
+    "stale-answer": "Search passes through, then carries stale=true and original age 7200 seconds.",
+    "offline": "Close app connections while control and independent server assertions remain available.",
+    "lost-add-receipt": "Deliver one add to the server, then close the response connection.",
+    "scan-arrival": "Install the generated tagged arrival file, run startScan and await scan/fulfilment.",
+    "remove-before-add": "Hold an add until cancellation is observed, bounded to 2 seconds.",
+    "identity-replacement": "Restore the documented Testing checkpoint, changing the real server instanceId.",
+    "future-metadata": "Expose a future kind/status and a missing-MBID row, both unwishable.",
+    "held-detail": "Hold artist/album detail after recording held=true until POST /control/release-detail; acknowledge released=true, with a 90-second safety expiry.",
+    "held-wishlist": "Hold Wishlist reads after recording held=true until POST /control/release-read; acknowledge released=true, with a 90-second safety expiry."
+  }
+}

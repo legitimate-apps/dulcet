@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""Run finite Discover component or session conformance inside the fixture."""
+import argparse
+import os
+from pathlib import Path
+import sys
+sys.dont_write_bytecode = True
+from discover_process_owner import ProcessOwner
+p=argparse.ArgumentParser(description=__doc__)
+p.add_argument('--self-test',action='store_true')
+p.add_argument('--build-for-testing',action='store_true',help='compile iPhone/iPad tests without a fixture or simulator boot')
+p.add_argument('mode',nargs='?',choices=['components','sessions','iphone','ipad','mac','macos','android'])
+a=p.parse_args()
+if a.self_test:
+    import unittest
+    import test_discover_proof_report
+    import test_discover_hosted_admission
+    suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromModule(module)
+                             for module in (test_discover_proof_report, test_discover_hosted_admission))
+    result=unittest.TextTestRunner(verbosity=2).run(suite)
+    sys.exit(0 if result.wasSuccessful() else 1)
+if not a.mode:p.error('mode is required')
+if not a.build_for_testing and os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
+if a.mode=='android':
+    helper=str(Path(__file__).resolve().parent/'run-discover-wishlist-android')
+    os.execv(helper,[helper])
+repo=Path(__file__).resolve().parents[2]
+def completed_native_report(bundle, suite, selected, output):
+    """Convert only a complete XCTest transcript; never infer execution from a build exit."""
+    import re
+    import xml.etree.ElementTree as ET
+    expected=['testEverywhereQueryPagesAndHeldRouting','testOfflineWishRelaunchRemoveAndScanArrival','testBusyStaleAndNavidromeControl','testAccountSwitchAndIdentityReplacementFence']
+    if suite.endswith('MacUITests') or suite=='DulcetMacDiscoverWishlistAppTest':expected+=['testMacKeyboardSearchSidebarAndContextRemove','testMacWindowClosureDropsPendingNavigation']
+    elif suite.endswith('IPadUITests'):expected+=['testIPadSidebarSelectionSurvivesWishlistDetailAndResize']
+    else:expected+=['testIPhoneLargestTextAndVoiceOverLabels']
+    if '/' in selected:expected=[selected.rsplit('/',1)[-1]]
+    for path in bundle.rglob('StandardOutputAndStandardError*.txt'):
+        transcript=path.read_text(errors='replace')
+        if not re.search(r"Test Suite 'Selected tests' (?:passed|failed) at",transcript):continue
+        results=re.findall(r"Test Case '-\[([^ ]+) (test\w+)\]' (passed|failed) \(([\d.]+) seconds\)\.",transcript)
+        results=[r for r in results if r[0].endswith('.'+suite)]
+        if sorted(r[1] for r in results)!=sorted(expected):continue
+        counts=re.findall(r'Executed (\d+) tests?, with (\d+) failures? \((\d+) unexpected\)',transcript)
+        failures=sum(r[2]=='failed' for r in results)
+        if not any(int(n)==len(results) and int(f)==failures for n,f,_ in counts):continue
+        root=ET.Element('testsuite',name=suite,tests=str(len(results)),failures=str(failures),errors='0',skipped='0')
+        for cls,name,status,seconds in results:
+            case=ET.SubElement(root,'testcase',classname=cls,name=name,time=seconds)
+            if status=='failed':
+                errors=[line for line in transcript.splitlines() if 'error:' in line and name in line]
+                ET.SubElement(case,'failure',message='\n'.join(errors) or 'XCTest reported failure').text='\n'.join(errors)
+        ET.ElementTree(root).write(output/'junit.xml',encoding='utf-8',xml_declaration=True)
+        (output/'completed-tests.txt').write_text(transcript)
+        return dict(total=len(results),passed=len(results)-failures,failed=failures,skipped=0)
+    return None
+
+def apple_build_for_testing(mode):
+    import json
+    import subprocess
+    import tempfile
+    if mode not in {'iphone','ipad'}:p.error('--build-for-testing requires iphone or ipad')
+    owner=ProcessOwner().install()
+    session='dulcet-discover-build-'+mode+'-'+str(os.getpid())
+    hosted=os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('RUNNER_ENVIRONMENT')=='github-hosted'
+    derived=Path(tempfile.gettempdir())/('dulcet-discover-'+mode)
+    output=Path(os.environ.get('DULCET_DISCOVER_PROOF_OUTPUT',str(repo/'build/discover-proofs'/mode/'native'))).parent/'build'
+    output.mkdir(parents=True,exist_ok=True)
+    suite='DulcetDiscoverWishlistIPadUITests' if mode=='ipad' else 'DulcetDiscoverWishlistUITests'
+    command=['xcodebuild','build-for-testing','-project',str(repo/'apple/Dulcet.xcodeproj'),
+             '-scheme','DulcetiOS','-destination','generic/platform=iOS Simulator',
+             '-parallel-testing-enabled','NO','-derivedDataPath',str(derived),
+             '-only-testing:DulcetiOSUITests/'+suite,'ARCHS=arm64','ONLY_ACTIVE_ARCH=YES']
+    try:
+        gate=os.environ.get('DULCET_DISCOVER_HOST_GATE')
+        if gate:owner.run([gate,'--wait','3600'],check=True)
+        if not hosted:owner.run(['leg-lease','create','--kind','build','--session',session,'--project','dulcet','--pid',str(os.getpid()),'--wait','7200'],check=True)
+        with (output/'xcodebuild.log').open('w') as log:
+            owner.run(command,cwd=repo,stdout=log,stderr=subprocess.STDOUT,check=True)
+        receipt=dict(mode=mode,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip())
+        (derived/'discover-build.json').write_text(json.dumps(receipt))
+        (output/'invocation.json').write_text(json.dumps(dict(**receipt,command=command),indent=2))
+    finally:
+        owner.stop_children()
+        if not hosted:subprocess.run(['leg-lease','release','--session',session],check=False,timeout=30)
+        owner.close()
+    return 0
+
+def apple_proof(mode):
+    import json
+    import subprocess
+    import tempfile
+    import urllib.request
+    from datetime import datetime, timezone
+    mode='macos' if mode=='mac' else mode
+    output=Path(os.environ.get('DULCET_DISCOVER_PROOF_OUTPUT',str(repo/'build'/'discover-proofs'/mode/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))))
+    output.mkdir(parents=True,exist_ok=False)
+    captures=output/'captures';captures.mkdir()
+    session='dulcet-discover-'+mode+'-'+str(os.getpid())
+    # The simulator's test runner cannot write the host's external volume reliably. Receive
+    # genuine native JPEGs over loopback, independently of xcresult finalization.
+    import base64, re, threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    class CaptureReceiver(BaseHTTPRequestHandler):
+        def log_message(self,*args): pass
+        def do_POST(self):
+            try:
+                length=int(self.headers.get('Content-Length','0'))
+                if not 0 < length < 16_000_000: raise ValueError('capture size')
+                body=json.loads(self.rfile.read(length))
+                if 'ack' in body:
+                    with (output/'acknowledgements.jsonl').open('a') as record: record.write(json.dumps(body['ack'],sort_keys=True)+'\n')
+                    self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(b'{"stored":true}'); return
+                name=body['name']
+                if not re.fullmatch(r'[A-Za-z0-9_-]+',name): raise ValueError('capture name')
+                data=base64.b64decode(body['jpeg'],validate=True)
+                if not data.startswith(bytes.fromhex('ffd8')): raise ValueError('JPEG required')
+                (captures/(name+'.jpg')).write_bytes(data)
+                if 'captureKind' in body:(captures/(name+'.source.json')).write_text(json.dumps({'captureKind':body['captureKind']},sort_keys=True))
+                self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(b'{"stored":true}')
+            except Exception:
+                self.send_response(400); self.end_headers()
+    class LoopbackCaptureServer(ThreadingHTTPServer):
+        def server_bind(self):
+            # HTTPServer adds a reverse-DNS lookup to TCPServer's bind. These callbacks
+            # use only a numeric loopback URL, so hostname discovery serves no purpose
+            # and can stall before native ownership/cleanup is installed.
+            from socketserver import TCPServer
+            TCPServer.server_bind(self)
+            self.server_name,self.server_port=self.server_address
+    capture_server=LoopbackCaptureServer(('127.0.0.1',0),CaptureReceiver)
+    threading.Thread(target=capture_server.serve_forever,daemon=True).start()
+    owner=ProcessOwner().install()
+    lease=None;udid=None;owned_device=False;navigation_log=None;navigation_stream=None
+    hosted=os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('RUNNER_ENVIRONMENT')=='github-hosted'
+    from discover_hosted_admission import HostedAppleAdmission
+    hosted_admission=HostedAppleAdmission(owner,repo/'tools/ci',output,mode) if hosted else None
+    monitor_done=threading.Event()
+    navigation_ready=threading.Event()
+    boot_settled=threading.Event()
+    native_started=threading.Event()
+    def host_gate():
+        gate=os.environ.get("DULCET_DISCOVER_HOST_GATE")
+        if gate:run([gate,"--wait","3600"])
+    def run(argv,**kw):
+        try:return owner.run(argv,check=True,text=True,**kw)
+        except subprocess.CalledProcessError as error:
+            # Preserve lease/simulator diagnostics even when their successful output is an ID.
+            if error.stdout:sys.stderr.write(error.stdout)
+            if error.stderr:sys.stderr.write(error.stderr)
+            raise
+    try:
+        host_gate()
+        derived=Path(tempfile.gettempdir())/('dulcet-discover-'+mode)
+        action='test-without-building' if os.environ.get('DULCET_DISCOVER_PREBUILT')=='true' else 'test'
+        if action=='test-without-building':
+            receipt=json.loads((derived/'discover-build.json').read_text())
+            head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()
+            if receipt!={'mode':mode,'head':head}:raise RuntimeError('prebuilt test source does not match the proof invocation')
+        if not hosted:lease=run(['leg-lease','create','--kind','build' if mode=='macos' else 'build,sim','--session',session,'--project','dulcet','--pid',str(os.getpid()),'--wait','7200'],capture_output=True).stdout.strip()
+        if hosted_admission:hosted_admission.start()
+        if mode!='macos':
+            udid=os.environ.get('DULCET_DISCOVER_PROOF_UDID')
+            if not udid:
+                device=os.environ.get('DULCET_DISCOVER_PROOF_DEVICE','iPad Pro 13-inch (M4)' if mode=='ipad' else 'iPhone 17 Pro')
+                command=['sim-lease','create','--project','dulcet','--device',device,'--owner-pid',str(os.getpid()),'--purpose',session]
+                if os.environ.get('DULCET_DISCOVER_PROOF_RUNTIME'):command+=['--runtime',os.environ['DULCET_DISCOVER_PROOF_RUNTIME']]
+                owned_device=True
+                if hosted:
+                    inventory=json.loads(run(['xcrun','simctl','list','devices','available','--json'],capture_output=True).stdout)
+                    candidates=[(runtime,d) for runtime,devices in inventory['devices'].items() if '.iOS-' in runtime for d in devices if d['name'].startswith('iPad' if mode=='ipad' else 'iPhone')]
+                    if not candidates:raise RuntimeError('no installed iOS runtime with the requested idiom')
+                    runtime,template=sorted(candidates,key=lambda row:row[0])[-1]
+                    command=['xcrun','simctl','create',session,template['deviceTypeIdentifier'],runtime]
+                udid=run(command,capture_output=True).stdout.strip()
+            if not udid:raise RuntimeError('sim-lease returned no device')
+            inventory=json.loads(run(['xcrun','simctl','list','devices','--json'],capture_output=True).stdout)
+            identity=next(dict(device=d['name'],runtime=r) for r,ds in inventory['devices'].items() for d in ds if d['udid']==udid)
+            (output/'device.json').write_text(json.dumps(dict(udid=udid,**identity),indent=2))
+            host_gate()
+            def monitor():
+                import signal
+                from discover_simulator_health import HostSampler, SimulatorHealth
+                sampler=HostSampler(udid)
+                health=SimulatorHealth()
+                errors=0
+                while not monitor_done.is_set():
+                    try:
+                        receipt,children=sampler.sample()
+                        errors=0
+                        reason=health.observe(receipt)
+                        receipt.update(stopReason=reason,settled=health.settled,
+                                       phase='native' if native_started.is_set() else 'boot')
+                        if receipt['launchd']:navigation_ready.set()
+                        with (output/'simulator-health.jsonl').open('a') as log:log.write(json.dumps(receipt)+'\n')
+                        (output/'host-peaks.json').write_text(json.dumps(health.peaks,indent=2))
+                        if not native_started.is_set():
+                            (output/'boot-peaks.json').write_text(json.dumps(health.peaks,indent=2))
+                        if reason:
+                            (output/'simulator-balloon-top20.txt').write_text('\n'.join(' '.join(row) for row in sorted(children,key=lambda r:int(r[2]),reverse=True)[:20]))
+                            (output/'health-stop.json').write_text(json.dumps(receipt,indent=2))
+                            os.kill(os.getpid(),signal.SIGTERM)
+                            return
+                        if health.settled:boot_settled.set()
+                        else:boot_settled.clear()
+                    except (subprocess.SubprocessError,ValueError,TypeError) as error:
+                        errors+=1
+                        with (output/'simulator-health-errors.log').open('a') as log:log.write(repr(error)+'\n')
+                        if errors>=3:
+                            os.kill(os.getpid(),signal.SIGTERM)
+                            return
+                    if monitor_done.wait(15):return
+            if not hosted:threading.Thread(target=monitor,daemon=True).start()
+            else:navigation_ready.set();boot_settled.set()
+            # First-boot migration settles before compilation rather than competing with it.
+            run(['xcrun','simctl','boot',udid],timeout=60)
+            with (output/'bootstatus.log').open('w') as log:
+                run(['xcrun','simctl','bootstatus',udid,'-b'],stdout=log,stderr=subprocess.STDOUT,timeout=900)
+            if hosted_admission:
+                hosted_admission.admit(udid,derived/'Build/Products/Debug-iphonesimulator/Dulcet DEV.app')
+            import time
+            deadline=time.monotonic()+900
+            while not boot_settled.wait(1):
+                if time.monotonic()>=deadline:raise RuntimeError('simulator did not settle for a quiet minute')
+        if udid:
+            navigation_log=(output/'navigation-unified.log').open('w')
+        target='DulcetMacTests' if mode=='macos' else 'DulcetiOSUITests'
+        suite={'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetMacDiscoverWishlistAppTest'}[mode]
+        # Test products must live on the internal volume: Xcode 27 silently executes zero
+        # XCUITests from external DerivedData. Result bundles/captures stay with the report.
+        env=os.environ.copy()
+        for key,value in os.environ.items():
+            if key.startswith('DULCET_DISCOVER_'):env['TEST_RUNNER_'+key]=value
+        env['TEST_RUNNER_DULCET_DISCOVER_CAPTURES']=str(captures)
+        env['TEST_RUNNER_DULCET_DISCOVER_CAPTURE_UPLOAD_URL']='http://127.0.0.1:'+str(capture_server.server_address[1])
+        env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
+        selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
+        command=['xcodebuild',action,'-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
+        if mode=='macos':
+            # Match the app-hosted Mac proofs: finite disposable tests use ad hoc signing.
+            command += ['CODE_SIGN_STYLE=Manual','CODE_SIGN_IDENTITY=-','CODE_SIGN_ENTITLEMENTS=','DEVELOPMENT_TEAM=','PROVISIONING_PROFILE_SPECIFIER=',
+                        '-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','180']
+            for key in ['SERVER_URL','NAVIDROME_URL','CONTROL_URL','USERNAME','PASSWORD','OTHER_USERNAME','OTHER_PASSWORD','DISPOSABLE']:
+                command.append('DULCET_TEST_DISCOVER_'+key+'='+os.environ['DULCET_DISCOVER_'+key])
+            command.append('DULCET_TEST_DISCOVER_CAPTURE_UPLOAD_URL=http://127.0.0.1:'+str(capture_server.server_address[1]))
+        host_gate()
+        (output/'invocation.json').write_text(json.dumps(dict(mode=mode,suite=suite,udid=udid,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()),indent=2))
+        import time
+        import signal
+        completed=None;completed_at=None;interrupted=False
+        with (output/'xcodebuild.log').open('w') as log:
+            native_started.set()
+            process=owner.spawn(command,cwd=repo,env=env,stdout=log,stderr=subprocess.STDOUT)
+            next_navigation_attempt=0
+            while process.poll() is None:
+                # Xcode boots the leased device. Starting log stream before that boot exits
+                # immediately; launch only after launchd_sim appears, retrying bootstrap races.
+                if udid and navigation_ready.is_set() and time.monotonic() >= next_navigation_attempt and (navigation_stream is None or navigation_stream.poll() is not None):
+                    navigation_stream=owner.spawn(['xcrun','simctl','spawn',udid,'log','stream','--style','compact','--level','debug','--predicate','subsystem == "com.dulcet.navigation" OR eventMessage CONTAINS "navigationDestination" OR eventMessage CONTAINS "NavigationLink is presenting"'],stdout=navigation_log,stderr=subprocess.STDOUT)
+                    next_navigation_attempt=time.monotonic()+10
+                if completed is None:
+                    completed=completed_native_report(output/'proof.xcresult',suite,selected,output)
+                    if completed:completed_at=time.monotonic()
+                # Xcode 27 can idle for many minutes after the final suite record. The actual
+                # named XCTest outcomes above form JUnit; screenshots are separate artifacts.
+                # Interrupt only this completed invocation. An incomplete/zero suite never qualifies.
+                if completed_at is not None and time.monotonic()-completed_at>120:
+                    process.send_signal(signal.SIGINT);interrupted=True;break
+                time.sleep(1)
+            try:code=process.wait(timeout=15 if interrupted else None)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:code=process.wait(timeout=10)
+                except subprocess.TimeoutExpired:process.kill();code=process.wait()
+        if completed is None:completed=completed_native_report(output/'proof.xcresult',suite,selected,output)
+        if completed:
+            completed['finalizationInterrupted']=interrupted
+            (output/'counts.json').write_text(json.dumps(completed,indent=2))
+        summary_result=subprocess.run(['xcrun','xcresulttool','get','test-results','summary','--path',str(output/'proof.xcresult')],capture_output=True,text=True)
+        summary=summary_result.stdout if summary_result.returncode==0 else '{}'
+        (output/'summary.json').write_text(summary)
+        tests_result=subprocess.run(['xcrun','xcresulttool','get','test-results','tests','--path',str(output/'proof.xcresult')],capture_output=True,text=True)
+        tests=tests_result.stdout if tests_result.returncode==0 else '{}'
+        (output/'tests.json').write_text(tests)
+        for endpoint in ['requests?since=0','state']:
+            with urllib.request.urlopen(os.environ['DULCET_DISCOVER_CONTROL_URL']+'/control/'+endpoint) as response:
+                (output/('fixture-'+endpoint.split('?')[0]+'.json')).write_bytes(response.read())
+        for capture in list(captures.glob('*.png'))+list(captures.glob('*.jpg')):
+            run(['sips','-Z','800','-s','format','jpeg','-s','formatOptions','50',str(capture),'--out',str(capture.with_suffix('.jpg'))],stdout=subprocess.DEVNULL)
+            if capture.suffix=='.png':capture.unlink()
+        from discover_proof_report import apple_report, validate_report, native_exit_status
+        acknowledgements=[json.loads(line) for line in (output/'acknowledgements.jsonl').read_text().splitlines()] if (output/'acknowledgements.jsonl').exists() else []
+        report=apple_report(mode,json.loads(summary),json.loads(tests),acknowledgements,
+            json.loads((output/'fixture-requests.json').read_text()),
+            [selected.rsplit('/',1)[-1]] if '/' in selected else None)
+        verdict=validate_report(report)
+        if report['finalized']:
+            import xml.etree.ElementTree as ET
+            root=ET.Element('testsuite',name=suite,tests=str(len(report['cases'])),failures=str(sum(c['status']=='failed' for c in report['cases'])),errors=str(sum(c['status']=='error' for c in report['cases'])),skipped=str(sum(c['status']=='skipped' for c in report['cases'])))
+            for case in report['cases']:
+                node=ET.SubElement(root,'testcase',classname=suite,name=case['name'])
+                if case['status']!='passed':ET.SubElement(node,'skipped' if case['status']=='skipped' else 'failure').text=case['status']
+            ET.ElementTree(root).write(output/'junit.xml',encoding='utf-8',xml_declaration=True)
+        (output/'validated-report.json').write_text(json.dumps(dict(**report,first_cause=verdict.first_cause),indent=2))
+        if verdict.first_cause:raise RuntimeError(verdict.first_cause)
+        counts=json.loads(summary)
+        (output/'counts.json').write_text(json.dumps(dict(total=counts['totalTestCount'],passed=counts['passedTests'],failed=counts['failedTests'],skipped=counts['skippedTests'],finalized=True,finalizationInterrupted=interrupted,xcodebuildExitCode=code),indent=2))
+        print(json.dumps(dict(output=str(output),suite=suite,**counts)))
+        return native_exit_status(code,interrupted,report)
+    finally:
+        monitor_done.set()
+        if hosted_admission:hosted_admission.close()
+        owner.stop_children()
+        capture_server.shutdown();capture_server.server_close()
+        if navigation_stream:
+            navigation_stream.terminate()
+            try:navigation_stream.wait(timeout=10)
+            except subprocess.TimeoutExpired:navigation_stream.kill();navigation_stream.wait()
+        if navigation_log:navigation_log.close()
+        try:
+            # TERM can land after create wrote the registry but before stdout was consumed.
+            if owned_device and not udid and not hosted:
+                leases=subprocess.run(['sim-lease','list','--json'],capture_output=True,text=True,timeout=30)
+                if leases.returncode==0:
+                    udid=next((row['udid'] for row in json.loads(leases.stdout) if row.get('purpose')==session and row.get('owner_pid')==os.getpid()),None)
+            if udid:
+                try:subprocess.run(['xcrun','simctl','shutdown',udid],check=False,timeout=60)
+                finally:
+                    if owned_device:subprocess.run(['xcrun','simctl','delete',udid] if hosted else ['sim-lease','release','--force',udid],check=False,timeout=60)
+        finally:
+            # The unique session also covers TERM during build-lease acquisition.
+            if not hosted:subprocess.run(['leg-lease','release','--session',session],check=False,timeout=30)
+            owner.close()
+
+if a.build_for_testing:sys.exit(apple_build_for_testing(a.mode))
+if a.mode in {'iphone','ipad','mac','macos'}:sys.exit(apple_proof(a.mode))
+runner=os.environ.get('DULCET_DISCOVER_GRADLE_RUNNER',str(repo/'tools/run-gradle-exclusive'))
+cls='DiscoverWishlistTransportComponentsTest' if a.mode=='components' else 'DiscoverWishlistConformanceTest'
+os.execv(runner,[runner,'-Pdulcet.discoverWishlistConformance',':core-conformance:jvmTest','--rerun','--tests','*'+cls])

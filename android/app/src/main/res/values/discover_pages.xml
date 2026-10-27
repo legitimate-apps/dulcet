@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="discover_pages_artist">Artist</string>
+    <string name="discover_pages_album">Album</string>
+    <string name="discover_pages_albums">Albums</string>
+    <string name="discover_pages_tracks">Tracks</string>
+    <string name="discover_pages_edition">Edition</string>
+    <string name="discover_pages_edition_number">Edition %1$d</string>
+    <string name="discover_pages_more_albums">More albums</string>
+    <string name="discover_pages_more_tracks">More tracks</string>
+    <string name="discover_pages_loading">Loading…</string>
+    <string name="discover_pages_back">Back</string>
+    <plurals name="discover_pages_track_count">
+        <item quantity="one">%d track</item>
+        <item quantity="other">%d tracks</item>
+    </plurals>
+</resources>
