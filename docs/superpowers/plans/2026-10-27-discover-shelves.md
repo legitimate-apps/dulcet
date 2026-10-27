@@ -137,11 +137,14 @@ Empty copy: trending **No trending artists/albums/songs right now.**; new releas
 
 ### Task 4: Android phone shell (Android builder)
 
-- [ ] Consume the additive methods through the existing DiscoverWishlistSession/source. Update affected doubles and add phone destination without TV wiring.
-- [ ] Compose home, full shelf list and public playlist list/page using shared states/copy/IDs. Show pending wishes from publications; source-aware adds use the existing facade. Preserve duplicate entries by position, library/Discover routes and player bar.
-- [ ] Exercise TalkBack labels, keyboard/focus, largest font and narrow/wide phone layout, Back/rotation and disposal/account change. No direct network or image URL path.
-- [ ] Host-test state/action/routing seams and dispatch changed Android host test classes to `android-test-soak`, 20 repetitions, after pushing. Report run ID without waiting inside the builder.
-- [ ] Add emulator proof using real disposable server, with non-empty controls and acknowledged mixed-state faults. No FEATURES promotion here.
+- [x] Consume the additive methods through the existing DiscoverWishlistSession/source. Update affected doubles and add phone destination without TV wiring.
+- [x] Compose home, full shelf list and public playlist list/page using shared states/copy/IDs. Show pending wishes from publications; source-aware adds use the existing facade. Preserve duplicate entries by position, library/Discover routes and player bar.
+- [x] Exercise TalkBack labels, keyboard/focus, largest font and narrow/wide phone layout, Back/rotation and disposal/account change. No direct network or image URL path.
+- [x] Host-test state/action/routing seams.
+- [ ] Dispatch changed Android host test classes to `android-test-soak`, 20 repetitions, after pushing. Report run IDs without waiting inside the builder.
+- [x] Add emulator proof using real disposable server, with non-empty controls and acknowledged mixed-state faults. No FEATURES promotion here.
+
+Android phone implementation and observed evidence: [handoff](../../evidence/discover-shelves-android.md). The locked interface is unchanged.
 
 ### Task 5: Proofs and integration (integrator)
 
