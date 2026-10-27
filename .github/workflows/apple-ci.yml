@@ -3017,8 +3017,8 @@ jobs:
     needs: [apple-plan, discover-wishlist-macos]
     if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
     runs-on: xcode-27
-    # Preserve the existing build/proof budget plus the separate six-minute destination step.
-    timeout-minutes: 101
+    # Add the provisional 30-minute startup/proof allowance; retain destination discovery.
+    timeout-minutes: 131
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -3064,9 +3064,11 @@ jobs:
         timeout-minutes: 20
         run: tools/ci/run-discover-wishlist-proofs ipad --build-for-testing
       - name: Drive Discover and Wishlist through the native ipad app
-        # Startup took nine minutes and the first four cases took 33 on a hosted iPad.
-        # Leave time for the fifth case and finalization without changing assertion deadlines.
-        timeout-minutes: 60
+        # Run 40547199270 spent 18m18s in startup, then passed four cases in 30m19s
+        # before the 60m step limit interrupted the fifth. 90m is ceil(1.5 * 60 / 5) * 5
+        # above that censored observation, pending final-head validation. Assertions retain
+        # their individual deadlines; main run 40442634538 completed this step in 46m47s.
+        timeout-minutes: 90
         env:
           DULCET_DISCOVER_PROOF_UDID: ${{ steps.discover_ipad_destination.outputs.udid }}
           DULCET_DISCOVER_PREBUILT: "true"

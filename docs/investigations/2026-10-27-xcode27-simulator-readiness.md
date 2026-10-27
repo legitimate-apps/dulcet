@@ -115,6 +115,24 @@ unavailable device. This makes the default proof comparable with the local
 Xcode 27.0/iOS 27.0 toolchain; it does not establish runtime selection as the cause
 of the timing difference.
 
+The final [Discover iPad job 122375819971](https://github.com/legitimate-apps/dulcet/actions/runs/40547199270/job/122375819971)
+also reached its workflow step limit, at 60 minutes. Startup ran from 19:07:47
+through 19:26:05 UTC (18m18s), including 634.5 seconds in shared admission and
+warm-up. Its iPad Pro 13-inch (M5) was on iOS 27.0. The first four native cases
+passed in 262.218, 160.269, 448.134 and 948.470 seconds (30m19s total); the
+fifth was still performing UI interactions when cancelled. Main run 40442634538's
+[successful iPad retry 122075346929](https://github.com/legitimate-apps/dulcet/actions/runs/40442634538/job/122075346929)
+completed the same whole step in 46m47s. Its earlier failed attempt ended via
+`test-not-passed`, rather than this step timeout, so it is not an established
+match for this failure.
+
+The iPad whole-step allowance is provisionally 90 minutes,
+`ceil(1.5 * 60 / 5) * 5`, with the job envelope increased by the same 30 minutes.
+This uses a censored timeout observation, not a claimed successful maximum.
+Final-head execution must validate it. The adjustment leaves every individual
+assertion and fixture request deadline intact.
+
+
 ## tvOS lazy grid navigation
 
 The same run's [core job 122340970605](https://github.com/legitimate-apps/dulcet/actions/runs/40547199270/job/122340970605)
