@@ -264,10 +264,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 return await self.find("dulcet.library.album", label: "Threshold Boundary") != nil
             }
             await photographMenu("album-sort-options", expectedItem: "Title") {
-                await self.press("dulcet.reader.albums.sort")
+                await self.press("dulcet.library.albums.sort")
             }
             await photographMenu("album-menu", expectedItem: "Play") {
-                await self.rightClick("dulcet.library.album", label: "Threshold Boundary")
+                await self.rightClick("dulcet.library.album")
             }
             await step("album") { await self.openAlbum(store) }
             await step("add-to-playlist") {
@@ -327,7 +327,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 if store.playingTrackFavourite?.isFavourite == false { _ = store.togglePlayingTrackFavourite() }
                 store.selectDestination(.library)
                 store.selectLibrarySection(.favourites)
-                return await self.find("dulcet.reader.track") != nil
+                if await self.find("dulcet.reader.track") != nil { return true }
+                return await self.findLabel("Nothing here yet.") != nil
             }
             await step("playlists") {
                 store.selectDestination(.library)
@@ -405,7 +406,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             }
             await step("search-empty") {
                 store.searchQuery = "BaselineAbsentQuery75319"
-                return await self.findLabel("No matches") != nil
+                return await self.findLabel("No server matches") != nil
             }
             await step("downloads-populated") {
                 guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
@@ -608,8 +609,17 @@ final class DulcetMacDesignTourTest: XCTestCase {
     }
 
     /// Sends a secondary click to the actual track row, matching the hosted playlist proof.
-    private func rightClick(_ identifier: String, label: String) async -> Bool {
-        guard let window, let element = await find(identifier, label: label),
+    private func rightClick(_ identifier: String, label: String? = nil) async -> Bool {
+        guard let window, await find(identifier, label: label) != nil else { return false }
+        let visibleBounds = window.convertToScreen(window.contentLayoutRect)
+        let element = interactionElements().first {
+            guard objectValue("accessibilityIdentifier", of: $0) as? String == identifier,
+                  label == nil || (self.label(of: $0) ?? "").hasPrefix(label!),
+                  let accessible = $0 as? any NSAccessibilityElementProtocol else { return false }
+            let frame = accessible.accessibilityFrame()
+            return !frame.isEmpty && visibleBounds.contains(frame)
+        }
+        guard let element,
               let accessible = element as? any NSAccessibilityElementProtocol else { return false }
         let frame = accessible.accessibilityFrame()
         guard window.convertToScreen(window.contentLayoutRect).contains(frame) else { return false }

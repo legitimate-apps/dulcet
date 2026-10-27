@@ -284,8 +284,8 @@ final class DulcetDesignTourUITests: XCTestCase {
                 && app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
         step("settings-quality", app) {
-            let quality = app.descendants(matching: .any)["dulcet.streaming-quality"].firstMatch
-            return quality.waitForExistence(timeout: 10) && self.scrollIntoView(quality, in: app) && self.settle(app)
+            let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
+            return self.revealSettingsControl(quality, in: app, searchingDown: true) && self.settle(app)
         }
         step("settings-storage", app) {
             let settings = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
@@ -295,7 +295,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         }
         step("quality-options", app) {
             let choice = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
-            guard choice.waitForExistence(timeout: 10), self.scrollIntoView(choice, in: app) else { return false }
+            guard self.revealSettingsControl(choice, in: app, searchingDown: false) else { return false }
             choice.tap()
             return app.buttons["96 kbps"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
@@ -340,10 +340,10 @@ final class DulcetDesignTourUITests: XCTestCase {
         }
         step("album-sort", app) {
             guard self.openSection("albums", in: app, compact: compact) else { return false }
-            let sort = app.buttons["dulcet.reader.albums.sort"].firstMatch
+            let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
             guard sort.waitForExistence(timeout: 10), self.scrollIntoView(sort, in: app) else { return false }
             sort.tap()
-            return app.buttons["Random"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+            return app.buttons["Artist"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
         if app.buttons["Done"].firstMatch.exists { app.buttons["Done"].firstMatch.tap() }
         dismissOverlay(in: app)
@@ -539,7 +539,7 @@ final class DulcetDesignTourUITests: XCTestCase {
             guard field.exists else { return false }
             field.tap(); field.typeText("BaselineAbsentQuery75319")
             self.dismissKeyboard(in: app)
-            return app.staticTexts["No matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+            return app.staticTexts["No server matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
         step("track-menu", app) {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
@@ -661,7 +661,7 @@ final class DulcetDesignTourUITests: XCTestCase {
             button.tap()
             // A second tap on the selected tab pops its stack back to the root.
             if tab == "Library" { button.tap() }
-            return true
+            return waitFor(timeout: 5, { button.isSelected }) && settle(app, seconds: 1.2)
         }
         let row = app.buttons[sidebar].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else { return false }
@@ -699,14 +699,7 @@ final class DulcetDesignTourUITests: XCTestCase {
     /// The artist a person reaches from Library > Artists.
     @MainActor
     private func openArtist(_ artist: String, in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
-        if compact {
-            let link = app.buttons["dulcet.reader.section.artists"].firstMatch
-            guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else { return false }
-            link.tap()
-        } else if !tapSidebarSection("artists", in: app) {
-            return false
-        }
+        guard openSection("artists", in: app, compact: compact) else { return false }
         let row = app.buttons.matching(identifier: "dulcet.library.artist")
             .matching(NSPredicate(format: "label BEGINSWITH %@", artist)).firstMatch
         guard row.waitForExistence(timeout: 30), scrollIntoView(row, in: app) else { return false }
@@ -721,9 +714,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         guard openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
         if !compact { return tapSidebarSection(section, in: app) }
         let link = app.buttons["dulcet.reader.section.\(section)"].firstMatch
-        guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else { return false }
-        link.tap()
-        return true
+        return openSectionLink(link, in: app)
     }
 
     @MainActor
@@ -733,9 +724,19 @@ final class DulcetDesignTourUITests: XCTestCase {
         guard openDestination(hasBrowse ? "Browse" : "Library", sidebar: hasBrowse ? "dulcet.sidebar.browse" : "dulcet.sidebar.library", in: app, compact: compact) else { return false }
         if !compact { return tapSidebarSection("playlists", in: app) }
         let link = app.buttons["dulcet.reader.section.playlists"].firstMatch
-        guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else { return false }
-        link.tap()
-        return true
+        return openSectionLink(link, in: app)
+    }
+
+    @MainActor
+    private func openSectionLink(_ link: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard link.waitForExistence(timeout: 15) else { return false }
+        for _ in 0..<3 {
+            guard scrollIntoView(link, in: app) else { return false }
+            _ = settle(app, seconds: 0.6)
+            link.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            if link.waitForNonExistence(timeout: 4) { return settle(app) }
+        }
+        return false
     }
 
     @MainActor
@@ -753,6 +754,17 @@ final class DulcetDesignTourUITests: XCTestCase {
         let hide = keyboard.buttons["Hide keyboard"].firstMatch
         if search.exists { search.tap() } else if hide.exists { hide.tap() }
         _ = keyboard.waitForNonExistence(timeout: 5)
+    }
+
+    @MainActor
+    private func revealSettingsControl(_ element: XCUIElement, in app: XCUIApplication, searchingDown: Bool) -> Bool {
+        let form = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+        guard form.waitForExistence(timeout: 10) else { return false }
+        for _ in 0..<12 {
+            if element.exists, scrollIntoView(element, in: app, verticalMargin: 116, scrollContainer: form) { return true }
+            if searchingDown { form.swipeUp() } else { form.swipeDown() }
+        }
+        return false
     }
 
     @MainActor

@@ -40,6 +40,10 @@ if [[ ! -x "$navidrome" ]]; then
   tools/conformance-env/prepare-darwin --output "$output/navidrome"
   navidrome="$output/navidrome/navidrome"
 fi
+if [[ "$device" != mac ]]; then
+  tools/ci/run-discover-wishlist-proofs --build-for-testing "$mode"
+  export DULCET_DISCOVER_PREBUILT=true
+fi
 tools/ci/with-discover-wishlist-fixture --evidence "$output/fixture" --navidrome "$navidrome" \
   --ffmpeg "$(command -v ffmpeg)" -- tools/ci/run-discover-wishlist-proofs "$mode"
 python3 - "$output/native/captures" "${DULCET_NATIVE_BASELINE_VARIANT:?}" "${DULCET_NATIVE_BASELINE_SCREENS:-}" <<'PY'

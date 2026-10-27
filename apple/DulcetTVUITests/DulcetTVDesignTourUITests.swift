@@ -189,7 +189,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("search-empty", app) {
             self.enterBaselineSearch("BaselineAbsentQuery75319", in: app)
-                && app.staticTexts["No matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(1)
+                && app.staticTexts["No server matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(1)
         }
 
         // Settings, with focus on the streaming-quality choice.
@@ -383,14 +383,14 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && self.settle(2)
         }
         step("album-sort", app) {
-            let sort = app.segmentedControls["dulcet.reader.albums.sort"].firstMatch
+            let sort = app.segmentedControls["dulcet.library.albums.sort"].firstMatch
             guard sort.waitForExistence(timeout: 10),
                   self.press(.down, until: { self.focused(in: sort.buttons) != nil }, bound: 4) else { return false }
             // TV renders all seven options inline as segments, not a menu. The container
             // cannot take focus; a real child segment does. Focus itself changes selection.
             let title = sort.buttons["Title"].firstMatch
             guard self.press(.left, until: { title.hasFocus }, bound: 7) else { return false }
-            return sort.buttons["Top Rated"].firstMatch.exists && self.settle(2)
+            return sort.buttons["Artist"].firstMatch.exists && self.settle(2)
         }
         var albumMenuOpened = false
         step("album-menu", app) {

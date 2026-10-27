@@ -101,7 +101,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 if app.staticTexts["dulcet.account-connect.title"].firstMatch.exists { break }
                 app.swipeDown()
             }
-        } else if screen == "connection-filled" || screen == "connection-saved-disconnected" {
+        } else if screen == "connection-saved-disconnected" {
+            let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
+            guard scrollIntoView(reconnect, matching: .identifier("dulcet.reader.reconnect"), in: app) else { return }
+        } else if screen == "connection-filled" {
             let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
             for _ in 0..<6 {
                 if primary.exists { break }
@@ -158,6 +161,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 try XCUIScreen.main.screenshot().pngRepresentation.write(
                     to: URL(fileURLWithPath: directory).appendingPathComponent(companionName + ".png"))
             } catch { XCTFail("Could not save scrolled intro photograph: \(error)") }
+            if screen == "connection-empty" {
+                // Return from the companion settings photograph before typing credentials.
+                for _ in 0..<(accessibilityText ? 14 : 6) { app.swipeDown() }
+                Thread.sleep(forTimeInterval: 0.6)
+            }
         }
     }
 
@@ -984,12 +992,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     private func enterCredential(in field: XCUIElement, with value: String, name: String, secure: Bool = false, app: XCUIApplication) -> Bool {
         // Form virtualizes rows outside its viewport. Reveal the requested credential row
         // before the existing lookup, just as a person scrolls back from an error to edit it.
-        for _ in 0..<6 {
+        let photographing = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1"
+        for _ in 0..<(photographing ? 14 : 6) {
             if field.exists { break }
             if name == "server address" { app.swipeDown() }
             else { app.swipeUp() }
         }
-        let photographing = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1"
         if photographing {
             guard field.waitForExistence(timeout: 5) else {
                 XCTFail("The \(name) field must exist")
