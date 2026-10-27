@@ -56,3 +56,6 @@ Final counts are read from JUnit XML, with no skipped tests. The implementation 
 The new common `DiscoverShelvesTest` has eight tests. Android's existing `AndroidDiscoverTest` has ten, including shelf/playlist/home main delivery and cancellation. Apple facade/DTO tests add copied lists, nullable metadata, main delivery and cancellation checks. These run on macOS native; iOS is compile evidence only in this core part.
 
 `:core:allMetadataJar`, `:core:bundleAndroidMainAar`, `:core:licensee`, `:core:compileTestKotlinIosSimulatorArm64` and `:core:linkDebugFrameworkMacosArm64` pass. Parity and CI policy checks pass. None of these compile/package tasks has a test count. Linux Android soak is dispatched after pushing, with task `:core:testAndroidHostTest`, filters `*AndroidDiscoverTest,*DiscoverShelvesTest` and 20 repetitions; its outcome is not claimed here. Native shell proofs and final platform support promotion remain integration work.
+
+The combined native shells, merged-tree checks and hosted proof conditions are recorded in
+[Discover shelves integration](discover-shelves-integration.md). The locked interface is unchanged.

@@ -1,6 +1,6 @@
 # Discover shelves in the Apple shells
 
-This implements Task 3 of the [Discover shelves plan](../superpowers/plans/2026-10-27-discover-shelves.md) against its frozen core interface. Discover remains on the account's existing advertised OpenSubsonic extensions. No second authentication, HTTP, artwork or acquisition path is introduced. Platform support cells are unchanged pending integration evidence.
+This implements Task 3 of the [Discover shelves plan](../superpowers/plans/2026-10-27-discover-shelves.md) against its frozen core interface. Discover remains on the account's existing advertised OpenSubsonic extensions. No second authentication, HTTP, artwork or acquisition path is introduced. Platform support cells and first hosted iPhone/iPad execution are tracked in the [integration evidence](discover-shelves-integration.md).
 
 ## Surfaces and navigation
 

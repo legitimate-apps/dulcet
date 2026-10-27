@@ -69,3 +69,8 @@ Both 20-repetition runs were dispatched on `feat/discover-shelves` at `80f68fde`
 
 - DEV `:android:app:testDevDebugUnitTest`: [40454579204](https://github.com/legitimate-apps/dulcet/actions/runs/40454579204).
 - PROD `:android:app:testProdDebugUnitTest`: [40454592593](https://github.com/legitimate-apps/dulcet/actions/runs/40454592593).
+
+## Integration
+
+The Apple and Android shells are combined in the [step-3 integration evidence](discover-shelves-integration.md),
+which records merged-tree checks, feature cells, CI proof wiring and the one-time soak status read.

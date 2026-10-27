@@ -129,11 +129,11 @@ Empty copy: trending **No trending artists/albums/songs right now.**; new releas
 
 ### Task 3: Apple shells (Apple builder, independent of Task 4)
 
-- [ ] Extend DulcetKit structs/source protocol, core-to-Swift copies, production source and test doubles strictly from the locked interface. No transport logic in Swift.
-- [ ] Add top-level Discover destination on iPhone/iPad/Mac only, capability-gated, preserving existing five-destination order, sidebar state, account teardown and player bar.
-- [ ] Build home shelf components, full shelf list, public playlist list/page and recent wishes. Implement the shared states, copy, IDs and source-aware wishing. Route existing artist/album/library actions; cancel obsolete detail/query work and retain scroll/selection through Back/resize.
-- [ ] Add presentation tests for independent states, copied nullable metadata, source IDs, duplicate playlist positions, unavailable recording action, partial albums, unknown kind, offline and cursor replacement. Compile the real generated framework integration, not only protocol doubles.
-- [ ] Prepare iPhone, iPad and Mac native UI proofs before claiming parity. Reuse fixture controls/effects, existing consent and account proof harness. iPad tests use actual sidebar/compact-window transition; Mac tests exercise keyboard navigation and resize; iPhone exercises largest text/VoiceOver labels. Do not promote FEATURES here.
+- [x] Extend DulcetKit structs/source protocol, core-to-Swift copies, production source and test doubles strictly from the locked interface. No transport logic in Swift.
+- [x] Add top-level Discover destination on iPhone/iPad/Mac only, capability-gated, preserving existing five-destination order, sidebar state, account teardown and player bar.
+- [x] Build home shelf components, full shelf list, public playlist list/page and recent wishes. Implement the shared states, copy, IDs and source-aware wishing. Route existing artist/album/library actions; cancel obsolete detail/query work and retain scroll/selection through Back/resize.
+- [x] Add presentation tests for independent states, copied nullable metadata, source IDs, duplicate playlist positions, unavailable recording action, partial albums, unknown kind, offline and cursor replacement. Compile the real generated framework integration, not only protocol doubles.
+- [x] Prepare iPhone, iPad and Mac native UI proofs before claiming parity. Reuse fixture controls/effects, existing consent and account proof harness. iPad tests use actual sidebar/compact-window transition; Mac tests exercise keyboard navigation and resize; iPhone exercises largest text/VoiceOver labels. Do not promote FEATURES here.
 
 ### Task 4: Android phone shell (Android builder)
 
@@ -148,11 +148,11 @@ Android phone implementation and observed evidence: [handoff](../../evidence/dis
 
 ### Task 5: Proofs and integration (integrator)
 
-- [ ] Reconcile both shell summaries, compile all integrations and run core gates once on final tree. Preserve the approved `/rest` transport decision.
-- [ ] Wire/execute hosted Apple and Android proofs for each of the four surfaces. Non-empty shelves must include artist/album routing, shelf wishes, playlist page duplicate/missing-MBID rows and playlist wishes. Show cache age, failure with retained content, empty copy, pending acknowledgement, offline/reconnect and healthy Navidrome absence.
-- [ ] Assert fixture scenario revision/effect, account identity, platform/window class and actual test counts. Preserve artifacts with source SHA; compile-only and core tests are not UI evidence.
-- [ ] Promote only the proven `discover.shelves` and public-playlist portion of `discover.pages` cells, preserving existing search/pages/wishlist proof and TV deferrals. Update evidence and main-spec §28 for the final user-facing behavior.
-- [ ] Run parity and CI policy checks. Open/merge/release only under the integration brief's authority.
+- [x] Reconcile both shell summaries, compile all integrations and run core gates once on final tree. Preserve the approved `/rest` transport decision.
+- [x] Wire hosted Apple and Android proofs for each of the four surfaces. Hosted execution remains pending and is not claimed by local compilation. Non-empty shelves must include artist/album routing, shelf wishes, playlist page duplicate/missing-MBID rows and playlist wishes. Show cache age, failure with retained content, empty copy, pending acknowledgement, offline/reconnect and healthy Navidrome absence.
+- [x] Assert fixture scenario revision/effect, account identity, platform/window class and actual test counts through exact native runner inventories. Preserve artifacts with source SHA; compile-only and core tests are not UI evidence.
+- [x] Promote locally proven Mac/Android `discover.shelves` cells; record iPhone/iPad as partial with named hosted-proof conditions until their first execution. Append public-playlist evidence to all four `discover.pages` cells while retaining the remaining completeness-matrix condition, existing step-2 evidence and TV deferrals. Update evidence and main-spec §28.
+- [x] Run parity and CI policy checks. Open one ready PR under the integration brief; no Apple dispatch, merge or release.
 
 ## Core checks
 

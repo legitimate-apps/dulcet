@@ -7960,6 +7960,29 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-27 - Discover destinations, shelves and public playlists on phone, tablet and Mac.**
+
+Step 3 adds Discover between Listen Now and Library on iPhone and Android phone, and to the
+regular-width iPad and Mac sidebars. iPhone now uses five music tabs; Connection moves to a
+toolbar sheet when those destinations are available. Compact iPad uses the tab shell while retaining
+its account-scoped path, query and loaded pages. TV remains outside this step.
+
+Home presents Trending on ListenBrainz (artists, albums and songs), New releases, Artists like
+yours, Public playlists and six Recent wishes. Twelve-item previews retain server order; See all
+appears with a cursor, and full lists request twenty rows through explicit Load more. Public
+playlist pages show source positions, preserve duplicate recordings and explain missing metadata.
+Song, album and artist wishes reuse the durable outbox with shelf or playlist provenance. Scoped
+held items route to the existing library; external artist and album metadata uses the existing
+Discover pages. Cached answers retain their age beside a failed refresh, and empty success has
+separate copy from an unavailable upstream. Credits read Data from MusicBrainz and ListenBrainz.
+The apps continue to use advertised OpenSubsonic extensions with existing authentication.
+
+OBSERVED: Android's six native emulator phases pass against the disposable server, including
+acknowledged shelf faults and a healthy Navidrome absence control. Mac shelf execution is recorded
+in the [integration evidence](../../evidence/discover-shelves-integration.md). iPhone and iPad
+proofs compile but their first native execution remains with hosted apple-ci. Their feature cells
+remain partial with named promotion conditions; this change makes no unobserved UI pass claim.
+
 **2026-10-27: Discover shelf and public playlist client core.**
 
 Step 3 adds account-owned reads for the six Discover shelf IDs, public playlist search/list and
