@@ -21,8 +21,13 @@ import org.robolectric.annotation.Config
 class PhoneNavigationTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
-    @Test fun largestFontKeepsNavigationWordsWholeAndBodyScaled() {
-        val labels = listOf("Listen Now", "Library", "Browse", "Search", "Account")
+    @Test fun largestFontKeepsNavigationWordsWholeAndBodyScaled() = verifyNavigation()
+
+    @Test @Config(qualifiers = "w360dp-h800dp-port")
+    fun narrowPhoneKeepsAllSixControlsReadableAtLargestFont() = verifyNavigation()
+
+    private fun verifyNavigation() {
+        val labels = listOf("Listen Now", "Discover", "Library", "Browse", "Search", "Account")
         val layouts = mutableMapOf<String, TextLayoutResult>()
         var bodyScale = 0f
         compose.setContent {
