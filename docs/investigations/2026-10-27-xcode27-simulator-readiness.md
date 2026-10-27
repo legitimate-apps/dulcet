@@ -144,3 +144,25 @@ from the hierarchy. The test waited for it without navigating the grid. The
 helper now focuses a published first-row tile and uses bounded remote Down
 navigation to reveal the target before the existing existence, activation and
 album-title assertions. Light and dark variants passed before this failure.
+
+## Final-head admission observations
+
+In run 40575992017, [core job 122442527560](https://github.com/legitimate-apps/dulcet/actions/runs/40575992017/job/122442527560)
+failed the startup control before native execution: the control still asserted
+the old six-minute platform iPad cap after the workflow moved to 19 minutes.
+The control now asserts 19 minutes and explicitly rejects a mutation restoring
+the old six-minute cap. The exact startup control passes locally after correction.
+
+[iPad job 122442527553](https://github.com/legitimate-apps/dulcet/actions/runs/40575992017/job/122442527553)
+booted successfully in 104.5 seconds. Streamed CoreSimulator stages show data
+migration taking about 51 seconds before terminal boot status at 77 seconds;
+the subprocess timing also includes scheduling and command completion. The next
+three service queries were unavailable and the service-count check expired at
+332.7 seconds. This is distinct from the earlier boot-status timeout.
+
+Its pressure artifact records a second simulator datamigrator at 20:24:04 UTC,
+after boot completion. Load remained above 630 in the final samples and rose to
+668.4, with peak swap occupancy 2021.88 MB. The running processes include system
+widgets and migration services before any application warm-up or UI test.
+The available main comparison logs contain no matching unavailable-service
+failure, so this is not classified as an established main failure.

@@ -165,7 +165,7 @@ def require_platform_ipad_order(candidate):
     assert "id: ipados_layout_destination" in resolve
     assert resolve.index("resolve-ipad-destination --print udid") < resolve.index('echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"')
     assert "--none --require-isolation" in release, "shutdown requires an empty booted-device acknowledgment"
-    assert "timeout-minutes: 6" in boot
+    assert "timeout-minutes: 19" in boot, "platform boot must retain its Xcode 27 readiness allowance"
     assert "IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}" in boot, "boot must consume the published destination"
     assert 'tools/ci/isolate-simulator --phase platform-ipad-first-boot' in boot
     assert '--keep "$IPAD_UDID" --require-isolation' in boot
@@ -173,11 +173,12 @@ def require_platform_ipad_order(candidate):
     return release, boot
 
 release, boot = require_platform_ipad_order(workflow)
-print("PLATFORM IPAD ORDER CONTROL PASS resolve publishes udid; required shutdown precedes six-minute boot using that output")
+print("PLATFORM IPAD ORDER CONTROL PASS resolve publishes udid; required shutdown precedes nineteen-minute boot using that output")
 
 for mutation, changed in [
     ("boot-before-shutdown", workflow.replace(release, "RELEASE_STEP_PLACEHOLDER").replace(boot, release).replace("RELEASE_STEP_PLACEHOLDER", boot)),
     ("shutdown-continue-on-error", workflow.replace(release, release.replace("        run:", "        continue-on-error: true\n        run:"))),
+    ("boot-old-budget", workflow.replace(boot, boot.replace("timeout-minutes: 19", "timeout-minutes: 6"))),
     ("boot-wrong-output", workflow.replace(boot, boot.replace("steps.ipados_layout_destination.outputs.udid", "steps.other_destination.outputs.udid"))),
 ]:
     assert changed != workflow, f"mutation changed nothing: {mutation}"
