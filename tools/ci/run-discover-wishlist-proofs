@@ -132,7 +132,7 @@ def apple_proof(mode):
     owner=ProcessOwner().install()
     lease=None;udid=None;owned_device=False;navigation_log=None;navigation_stream=None
     hosted=os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('RUNNER_ENVIRONMENT')=='github-hosted'
-    from discover_hosted_admission import HostedAppleAdmission
+    from discover_hosted_admission import HostedAppleAdmission, hosted_simulator_template
     hosted_admission=HostedAppleAdmission(owner,repo/'tools/ci',output,mode) if hosted else None
     monitor_done=threading.Event()
     navigation_ready=threading.Event()
@@ -167,9 +167,11 @@ def apple_proof(mode):
                 owned_device=True
                 if hosted:
                     inventory=json.loads(run(['xcrun','simctl','list','devices','available','--json'],capture_output=True).stdout)
-                    candidates=[(runtime,d) for runtime,devices in inventory['devices'].items() if '.iOS-' in runtime for d in devices if d['name'].startswith('iPad' if mode=='ipad' else 'iPhone')]
-                    if not candidates:raise RuntimeError('no installed iOS runtime with the requested idiom')
-                    runtime,template=sorted(candidates,key=lambda row:row[0])[-1]
+                    # The preview image also installs newer runtimes. Its newest entry selected
+                    # iOS 27.1 under Xcode 27.0 in run 40547199270; use the selected SDK instead.
+                    runtime_version=os.environ.get('DULCET_DISCOVER_PROOF_RUNTIME') or run(
+                        ['xcrun','--sdk','iphonesimulator','--show-sdk-version'],capture_output=True).stdout.strip()
+                    runtime,template=hosted_simulator_template(inventory,device,runtime_version)
                     command=['xcrun','simctl','create',session,template['deviceTypeIdentifier'],runtime]
                 udid=run(command,capture_output=True).stdout.strip()
             if not udid:raise RuntimeError('sim-lease returned no device')

@@ -2938,7 +2938,8 @@ jobs:
     needs: [apple-plan, apple-conformance-ipad-iphone]
     if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 95
+    # Add the provisional startup allowance to the existing build/proof envelope.
+    timeout-minutes: 120
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -2978,7 +2979,11 @@ jobs:
         run: tools/ci/run-discover-wishlist-proofs iphone --build-for-testing
       - name: Drive Discover and Wishlist through the native iphone app
         # Includes cold simulator startup and the five measured multi-launch UI proofs.
-        timeout-minutes: 45
+        # Run 40547199270 spent 15m46s before native execution, passed four cases
+        # in 25m47s, then reached the 45m envelope during case five. 70m is
+        # ceil(1.5 * 45 / 5) * 5 above that censored observation; final-head
+        # execution must validate it. Individual assertion deadlines stay unchanged.
+        timeout-minutes: 70
         env:
           DULCET_DISCOVER_PREBUILT: "true"
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-iphone/fixture" -- tools/ci/run-discover-wishlist-proofs iphone

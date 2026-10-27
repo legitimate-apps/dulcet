@@ -87,3 +87,42 @@ transition assertions remain. Local macOS execution passed all 42 engine tests;
 iOS validation requires the final hosted run. The log does not establish why
 AVFoundation retired the original item, so the unsupported-URL diagnostic alone
 is not treated as a production resource-loader defect.
+
+## Discover startup and runtime selection
+
+[Discover iPhone job 122360940843](https://github.com/legitimate-apps/dulcet/actions/runs/40547199270/job/122360940843)
+reached its 45-minute workflow step limit. Startup occupied 18:16:01 through
+18:31:47 UTC, including 656.9 seconds in shared service/pressure admission and
+app warm-up. The first four native cases passed in 346.961, 201.255, 484.178
+and 514.808 seconds. The fifth was underway when the workflow cancelled the
+fixture; its later connection-refused failure follows fixture shutdown and does
+not establish an application failure. Main run 40442634538's successful
+[Discover iPhone job 122035150007](https://github.com/legitimate-apps/dulcet/actions/runs/40442634538/job/122035150007)
+spent 32m47s in the same whole step.
+
+The step envelope is now 70 minutes, `ceil(1.5 * 45 / 5) * 5`, with the job
+envelope increased by the same 25 minutes. The 45-minute observation is censored,
+so final-head execution remains the validation. Individual test assertion and
+fixture request deadlines remain unchanged.
+
+The failed job's `native/device.json` also records iOS 27.1. The hosted fallback
+had sorted all installed runtimes and chosen the last iPhone entry, ignoring the
+requested device. It now chooses the requested iPhone 18 Pro on the runtime
+matching `xcrun --sdk iphonesimulator --show-sdk-version` from the selected Xcode.
+An explicit runtime override is honored; missing or unavailable matches fail
+clearly. New controls reject a newer installed runtime, a wrong device and an
+unavailable device. This makes the default proof comparable with the local
+Xcode 27.0/iOS 27.0 toolchain; it does not establish runtime selection as the cause
+of the timing difference.
+
+## tvOS lazy grid navigation
+
+The same run's [core job 122340970605](https://github.com/legitimate-apps/dulcet/actions/runs/40547199270/job/122340970605)
+completed the earlier Darwin proofs and failed the largest-text tvOS album tour.
+Its failed-test hierarchy shows the Albums section selected and six first-row
+album buttons starting at y=559, with heights up to 818.5 points in a 1080-point
+window. The named Threshold Boundary album is in the next lazy row and is absent
+from the hierarchy. The test waited for it without navigating the grid. The
+helper now focuses a published first-row tile and uses bounded remote Down
+navigation to reveal the target before the existing existence, activation and
+album-title assertions. Light and dark variants passed before this failure.

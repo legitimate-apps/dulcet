@@ -764,6 +764,21 @@ final class DulcetMyLibraryUITests: XCTestCase {
                       "The album's center must be inside the visible catalog before activation: \(tileFrame)")
         print("MY LIBRARY ALBUM target=\(title) center-in-viewport=true swipes=\(swipes) frame=\(tileFrame)")
 #else
+        // At the largest text size the first native grid row fills the viewport. Its lazy
+        // second row is absent from AX until remote navigation scrolls it into view (run
+        // 40547199270). Reach it with the remote before resolving the named tile.
+        if !tile.exists {
+            let firstTile = app.buttons["dulcet.library.album"].firstMatch
+            XCTAssertTrue(firstTile.waitForExistence(timeout: 30), "The album grid must publish before remote navigation")
+            focus(firstTile)
+            var presses = 0
+            for _ in 0..<12 {
+                if tile.exists { break }
+                XCUIRemote.shared.press(.down)
+                presses += 1
+            }
+            print("MY LIBRARY TV ALBUM target=\(title) reveal-down-presses=\(presses) published=\(tile.exists)")
+        }
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
 #endif
         activate(tile)
