@@ -86,13 +86,13 @@ def main():
         if platform == "mac" and args.logs:
             log = args.logs / (variant + ".log")
             if log.exists():
-                modes = re.findall(r"capture=(screen|view-render) screen=" + re.escape(screen) + r"(?:\s|$)", log.read_text(errors="replace"))
+                modes = re.findall(r"capture=(screen-region|screen|view-render) screen=" + re.escape(screen) + r"(?:\s|$)", log.read_text(errors="replace"))
                 if modes:
                     mode = modes[-1]
         reached = not screen.endswith("-UNREACHED")
         shots.append(dict(platform=platform, variant=variant.removesuffix("-account"), screen=screen,
                           file=str(target.relative_to(output)), reached=reached, captureMode=mode,
-                          eligibleForVisualReview=reached and mode == "screen"))
+                          eligibleForVisualReview=reached and mode in {"screen", "screen-region"}))
     manifest, coverage = [], []
     try:
         font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 13)
