@@ -204,3 +204,13 @@ drag wrapper interfering with button accessibility is the working mechanism,
 not an isolated framework reproduction. Hosted relaunch, activation, native-menu
 and real queue-drop checks must validate this change together; none of those
 assertions are relaxed.
+
+
+The following [PR platform check 122465865449](https://github.com/legitimate-apps/dulcet/actions/runs/40582613223/job/122465865449)
+stopped in its executable cleanup control before compilation. The fake `xcrun`
+returned no SDK version and advertised an arbitrary phone name after the hosted
+selector began requiring the requested device on the selected SDK runtime. The
+control now supplies iPhone 18 Pro / iOS 27.0 inventory and the SDK response,
+clears inherited device/runtime overrides, and asserts the actual runtime/type
+used to create its owned device. Its TERM, admission, parent-loss and child-reaping
+assertions remain in force.
