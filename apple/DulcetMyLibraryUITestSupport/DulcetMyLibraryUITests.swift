@@ -87,7 +87,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(tvOS)
         try addFromFullGridMore(album)
         try select("library")
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(albumTile(album.title), stage: "checkpoint-1"))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
         app.terminate(); try launch()
@@ -129,13 +129,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // The compact root's destination rows precede its lazy Recently Added grid.
         // Relaunch resets its scroll position; reveal the actual tile before observing it.
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(albumTile(album.title), stage: "checkpoint-2"))
         try awaitServerMembership(album.id, added: true)
         app.terminate()
         try launch(connect: false)
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
+        XCTAssertTrue(observedAlbum(albumTile(album.title), stage: "checkpoint-3"), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
         let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 20))
@@ -152,7 +152,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         awaitLabel(offlineAdd, "Remove from Library")
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(albumTile(album.title), stage: "checkpoint-4"))
         // A direct read bypasses the offline proxy: it proves the write has not reached the server.
         let pendingBeforeRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingBeforeRelaunch)
@@ -172,7 +172,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             print("MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=\(scrolls)")
         }
 #endif
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline relaunch paints the durable pending add before reconnect")
+        XCTAssertTrue(observedAlbum(albumTile(album.title), stage: "checkpoint-5"), "Offline relaunch paints the durable pending add before reconnect")
         let pendingAfterRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingAfterRelaunch)
         app.terminate()
@@ -180,7 +180,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch()
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(albumTile(album.title), stage: "checkpoint-6"))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
     }
@@ -695,6 +695,45 @@ final class DulcetMyLibraryUITests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "identifier == 'dulcet.library.album' AND label BEGINSWITH %@", title)).firstMatch
     }
     @discardableResult
+    // Diagnostic only: retain the original assertion result while recording whether a new
+    // snapshot, time, or a small real scroll republishes a visible lazy tile.
+    @MainActor private func observedAlbum(_ tile: XCUIElement, stage: String) -> Bool {
+        let original = tile.waitForExistence(timeout: 20)
+#if os(iOS)
+        guard !original, UIDevice.current.userInterfaceIdiom == .phone else { return original }
+        func record(_ phase: String) {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "Album AX " + stage + " " + phase
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Album AX " + stage + " " + phase
+            shot.lifetime = .keepAlways
+            add(shot)
+            let artist = app.buttons["dulcet.library.artist"].firstMatch
+            let albumExists = tile.exists
+            let artistExists = artist.exists
+            let albumFrame = albumExists ? tile.frame : .zero
+            let artistFrame = artistExists ? artist.frame : .zero
+            print("ALBUM AX DIAGNOSTIC stage=\(stage) phase=\(phase) album=\(albumExists) artist=\(artistExists) albumFrame=\(albumFrame) artistFrame=\(artistFrame)")
+        }
+        record("original-miss")
+        let afterWait = tile.waitForExistence(timeout: 3)
+        print("ALBUM AX DIAGNOSTIC stage=\(stage) afterWait=\(afterWait)")
+        record("after-wait")
+        let scroll = app.scrollViews["dulcet.myLibrary"].firstMatch
+        // The right gutter avoids both tile hit regions and the tab bar. Move a short
+        // distance down and back up so layout invalidates without navigating away.
+        let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.55))
+        let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.60))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        record("after-nudge-down")
+        end.press(forDuration: 0.05, thenDragTo: start)
+        record("after-nudge-back")
+#endif
+        return original
+    }
+
     @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) -> Int {
 #if os(iOS)
         guard UIDevice.current.userInterfaceIdiom == .phone else { return 0 }
