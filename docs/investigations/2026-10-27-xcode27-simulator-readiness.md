@@ -66,3 +66,24 @@ describes duplicate watchOS runtimes; this run supplies no evidence linking that
 issue to its iPad boot. The open simulator-boot report
 [12777](https://github.com/actions/runner-images/issues/12777) concerns a macOS 15
 image and is not evidence of the same Xcode 27 failure.
+
+## Native queue fixture
+
+[PR platform job 122359653166](https://github.com/legitimate-apps/dulcet/actions/runs/40552454388/job/122359653166)
+passed the 425 macOS tests and both corrected capture passes, then failed one
+of 407 iOS package tests. `aPreloadedAdvanceWhilePausedInheritsNoPlayRequest`
+observed the expected engine boundary but found `AVQueuePlayer.currentItem == nil`
+instead of the preloaded item. The native log also reports an unsupported-URL
+error around that transition. No matching failure was found among platform jobs
+in the last 30 main runs and their recorded attempts.
+
+The boundary helper had supplied resources that never completed any byte request.
+That is an unstable fixture for a test that requires AVFoundation to retain a
+playable queue item. The helper now supplies ten minutes of valid PCM, checks
+incoming decoder readiness, and retains the exact current-item identity check.
+The engine still reads only the manual clock's samples. The requested-play,
+paused inheritance, resumed positive control, event ordering and real queue
+transition assertions remain. Local macOS execution passed all 42 engine tests;
+iOS validation requires the final hosted run. The log does not establish why
+AVFoundation retired the original item, so the unsupported-URL diagnostic alone
+is not treated as a production resource-loader defect.
