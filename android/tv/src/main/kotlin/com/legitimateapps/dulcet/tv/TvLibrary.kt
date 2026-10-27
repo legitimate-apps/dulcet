@@ -478,6 +478,7 @@ internal fun TvTopBar(
     Row(
         Modifier.fillMaxWidth().then(if (discover) Modifier.horizontalScroll(rememberScrollState()) else Modifier).padding(start = 56.dp, top = 20.dp, end = 56.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (discover) Arrangement.spacedBy(12.dp) else Arrangement.Start,
     ) {
         Icon(DulcetIcons.LibraryMusic, null, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.primary)
         if (!discover) Text(

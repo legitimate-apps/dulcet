@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -166,7 +167,7 @@ internal fun TvDiscoverItem(session: DiscoverWishlistSession, item: DiscoverItem
             }
         }
         }
-        if (compact) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { primaryActions() }
+        if (compact && androidx.compose.ui.platform.LocalDensity.current.fontScale < 1.5f) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { primaryActions() }
         else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { primaryActions() }
         // Partial and ambiguous matches stay metadata pages; each scoped library match is explicit.
         if (local == null) item.availability.libraryItems.filter { it.providerInstanceId == account.providerInstanceId }.forEachIndexed { i, ref ->
@@ -323,33 +324,51 @@ private fun TvDiscoverMetadata(session: DiscoverWishlistSession, route: String, 
 
 @Composable
 internal fun TvDiscoverQuery(value: String, change: (String) -> Unit, tag: String, submit: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    var editing by remember { mutableStateOf(false) }
-    LaunchedEffect(editing) { if (editing) { withFrameNanos { }; keyboard?.show() } }
     val navFocus = LocalTvNavFocus.current
     val manager = androidx.compose.ui.platform.LocalFocusManager.current
-    BasicTextField(value, change, readOnly = !editing, modifier = Modifier.fillMaxWidth().tvFocus(tag).onFocusChanged {
-        focused = it.isFocused
-        if (!it.isFocused) { editing = false; keyboard?.hide() }
-    }
-        .onPreviewKeyEvent { event ->
-            if (event.type == KeyEventType.KeyDown && (event.key == Key.DirectionCenter || event.key == Key.Enter)) {
-                if (editing) keyboard?.show() else editing = true
-                true
-            } else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                runCatching { navFocus?.requestFocus() }; true
-            } else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                manager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down); true
-            } else false
+    val editorFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    var editing by remember { mutableStateOf(false) }
+    var editorWasFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(editing) {
+        if (editing) {
+            withFrameNanos { }
+            editorFocus.requestFocus()
+            keyboard?.show()
         }
-        .border(if (focused) 3.dp else 1.dp, MaterialTheme.colorScheme.primary).padding(16.dp)
-        .semantics { contentDescription = "Search query" }, textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), singleLine = true,
-        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
-        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = {
-            submit(); editing = false; keyboard?.hide(); manager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)
-        }))
+    }
+    if (!editing) {
+        // A TV button is a reliable remote focus target even when the input service is closed.
+        Button(onClick = { editorWasFocused = false; editing = true }, modifier = Modifier.fillMaxWidth().tvFocus(tag)
+            .semantics { contentDescription = "Search query. Select to edit." }) {
+            Text(value.ifBlank { "Search query" }, style = MaterialTheme.typography.bodyLarge)
+        }
+    } else {
+        BasicTextField(value, change, modifier = Modifier.fillMaxWidth()
+            .tvFocus(tag)
+            .focusRequester(editorFocus)
+            .onFocusChanged {
+                if (it.isFocused) editorWasFocused = true
+                else if (editorWasFocused) { editing = false; keyboard?.hide() }
+            }
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false
+                else when (event.key) {
+                    Key.DirectionCenter, Key.Enter -> { keyboard?.show(); true }
+                    Key.DirectionUp -> { runCatching { navFocus?.requestFocus() }; true }
+                    Key.DirectionDown -> { manager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down); true }
+                    else -> false
+                }
+            }
+            .border(3.dp, MaterialTheme.colorScheme.primary).padding(16.dp)
+            .semantics { contentDescription = "Search query" },
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), singleLine = true,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = {
+                submit(); keyboard?.hide(); manager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)
+            }))
+    }
 }
 
 @Composable
