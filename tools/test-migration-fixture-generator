@@ -31,6 +31,8 @@ COPIED = [
     "core/src/commonMain/sqldelight/migrations/10.sqm",
     "tools/migration-fixtures/v12",
     "tools/migration-fixtures/v13",
+    "tools/migration-fixtures/v14",
+    "core/src/commonMain/sqldelight/migrations/13.sqm",
     "core/src/commonMain/sqldelight/migrations/12.sqm",
 ]
 
@@ -173,6 +175,35 @@ QUEUE_CASES = [
 ]
 
 
+DISCOVER_CASES = [
+    (
+        "a changed pending wish seed",
+        lambda root: edit_tool(root, '\"pending\", None, 51', '\"synced\", None, 51'),
+        "rows of wish_intent differ",
+    ),
+    (
+        "a committed pending wish erased",
+        lambda root: edit_fixture(root, 14, "DELETE FROM wish_intent"),
+        "rows of wish_intent differ",
+    ),
+    (
+        "a committed wish action clock lowered",
+        lambda root: edit_fixture(root, 14, "UPDATE wish_clock SET last_action_time = 0"),
+        "rows of wish_clock differ",
+    ),
+    (
+        "a committed wish receipt erased",
+        lambda root: edit_fixture(root, 14, "DELETE FROM wish_receipt"),
+        "rows of wish_receipt differ",
+    ),
+    (
+        "queue metadata erased alongside Discover",
+        lambda root: edit_fixture(root, 14, "UPDATE queue_entry SET album_raw_id = NULL, duration_milliseconds = NULL"),
+        "rows of queue_entry differ",
+    ),
+]
+
+
 def main() -> None:
     failures = []
     with tempfile.TemporaryDirectory(prefix="dulcet-fixture-control-") as directory:
@@ -186,6 +217,9 @@ def main() -> None:
         result = check(root, 13)
         if result.returncode != 0:
             failures.append(f"the unmodified queue fixture was refused: {result.stderr.strip()}")
+        result = check(root, 14)
+        if result.returncode != 0:
+            failures.append(f"the unmodified Discover fixture was refused: {result.stderr.strip()}")
         # A cached placeholder and a completely absent cached track both leave NULL metadata.
         # Keep released v12 immutable; exercise the absent-track input on an isolated copy.
         uncached = scratch(Path(directory) / "uncached")
@@ -206,7 +240,7 @@ def main() -> None:
         if result.returncode != 0:
             failures.append(f"a seed lowered an earlier fixture's sequence: {result.stderr.strip()}")
         cases = ([(8, *case) for case in CASES] + [(11, *case) for case in OFFLINE_CASES]
-                 + [(13, *case) for case in QUEUE_CASES])
+                 + [(13, *case) for case in QUEUE_CASES] + [(14, *case) for case in DISCOVER_CASES])
         for index, (version, name, change, expected) in enumerate(cases):
             root = scratch(Path(directory) / f"case-{index}")
             change(root)
@@ -222,7 +256,7 @@ def main() -> None:
     print(
         f"test-migration-fixture-generator: the committed fixture and a raised sequence accepted; "
         f"uncached queue rows preserved; "
-        f"{len(CASES) + len(OFFLINE_CASES) + len(QUEUE_CASES)} single changes refused, "
+        f"{len(CASES) + len(OFFLINE_CASES) + len(QUEUE_CASES) + len(DISCOVER_CASES)} single changes refused, "
         f"each named (SQLite {sqlite3.sqlite_version})"
     )
 

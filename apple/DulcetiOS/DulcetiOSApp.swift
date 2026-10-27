@@ -97,6 +97,7 @@ struct DulcetiOSApp: App {
                "-dulcet-debug-account-password",
                in: arguments
            ) {
+            if arguments.contains("-dulcet-debug-add-account") { presentation.addServer() }
             presentation.accountServerURL = serverURL
             presentation.accountUsername = username
             presentation.accountPassword = password

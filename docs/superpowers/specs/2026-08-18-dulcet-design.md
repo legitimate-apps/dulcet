@@ -1768,28 +1768,30 @@ to the cold body, byte for byte. `PlaybackContentLength.Estimated` remains a dis
 collapse the two into one numeric "expected length"; nothing in production produces an `Estimated`
 since §28 2026-10-04, and where one is still branched on it is never accepted as the length of a
 body short of it. A network drop part-way through a response that declares a length is therefore
-a failure on every platform, not an early end. A cold transcode now declares none and arrives
-chunked, so a cut-off there is caught only by the chunk framing, and per platform: **OBSERVED
-2026-10-04** (#227 review, real socket; Android under Robolectric with the JDK's
-`HttpURLConnection`, not a device) Android's data source fails both a close mid-chunk and a
-close after a whole chunk with no terminating chunk ("Premature EOF"); the core's JVM client (Ktor
-CIO) fails a close mid-chunk but **loads** a close at a chunk boundary as the whole song, the same as
-before #227. That path is `PlaybackWireClient.load` (CONF-92, the core controls), not a shipping
-player. **ASSUMED, not measured:** that the Apple URLSession loader and the Darwin core client fail
-both kinds of cut-off. The
-core's Ktor read path for estimated bodies and the Darwin delegate's
-end-of-estimate rewrite (§28, 2026-09-30 and 2026-10-01) act only on a request that asks for an
-estimate, so neither acts now. **OBSERVED 2026-10-01 on macOS** (loopback fixture,
-`DarwinEstimatedLengthBodyTest`): when the end of the stream follows body bytes closely, NSURLSession
-discards the ones it has read but not yet handed to its delegate and reports the -1005 without them
--- on an idle host usually the tail after its first 16 KiB read, and under CPU load every byte of a
-23,385-byte body in 65 of 200 reads. **The Apple playback loader is a second client with its own
+a failure on every platform, not an early end. A cold transcode declares no length and arrives
+chunked, so its completeness must be established by the HTTP framing. **OBSERVED 2026-10-24** (#228, real loopback sockets): CIO on
+JVM and Android core, Darwin core on macOS and native URLSession on macOS, iOS and tvOS accepted
+EOF after a whole chunk without a terminating zero chunk. All Apple shells share the playback
+loader; the durable download/cache controller compiles only on macOS and iOS. Mid-chunk cuts failed. Android's
+shipping `HttpURLConnection` player, cache and download paths rejected both cuts under Robolectric.
+Media GETs now use strict framing transports: OkHttp in JVM/Android core, raw Foundation streams
+in Darwin core and Network framework in the Swift resource loader. They require the zero chunk
+and complete trailers. Nonmedia account requests keep their existing transports. The inert Ktor
+estimated-body reader and Darwin end-of-estimate rewrite were removed together. Background Apple
+downloads with chunked or undeclared length discard their OS delivery and promote only a strict
+replacement transfer authorized against the current server identity. See
+[the path inventory and compatibility limits](../../evidence/chunked-media-completeness.md).
+
+**The Apple playback loader is a second client with its own
 session** (`DulcetURLSessionPlaybackResource`), and it sends the plan's request, which never carries
 `estimateContentLength`: a cold transcode answers it with a complete chunked 200 and a cached one
 with 206 and an exact total. It reads each chunk through its delegate and, when a 200 body that
 declared a length ends in the -1005 after at least one byte, hands what arrived to the core
 validator, which treats every declared length as exact and refuses the short body; refused, with no
-byte, or on a 200 that declared no length, the load stays the lost connection. A cold transcode
+byte, or on a 200 that declared no length, the load stays the lost connection. For a chunked 200,
+the session's strict transport is what reports a body whose zero chunk never arrived as that
+-1005 (§28, 2026-10-24). A close-delimited body has no framing to check, so a drop there still
+reads as its end. A cold transcode
 answers the loader's first ranged read with 200 and the whole representation, which the loader
 accepts as the resource only from byte 0 and only at the length the validator measured (§28,
 2026-10-02). `TranscodeDecision.LegacyHint` records that we are on this path so the UI never claims a
@@ -7958,6 +7960,46 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-25 - Integrate Discover and Wishlist native clients and finite proof jobs.**
+
+Step 2 composes the existing REST extension reader and durable wish outbox with Search Everywhere,
+artist/album metadata and Library Wishlist on iPhone, iPad, Mac and Android phone. Account changes
+share the saved-lineage authorization fence; native Swift publications copy Objective-C DTOs into
+values. The iPad reader stack replays an initially unpresented path after destination registration.
+An ordinary push in the same account and destination keeps its requested path visible while the
+presentation acknowledgement catches up, preventing a synthetic empty binding write from popping the
+newly appeared page. The Mac proofs use app-hosted XCTest. iOS Search metadata links carry their
+destination views explicitly inside the shell, avoiding a nested stack value-registration
+dependency. Concrete Discover pages receive the existing shell player-bar configuration above the
+iOS split presentation owner. Identical concurrent album reads keep independent cancellation during
+stack replacement; a different requested edition still revokes the older reads. The requested
+identity stays separate from a resolved default edition. Android restores a visible query into a
+replacement reader using that reader's current publication, including when a retained Compose
+collection still exposes the previous reader's frame. Finite hosted proof jobs keep separate
+device/runtime, finalized test, fixture-effect and capture evidence, with explicit expected
+identities and negative runner controls. The existing hosted pressure-admission dependency precedes
+destination confirmation and keeps the exact selected-device acknowledgement. A dispatch-only
+Discover diagnostic option runs the three fixture proofs without baseline legs; it cannot satisfy
+the full release-run gate. Android captures additionally require the actual foreground package to be
+Dulcet; a system error overlay cannot count as clean visual evidence. Large-text track rows wrap
+their titles and put actions below them. At iOS accessibility sizes the edition menu lets its
+visible date/count label grow vertically while retaining native picker choices. The iPad resize
+proof requires the actual compact tab shell as well as the smaller window. It requires the exact
+title, Back action and durable pending intent after the transition. The pending compact-detail
+failure is recorded in the evidence document. Wishlist dates name their meaning, pair labels with
+values and omit an Updated value identical at the displayed precision. Wishlist loading indicators
+keep an inset from the content edge; Mac loading captures wait for an acknowledged held read and
+visible loading control, then require explicit release. Mac hosted view renders record their
+vibrant-material limitation, and the environment variant does not claim enlarged Mac text. Artist
+captures wait for loaded metadata; Search proof reentry uses native Back controls through its
+retained metadata stack. Native matrix promotion awaits the final integrated-head proofs in
+`docs/evidence/discover-wishlist-clients.md`. Shelves and playlist pages remain step 3, television
+UI step 4; production terms and upstream rights conditions are unchanged.
+
+Main's queue migration retains schema 13; Discover uses the additive 13-to-14 migration and fixture
+v14. The integration migration proof preserves queue context, pending My Library intents and scoped
+media ownership. Native cells still require the corresponding native proof.
+
 **2026-10-25 - Tracks without server duration play on every platform (#388).**
 
 A track listed by the server remains queueable when its duration is absent, in Library Play,
@@ -8006,7 +8048,6 @@ a full run. `tools/test-plan-apple-legs` executes the event/input plans;
 `tools/test-release-channel` accepts a full suite and refuses a conformance-only run, including
 when an earlier full suite or a separate platform success is available. `docs/MERGING.md`
 documents the opt-in command and the conclusions a maintainer must inspect.
-
 
 **2026-10-24 — Retry interrupted AutoPlay searches and retain queue musical context.**
 
@@ -8061,6 +8102,25 @@ Queue, playlists and system media browsing use the same duration and offline ava
 requirements. Android continues to exclude tracks unavailable offline from a new queue, while
 Apple's adapter labels them `metadataOnly` for its queue's offline policy. Apple reader and search use their shared localized `reader.untitled` value, with English
 "Untitled". Both platforms treat whitespace-only titles as absent display text.
+
+
+**2026-10-24 - Require complete HTTP chunk framing before media completion (#228).**
+
+Media EOF between whole chunks is a transport failure until the terminating zero chunk and
+trailers have arrived. JVM and Android core use a media-only OkHttp client; Darwin core and Swift
+media sessions keep raw HTTP/1.1 framing through strict socket transports with platform TLS trust.
+Account traffic keeps its prior transports and retry behavior. Apple background downloads with
+no exact length replace the unproved OS file through a strict, currently authorized transfer;
+only that response's bytes and persisted framing proof can be promoted. The inert estimated-body
+reader and Darwin completion rewrite were removed together. The
+[path inventory, baseline socket observations and limitations](../../evidence/chunked-media-completeness.md)
+record the tested boundaries. Existing completed library files are not retroactively repaired.
+
+The Apple playback loader retains a 256 KiB signature probe and caps later ranges at 1 MiB to
+reduce fresh TCP/TLS connections. Later reads stop at the requested end or known resource end;
+the signature probe may outgrow a tiny header request but never a known resource end. A server
+that ignores the initial range can still return the complete validated representation. Strict
+HTTP framing remains required for every response.
 
 
 **2026-10-23 — Retain Android Play across a chosen connection's transient validation loss.**

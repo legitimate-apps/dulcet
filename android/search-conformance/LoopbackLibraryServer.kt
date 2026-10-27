@@ -77,6 +77,8 @@ class LoopbackLibraryServer : AutoCloseable {
     @Volatile var dulcetLibrary = false
     /** Optional Home feed, with mutable recent playlists for offscreen refresh proofs. */
     @Volatile var dulcetHome = false
+    /** Advertise phone extensions to detect accidental eager feature composition on TV. */
+    @Volatile var dulcetDiscoverWishlist = false
     @Volatile var homePlaylists: List<Pair<String, String>> = emptyList()
 
     private val libraryAlbumIds = LinkedHashMap<String, Long>()
@@ -185,6 +187,7 @@ class LoopbackLibraryServer : AutoCloseable {
             "getStarred2" -> """"starred2":{}"""
             "getOpenSubsonicExtensions" -> listOfNotNull(
                 "dulcetLibrary".takeIf { dulcetLibrary }, "dulcetHome".takeIf { dulcetHome },
+                "dulcetDiscover".takeIf { dulcetDiscoverWishlist }, "dulcetWishlist".takeIf { dulcetDiscoverWishlist },
             ).takeIf { it.isNotEmpty() }?.joinToString(",", "\"openSubsonicExtensions\":[", "]") {
                 """{"name":${quote(it)},"versions":[1]}"""
             }
@@ -250,7 +253,8 @@ class LoopbackLibraryServer : AutoCloseable {
                 val id = parameters["id"].orEmpty()
                 val index = id.substringAfterLast("-song-").toInt() - 1
                 val titleField = albumSongTitles[index]?.let { "\"title\":${quote(it)}," }.orEmpty()
-                """"song":{"id":${quote(id)},${titleField}"duration":120,"suffix":"wav","contentType":"audio/wav"}"""
+                val durationField = (if (albumSongDurationsSeconds != null) albumSongDurationsSeconds?.getOrNull(index) else albumSongDurationSeconds)?.let { "\"duration\":$it," }.orEmpty()
+                """"song":{"id":${quote(id)},${titleField}${durationField}"suffix":"wav","contentType":"audio/wav"}"""
             } else songsByGenre.values.flatten().firstOrNull { it.first == parameters["id"] }
                 ?.let { (id, title) -> """"song":${genreSong(id, title)}""" }
             else -> null

@@ -21,6 +21,7 @@ RESERVATIONS = FIXTURES / "reserved-tables.json"
 SHIPPING_FOREIGN_KEYS = 1
 
 SCHEMA_INTENT_TABLES = {
+    "discover_read", "wishlist_snapshot", "wish_clock", "wish_intent", "wish_receipt",
     "server_account",
     "music_folder",
     "artist",
@@ -64,6 +65,7 @@ SCHEMA_INTENT_TABLES = {
     "cache_lyrics_line",
 }
 REQUIRED_IMPLEMENTED_TABLES = {
+    "discover_read", "wishlist_snapshot", "wish_clock", "wish_intent", "wish_receipt",
     "my_library_item",
     "my_library_state",
     "music_folder",
@@ -95,6 +97,9 @@ REQUIRED_IMPLEMENTED_TABLES = {
     "cache_album",
 }
 PROTECTED_COLUMNS = {
+    "wish_clock": ("server_id", "last_action_time", "last_sequence"),
+    "wish_intent": ("server_id", "operation_id", "row_key", "target_key", "payload", "status", "error", "ordinal"),
+    "wish_receipt": ("server_id", "operation_id", "wish_id", "payload", "issue_seq"),
     "queue_entry": (
         "server_id", "queue_entry_id", "raw_id", "source_context_kind",
         "source_context_raw_id", "source_context_display_name", "added_by",
@@ -161,6 +166,7 @@ PROTECTED_COLUMNS = {
 # A protected table that a released schema introduced is compared only from that version on; the
 # migration that introduces it is held to the pin-coverage contract instead.
 PROTECTED_SINCE_VERSION = {
+    "wish_clock": 14, "wish_intent": 14, "wish_receipt": 14,
     "cache_pin": 6,
     "offline_library_settings": 11,
     "offline_media_retention": 11,

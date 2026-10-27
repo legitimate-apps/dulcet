@@ -156,6 +156,7 @@ public class LibrarySession internal constructor(
     public val connection: StateFlow<LibraryConnectionState> = connectionState.asStateFlow()
 
     private fun setConnection(state: LibraryConnectionState) {
+        proof("setConnection old=${connectionState.value.javaClass.simpleName} new=${state.javaClass.simpleName}")
         if (state is LibraryConnectionState.Online) serverReportsNoEpoch = state.serverReportsNoEpoch
         connectionState.value = state
         observationState.update { it.copy(connections = (it.connections + state).takeLast(MAX_FRAMES)) }
@@ -255,6 +256,15 @@ public class LibrarySession internal constructor(
         lyricsFacade ?: AndroidLibraryLyrics(reader, preferredLanguages).also { lyricsFacade = it }
 
     private var myLibrarySession: MyLibrarySession? = null
+    private var discoverWishlistSession: DiscoverWishlistSession? = null
+
+    /** Phone feature only. TV never opens this lazy facade. Shares this reader's identity fence. */
+    public val discoverWishlist: DiscoverWishlistSession
+        get() = discoverWishlistSession ?: DiscoverWishlistSession(CoreDiscoverWishlistSource(reader)).also {
+            discoverWishlistSession = it
+            it.refreshWishlist(com.legitimateapps.dulcet.core.WishFilter())
+        }
+
 
     /**
      * The account's My Library (spec §29.4, §29.9): what this account added on a server advertising
@@ -540,6 +550,7 @@ public class LibrarySession internal constructor(
      * the outbox flush, the epoch read, and the visible screen revalidated. Nothing else.
      */
     public fun start() {
+        proof("start closed=$closed started=$started")
         if (closed || started) return
         started = true
         if (awaitingReconnect) {
@@ -568,6 +579,7 @@ public class LibrarySession internal constructor(
 
     /** The app left the foreground: nothing reads the epoch in the background (§16.11). */
     public fun stop() {
+        proof("stop started=$started")
         if (!started) return
         started = false
         unregisterNetworkCallback()
@@ -586,6 +598,7 @@ public class LibrarySession internal constructor(
      * it was told before; a reconnect never changes that itself.
      */
     public fun retry() {
+        proof("retry closed=$closed awaitingReconnect=$awaitingReconnect")
         if (closed) return
         if (awaitingReconnect) {
             connectSavedAccount()
@@ -647,6 +660,7 @@ public class LibrarySession internal constructor(
         closed = true
         reconnectRegistration.close()
         myLibrarySession?.close()
+        discoverWishlistSession?.close()
         outcomeRegistration.close()
         playlistRegistration.close()
         playlistQuestions.close()
@@ -760,6 +774,13 @@ public class LibrarySession internal constructor(
         runCatching { Log.i(REACHABILITY_LOG_TAG, line) }
     }
 
+    /** Opt-in native proof receipts contain only state names, counters and booleans. */
+    private fun proof(line: String) {
+        if (System.getProperty("dulcet.proof.readerReceipts") == "true") {
+            log("proof session=${System.identityHashCode(this)} $line")
+        }
+    }
+
     /**
      * The platform's report, forwarded as is. Reachable while the reader is offline REQUESTS a
      * reconnect in the core; the [reconnect] call after it joins that one, for its outcome.
@@ -783,6 +804,7 @@ public class LibrarySession internal constructor(
      * only while that says reachable and the app is in the foreground.
      */
     private fun tell(reachable: Boolean, serverUnavailable: Boolean = true) {
+        proof("tell reachable=$reachable serverUnavailable=$serverUnavailable generation=$reachabilityGeneration")
         observationState.update { it.copy(reachabilityReports = it.reachabilityReports + reachable) }
         reader.setOnline(reachable, serverUnavailable)
     }
@@ -795,12 +817,14 @@ public class LibrarySession internal constructor(
         if (connectionState.value == LibraryConnectionState.Closed) return
         val generation = reachabilityGeneration
         val call = ++reconnectCalls
+        proof("reconnect call=$call generation=$generation started=$started")
         setConnection(LibraryConnectionState.Connecting)
         observationState.update { it.copy(reconnects = it.reconnects + 1) }
         reader.reconnect { outcome -> if (call == reconnectCalls) reconnected(outcome, generation) }
     }
 
     private fun reconnected(outcome: AndroidLibraryConnection, generation: Int) {
+        proof("reconnected call=$reconnectCalls generation=$generation currentGeneration=$reachabilityGeneration lastReport=$lastReport started=$started epochRead=${outcome.epochRead} readerOnline=${outcome.readerOnline} closed=${outcome.closed} error=${outcome.error?.javaClass?.simpleName}")
         if (closed) return
         observationState.update { it.copy(reconnectAnswers = it.reconnectAnswers + 1) }
         if (outcome.closed) {

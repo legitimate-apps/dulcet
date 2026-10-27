@@ -126,11 +126,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch()
 #endif
         try select("library")
+        // The compact root's destination rows precede its lazy Recently Added grid.
+        // Relaunch resets its scroll position; reveal the actual tile before observing it.
+        revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
         app.terminate()
         try launch(connect: false)
         try select("library")
+        revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
         let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
@@ -466,7 +470,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 
     @MainActor
     private func launch(connect: Bool = true, server: String? = nil, username: String? = nil, password: String? = nil, variant: String = "light") throws {
-        var launchArguments = [variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
+        var launchArguments = ["-dulcet-debug-ui-markers", variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if variant == "largest-text" { launchArguments += ["-dulcet-debug-largest-text"] }
         if connect {
             launchArguments += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server ?? base,
@@ -492,7 +496,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }
         app.activate()
         let window = app.windows.firstMatch
-        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        if !window.waitForExistence(timeout: 10) {
+            // The hosted app can expose its menu bar without a window. Start this proof
+            // through the same File > New Window action available to a person.
+            app.menuBars.menuBarItems["File"].click()
+            let newWindow = app.menuItems["New Window"].firstMatch
+            XCTAssertTrue(newWindow.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertTrue(newWindow.isEnabled, "File > New Window must be available")
+            newWindow.click()
+        }
+        XCTAssertTrue(window.waitForExistence(timeout: 10), app.debugDescription)
         let screenWidth = try XCTUnwrap(NSScreen.main?.frame.width)
         let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             window.frame.minX >= 0 && window.frame.maxX <= screenWidth
@@ -536,15 +549,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(macOS)
         // Labels also match section headings and toolbar titles. The actual navigation row
         // carries this identifier on its text in the macOS outline's accessibility tree.
-        return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
+        return app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #elseif os(tvOS)
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
         if UIDevice.current.userInterfaceIdiom == .pad {
-            // Resolve the indexed result after the account publishes its sidebar. The retained
-            // iPad failure's firstMatch wait reported absent while its own failure hierarchy
-            // contained this exact StaticText. The indexed query avoids that early shortcut.
-            return app.staticTexts.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
+            // iPad sidebar choices are explicit buttons. Resolve the indexed action itself,
+            // including its selected trait, rather than a label or a former List cell.
+            return app.buttons.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
         }
         let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
@@ -632,13 +644,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // before reading destination content; make at most one second real row tap.
             let firstSelection = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
             if XCTWaiter.wait(for: [firstSelection], timeout: 3) != .completed {
-                let row = app.cells.containing(.staticText, identifier: "dulcet.sidebar.\(section)").firstMatch
+                let row = app.buttons.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
                 guard row.waitForExistence(timeout: 3) else {
                     XCTFail("Missing native sidebar row for \(section): \(app.debugDescription)")
                     return
                 }
-                print("MY LIBRARY IPAD unacknowledged-sidebar-tap target=\(section) retry=cell")
-                row.tap()
+                if !row.isSelected {
+                    print("MY LIBRARY IPAD unacknowledged-sidebar-tap target=\(section) retry=button")
+                    row.tap()
+                }
             }
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
@@ -756,7 +770,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // Resolve the indexed result, as for the iPad sidebar. On the Mac the firstMatch wait
         // reported absent for 15 s while the failure hierarchy held this exact titled StaticText.
         let header = app.staticTexts.matching(identifier: "dulcet.album.title").element(boundBy: 0)
-        XCTAssertTrue(header.waitForExistence(timeout: 15), "The activated tile must open its album page")
+        let opened = header.waitForExistence(timeout: 15)
+        if !opened {
+            print("MY LIBRARY NAVIGATION " + app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label)
+            print("MY LIBRARY FAILED ALBUM HIERARCHY " + app.debugDescription)
+        }
+        XCTAssertTrue(opened, "The activated tile must open its album page")
         XCTAssertEqual(header.label, title, "The album page must name the activated tile")
     }
     @MainActor private func activate(_ element: XCUIElement) {

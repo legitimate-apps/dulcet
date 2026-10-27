@@ -1151,7 +1151,7 @@ struct AVPlayerResourceLoaderIntegrationTests {
 struct AVPlayerWholeRepresentationTests {
     @Test
     func aWholeRepresentationLongerThanTheChunkMakesTheItemReady() async throws {
-        let wave = makePCMWave(duration: 20)
+        let wave = makePCMWave(duration: 90)
         #expect(Int64(wave.count) > DulcetAVAssetResourceLoaderDelegate.maximumChunkLength,
                 "The control: the body must outgrow one chunk")
         let resource = WholeRepresentationPlaybackResource(data: wave)
@@ -1182,6 +1182,7 @@ struct AVPlayerWholeRepresentationTests {
         #expect(failures().isEmpty, "reported \(failures())")
         #expect(ready())
         #expect(resource.requestCount > 0)
+        #expect(resource.requests.first?.range.length == DulcetAVAssetResourceLoaderDelegate.initialChunkLength)
         _ = await execute(engine, .release(commandID: .init("whole-release")))
     }
 }

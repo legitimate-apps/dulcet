@@ -145,12 +145,14 @@ def invoke(root: Path, base_ref: str | None = "main") -> subprocess.CompletedPro
     )
 
 
-def invoke_execution(root: Path, report: str) -> subprocess.CompletedProcess[str]:
+def invoke_execution(
+    root: Path, report: str, *, workflow: str = "apple-ci", job: str = "apple-ci",
+) -> subprocess.CompletedProcess[str]:
     results = root / "results"
     results.mkdir()
     (results / "TEST-evidence.xml").write_text(report)
     environment = os.environ.copy()
-    environment.update(GITHUB_WORKFLOW="apple-ci", GITHUB_JOB="apple-ci")
+    environment.update(GITHUB_WORKFLOW=workflow, GITHUB_JOB=job)
     return subprocess.run(
         [sys.executable, "tools/verify-parity-evidence", str(results)],
         cwd=root,
@@ -1402,6 +1404,34 @@ for alias, methods in (
     for method in methods:
         passing_cases += f'<testcase classname="{alias}" name="{method}" time="0.1" />\n'
 
+# Keep Discover's synthetic execution inventory explicit and independent of FEATURES.
+# These are harness fixtures, never native feature evidence.
+DISCOVER_EXECUTION_CASES = (
+    ("apple-ci", "DulcetDiscoverWishlistUITests", (
+        "testEverywhereQueryPagesAndHeldRouting",
+        "testBusyStaleAndNavidromeControl",
+        "testOfflineWishRelaunchRemoveAndScanArrival",
+    )),
+    ("apple-ci", "DulcetDiscoverWishlistIPadUITests", (
+        "testEverywhereQueryPagesAndHeldRouting",
+        "testBusyStaleAndNavidromeControl",
+        "testOfflineWishRelaunchRemoveAndScanArrival",
+    )),
+    ("apple-ci", "DulcetMacDiscoverWishlistAppTest", (
+        "testEverywhereQueryPagesAndHeldRouting",
+        "testBusyStaleAndNavidromeControl",
+        "testOfflineWishRelaunchRemoveAndScanArrival",
+    )),
+    ("core-ci", "com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest", (
+        "everywherePagesAndHeldRoute",
+        "busyStaleAndNavidromeControl",
+        "offlineWishRelaunchRemoveRaceAndArrival",
+    )),
+)
+for workflow, alias, methods in DISCOVER_EXECUTION_CASES:
+    for method in methods:
+        passing_cases += f'<testcase classname="{alias}" name="{method}" time="0.1" />\n'
+
 passing_report = (
     f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'
     + passing_cases
@@ -1576,6 +1606,50 @@ for label, (report, expected) in execution_rejections.items():
                 f"{label}: expected rejection containing {expected!r}, "
                 f"returncode={result.returncode}, output={result.stdout!r}"
             )
+
+# Exercise each native claim in its actual executing workflow. Other core-ci claims
+# have separate fixtures; isolate the five Discover rows while retaining an explicit
+# passing-case inventory rather than manufacturing XML from their citations.
+def invoke_discover_execution(root: Path, report: str, workflow: str) -> subprocess.CompletedProcess[str]:
+    path = root / "FEATURES.yml"
+    document = json.loads(path.read_text())
+    discover_ids = {"discover.search", "discover.pages", "wishlist.add", "wishlist.state", "wishlist.fulfil"}
+    document["features"] = [row for row in document["features"] if row["id"] in discover_ids]
+    assert {row["id"] for row in document["features"]} == discover_ids
+    path.write_text(json.dumps(document, indent=2) + "\n")
+    return invoke_execution(root, report, workflow=workflow, job=workflow)
+
+
+for workflow in ("apple-ci", "core-ci"):
+    with tempfile.TemporaryDirectory(prefix="dulcet-discover-execution-") as directory:
+        root = Path(directory)
+        materialize(root)
+        result = invoke_discover_execution(root, passing_report, workflow)
+        if result.returncode != 0:
+            raise AssertionError(f"{workflow} Discover positive report rejected: {result.stdout}")
+
+for workflow, alias, methods in DISCOVER_EXECUTION_CASES:
+    for method in methods:
+        case = f'<testcase classname="{alias}" name="{method}" time="0.1" />'
+        assert passing_report.count(case) == 1
+        mutations = [(passing_report.replace(case, ""), "evidence test did not execute")]
+        mutations += [(
+            passing_report.replace(case, case.removesuffix(" />") + f'><{terminal} /></testcase>'),
+            "evidence test did not pass",
+        ) for terminal in ("failure", "error", "skipped")]
+        for report, expected in mutations:
+            with tempfile.TemporaryDirectory(prefix="dulcet-discover-execution-") as directory:
+                root = Path(directory)
+                materialize(root)
+                result = invoke_discover_execution(root, report, workflow)
+                if result.returncode == 0 or expected not in result.stdout:
+                    raise AssertionError(
+                        f"{workflow} {alias}/{method}: expected {expected!r}, "
+                        f"returncode={result.returncode}, output={result.stdout!r}"
+                    )
+print("Discover execution controls: two workflow positives and "
+      f"{4 * sum(len(methods) for _, _, methods in DISCOVER_EXECUTION_CASES)} "
+      "missing/failure/error/skip rejections passed")
 
 # Exercise raw JSON: dict-based mutations cannot represent duplicate keys.
 for original, replacement, key in (

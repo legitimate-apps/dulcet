@@ -6839,24 +6839,80 @@
       ],
       "platforms": {
         "macos": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "Typing Everywhere renders incremental artist, album and song groups and ignores an acknowledged late old payload.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacDiscoverWishlistAppTest/testEverywhereQueryPagesAndHeldRouting"
+            },
+            {
+              "observes": "A served 429 and stale answer produce the expected notice and age; positive native Navidrome browsing precedes zero feature RPCs.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacDiscoverWishlistAppTest/testBusyStaleAndNavidromeControl"
+            }
+          ],
+          "reason": "All six hosted app XCTest identities pass in apple-ci run 40186168478, discover-wishlist-macos job 121147327611, on source 375b991d and arm64 macOS 26.6.2 (25G83), with 25 captures and acknowledged fixture effects. Finalized xcresult and XML agree on six passes with zero failures, errors or skips. SQL/session restart, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "ios": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "Typing Everywhere renders incremental artist, album and song groups and ignores an acknowledged late old payload.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistUITests/testEverywhereQueryPagesAndHeldRouting"
+            },
+            {
+              "observes": "A served 429 and stale answer produce the expected notice and age; positive native Navidrome browsing precedes zero feature RPCs.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistUITests/testBusyStaleAndNavidromeControl"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-iphone job 121147327659, on source 375b991d and iPhone 17, iOS 26.5 (23F77), with 23 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The native player bar, consent Cancel and VoiceOver label, process relaunch, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "ipados": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "Typing Everywhere renders incremental artist, album and song groups and ignores an acknowledged late old payload.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting"
+            },
+            {
+              "observes": "A served 429 and stale answer produce the expected notice and age; positive native Navidrome browsing precedes zero feature RPCs.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistIPadUITests/testBusyStaleAndNavidromeControl"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-ipad job 121149529146, on source 375b991d and iPad (A16), iOS 26.5 (23F77), with 26 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The explicit sidebar, held album, actual compact-window transition and Back/pending-intent retention, native player bar, process relaunch, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "tvos": {
           "status": "planned",
           "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
         },
         "android": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "Typing Everywhere renders incremental artist, album and song groups and ignores an acknowledged late old payload.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorDiscoverWishlistProofTest/everywherePagesAndHeldRoute"
+            },
+            {
+              "observes": "A served 429 and stale answer produce the expected notice and age; positive native Navidrome browsing precedes zero feature RPCs.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorDiscoverWishlistProofTest/busyStaleAndNavidromeControl"
+            }
+          ],
+          "reason": "Native core-ci run 40186171196, discover-wishlist-android job 121147304534, executes ten passing phases across five methods on source 375b991d, API 34, with fixture acknowledgements and 32 foreground captures. The checkout tree matches the branch source and the complete workflow passes. Counts, delayed-query and 429 effects, lost-receipt replay, completed scans, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "androidtv": {
           "status": "planned",
@@ -6909,24 +6965,76 @@
       ],
       "platforms": {
         "macos": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "The native artist and album pages expose editions and tracks, page results and route held music through its scoped local reference.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacDiscoverWishlistAppTest/testEverywhereQueryPagesAndHeldRouting"
+            }
+          ],
+          "reason": "All six hosted app XCTest identities pass in apple-ci run 40186168478, discover-wishlist-macos job 121147327611, on source 375b991d and arm64 macOS 26.6.2 (25G83), with 25 captures and acknowledged fixture effects. Finalized xcresult and XML agree on six passes with zero failures, errors or skips. SQL/session restart, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "discover-playlist-pages-and-native-completeness-matrix",
+            "reason": "Playlist metadata pages remain step 3. Native partial and unknown completeness states still need explicit proof that no false complete-library link is offered."
+          }
         },
         "ios": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "The native artist and album pages expose editions and tracks, page results and route held music through its scoped local reference.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistUITests/testEverywhereQueryPagesAndHeldRouting"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-iphone job 121147327659, on source 375b991d and iPhone 17, iOS 26.5 (23F77), with 23 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The native player bar, consent Cancel and VoiceOver label, process relaunch, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "discover-playlist-pages-and-native-completeness-matrix",
+            "reason": "Playlist metadata pages remain step 3. Native partial and unknown completeness states still need explicit proof that no false complete-library link is offered."
+          }
         },
         "ipados": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "The native artist and album pages expose editions and tracks, page results and route held music through its scoped local reference.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-ipad job 121149529146, on source 375b991d and iPad (A16), iOS 26.5 (23F77), with 26 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The explicit sidebar, held album, actual compact-window transition and Back/pending-intent retention, native player bar, process relaunch, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "discover-playlist-pages-and-native-completeness-matrix",
+            "reason": "Playlist metadata pages remain step 3. Native partial and unknown completeness states still need explicit proof that no false complete-library link is offered."
+          }
         },
         "tvos": {
           "status": "planned",
           "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
         },
         "android": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "The native artist and album pages expose editions and tracks, page results and route held music through its scoped local reference.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorDiscoverWishlistProofTest/everywherePagesAndHeldRoute"
+            }
+          ],
+          "reason": "Native core-ci run 40186171196, discover-wishlist-android job 121147304534, executes ten passing phases across five methods on source 375b991d, API 34, with fixture acknowledgements and 32 foreground captures. The checkout tree matches the branch source and the complete workflow passes. Counts, delayed-query and 429 effects, lost-receipt replay, completed scans, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "discover-playlist-pages-and-native-completeness-matrix",
+            "reason": "Playlist metadata pages remain step 3. Native partial and unknown completeness states still need explicit proof that no false complete-library link is offered."
+          }
         },
         "androidtv": {
           "status": "planned",
@@ -6944,24 +7052,56 @@
       ],
       "platforms": {
         "macos": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "An offline wish survives closing and recreating the production session and SQL store inside the app host; lost receipt A is removed through a scan and replay, and new B survives another old-A reply.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacDiscoverWishlistAppTest/testOfflineWishRelaunchRemoveAndScanArrival"
+            }
+          ],
+          "reason": "All six hosted app XCTest identities pass in apple-ci run 40186168478, discover-wishlist-macos job 121147327611, on source 375b991d and arm64 macOS 26.6.2 (25G83), with 25 captures and acknowledged fixture effects. Finalized xcresult and XML agree on six passes with zero failures, errors or skips. SQL/session restart, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "ios": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "An offline wish survives terminating and relaunching the native app; lost receipt A is removed through a scan and replay, and new B survives another old-A reply.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistUITests/testOfflineWishRelaunchRemoveAndScanArrival"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-iphone job 121147327659, on source 375b991d and iPhone 17, iOS 26.5 (23F77), with 23 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The native player bar, consent Cancel and VoiceOver label, process relaunch, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "ipados": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "An offline wish survives terminating and relaunching the native app; lost receipt A is removed through a scan and replay, and new B survives another old-A reply.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistIPadUITests/testOfflineWishRelaunchRemoveAndScanArrival"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-ipad job 121149529146, on source 375b991d and iPad (A16), iOS 26.5 (23F77), with 26 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The explicit sidebar, held album, actual compact-window transition and Back/pending-intent retention, native player bar, process relaunch, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "tvos": {
           "status": "planned",
           "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
         },
         "android": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "An offline wish survives process restart; lost receipt A is removed through a scan and replay, and a new B survives another old-A reply. An acknowledged in-flight add/remove race ends absent.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorDiscoverWishlistProofTest/offlineWishRelaunchRemoveRaceAndArrival"
+            }
+          ],
+          "reason": "Native core-ci run 40186171196, discover-wishlist-android job 121147304534, executes ten passing phases across five methods on source 375b991d, API 34, with fixture acknowledgements and 32 foreground captures. The checkout tree matches the branch source and the complete workflow passes. Counts, delayed-query and 429 effects, lost-receipt replay, completed scans, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "androidtv": {
           "status": "planned",
@@ -6979,24 +7119,76 @@
       ],
       "platforms": {
         "macos": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "Native Wishlist shows the same durable pending intent after production session and SQL recreation, then the scanned Arrived result; removal preserves library membership.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacDiscoverWishlistAppTest/testOfflineWishRelaunchRemoveAndScanArrival"
+            }
+          ],
+          "reason": "All six hosted app XCTest identities pass in apple-ci run 40186168478, discover-wishlist-macos job 121147327611, on source 375b991d and arm64 macOS 26.6.2 (25G83), with 25 captures and acknowledged fixture effects. Finalized xcresult and XML agree on six passes with zero failures, errors or skips. SQL/session restart, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "wishlist-native-state-filter-matrix",
+            "reason": "The five-state, note/time, unknown, error, history and Discover-off filter matrix still needs native proof."
+          }
         },
         "ios": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "Native Wishlist shows the same durable pending intent after process relaunch, then the scanned Arrived result; removal preserves library membership.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistUITests/testOfflineWishRelaunchRemoveAndScanArrival"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-iphone job 121147327659, on source 375b991d and iPhone 17, iOS 26.5 (23F77), with 23 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The native player bar, consent Cancel and VoiceOver label, process relaunch, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "wishlist-native-state-filter-matrix",
+            "reason": "The five-state, note/time, unknown, error, history and Discover-off filter matrix still needs native proof."
+          }
         },
         "ipados": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "Native Wishlist shows the same durable pending intent after process relaunch, then the scanned Arrived result; removal preserves library membership.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistIPadUITests/testOfflineWishRelaunchRemoveAndScanArrival"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-ipad job 121149529146, on source 375b991d and iPad (A16), iOS 26.5 (23F77), with 26 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The explicit sidebar, held album, actual compact-window transition and Back/pending-intent retention, native player bar, process relaunch, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "wishlist-native-state-filter-matrix",
+            "reason": "The five-state, note/time, unknown, error, history and Discover-off filter matrix still needs native proof."
+          }
         },
         "tvos": {
           "status": "planned",
           "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
         },
         "android": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "Native Wishlist shows the same durable pending intent after restart and later the scanned Arrived result; removal preserves library membership.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorDiscoverWishlistProofTest/offlineWishRelaunchRemoveRaceAndArrival"
+            }
+          ],
+          "reason": "Native core-ci run 40186171196, discover-wishlist-android job 121147304534, executes ten passing phases across five methods on source 375b991d, API 34, with fixture acknowledgements and 32 foreground captures. The checkout tree matches the branch source and the complete workflow passes. Counts, delayed-query and 429 effects, lost-receipt replay, completed scans, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "wishlist-native-state-filter-matrix",
+            "reason": "The five-state, note/time, unknown, error, history and Discover-off filter matrix still needs native proof."
+          }
         },
         "androidtv": {
           "status": "planned",
@@ -7014,24 +7206,56 @@
       ],
       "platforms": {
         "macos": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "The fixture completes the tagged scan, the native app refreshes B to Arrived and opens its exact existing local item, and removal retains My Library membership.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacDiscoverWishlistAppTest/testOfflineWishRelaunchRemoveAndScanArrival"
+            }
+          ],
+          "reason": "All six hosted app XCTest identities pass in apple-ci run 40186168478, discover-wishlist-macos job 121147327611, on source 375b991d and arm64 macOS 26.6.2 (25G83), with 25 captures and acknowledged fixture effects. Finalized xcresult and XML agree on six passes with zero failures, errors or skips. SQL/session restart, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "ios": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "The fixture completes the tagged scan, the native app refreshes B to Arrived and opens its exact existing local item, and removal retains My Library membership.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistUITests/testOfflineWishRelaunchRemoveAndScanArrival"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-iphone job 121147327659, on source 375b991d and iPhone 17, iOS 26.5 (23F77), with 23 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The native player bar, consent Cancel and VoiceOver label, process relaunch, positive Navidrome control, scope limits and final-head confirmation requirements are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "ipados": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "The fixture completes the tagged scan, the native app refreshes B to Arrived and opens its exact existing local item, and removal retains My Library membership.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetDiscoverWishlistIPadUITests/testOfflineWishRelaunchRemoveAndScanArrival"
+            }
+          ],
+          "reason": "All five native XCUITest identities pass in apple-ci run 40186168478, discover-wishlist-ipad job 121149529146, on source 375b991d and iPad (A16), iOS 26.5 (23F77), with 26 captures and acknowledged fixture effects. Finalized xcresult and XML agree on five passes with zero failures, errors or skips. The explicit sidebar, held album, actual compact-window transition and Back/pending-intent retention, native player bar, process relaunch, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "tvos": {
           "status": "planned",
           "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
         },
         "android": {
-          "status": "planned",
-          "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
+          "status": "shipped",
+          "evidence": [
+            {
+              "observes": "The fixture completes the tagged scan, the native app refreshes B to Arrived and opens its exact existing local item, and removal retains My Library membership.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorDiscoverWishlistProofTest/offlineWishRelaunchRemoveRaceAndArrival"
+            }
+          ],
+          "reason": "Native core-ci run 40186171196, discover-wishlist-android job 121147304534, executes ten passing phases across five methods on source 375b991d, API 34, with fixture acknowledgements and 32 foreground captures. The checkout tree matches the branch source and the complete workflow passes. Counts, delayed-query and 429 effects, lost-receipt replay, completed scans, positive Navidrome control and promotion limits are recorded in docs/evidence/discover-wishlist-clients.md."
         },
         "androidtv": {
           "status": "planned",

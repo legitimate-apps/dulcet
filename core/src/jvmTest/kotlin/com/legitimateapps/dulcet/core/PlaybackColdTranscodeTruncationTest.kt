@@ -47,7 +47,46 @@ class PlaybackColdTranscodeTruncationTest {
         }
     }
 
-    private fun load(server: ReplayServer): PlaybackLoadResult = runBlocking {
+    @Test
+    fun aChunkBoundaryCloseWithoutTheTerminatingChunkFails() {
+        ReplayServer(null, MP3_BODY, ChunkEnd.BoundaryCut).use { server ->
+            val failed = assertIs<PlaybackLoadResult.Failed>(load(server), "a missing zero chunk loaded as the song")
+            assertFalse(failed.toString().contains("cold-password-canary"))
+            assertFalse(failed.toString().contains("cold-user-canary"))
+        }
+    }
+
+    @Test
+    fun aMidChunkCloseFails() {
+        ReplayServer(null, MP3_BODY, ChunkEnd.MidChunkCut).use { server ->
+            assertIs<PlaybackLoadResult.Failed>(load(server), "a mid-chunk cut loaded as the song")
+        }
+    }
+
+    @Test
+    fun aDownloadChunkBoundaryCloseWithoutTheTerminatingChunkFails() {
+        ReplayServer(null, MP3_BODY, ChunkEnd.BoundaryCut).use { server ->
+            assertIs<PlaybackLoadResult.Failed>(load(server, "download"))
+        }
+    }
+
+    @Test
+    fun aMidChunkDownloadCloseFails() {
+        ReplayServer(null, MP3_BODY, ChunkEnd.MidChunkCut).use { server ->
+            assertIs<PlaybackLoadResult.Failed>(load(server, "download"))
+        }
+    }
+
+    @Test
+    fun aCompleteChunkedDownloadLoadsWhole() {
+        ReplayServer(null, MP3_BODY).use { server ->
+            assertContentEquals(MP3_BODY, assertIs<PlaybackLoadResult.Audio>(load(server, "download")).bytes)
+        }
+    }
+
+    private enum class ChunkEnd { Complete, BoundaryCut, MidChunkCut }
+
+    private fun load(server: ReplayServer, endpoint: String = "stream"): PlaybackLoadResult = runBlocking {
         val account = PlaybackEndpointAccount(
             providerInstanceId = PROVIDER_ID,
             normalizedBaseUrl = "http://127.0.0.1:${server.port}",
@@ -58,7 +97,12 @@ class PlaybackColdTranscodeTruncationTest {
         val wire = PlaybackWireClient(account)
         try {
             val plan = assertIs<PlaybackResolutionResult.Resolved>(wire.resolve(cappedRequest())).plan
-            wire.load(plan)
+            val media = RemotePlaybackWirePlan(
+                plan.playbackSessionId, plan.attemptId, plan.itemId, plan.path, plan.deliveryProtocol,
+                plan.expectedContainer, plan.transcode, endpoint = endpoint,
+                parameters = plan.parameters, resolutionRequest = plan.resolutionRequest,
+            )
+            wire.load(media)
         } finally {
             wire.close()
         }
@@ -83,7 +127,7 @@ class PlaybackColdTranscodeTruncationTest {
     )
 
     /** Answers every connection with one 200: [body], declared as [declaredLength] or chunked when null, then closes. */
-    private class ReplayServer(private val declaredLength: Int?, private val body: ByteArray) : Closeable {
+    private class ReplayServer(private val declaredLength: Int?, private val body: ByteArray, private val end: ChunkEnd = ChunkEnd.Complete) : Closeable {
         private val socket = ServerSocket().apply { bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0)) }
         val port = socket.localPort
         val requestTargets = CopyOnWriteArrayList<String>()
@@ -103,9 +147,11 @@ class PlaybackColdTranscodeTruncationTest {
                             .toByteArray(Charsets.US_ASCII),
                     )
                     if (declaredLength == null) {
-                        output.write("${body.size.toString(16)}\r\n".toByteArray(Charsets.US_ASCII))
+                        val chunkSize = body.size + if (end == ChunkEnd.MidChunkCut) 16 else 0
+                        output.write("${chunkSize.toString(16)}\r\n".toByteArray(Charsets.US_ASCII))
                         output.write(body)
-                        output.write("\r\n0\r\n\r\n".toByteArray(Charsets.US_ASCII))
+                        if (end != ChunkEnd.MidChunkCut) output.write("\r\n".toByteArray(Charsets.US_ASCII))
+                        if (end == ChunkEnd.Complete) output.write("0\r\n\r\n".toByteArray(Charsets.US_ASCII))
                     } else {
                         output.write(body)
                     }
