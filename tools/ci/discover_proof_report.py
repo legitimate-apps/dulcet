@@ -8,6 +8,12 @@ def expected_tests(mode):
         'macos':['testMacKeyboardSearchSidebarAndContextRemove','testMacWindowClosureDropsPendingNavigation']}[mode])
 def expected_suite(mode):
     return {'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetMacDiscoverWishlistAppTest'}[mode]
+def shelf_tests(mode):
+    if mode in {'mac','macos'}:
+        return ['testDiscoverShelvesMixedPagingAndShelfWish', 'testDiscoverPublicPlaylistPositionsWishKeyboardAndResize', 'testDiscoverShelvesEmptyFailureCachedVariantsAndNavidrome']
+    return ['testDiscoverShelvesEmptyCachedFailureAndNavidrome',
+        'testIPadDiscoverShelvesSidebarCompactResizeAndBack' if mode=='ipad' else 'testIPhoneDiscoverShelvesLargestTextPagesAndSources']
+
 @dataclass(frozen=True)
 class Verdict:
     first_cause: str | None = None
@@ -20,6 +26,12 @@ def validate_report(report):
     if any(c.get('status')!='passed' for c in cases):return Verdict('test-not-passed')
     if report.get('idiom')!={'iphone':'phone','ipad':'pad','macos':'mac'}[report['mode']]:return Verdict('wrong-device-idiom')
     # A focused navigation reproduction is not a complete feature proof.
+    if report.get('proofKind')=='shelves':
+        if sorted(c.get('name','') for c in cases)!=sorted(shelf_tests(report['mode'])):return Verdict('expected-shelf-test-not-executed')
+        for scenario in ['shelves-mixed','shelves-empty','shelves-stale','shelves-unavailable']:
+            if not any(e.get('scenario')==scenario and e.get('revision',0)>0 and ('empty' in e or 'stale' in e or e.get('unavailable') is True) for e in report.get('effects',[])):
+                return Verdict('shelf-fixture-effect-not-observed')
+        return Verdict()
     if report.get('selected'):return Verdict()
     effects=report.get('effects',[])
     for scenario,flag in [('rate-limit','served'),('scan-arrival','completed'),('lost-add-receipt','delivered')]:

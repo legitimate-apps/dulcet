@@ -122,7 +122,13 @@ struct DulcetDiscoverShelfStatus: View {
     private var status: DulcetDiscoverStatus { .init(age: age, error: error, connection: connection, now: max(retryNow, .now)) }
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            if let ageText = status.ageText { Text(ageText).font(.caption).accessibilityIdentifier(prefix + ".age") }
+            if let ageText = status.ageText {
+                VStack(alignment: .leading) {
+                    Text(ageText.contains("Cached answer") ? ageText : "Cached answer. " + ageText)
+                    if let fetchedAt = age?.fetchedAt { Text("Fetched " + fetchedAt.formatted(date: .abbreviated, time: .shortened)) }
+                    if age?.sourceAgeSeconds == nil && age?.fetchedAt == nil { Text("Age unavailable") }
+                }.font(.caption).accessibilityElement(children: .combine).accessibilityIdentifier(prefix + ".age")
+            }
             if let error, error.code != "cancelled" {
                 Text(error.code == "rate-limited" ? (status.notice ?? "Discovery is temporarily unavailable.") :
                      connection == "offline" || error.code == "offline" ? "Connect to your server to explore music." : "Discovery is temporarily unavailable.")

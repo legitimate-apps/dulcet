@@ -474,6 +474,7 @@ private struct DulcetIOSShell: View {
 
     private func absorbNowPlayingDestination() {
         let destination = store.selectedDestination
+        if destination == .settings && compact && store.destinations(Self.places).count > 5 { return }
         if store.destinations(Self.places).contains(destination) {
             lastPlace = destination
         } else if destination == .nowPlaying {
@@ -602,7 +603,7 @@ private struct DulcetCompactShell: View {
         Binding(
             get: {
                 let destination = store.selectedDestination
-                return store.destinations(DulcetIOSShell.places).contains(destination) ? destination : lastTab
+                return places.contains(destination) ? destination : lastTab
             },
             set: { destination in
                 lastTab = destination
