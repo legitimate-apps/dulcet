@@ -1,18 +1,19 @@
-#if os(iOS) || os(macOS)
+#if os(iOS) || os(macOS) || os(tvOS)
 import SwiftUI
 
 public struct DulcetDiscoverSearchView: View {
     @State private var model: DulcetDiscoverModel
     @State private var query = ""
     private let openLibrary: (DulcetDiscoverLibraryRef) -> Void
-    public init(reader: any DulcetDiscoverReading, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void) {
-        _model = State(initialValue: DulcetDiscoverModel(reader: reader)); self.openLibrary = openLibrary
+    private let openMetadata: ((DulcetDiscoverDestination) -> Void)?
+    public init(reader: any DulcetDiscoverReading, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void, openMetadata: ((DulcetDiscoverDestination) -> Void)? = nil) {
+        _model = State(initialValue: DulcetDiscoverModel(reader: reader)); self.openLibrary = openLibrary; self.openMetadata = openMetadata
     }
     public var body: some View {
-        NavigationStack {
+        searchNavigation {
             VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                 TextField(DulcetStrings.discoverSearchPrompt, text: $query)
-                    .textFieldStyle(.roundedBorder)
+                    .dulcetSearchFieldStyle()
                     .accessibilityIdentifier("discover.query")
                     .onChange(of: query) { _, query in model.reader.setQuery(query) }
                 Text(DulcetStrings.discoverCredit).font(.caption).dulcetForeground(.secondaryTextOnWindow)
@@ -29,7 +30,7 @@ public struct DulcetDiscoverSearchView: View {
                                     if let page = group.page {
                                         ForEach(page.items, id: \.id) { item in
                                             metadataLink(item)
-                                            .buttonStyle(.plain)
+                                            .dulcetDiscoverButtonStyle()
                                             .accessibilityIdentifier("discover.item.\(item.id)")
                                             .accessibilityLabel(DulcetStrings.readerRowAccessibility(item.title, DulcetDiscoverItemPresentation(item: item).availabilityText))
                                         }
@@ -53,7 +54,7 @@ public struct DulcetDiscoverSearchView: View {
 #endif
             }
             .padding(DulcetSpacing.md)
-#if os(macOS)
+#if os(macOS) || os(tvOS)
             .navigationDestination(for: DulcetDiscoverDestination.self) { destination in
                 DulcetDiscoverDetailView(reader: model.reader, destination: destination, openLibrary: openLibrary)
             }
@@ -63,9 +64,20 @@ public struct DulcetDiscoverSearchView: View {
         .onAppear { model.open(); model.reader.setQuery(query) }
         .onDisappear { model.close(); model.reader.setQuery("") }
     }
+    @ViewBuilder private func searchNavigation<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+#if os(tvOS)
+        content()
+#else
+        NavigationStack { content() }
+#endif
+    }
     @ViewBuilder
     private func metadataLink(_ item: DulcetDiscoverItem) -> some View {
-#if os(iOS)
+#if os(tvOS)
+        Button { openMetadata?(DulcetDiscoverDestination(item: item)) } label: {
+            DulcetDiscoverItemRow(item: item, reader: model.reader)
+        }
+#elseif os(iOS)
         // Search is embedded in the shell's navigation owner. Supply the destination
         // here instead of relying on an inner value registration.
         NavigationLink {
@@ -89,9 +101,16 @@ public struct DulcetDiscoverSearchView: View {
 struct DulcetDiscoverItemRow: View {
     let item: DulcetDiscoverItem
     let reader: any DulcetDiscoverReading
+    private var artworkSize: CGFloat {
+#if os(tvOS)
+        120
+#else
+        48
+#endif
+    }
     var body: some View {
         HStack(spacing: DulcetSpacing.sm) {
-            DulcetDiscoverArtworkView(reader: reader, artworkId: item.artworkId)
+            DulcetDiscoverArtworkView(reader: reader, artworkId: item.artworkId, size: artworkSize)
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                 Text(verbatim: item.title).font(.headline).dulcetForeground(.primaryTextOnWindow)
                 if let artist = item.artist { Text(verbatim: artist).font(.subheadline).dulcetForeground(.secondaryTextOnWindow) }
@@ -218,7 +237,7 @@ struct DulcetDiscoverDetailView: View {
                 }
                 .frame(minHeight: 44, alignment: .leading)
             }
-            .buttonStyle(.plain)
+            .dulcetDiscoverButtonStyle()
             .accessibilityLabel(DulcetStrings.discoverEdition)
         } else {
             editionPicker(album)
@@ -276,7 +295,7 @@ struct DulcetDiscoverDetailView: View {
 #endif
             }
         }
-        .buttonStyle(.plain).accessibilityIdentifier("discover.item.\(item.id)")
+        .dulcetDiscoverButtonStyle().accessibilityIdentifier("discover.item.\(item.id)")
         .accessibilityLabel(DulcetStrings.readerRowAccessibility(item.title, DulcetDiscoverItemPresentation(item: item).availabilityText))
     }
 }
@@ -318,7 +337,7 @@ struct DulcetDiscoverArtworkView: View {
     @State private var operation: (any DulcetLibraryReaderCancellable)?
     var body: some View {
         Group {
-#if os(iOS)
+#if os(iOS) || os(tvOS)
             if let data, let image = UIImage(data: data) { Image(uiImage: image).resizable().scaledToFill() }
             else { placeholder }
 #else
@@ -337,6 +356,18 @@ struct DulcetDiscoverArtworkView: View {
     }
     private var placeholder: some View {
         RoundedRectangle(cornerRadius: 8).fill(Color.dulcetControl).overlay { Image(systemName: "music.note").dulcetForeground(.secondaryTextOnControl) }
+    }
+}
+#endif
+
+#if os(iOS) || os(macOS) || os(tvOS)
+extension View {
+    @ViewBuilder func dulcetDiscoverButtonStyle() -> some View {
+#if os(tvOS)
+        self.buttonStyle(.borderless)
+#else
+        self.buttonStyle(.plain)
+#endif
     }
 }
 #endif

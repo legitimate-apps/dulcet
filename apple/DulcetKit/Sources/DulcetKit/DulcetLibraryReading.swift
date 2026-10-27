@@ -400,7 +400,6 @@ public final class DulcetLibrarySession {
         readerSetupFailed = false
         let generation = readerGeneration
         refreshLibraryDepth()
-#if !os(tvOS)
         if let discover = (made as? any DulcetDiscoverProviding)?.openDiscover() {
             discoverSubscription = discover.observe { [weak self] publication in
                 guard let self, self.readerGeneration == generation,
@@ -411,7 +410,6 @@ public final class DulcetLibrarySession {
             // feature endpoint; absent extensions stop in the core without a Wishlist request.
             discover.refreshWishlist(.init())
         }
-#endif
         myLibrary = DulcetMyLibrarySnapshot()
         if let library = made as? any DulcetMyLibraryReading {
             myLibrarySubscription = library.subscribeMyLibrary { [weak self] publication in

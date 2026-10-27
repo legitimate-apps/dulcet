@@ -1,4 +1,4 @@
-#if os(iOS) || os(macOS)
+#if os(iOS) || os(macOS) || os(tvOS)
 import SwiftUI
 
 struct DulcetDiscoverHomeView: View {
@@ -39,6 +39,13 @@ struct DulcetDiscoverHomeView: View {
         .onAppear { model.open(); model.reader.refreshHome() }
         .onDisappear { model.close() }
     }
+    private var shelfCardWidth: CGFloat {
+#if os(tvOS)
+        440
+#else
+        300
+#endif
+    }
     private func shelfView(_ shelf: DulcetDiscoverShelf, _ state: DulcetDiscoverShelfState) -> some View {
         let presentation = DulcetDiscoverShelfPresentation(state)
         let prefix = "discover.shelf.\(shelf.rawValue)"
@@ -68,20 +75,23 @@ struct DulcetDiscoverHomeView: View {
                         ForEach(page.items, id: \.id) { item in
                             DulcetDiscoverShelfItem(model: model, item: item, source: presentation.source,
                                 identifier: prefix + ".item." + item.id, navigate: { navigation.path.append(.metadata($0, presentation.source)) }, openLibrary: store.openDiscoverLibrary)
-                                .frame(width: 300, alignment: .leading)
+                                .frame(width: shelfCardWidth, alignment: .leading)
                         }
                         ForEach(page.playlists, id: \.id) { playlist in
                             playlistButton(playlist, prefix: prefix + ".playlist.")
-                                .frame(width: 260, alignment: .leading)
+                                .frame(width: shelfCardWidth, alignment: .leading)
                         }
-                    }
+                    }.padding(.vertical, DulcetSpacing.sm)
                 }
+#if os(tvOS)
+                .focusSection()
+#endif
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier(prefix)
     }
     private func playlistButton(_ playlist: DulcetDiscoverPlaylistSummary, prefix: String) -> some View {
         Button { navigation.path.append(.playlist(playlist.id)) } label: { DulcetDiscoverPlaylistLabel(summary: playlist) }
-            .buttonStyle(.plain).accessibilityIdentifier(prefix + playlist.id)
+            .dulcetDiscoverButtonStyle().accessibilityIdentifier(prefix + playlist.id)
     }
     private func wishes(_ home: DulcetDiscoverHome) -> some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
@@ -103,7 +113,7 @@ struct DulcetDiscoverHomeView: View {
                         if let pending = value.pendingText { Text(pending) }
                         if let error = value.errorText { Text(error) }
                     }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityIdentifier("discover.recentWishes.item." + row.key)
+                }.dulcetDiscoverButtonStyle().accessibilityIdentifier("discover.recentWishes.item." + row.key)
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("discover.recentWishes")
     }
@@ -171,7 +181,7 @@ struct DulcetDiscoverShelfItem: View {
                     openLibrary(ref)
                 } else { navigate(.init(item: item, source: source)) }
             } label: { DulcetDiscoverItemRow(item: item, reader: model.reader) }
-                .buttonStyle(.plain).accessibilityIdentifier(identifier)
+                .dulcetDiscoverButtonStyle().accessibilityIdentifier(identifier)
                 .accessibilityLabel([item.title, item.artist, DulcetDiscoverItemPresentation(item: item).availabilityText, row?.pending == true ? "Waiting to sync" : nil].compactMap { $0 }.joined(separator: ", "))
             if row?.pending == true { Text("Waiting to sync").font(.caption) }
             if row?.error != nil { Text("Not saved").font(.caption) }
@@ -246,7 +256,7 @@ struct DulcetDiscoverListView: View {
         VStack(alignment: .leading) {
             if page.route == .playlists {
                 HStack {
-                    TextField("Search public playlists", text: $page.query).textFieldStyle(.roundedBorder)
+                    TextField("Search public playlists", text: $page.query).dulcetSearchFieldStyle()
                         .onSubmit { page.submitQuery() }.accessibilityIdentifier("discover.playlists.query")
                     Button("Search") { page.submitQuery() }.accessibilityIdentifier("discover.playlists.submit")
                 }.padding(.horizontal, DulcetSpacing.md)
@@ -264,7 +274,7 @@ struct DulcetDiscoverListView: View {
                     }
                     ForEach(page.playlists?.items ?? [], id: \.id) { summary in
                         Button { navigation.path.append(.playlist(summary.id)) } label: { DulcetDiscoverPlaylistLabel(summary: summary) }
-                            .buttonStyle(.plain).accessibilityIdentifier("discover.playlists.item." + summary.id).id(summary.id)
+                            .dulcetDiscoverButtonStyle().accessibilityIdentifier("discover.playlists.item." + summary.id).id(summary.id)
                     }
                     ForEach(page.playlist?.entries ?? [], id: \.position) { entry in
                         VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {

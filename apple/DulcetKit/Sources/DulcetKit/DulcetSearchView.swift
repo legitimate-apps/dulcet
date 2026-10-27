@@ -546,7 +546,7 @@ private struct DulcetSearchResultMenuItems: View {
 }
 #endif
 
-private extension View {
+extension View {
     @ViewBuilder
     func dulcetSearchFieldStyle() -> some View {
 #if os(tvOS)

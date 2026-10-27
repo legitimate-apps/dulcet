@@ -245,6 +245,10 @@ struct DulcetMyLibraryView: View {
 #if os(tvOS)
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             sectionBar
+            if store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
+                DulcetReaderHomeLink(title: DulcetStrings.wishlist, symbolName: "bookmark", identifier: "wishlist.destination") { store.pushReaderPage(.wishlist) }
+                    .padding(.horizontal, DulcetSpacing.md)
+            }
             sectionContent(section)
         }
 #elseif os(iOS)

@@ -104,4 +104,26 @@ class AppleExtractionTests(unittest.TestCase):
         report=apple_report('iphone',{},dict(devices=[],testNodes=[]),[],{})
         self.assertEqual('result-not-finalized',validate_report(report).first_cause)
 
+class TVReportTests(unittest.TestCase):
+    def positive(self):
+        names=expected_tests('tvos')
+        tree=dict(devices=[dict(modelName='Apple TV 4K', platform='tvOS Simulator')], testNodes=[dict(nodeType='Test Case',name=n+'()',nodeIdentifier=expected_suite('tvos')+'/'+n+'()',result='Passed') for n in names])
+        effects=[dict(scenario=n,revision=i+1,empty=False) for i,n in enumerate(['shelves-mixed','shelves-empty','shelves-stale','shelves-unavailable'])]
+        effects.append(dict(scenario='scan-arrival',revision=5,completed=True))
+        acks=[dict(effects=effects), dict(scenario='tv-flow',shelfPaging=24,playlistPositions=24,sources=True,searched=True,arrived=True,removed=True),dict(scenario='navidrome-baseline',baseline=dict(login=True,albums=1,featureCalls=0))]
+        return apple_report('tvos',dict(finishTime=123,totalTestCount=2),tree,acks,dict(requests=[dict(channel='navidrome',endpoint='getAlbumList2')]))
+    def test_tv_inventory_and_observed_receipts_pass(self):
+        self.assertIsNone(validate_report(self.positive()).first_cause)
+    def test_missing_zero_failed_or_wrong_platform_cannot_pass(self):
+        for field,value,cause in [('cases',[],'expected-test-not-executed'),('idiom','phone','wrong-device-idiom'),('finalized',False,'result-not-finalized'),('tvFlow',{},'tv-flow-not-observed'),('baseline',{},'navidrome-positive-control-missing')]:
+            report=self.positive();report[field]=value
+            self.assertEqual(validate_report(report).first_cause,cause)
+        report=self.positive();report['cases'][0]['status']='failed'
+        self.assertEqual(validate_report(report).first_cause,'test-not-passed')
+    def test_armed_scan_or_shelf_is_not_an_observed_effect(self):
+        for scenario in ['shelves-mixed','scan-arrival']:
+            report=self.positive()
+            report['effects']=[dict(scenario=scenario,revision=8,armed=True) if e['scenario']==scenario else e for e in report['effects']]
+            self.assertIn(validate_report(report).first_cause, ['fixture-effect-not-observed','shelf-fixture-effect-not-observed'])
+
 if __name__=='__main__':unittest.main()

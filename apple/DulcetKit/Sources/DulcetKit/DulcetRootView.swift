@@ -293,19 +293,53 @@ private struct DulcetTVSectionNavigation: View {
     @FocusState private var focusedSection: DulcetSidebarDestination?
     @State private var arrivalFocus = DulcetArrivalFocus()
 
+    private enum Route: Hashable {
+        case reader(DulcetReaderRoute)
+        case discover(DulcetDiscoverHomeRoute)
+        case search(DulcetDiscoverDestination)
+    }
+    private struct Context: Hashable {
+        let destination: DulcetSidebarDestination
+        let generation: Int
+    }
+    private typealias DiscoverPresentation = DulcetReaderStackPresentation<DulcetDiscoverHomeRoute, Context>
+    @State private var discoverPresentation = DiscoverPresentation()
+    private var discoverRequest: DiscoverPresentation.Request {
+        .init(context: .init(destination: store.selectedDestination, generation: store.librarySession?.readerGeneration ?? 0),
+              path: store.selectedDestination == .discover ? store.discoverNavigation.path : [])
+    }
+    private var hasPushedPage: Bool {
+        store.canGoBackInLibrary || (store.selectedDestination == .discover && !store.discoverNavigation.path.isEmpty)
+            || (store.selectedDestination == .search && !store.discoverSearchPath.isEmpty)
+    }
+
     var body: some View {
         let selected = store.selectedDestination
         VStack(spacing: 0) {
             sectionBar(selected: selected)
-            NavigationStack(path: readerPath) {
+            NavigationStack(path: path) {
                 DulcetStateSurface(store: store)
-                    .navigationDestination(for: DulcetReaderRoute.self) { route in
-                        DulcetReaderRouteView(route: route)
-                            .environment(\.dulcetReaderPage, route)
+                    .navigationDestination(for: Route.self) { route in
+                        switch route {
+                        case let .reader(page):
+                            DulcetReaderRouteView(route: page).environment(\.dulcetReaderPage, page)
+                        case let .discover(page):
+                            DulcetDiscoverHomeDestination(route: page)
+                                .onAppear { discoverPresentation.appeared(page) }
+                        case let .search(destination):
+                            DulcetDiscoverReaderDestinationView(destination: destination)
+                        }
                     }
             }
         }
         .environment(arrivalFocus)
+        .onChange(of: discoverRequest, initial: true) { _, request in discoverPresentation.request(request) }
+        .task(id: discoverPresentation.pendingReplay) {
+            guard let request = discoverPresentation.pendingReplay else { return }
+            await Task.yield()
+            guard !Task.isCancelled, discoverRequest == request else { return }
+            discoverPresentation.replay(request)
+        }
         .onChange(of: focusedSection) { previous, current in
             arrivalFocus.sectionBarFocusChanged(wasOnBar: previous != nil, isOnBar: current != nil)
         }
@@ -320,23 +354,32 @@ private struct DulcetTVSectionNavigation: View {
         // relying on the focus engine to find a control several scroll views away. From the bar
         // itself it stays unhandled, because there the platform's own meaning is to leave the
         // app, and consuming it would strand the person inside.
-        .dulcetOnExitCommand(perform: focusedSection == nil && !store.canGoBackInLibrary ? {
+        .dulcetOnExitCommand(perform: focusedSection == nil && !hasPushedPage ? {
             arrivalFocus.settle()
             focusedSection = selected
         } : nil)
     }
 
-    /// The reader's Library pages; empty anywhere else, so another section is never pushed on.
-    private var readerPath: Binding<[DulcetReaderRoute]> {
-        Binding(
-            get: {
-                store.isReaderDestination && store.readerOwnsLibrary ? store.readerPath : []
-            },
-            set: { path in
-                guard store.isReaderDestination, store.readerOwnsLibrary else { return }
-                store.popReader(to: path)
+    private var path: Binding<[Route]> {
+        Binding(get: {
+            switch store.selectedDestination {
+            case .discover: discoverPresentation.displayedPath(for: discoverRequest).map(Route.discover)
+            case .search: store.discoverSearchPath.map(Route.search)
+            default: store.isReaderDestination && store.readerOwnsLibrary ? store.readerPath.map(Route.reader) : []
             }
-        )
+        }, set: { updated in
+            switch store.selectedDestination {
+            case .discover:
+                let pages = updated.compactMap { if case let .discover(page) = $0 { return page }; return nil }
+                guard pages.count == updated.count else { return }
+                if discoverPresentation.wrote(pages) { store.discoverNavigation.path = pages }
+            case .search:
+                store.discoverSearchPath = updated.compactMap { if case let .search(page) = $0 { return page }; return nil }
+            default:
+                guard store.isReaderDestination, store.readerOwnsLibrary else { return }
+                store.popReader(to: updated.compactMap { if case let .reader(page) = $0 { return page }; return nil })
+            }
+        })
     }
 
     private func sectionBar(selected: DulcetSidebarDestination) -> some View {
@@ -1266,11 +1309,7 @@ private struct DulcetStateSurface: View {
                 allowsProgrammaticFocus: allowsProgrammaticFocus
             )
         case .discover:
-#if !os(tvOS)
             DulcetDiscoverHomeDestination()
-#else
-            librarySurface
-#endif
         case .listenNow:
             if store.readerOwnsLibrary { DulcetListenNowView() } else { librarySurface }
         case .library, .browse:

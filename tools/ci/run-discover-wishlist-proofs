@@ -10,7 +10,7 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--self-test',action='store_true')
 p.add_argument('--shelves',action='store_true',help='run the step-3 Discover shelf and public playlist proofs')
 p.add_argument('--build-for-testing',action='store_true',help='compile iPhone/iPad tests without a fixture or simulator boot')
-p.add_argument('mode',nargs='?',choices=['components','sessions','iphone','ipad','mac','macos','android'])
+p.add_argument('mode',nargs='?',choices=['components','sessions','iphone','ipad','mac','macos','android','tvos'])
 a=p.parse_args()
 if a.self_test:
     import unittest
@@ -25,6 +25,8 @@ if not a.build_for_testing and os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='tr
 if a.mode=='android':
     helper=str(Path(__file__).resolve().parent/'run-discover-wishlist-android')
     os.execv(helper,[helper]+(["--shelves"] if a.shelves else []))
+if a.mode == 'tvos' and not a.build_for_testing and not (os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'):
+    p.error('tvos execution requires a GitHub-hosted runner; compile with --build-for-testing locally')
 repo=Path(__file__).resolve().parents[2]
 def completed_native_report(bundle, suite, selected, output):
     """Convert only a complete XCTest transcript; never infer execution from a build exit."""
@@ -34,7 +36,10 @@ def completed_native_report(bundle, suite, selected, output):
     if suite.endswith('MacUITests') or suite=='DulcetMacDiscoverWishlistAppTest':expected+=['testMacKeyboardSearchSidebarAndContextRemove','testMacWindowClosureDropsPendingNavigation']
     elif suite.endswith('IPadUITests'):expected+=['testIPadSidebarSelectionSurvivesWishlistDetailAndResize']
     else:expected+=['testIPhoneLargestTextAndVoiceOverLabels']
-    if a.shelves:
+    if a.mode == 'tvos':
+        from discover_proof_report import expected_tests
+        expected=expected_tests('tvos')
+    elif a.shelves:
         from discover_proof_report import shelf_tests
         expected=shelf_tests(a.mode)
     if '/' in selected:expected=[selected.rsplit('/',1)[-1]]
@@ -62,18 +67,18 @@ def apple_build_for_testing(mode):
     import json
     import subprocess
     import tempfile
-    if mode not in {'iphone','ipad'}:p.error('--build-for-testing requires iphone or ipad')
+    if mode not in {'iphone','ipad','tvos'}:p.error('--build-for-testing requires iphone, ipad or tvos')
     owner=ProcessOwner().install()
     session='dulcet-discover-build-'+mode+'-'+str(os.getpid())
     hosted=os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('RUNNER_ENVIRONMENT')=='github-hosted'
     derived=Path(tempfile.gettempdir())/('dulcet-discover-'+mode)
     output=Path(os.environ.get('DULCET_DISCOVER_PROOF_OUTPUT',str(repo/'build/discover-proofs'/mode/'native'))).parent/'build'
     output.mkdir(parents=True,exist_ok=True)
-    suite='DulcetDiscoverWishlistIPadUITests' if mode=='ipad' else 'DulcetDiscoverWishlistUITests'
+    suite='DulcetTVDiscoverWishlistUITests' if mode=='tvos' else 'DulcetDiscoverWishlistIPadUITests' if mode=='ipad' else 'DulcetDiscoverWishlistUITests'
     command=['xcodebuild','build-for-testing','-project',str(repo/'apple/Dulcet.xcodeproj'),
-             '-scheme','DulcetiOS','-destination','generic/platform=iOS Simulator',
+             '-scheme','DulcetTV' if mode=='tvos' else 'DulcetiOS','-destination','generic/platform=tvOS Simulator' if mode=='tvos' else 'generic/platform=iOS Simulator',
              '-parallel-testing-enabled','NO','-derivedDataPath',str(derived),
-             '-only-testing:DulcetiOSUITests/'+suite,'ARCHS=arm64','ONLY_ACTIVE_ARCH=YES']
+             '-only-testing:'+('DulcetTVUITests' if mode=='tvos' else 'DulcetiOSUITests')+'/'+suite,'ARCHS=arm64','ONLY_ACTIVE_ARCH=YES']
     try:
         gate=os.environ.get('DULCET_DISCOVER_HOST_GATE')
         if gate:owner.run([gate,'--wait','3600'],check=True)
@@ -165,14 +170,14 @@ def apple_proof(mode):
         if mode!='macos':
             udid=os.environ.get('DULCET_DISCOVER_PROOF_UDID')
             if not udid:
-                device=os.environ.get('DULCET_DISCOVER_PROOF_DEVICE','iPad Pro 13-inch (M4)' if mode=='ipad' else 'iPhone 17 Pro')
+                device=os.environ.get('DULCET_DISCOVER_PROOF_DEVICE','Apple TV 4K (3rd generation)' if mode=='tvos' else 'iPad Pro 13-inch (M4)' if mode=='ipad' else 'iPhone 17 Pro')
                 command=['sim-lease','create','--project','dulcet','--device',device,'--owner-pid',str(os.getpid()),'--purpose',session]
                 if os.environ.get('DULCET_DISCOVER_PROOF_RUNTIME'):command+=['--runtime',os.environ['DULCET_DISCOVER_PROOF_RUNTIME']]
                 owned_device=True
                 if hosted:
                     inventory=json.loads(run(['xcrun','simctl','list','devices','available','--json'],capture_output=True).stdout)
-                    candidates=[(runtime,d) for runtime,devices in inventory['devices'].items() if '.iOS-' in runtime for d in devices if d['name'].startswith('iPad' if mode=='ipad' else 'iPhone')]
-                    if not candidates:raise RuntimeError('no installed iOS runtime with the requested idiom')
+                    candidates=[(runtime,d) for runtime,devices in inventory['devices'].items() if ('.tvOS-' if mode=='tvos' else '.iOS-') in runtime for d in devices if d['name'].startswith('Apple TV' if mode=='tvos' else 'iPad' if mode=='ipad' else 'iPhone')]
+                    if not candidates:raise RuntimeError('no installed runtime with the requested idiom')
                     runtime,template=sorted(candidates,key=lambda row:row[0])[-1]
                     command=['xcrun','simctl','create',session,template['deviceTypeIdentifier'],runtime]
                 udid=run(command,capture_output=True).stdout.strip()
@@ -220,15 +225,15 @@ def apple_proof(mode):
             with (output/'bootstatus.log').open('w') as log:
                 run(['xcrun','simctl','bootstatus',udid,'-b'],stdout=log,stderr=subprocess.STDOUT,timeout=900)
             if hosted_admission:
-                hosted_admission.admit(udid,derived/'Build/Products/Debug-iphonesimulator/Dulcet DEV.app')
+                hosted_admission.admit(udid,derived/('Build/Products/Debug-appletvsimulator/Dulcet DEV.app' if mode=='tvos' else 'Build/Products/Debug-iphonesimulator/Dulcet DEV.app'))
             import time
             deadline=time.monotonic()+900
             while not boot_settled.wait(1):
                 if time.monotonic()>=deadline:raise RuntimeError('simulator did not settle for a quiet minute')
         if udid:
             navigation_log=(output/'navigation-unified.log').open('w')
-        target='DulcetMacTests' if mode=='macos' else 'DulcetiOSUITests'
-        suite={'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetMacDiscoverWishlistAppTest'}[mode]
+        target='DulcetMacTests' if mode=='macos' else 'DulcetTVUITests' if mode=='tvos' else 'DulcetiOSUITests'
+        suite={'iphone':'DulcetDiscoverWishlistUITests','ipad':'DulcetDiscoverWishlistIPadUITests','macos':'DulcetMacDiscoverWishlistAppTest','tvos':'DulcetTVDiscoverWishlistUITests'}[mode]
         # Test products must live on the internal volume: Xcode 27 silently executes zero
         # XCUITests from external DerivedData. Result bundles/captures stay with the report.
         env=os.environ.copy()
@@ -236,12 +241,12 @@ def apple_proof(mode):
             if key.startswith('DULCET_DISCOVER_'):env['TEST_RUNNER_'+key]=value
         env['TEST_RUNNER_DULCET_DISCOVER_CAPTURES']=str(captures)
         env['TEST_RUNNER_DULCET_DISCOVER_CAPTURE_UPLOAD_URL']='http://127.0.0.1:'+str(capture_server.server_address[1])
-        env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
+        env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='tv' if mode=='tvos' else 'pad' if mode=='ipad' else 'phone'
         selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
         from discover_proof_report import shelf_tests, selected_tests
         selected_shelves=shelf_tests(mode) if a.shelves and '/' not in selected else None
         selected_methods=selected_tests(mode,selected,a.shelves)
-        command=['xcodebuild',action,'-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
+        command=['xcodebuild',action,'-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetTV' if mode=='tvos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else ('platform=tvOS Simulator,id=' if mode=='tvos' else 'platform=iOS Simulator,id=')+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
         if selected_methods:
             command=[arg for arg in command if not arg.startswith('-only-testing:')]
             command += ['-only-testing:'+target+'/'+suite+'/'+name for name in selected_methods]
@@ -346,7 +351,7 @@ def apple_proof(mode):
             owner.close()
 
 if a.build_for_testing:sys.exit(apple_build_for_testing(a.mode))
-if a.mode in {'iphone','ipad','mac','macos'}:sys.exit(apple_proof(a.mode))
+if a.mode in {'iphone','ipad','mac','macos','tvos'}:sys.exit(apple_proof(a.mode))
 runner=os.environ.get('DULCET_DISCOVER_GRADLE_RUNNER',str(repo/'tools/run-gradle-exclusive'))
 cls='DiscoverWishlistTransportComponentsTest' if a.mode=='components' else 'DiscoverWishlistConformanceTest'
 os.execv(runner,[runner,'-Pdulcet.discoverWishlistConformance',':core-conformance:jvmTest','--rerun','--tests','*'+cls])
