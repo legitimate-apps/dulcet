@@ -85,8 +85,9 @@ with patch.object(fixture, 'rest', side_effect=empty_catalog), redirect_stdout(S
 print('READINESS NEGATIVE CONTROL PASS empty catalog rejected')
 
 # Execute the actual shell preparation against fake process boundaries. A missing pressure flag
-# would let the fake isolation succeed during pressure failure; a missing/misordered destination
-# check would reach fake xcodebuild for a mismatched iPad. Neither control touches a simulator.
+# would let fake isolation succeed during pressure failure. The iPad keeps the job-start proven
+# destination even if another discovery would hang; Xcode remains authoritative at test time.
+# None of these controls touches a simulator.
 with tempfile.TemporaryDirectory() as directory:
     tmp = Path(directory)
     python = tmp / 'python3'
@@ -99,30 +100,41 @@ if args[0].endswith('isolate-simulator'):
               or (os.environ['SCENARIO'] == 'warmup-failure' and '--warmup-app' in args))
     sys.exit(1 if failed else 0)
 if args[0].endswith('resolve-ipad-destination'):
-    if os.environ['SCENARIO'] == 'destination-timeout': sys.exit(1)
-    print('OTHER' if os.environ['SCENARIO'] == 'destination-mismatch' else 'IPAD')
-    sys.exit(0)
+    raise AssertionError('phase must reuse the proven destination')
 raise AssertionError(args)
 '''.replace('#!/usr/bin/env python3', '#!' + __import__('sys').executable, 1))
     python.chmod(0o755)
     xcode = tmp / 'xcodebuild'
-    xcode.write_text('#!/bin/bash\necho \'["xcodebuild"]\' >> "$CALLS"\nexit 42\n')
+    xcode.write_text('#!' + __import__('sys').executable + '\nimport json, os, sys\n'
+                     'with open(os.environ["CALLS"], "a") as f: f.write(json.dumps(["xcodebuild"] + sys.argv[1:]) + "\\n")\n'
+                     'sys.exit(42)\n')
     xcode.chmod(0o755)
     for mode in ['iphone', 'ipad']:
         scenarios = ['positive', 'pressure-failure', 'warmup-failure']
-        if mode == 'ipad': scenarios += ['destination-mismatch', 'destination-timeout']
+        if mode == 'ipad': scenarios += ['missing-proven-destination']
         for scenario in scenarios:
             calls = tmp / 'calls'
             calls.write_text('')
             env = dict(os.environ, PATH=str(tmp) + ':' + os.environ['PATH'], CALLS=str(calls),
                        SCENARIO=scenario, RUNNER_TEMP=str(tmp), IPAD_UDID='IPAD')
+            if scenario == 'missing-proven-destination': env.pop('IPAD_UDID')
             result = subprocess.run(['bash', str(root / 'tools/ci/run-my-library-proofs'), mode],
                                     env=env, capture_output=True, text=True, timeout=10)
             invoked = [json.loads(line) for line in calls.read_text().splitlines()]
-            reached = ['xcodebuild'] in invoked
+            xcode_calls = [call for call in invoked if call[0] == 'xcodebuild']
+            reached = bool(xcode_calls)
             assert reached == (scenario == 'positive'), (mode, scenario, invoked, result)
             assert result.returncode != 0  # positive deliberately stops at fake xcodebuild
-            assert invoked[0][0].endswith('isolate-simulator'), invoked
+            if scenario == 'missing-proven-destination':
+                assert not invoked, invoked
+            else:
+                assert invoked[0][0].endswith('isolate-simulator'), invoked
             if reached and mode == 'ipad':
-                assert invoked[1][0].endswith('resolve-ipad-destination'), invoked
+                assert len(invoked) == 2, invoked
+                isolation = invoked[0]
+                assert isolation[isolation.index('--keep') + 1] == 'IPAD', isolation
+                assert '--require-isolation' in isolation, isolation
+                args = xcode_calls[0]
+                assert args[args.index('-destination') + 1] == 'platform=iOS Simulator,id=IPAD', args
+                assert result.returncode == 42, result
             print(f'PROOF ADMISSION CONTROL PASS {mode} {scenario} reached_xcodebuild={reached}')

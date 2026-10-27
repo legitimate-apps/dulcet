@@ -2,6 +2,104 @@ import CryptoKit
 import UIKit
 import XCTest
 
+final class DulcetWindowWidthSettlementTests: XCTestCase {
+    private final class Samples {
+        let frames: [CGRect?]
+        var elapsed: TimeInterval = 0
+        var reads = 0
+
+        init(_ frames: [CGRect?]) { self.frames = frames }
+
+        func settle(
+            timeout: TimeInterval = 1, queryDuration: TimeInterval = 0,
+            expecting expectedClass: String? = nil, matching expectation: (CGFloat) -> Bool = { _ in true }
+        ) throws -> CGFloat {
+            try waitForSettledWindowWidth(
+                timeout: timeout, expecting: expectedClass, matching: expectation,
+                readFrame: {
+                    self.elapsed += queryDuration
+                    let frame = self.frames[min(self.reads, self.frames.count - 1)]
+                    self.reads += 1
+                    return frame
+                },
+                now: { self.elapsed },
+                pause: { self.elapsed += $0 }
+            )
+        }
+    }
+
+    private func frame(_ width: CGFloat, height: CGFloat = 768) -> CGRect {
+        CGRect(x: 0, y: 0, width: width, height: height)
+    }
+
+    func testTransientCompactWidthSettlesAtRegularWidth() throws {
+        let samples = Samples([frame(0), frame(320), frame(1032), frame(1032)])
+        XCTAssertEqual(try samples.settle(), 1032)
+        XCTAssertEqual(samples.reads, 4)
+        XCTAssertEqual(samples.elapsed, 0.75)
+    }
+
+    func testStableTransientCompactWidthWaitsForExpectedRegularWidth() throws {
+        let samples = Samples([frame(0), frame(320), frame(320), frame(1032), frame(1032)])
+        XCTAssertEqual(try samples.settle(timeout: 2, expecting: "regular", matching: { $0 > 700 }), 1032)
+        XCTAssertEqual(samples.reads, 5)
+        XCTAssertEqual(samples.elapsed, 1)
+    }
+
+    func testWidthStuckInCompactClassFailsAtDeadlineExpectingRegular() {
+        let samples = Samples([frame(320)])
+        do {
+            _ = try samples.settle(expecting: "regular", matching: { $0 > 700 })
+            XCTFail("A stable compact width must fail at the deadline when regular is required")
+        } catch let error as WindowWidthSettlementTimeout {
+            XCTAssertEqual(error.previousWidth, 320)
+            XCTAssertEqual(error.latestWidth, 320)
+            XCTAssertEqual(error.elapsed, 1)
+            XCTAssertTrue(error.description.contains("320"))
+            XCTAssertTrue(error.description.contains("regular"))
+            XCTAssertEqual(samples.reads, 4)
+        } catch { XCTFail("Unexpected settlement error: \(error)") }
+    }
+
+    func testInvalidOrMissingFramesBreakConsecutiveAgreement() throws {
+        for invalid in [nil, frame(1032, height: 0), frame(.infinity), frame(.nan),
+                        CGRect(x: CGFloat.infinity, y: 0, width: 1032, height: 768)] as [CGRect?] {
+            let samples = Samples([frame(1032), invalid, frame(1032), frame(1032)])
+            XCTAssertEqual(try samples.settle(), 1032)
+            XCTAssertEqual(samples.reads, 4)
+        }
+    }
+
+    func testChangingWidthFailsAtDeadlineWithBothWidthsAndElapsedTime() {
+        let samples = Samples([frame(320), frame(321), frame(322), frame(323)])
+        do {
+            _ = try samples.settle()
+            XCTFail("A width that keeps changing must fail at its deadline")
+        } catch let error as WindowWidthSettlementTimeout {
+            XCTAssertEqual(error.previousWidth, 322)
+            XCTAssertEqual(error.latestWidth, 323)
+            XCTAssertEqual(error.elapsed, 1)
+            XCTAssertTrue(error.description.contains("previous-width=Optional(322.0)"))
+            XCTAssertTrue(error.description.contains("latest-width=Optional(323.0)"))
+            XCTAssertTrue(error.description.contains("elapsed=1.0 seconds"))
+            XCTAssertEqual(samples.reads, 4)
+        } catch { XCTFail("Unexpected settlement error: \(error)") }
+    }
+
+    func testAgreementReturnedAfterDeadlineDoesNotSettle() {
+        let samples = Samples([frame(1032), frame(1032)])
+        do {
+            _ = try samples.settle(queryDuration: 0.6)
+            XCTFail("A slow query must not turn agreement after the deadline into success")
+        } catch let error as WindowWidthSettlementTimeout {
+            XCTAssertEqual(error.previousWidth, 1032)
+            XCTAssertEqual(error.latestWidth, 1032)
+            XCTAssertGreaterThanOrEqual(error.elapsed, 1)
+            XCTAssertEqual(samples.reads, 2)
+        } catch { XCTFail("Unexpected settlement error: \(error)") }
+    }
+}
+
 final class DulcetiOSUITests: XCTestCase {
     /// Server cleanup a test registers once it has made something on the disposable server; run
     /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
@@ -29,11 +127,14 @@ final class DulcetiOSUITests: XCTestCase {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10))
         let display = XCUIScreen.main.screenshot().image.size
+        guard let width = settledWindowWidth(
+            window, expecting: "compact", matching: { $0 < 700 }
+        ) else { return }
         let frame = window.frame
-        print("DULCET DISPLAY GEOMETRY window=\(frame) displayImageSize=\(display)")
+        print("DULCET DISPLAY GEOMETRY width=\(width) window=\(frame) displayImageSize=\(display)")
         print(app.debugDescription)
         XCTAssertGreaterThan(frame.width, 0)
-        XCTAssertLessThan(frame.width, 700, "Run this full-display proof on an iPhone")
+        XCTAssertLessThan(width, 700, "Run this full-display proof on an iPhone")
         XCTAssertEqual(frame.minX, 0, accuracy: 1)
         XCTAssertEqual(frame.minY, 0, accuracy: 1)
         XCTAssertEqual(
@@ -126,8 +227,11 @@ final class DulcetiOSUITests: XCTestCase {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
         // Checks the experiment before the product: a regular-width window has no tab bar.
+        guard let width = settledWindowWidth(
+            window, expecting: "compact", matching: { $0 < 700 }
+        ) else { return }
         XCTAssertLessThan(
-            window.frame.width,
+            width,
             700,
             "This proof requires a compact-width iPhone window; an iPad is invalid evidence"
         )
@@ -282,7 +386,10 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        XCTAssertLessThan(window.frame.width, 700,
+        guard let width = settledWindowWidth(
+            window, expecting: "compact", matching: { $0 < 700 }
+        ) else { return }
+        XCTAssertLessThan(width, 700,
                           "This proof requires a compact-width iPhone window; an iPad is invalid evidence")
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
             return
@@ -391,7 +498,10 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        XCTAssertLessThan(window.frame.width, 700, "The proof starts on a compact portrait window")
+        guard let width = settledWindowWidth(
+            window, expecting: "compact", matching: { $0 < 700 }
+        ) else { return }
+        XCTAssertLessThan(width, 700, "The proof starts on a compact portrait window")
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
             return
         }
@@ -486,7 +596,10 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        XCTAssertLessThan(window.frame.width, 700,
+        guard let width = settledWindowWidth(
+            window, expecting: "compact", matching: { $0 < 700 }
+        ) else { return }
+        XCTAssertLessThan(width, 700,
                           "This proof requires a compact-width iPhone window; an iPad is invalid evidence")
         guard requireProofMarkers(in: app) else { return }
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
@@ -547,13 +660,13 @@ final class DulcetiOSUITests: XCTestCase {
             XCTAssertTrue(titled && settled, "\(name): the player must show \(expectedTitle); title=\(title.label)")
             return recorded == [marker] && titled && settled
         }
-        let width = window.frame.width
+        let swipeWidth = window.frame.width
         // On the first track Previous is unavailable, so a right swipe asks for nothing.
         let unavailable = swipe("right-on-first", expecting: "swipe:none", then: "Disc 1 Track 1") {
-            drag(from: width * 0.2, to: width * 0.8)
+            drag(from: swipeWidth * 0.2, to: swipeWidth * 0.8)
         }
         let next = swipe("left", expecting: "swipe:next", then: "Disc 1 Track 2") {
-            drag(from: width * 0.8, to: width * 0.2)
+            drag(from: swipeWidth * 0.8, to: swipeWidth * 0.2)
         }
         // Up and across by the same distance: neither direction dominates. Upward, so the sheet's
         // own drag-to-dismiss is not what answers it. Observed on an iPhone 17 Pro simulator: an
@@ -563,7 +676,7 @@ final class DulcetiOSUITests: XCTestCase {
         // the handler, if it runs, must ask for nothing, and the track must not change. Which of the
         // two occurred is printed; the classification itself is `ArtworkSwipeTests`'.
         let diagonalBefore = proofMarkers(in: app)
-        drag(from: width * 0.8, to: width * 0.2, rising: width * 0.6)
+        drag(from: swipeWidth * 0.8, to: swipeWidth * 0.2, rising: swipeWidth * 0.6)
         let diagonalRecorded = waitForMarkers(after: diagonalBefore, ["swipe:none"], in: app, timeout: 3)
         Thread.sleep(forTimeInterval: 1)
         let diagonal = (diagonalRecorded == ["swipe:none"] || diagonalRecorded.isEmpty)
@@ -572,10 +685,10 @@ final class DulcetiOSUITests: XCTestCase {
             + " handler-ran=\(!diagonalRecorded.isEmpty) title=\(title.label.debugDescription)")
         XCTAssertTrue(diagonal, "A diagonal drag must do nothing; recorded=\(diagonalRecorded) title=\(title.label)")
         let short = swipe("short", expecting: "swipe:none", then: "Disc 1 Track 2") {
-            drag(from: width * 0.6, to: width * 0.6 - 40)
+            drag(from: swipeWidth * 0.6, to: swipeWidth * 0.6 - 40)
         }
         let previous = swipe("right", expecting: "swipe:previous", then: "Disc 1 Track 1") {
-            drag(from: width * 0.2, to: width * 0.8)
+            drag(from: swipeWidth * 0.2, to: swipeWidth * 0.8)
         }
         print("DULCET ARTWORK SWIPE OBSERVED unavailable-previous=\(unavailable) next=\(next)"
             + " diagonal=\(diagonal) short=\(short) previous=\(previous) markers=\(proofMarkers(in: app))")
@@ -1084,7 +1197,10 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        XCTAssertLessThan(window.frame.width, 700,
+        guard let width = settledWindowWidth(
+            window, expecting: "compact", matching: { $0 < 700 }
+        ) else { return }
+        XCTAssertLessThan(width, 700,
                           "This proof requires a compact-width iPhone window; an iPad is invalid evidence")
         guard awaitLiveAccountConnection(in: app, compact: true) else {
             XCTFail("The live account connection must succeed first")
@@ -1207,10 +1323,14 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        let compact = window.frame.width < 700
-        print("DULCET READER PROOF destination=\(compact ? "compact" : "regular") window=\(window.frame)")
+        guard let width = settledWindowWidth(
+            window, expecting: expectedCompact ? "compact" : "regular",
+            matching: { ($0 < 700) == expectedCompact }
+        ) else { return }
+        let compact = width < 700
+        print("DULCET READER PROOF destination=\(compact ? "compact" : "regular") width=\(width)")
         guard compact == expectedCompact else {
-            XCTFail("The reader proof expected a \(expectedCompact ? "compact" : "regular") window, got \(window.frame)")
+            XCTFail("The reader proof expected a \(expectedCompact ? "compact" : "regular") window, got width=\(width)")
             return
         }
         guard awaitLiveAccountConnection(in: app, compact: compact) else {
@@ -1832,9 +1952,13 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        let compact = window.frame.width < 700
+        guard let width = settledWindowWidth(
+            window, expecting: expectedCompact ? "compact" : "regular",
+            matching: { ($0 < 700) == expectedCompact }
+        ) else { return }
+        let compact = width < 700
         guard compact == expectedCompact else {
-            XCTFail("The proof expects a \(expectedCompact ? "compact" : "regular") window; width=\(window.frame.width)")
+            XCTFail("The proof expects a \(expectedCompact ? "compact" : "regular") window; width=\(width)")
             return
         }
         guard awaitLiveAccountConnection(in: app, compact: compact) else {
@@ -3391,7 +3515,8 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        let compact = window.frame.width < 700
+        guard let width = settledWindowWidth(window) else { return }
+        let compact = width < 700
         guard awaitLiveAccountConnection(in: app, compact: compact) else {
             XCTFail("The live account connection must succeed first")
             return
@@ -3435,7 +3560,8 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        let compact = window.frame.width < 700
+        guard let width = settledWindowWidth(window) else { return }
+        let compact = width < 700
         guard awaitLiveAccountConnection(in: app, compact: compact) else {
             XCTFail("The live account connection must succeed first")
             return
@@ -3527,7 +3653,8 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        let compact = window.frame.width < 700
+        guard let width = settledWindowWidth(window) else { return }
+        let compact = width < 700
         guard awaitLiveAccountConnection(in: app, compact: compact) else {
             XCTFail("The live account connection must succeed first")
             return
@@ -4078,9 +4205,13 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The app window must exist")
             return nil
         }
-        let compact = window.frame.width < 700
+        guard let width = settledWindowWidth(
+            window, expecting: expectedCompact ? "compact" : "regular",
+            matching: { ($0 < 700) == expectedCompact }
+        ) else { return nil }
+        let compact = width < 700
         guard compact == expectedCompact else {
-            XCTFail("This proof needs a \(expectedCompact ? "compact" : "regular") window; observed \(window.frame)")
+            XCTFail("This proof needs a \(expectedCompact ? "compact" : "regular") window; observed width=\(width)")
             return nil
         }
         guard awaitLiveAccountConnection(in: app, compact: compact) else {
@@ -4666,11 +4797,15 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        let compact = window.frame.width < 700
+        guard let width = settledWindowWidth(
+            window, expecting: expectedCompact ? "compact" : "regular",
+            matching: { ($0 < 700) == expectedCompact }
+        ) else { return }
+        let compact = width < 700
         guard compact == expectedCompact else {
-            XCTFail(expectedCompact
+            XCTFail((expectedCompact
                 ? "This proof requires a compact-width iPhone window; an iPad is invalid evidence"
-                : "This proof requires a regular-width iPad window; an iPhone is invalid evidence")
+                : "This proof requires a regular-width iPad window; an iPhone is invalid evidence") + "; width=\(width)")
             return
         }
         guard awaitLiveAccountConnection(in: app, compact: compact) else {
@@ -4713,7 +4848,7 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertEqual(awaitServerSongStarred(track, album: album, configuration: configuration, expected: false, timeout: 30), false,
             "Removing the favourite must reach the server")
         print("DULCET NOW PLAYING HEART PROOF PASS destination=\(compact ? "compact" : "regular")"
-            + " window-width=\(Int(window.frame.width)) track=\(track.debugDescription) starred=true->false")
+            + " window-width=\(width) track=\(track.debugDescription) starred=true->false")
     }
 
     /// Whether the server holds the named track of `album` as a favourite, read over
@@ -5240,8 +5375,11 @@ final class DulcetiOSUITests: XCTestCase {
 
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        guard let width = settledWindowWidth(
+            window, expecting: "regular", matching: { $0 > 700 }
+        ) else { return }
         XCTAssertGreaterThan(
-            window.frame.width,
+            width,
             700,
             "This proof requires a regular-width iPad window; an iPhone is invalid evidence"
         )
@@ -5471,16 +5609,20 @@ final class DulcetiOSUITests: XCTestCase {
 
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        guard let width = settledWindowWidth(
+            window, expecting: windowExpectation == .compactWidth ? "compact" : "regular",
+            matching: { windowExpectation == .compactWidth ? $0 <= 700 : $0 > 700 }
+        ) else { return }
         switch windowExpectation {
         case .compactWidth:
             XCTAssertLessThanOrEqual(
-                window.frame.width,
+                width,
                 700,
                 "This proof requires a compact-width iPhone window; an iPad is invalid evidence"
             )
         case .regularWidth:
             XCTAssertGreaterThan(
-                window.frame.width,
+                width,
                 700,
                 "This proof requires a regular-width iPad window; an iPhone is invalid evidence"
             )
@@ -5754,8 +5896,11 @@ final class DulcetiOSUITests: XCTestCase {
         // split needs a window far wider than any iPhone.
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        guard let width = settledWindowWidth(
+            window, expecting: "regular", matching: { $0 > 700 }
+        ) else { return }
         XCTAssertGreaterThan(
-            window.frame.width,
+            width,
             700,
             "This proof requires a regular-width window; an iPhone destination is invalid evidence"
         )
@@ -5841,8 +5986,11 @@ final class DulcetiOSUITests: XCTestCase {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
         if !compact {
+            guard let width = settledWindowWidth(
+                window, expecting: "regular", matching: { $0 > 700 }
+            ) else { return }
             XCTAssertGreaterThan(
-                window.frame.width,
+                width,
                 700,
                 "This playback proof requires a regular-width iPad window; an iPhone is invalid evidence"
             )
@@ -6958,7 +7106,8 @@ extension DulcetiOSUITests {
         app.buttons["dulcet.mini-player.open"].firstMatch.tap()
         let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        if app.windows.firstMatch.frame.width < 700 {
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        if width < 700 {
             app.buttons["dulcet.now-playing.up-next"].firstMatch.tap()
         }
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Disc 1 Track 1")).firstMatch
@@ -7061,7 +7210,8 @@ extension DulcetiOSUITests {
         let app = XCUIApplication()
         app.launchArguments = ["-dulcet-account-connect-layout-fixture", "-dulcet-debug-player-frame-metrics"] + additionalArguments
         app.launch()
-        let compact = app.windows.firstMatch.frame.width < 700
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return app }
+        let compact = width < 700
         XCTAssertTrue(openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact))
         if !compact {
             XCTAssertTrue(app.staticTexts["Albums"].firstMatch.waitForExistence(timeout: 5),

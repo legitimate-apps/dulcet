@@ -46,8 +46,10 @@ exact inventory, with XML, fixture receipts and foreground captures uploaded. Sh
 separate directories beneath each job's existing artifact root.
 
 Job envelopes allow both inventories and their independent setup: Mac 95 minutes, iPhone 135,
-iPad 165 and Android 70. Shelf step caps are Mac 30, iPhone 35 and iPad 45 minutes. iPhone/iPad
-compilation retains its separate 20-minute cap; Android shares a 40-minute emulator step. These
+iPad 171 and Android 70. Shelf step caps are Mac 30, iPhone 35 and iPad 45 minutes. iPhone/iPad
+compilation retains its separate 20-minute cap; Android shares a 40-minute emulator step.
+The iPad envelope includes main's separate six-minute destination-resolution step; both proof
+inventories use that resolved destination. These
 are finite upper bounds, not observed durations or retries.
 
 ## Evidence and feature status
