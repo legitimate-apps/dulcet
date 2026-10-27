@@ -1211,7 +1211,7 @@ def discover_parity_artifact_path_errors(lines: list[str]) -> list[str]:
 # an allowlist rather than a list of forbidden suffixes: any label not matched here is refused,
 # including larger-runner spellings nobody thought to forbid. Self-hosted labels are judged by the
 # workflow_dispatch-only rule below instead (spec §21.3.1).
-STANDARD_RUNNER = re.compile(r"ubuntu-latest|ubuntu-[0-9]+\.04|macos-latest|macos-[0-9]+")
+STANDARD_RUNNER = re.compile(r"ubuntu-latest|ubuntu-[0-9]+\.04|macos-latest|macos-[0-9]+|xcode-27")
 
 for workflow in workflows:
     text = workflow.read_text()
@@ -1237,7 +1237,7 @@ for workflow in workflows:
         elif not STANDARD_RUNNER.fullmatch(runner_value.strip().strip("'\"")):
             errors.append(
                 f"{workflow}: job {job} runs on {runner_value.strip()!r}; only the standard hosted "
-                "labels ubuntu-latest, ubuntu-<LTS version>, macos-latest and macos-<version> are allowed",
+                "labels ubuntu-latest, ubuntu-<LTS version>, macos-latest, macos-<version> and xcode-27 are allowed",
             )
     for name, start, end in job_spans(lines):
         env = job_properties(lines, start, end).get("env") or {}

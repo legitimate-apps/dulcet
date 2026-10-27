@@ -1,0 +1,115 @@
+name: apple-design-tour
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: Device family to photograph
+        type: choice
+        default: all
+        options: [all, iphone, ipad, mac, tvos]
+      screens:
+        description: Optional space-separated capture names for an affected-page reshoot
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: capture-${{ matrix.variant }}
+    runs-on: xcode-27
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - {device: iphone, variant: iphone-light-default}
+          - {device: iphone, variant: iphone-dark-default}
+          - {device: iphone, variant: iphone-light-accessibility-xxxl}
+          - {device: ipad, variant: ipad-light-landscape}
+          - {device: mac, variant: mac}
+          - {device: tvos, variant: tvos}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select capture family
+        id: selection
+        env:
+          REQUESTED_DEVICE: ${{ inputs.device }}
+          MATRIX_DEVICE: ${{ matrix.device }}
+        run: |
+          if [[ "$REQUESTED_DEVICE" == all || "$REQUESTED_DEVICE" == "$MATRIX_DEVICE" ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Select Xcode 27.0 and record provenance
+        if: steps.selection.outputs.enabled == 'true'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app/Contents/Developer
+          mkdir -p "$RUNNER_TEMP/captures"
+          xcodebuild -version > "$RUNNER_TEMP/captures/toolchain.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/captures/revision.txt"
+          echo "DULCET_DESIGN_TOUR_WORK=$RUNNER_TEMP/design-tour" >> "$GITHUB_ENV"
+          echo "DULCET_DESIGN_TOUR_DERIVED_DATA=$RUNNER_TEMP/design-tour-dd" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        if: steps.selection.outputs.enabled == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        if: steps.selection.outputs.enabled == 'true'
+        timeout-minutes: 5
+      - name: Prepare capture dependencies
+        if: steps.selection.outputs.enabled == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install capture image tools
+        if: steps.selection.outputs.enabled == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/review-venv"
+          "$RUNNER_TEMP/review-venv/bin/pip" install Pillow==12.2.0
+          echo "$RUNNER_TEMP/review-venv/bin" >> "$GITHUB_PATH"
+          command -v ffmpeg || brew install ffmpeg
+      - name: Build the platform framework
+        if: steps.selection.outputs.enabled == 'true'
+        timeout-minutes: 20
+        env:
+          CAPTURE_DEVICE: ${{ matrix.device }}
+        run: |
+          case "$CAPTURE_DEVICE" in
+            iphone|ipad) task=:core:linkDebugFrameworkIosSimulatorArm64 ;;
+            tvos) task=:core:linkDebugFrameworkTvosSimulatorArm64 ;;
+            mac) task=:core:linkDebugFrameworkMacosArm64 ;;
+          esac
+          ./gradlew --no-daemon --max-workers=2 "$task"
+      - name: Photograph real app pages against the disposable server
+        if: steps.selection.outputs.enabled == 'true'
+        env:
+          CAPTURE_DEVICE: ${{ matrix.device }}
+          CAPTURE_VARIANT: ${{ matrix.variant }}
+          DULCET_DESIGN_TOUR_SCREENS: ${{ inputs.screens }}
+        run: |
+          if [[ "$CAPTURE_DEVICE" == iphone || "$CAPTURE_DEVICE" == ipad ]]; then
+            export DULCET_DESIGN_TOUR_VARIANT="$CAPTURE_VARIANT"
+          fi
+          export DULCET_FFMPEG="$(command -v ffmpeg)"
+          tools/design-tour-apple "$RUNNER_TEMP/captures" --device "$CAPTURE_DEVICE"
+      - name: Package review and report coverage gaps
+        if: always() && steps.selection.outputs.enabled == 'true'
+        run: tools/apple-restyle-review "$RUNNER_TEMP/captures" --revision "$GITHUB_SHA" --logs "$RUNNER_TEMP/design-tour/logs"
+      - name: Upload captures, coverage and test logs
+        if: always() && steps.selection.outputs.enabled == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: apple-design-tour-${{ matrix.variant }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/captures
+            ${{ runner.temp }}/design-tour/logs
+          if-no-files-found: error
+          retention-days: 14

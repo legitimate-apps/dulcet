@@ -64,6 +64,16 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // Library root as a person meets it at launch: a saved account opens straight into its
         // library with focus inside it. A first launch on this simulator stops on Connection
         // while the account connects, so the tour waits for that and launches again.
+        step("listen-now", app) {
+            app.launch()
+            guard let section = self.launchSection(app) else { return false }
+            if section == "Connection" {
+                guard app.navigationBars["Listen Now"].waitForExistence(timeout: 60) else { return false }
+            }
+            return self.selectSection(app, "listenNow")
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+                && self.focusedSection(app) == nil && self.settle(3)
+        }
         step("library", app) {
             app.launch()
             guard let section = self.launchSection(app) else { return false }

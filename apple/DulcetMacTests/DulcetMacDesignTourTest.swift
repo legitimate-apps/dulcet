@@ -223,6 +223,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
             hostingView = hosting
             window.makeKeyAndOrderFront(nil)
 
+            await step("listen-now") {
+                store.navigate(to: .listenNow)
+                return await self.find("dulcet.library.album") != nil
+            }
             await step("library-sidebar") {
                 store.selectDestination(.library)
                 store.selectLibrarySection(.home)

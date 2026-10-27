@@ -274,6 +274,11 @@ final class DulcetDesignTourUITests: XCTestCase {
             return
         }
 
+        step("listen-now", app) {
+            self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
+                && app.descendants(matching: .any)["dulcet.listenNow"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30) && self.settle(app)
+        }
         step("connection-connected", app) {
             self.openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
                 && app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)

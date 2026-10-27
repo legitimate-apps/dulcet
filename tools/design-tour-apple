@@ -268,7 +268,7 @@ run_tour() { # label xctestrun only-testing destination...
   local png count=0
   for png in "$shots"/*.png; do
     [[ -e "$png" ]] || continue
-    sips -s format jpeg -s formatOptions 72 -Z 1000 "$png" --out "$OUT/$label-$(basename "$png" .png).jpg" >/dev/null
+    sips -s format jpeg -s formatOptions 55 -Z 1000 "$png" --out "$OUT/$label-$(basename "$png" .png).jpg" >/dev/null
     echo "  $label-$(basename "$png" .png).jpg" >> "$SUMMARY"; count=$((count + 1))
   done
   note "$label: $count shots, $(ls "$shots" | grep -c UNREACHED || true) unreached, in $(( $(date +%s) - t0 ))s"
@@ -358,11 +358,12 @@ if want iphone; then
   IPHONE=$(simulator "${DULCET_DESIGN_TOUR_IPHONE_UDID:-}" "Dulcet Design Tour iPhone" "iPhone 17 Pro")
   RUN=$(tour_xctestrun 'DulcetiOS_iphonesimulator*.xctestrun' ios)
   for appearance in light dark; do
-    for size in default xxl accessibility-l; do
+    for size in default xxl accessibility-l accessibility-xxxl; do
       case "$size" in
         default) category=UICTContentSizeCategoryL ;;
         xxl) category=UICTContentSizeCategoryXXL ;;
         accessibility-l) category=UICTContentSizeCategoryAccessibilityL ;;
+        accessibility-xxxl) category=UICTContentSizeCategoryAccessibilityXXXL ;;
       esac
       run_ios_variant "iphone-$appearance-$size" "$IPHONE" "$appearance" "$category" portrait
     done
