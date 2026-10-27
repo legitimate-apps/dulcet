@@ -122,6 +122,35 @@ class AppleExtractionTests(unittest.TestCase):
         report=apple_report('iphone',{},dict(devices=[],testNodes=[]),[],{})
         self.assertEqual('result-not-finalized',validate_report(report).first_cause)
 
+class AndroidRestProofDispatchTests(unittest.TestCase):
+    def test_fixture_only_suites_are_excluded_from_both_generic_device_legs(self):
+        import os
+        from pathlib import Path
+        import runpy
+        import sys
+        import tempfile
+        from unittest.mock import patch
+        runner = Path(__file__).with_name('run-android-rest-proofs')
+        for surface, package, proof in [
+            ('phone', 'com.legitimateapps.dulcet', 'AndroidEmulatorDiscoverWishlistProofTest'),
+            ('tv', 'com.legitimateapps.dulcet.tv', 'AndroidTvDiscoverWishlistProofTest'),
+        ]:
+            with self.subTest(surface=surface), tempfile.TemporaryDirectory() as temporary:
+                captures = Path(temporary) / 'listen-now-fallback-shots'
+                captures.mkdir()
+                for index in range(3):
+                    (captures / f'listen-now-{index}.jpg').touch()
+                with patch.object(sys, 'argv', [str(runner), ':device:test', surface]), \
+                     patch.dict(os.environ, {'RUNNER_TEMP': temporary}), \
+                     patch('subprocess.run') as run:
+                    runpy.run_path(str(runner), run_name='__main__')
+                command = run.call_args_list[0].args[0]
+                exclusion = next(arg.split('=', 1)[1] for arg in command if '.notClass=' in arg).split(',')
+                self.assertIn(f'{package}.{proof}', exclusion)
+                library = 'AndroidTvMyLibraryProofTest' if surface == 'tv' else 'AndroidEmulatorMyLibraryProofTest'
+                self.assertIn(f'{package}.{library}#automaticLibraryRetentionAndSameResponseCachePlayOffline', exclusion)
+                self.assertEqual(2, len(exclusion))
+
 class TVReportTests(unittest.TestCase):
     def positive(self):
         names=expected_tests('tvos')

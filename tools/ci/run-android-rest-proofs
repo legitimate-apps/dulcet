@@ -15,6 +15,9 @@ fixture_only = [f'{fixture_class}#automaticLibraryRetentionAndSameResponseCacheP
 if surface == 'phone':
     # This suite has its own finite fixture, phase arguments and process-death runner.
     fixture_only.append('com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest')
+else:
+    # The TV suite also requires the dedicated Discover fixture and runner arguments.
+    fixture_only.append('com.legitimateapps.dulcet.tv.AndroidTvDiscoverWishlistProofTest')
 try:
     subprocess.run(['./gradlew', '--no-daemon', '--max-workers=2', task,
                     '-Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4533',

@@ -258,7 +258,7 @@ public class LibrarySession internal constructor(
     private var myLibrarySession: MyLibrarySession? = null
     private var discoverWishlistSession: DiscoverWishlistSession? = null
 
-    /** Phone feature only. TV never opens this lazy facade. Shares this reader's identity fence. */
+    /** Account-owned phone/TV facade. Opening it negotiates access and refreshes Wishlist. */
     public val discoverWishlist: DiscoverWishlistSession
         get() = discoverWishlistSession ?: DiscoverWishlistSession(CoreDiscoverWishlistSource(reader)).also {
             discoverWishlistSession = it

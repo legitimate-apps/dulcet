@@ -63,10 +63,10 @@ class TvMyLibraryTest {
         context.getSharedPreferences("dulcet.ui", 0).edit().clear().commit()
     }
 
-    @Test fun supportedServerDoesNotFetchDiscoverUntilOpened() {
+    @Test fun supportedServerBootstrapsWishlistWithoutFetchingDiscoverContent() {
         server.dulcetDiscoverWishlist = true
-        // Prove the fixture's advertisement independently; the baseline TV need not discover
-        // extensions when no feature facade is opened.
+        // The account session negotiates capabilities through the existing Wishlist refresh.
+        // This is independent of opening Discover content or submitting a search.
         val extensions = org.json.JSONObject(java.net.URI(server.url + "/rest/getOpenSubsonicExtensions.view?f=json")
             .toURL().readText()).getJSONObject("subsonic-response").getJSONArray("openSubsonicExtensions")
         val names = (0 until extensions.length()).map { extensions.getJSONObject(it).getString("name") }
@@ -74,9 +74,14 @@ class TvMyLibraryTest {
         val myLibrary = MyLibrarySession(FakeMyLibrarySource(available = false)).also { myLibrarySessions += it }
         compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = null, myLibrary = myLibrary) { _, _ -> } } }
         await("positive baseline catalog response") { server.requests("getAlbumList2").isNotEmpty() }
-        for (endpoint in listOf("searchDulcetDiscover", "getDulcetWishlist", "addToDulcetWishlist")) {
-            assertTrue(server.requests(endpoint).isEmpty(), "TV must not create Discover: $endpoint")
-        }
+        await("the shared session Wishlist bootstrap") { server.requests("getDulcetWishlist").isNotEmpty() }
+        await("the advertised Discover navigation") { exists("discover.open") }
+        assertTrue(exists("listenNow.surface"), "the account is still on Listen Now")
+        assertFalse(exists("discover.home"), "Discover content has not been opened")
+        val featureRequests = server.endpoints().filter { "DulcetDiscover" in it || "DulcetWish" in it }
+        assertTrue(featureRequests.isNotEmpty(), "the shared session bootstrapped Wishlist")
+        assertEquals(setOf("getDulcetWishlist"), featureRequests.toSet(),
+            "bootstrap may read Wishlist, but must not fetch Discover content or mutate wishes")
     }
 
     private fun host(source: FakeMyLibrarySource) {
