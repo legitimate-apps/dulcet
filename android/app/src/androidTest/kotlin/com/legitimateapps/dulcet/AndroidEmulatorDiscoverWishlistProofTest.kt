@@ -549,6 +549,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.destination");awaitTag("discover.home")
             accessible("discover.destination");accessible("discover.home.refresh")
             navigationControlsRemainLabeled()
+            navigationGlyphsRemainWholeAndCentered()
             ensureDisplayed("discover.shelf.trendingArtists")
             requireText("Trending on ListenBrainz");capture("home")
             click("discover.shelf.publicPlaylists.all")
@@ -674,6 +675,29 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun visiblePending(container: String) {
         compose.onNodeWithTag(container).performScrollToNode(hasText("Waiting to sync"))
         compose.onNodeWithText("Waiting to sync").assertIsDisplayed()
+    }
+    private fun navigationGlyphsRemainWholeAndCentered() {
+        val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        val label=compose.onNode(hasText("Listen Now"),useUnmergedTree=true)
+        label.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { action ->
+            check(action(layouts)) {"Native navigation label did not expose its executed text layout"}
+        }
+        val result=layouts.single()
+        val node=label.fetchSemanticsNode()
+        val navigation=compose.onNodeWithTag("listenNow.open",useUnmergedTree=true).fetchSemanticsNode()
+        val glyphCenter=node.boundsInRoot.left+(result.getLineLeft(0)+result.getLineRight(0))/2f
+        val itemCenter=navigation.boundsInRoot.center.x
+        val delta=kotlin.math.abs(glyphCenter-itemCenter)
+        val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
+        File(directory,"navigation-glyphs.json").writeText(JSONObject().put("label","Listen Now")
+            .put("visibleEnd",result.getLineEnd(0,visibleEnd=true)).put("lineCount",result.lineCount)
+            .put("lineLeftPx",result.getLineLeft(0)).put("lineRightPx",result.getLineRight(0))
+            .put("textLeftPx",node.boundsInRoot.left).put("textRightPx",node.boundsInRoot.right)
+            .put("navigationLeftPx",navigation.boundsInRoot.left).put("navigationRightPx",navigation.boundsInRoot.right)
+            .put("glyphCenterPx",glyphCenter).put("navigationCenterPx",itemCenter).put("deltaPx",delta).toString())
+        capture("navigation-glyphs")
+        check(result.lineCount==1 && result.getLineEnd(0,visibleEnd=true)=="Listen Now".length) {"Native navigation omitted a word: ${result.layoutInput.text}"}
+        check(delta<=2f) {"Native navigation glyphs are shifted by $delta px"}
     }
     private fun navigationControlsRemainLabeled() {
         listOf("library.open","browse.open","search.open","account.open").forEach(::accessible)
