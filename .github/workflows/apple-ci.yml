@@ -413,7 +413,8 @@ jobs:
       # This boots no app. Require both positive acknowledgments and carry that exact device on.
       - name: First-boot and settle the platform iPhone before native media tests
         id: platform_iphone_destination
-        timeout-minutes: 15
+        # 11-minute boot deadline, five-minute service settle, device queries and startup.
+        timeout-minutes: 20
         run: |
           set -o pipefail
           python3 tools/ci/isolate-simulator \
@@ -551,7 +552,8 @@ jobs:
           # the iPad's first boot, and require the empty booted-device list before proceeding.
           python3 tools/ci/isolate-simulator --phase platform-before-ipad --none --require-isolation
       - name: Boot iPadOS simulator before the layout launch
-        timeout-minutes: 6
+        # The shared 11-minute boot deadline plus bounded inventory queries and startup.
+        timeout-minutes: 19
         env:
           IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
         run: |
@@ -562,7 +564,8 @@ jobs:
           # launch budget into an explicit prerequisite. Do not install or launch Dulcet here: the
           # UI test must still exercise a cold product launch, and a product launch failure must
           # remain a failure rather than being disguised by an app warm-up.
-          if ! xcrun simctl bootstatus "$IPAD_UDID" -b; then
+          if ! python3 tools/ci/isolate-simulator --phase platform-ipad-first-boot \
+            --keep "$IPAD_UDID" --require-isolation; then
             echo "::error title=iPadOS simulator prerequisite failed::CoreSimulator did not finish booting; the layout test did not run"
             exit 1
           fi
@@ -1106,8 +1109,10 @@ jobs:
       # Pays each device's FIRST boot before any proof's clock, as apple-conformance-ipad-iphone does.
       # OBSERVED in run 37142077432 on main: the composite's library-sync phases paid them instead.
       # The iPhone's took 222.4 s at load1 up to 574, and right after the iPad's, `simctl list`
-      # timed out at 120 s and failed the step. 20 bounds three first boots (158 to 222 s each,
-      # OBSERVED) plus the tool's own 120 s shutdown bound.
+      # timed out at 120 s and failed the step. Xcode 27 run 40547199270 completed this whole
+      # prerequisite in 592s. Its 20-minute envelope retains room above 1.5 times that witness;
+      # each device has its own monotonic boot deadline and streams its migration stages.
+      # This existing whole-phase cap takes precedence over the sum of per-device budgets.
       - name: First-boot the iPhone, iPadOS and tvOS simulators before the timed proofs
         timeout-minutes: 20
         env:

@@ -31,7 +31,12 @@ import subprocess
 import sys
 import time
 
-BOOT_TIMEOUT_SECONDS = 300
+# Xcode 27 run 40547199270: iPhone readiness <=264s; iPad's split boot/bootstatus
+# prerequisite exhausted its guard after 433s overall. Recent macos-26 main readiness
+# was <=88..173s. One 660s deadline is ceil(1.5 * 433 / 60) * 60, including the boot
+# itself. This allowance is provisional until a successful final-head iPad witness.
+# Stream CoreSimulator's migration stages so a future timeout keeps its cause.
+BOOT_TIMEOUT_SECONDS = 660
 # A booted device keeps starting its widget, poster and News extensions after `bootstatus` returns,
 # and that burst is what swaps. OBSERVED in run 37519277991: the iPhone's first boot took 201 s, the
 # step shut it down 12 s later, the proof booted it again, and its first test ran at load1 567 with
@@ -43,8 +48,33 @@ SETTLE_WINDOW = 3
 SETTLE_TOLERANCE = 2
 
 
-def simctl(*args: str, timeout: float = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(["xcrun", "simctl", *args], capture_output=True, text=True, timeout=timeout)
+def simctl(*args: str, timeout: float = 120, capture_output: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(["xcrun", "simctl", *args], capture_output=capture_output,
+                          text=True, timeout=timeout)
+
+
+def boot(phase: str, udid: str) -> bool:
+    """One monotonic subprocess deadline covers automatic boot and readiness.
+
+    bootstatus -b also boots a shut-down device. A separate `simctl boot` adds an
+    unmeasured RPC wait before the readiness budget and hides its migration output.
+    Inherit stdout/stderr so CoreSimulator's stages survive success and timeout.
+    """
+    started = time.monotonic()
+    print(f"SIMULATOR BOOT BEGIN phase={phase} udid={udid} budget_seconds={BOOT_TIMEOUT_SECONDS}",
+          flush=True)
+    try:
+        status = simctl("bootstatus", udid, "-b", timeout=BOOT_TIMEOUT_SECONDS,
+                        capture_output=False)
+    except subprocess.TimeoutExpired:
+        print(f"SIMULATOR BOOT phase={phase} udid={udid} ready=false reason=deadline "
+              f"seconds={time.monotonic() - started:.1f} budget_seconds={BOOT_TIMEOUT_SECONDS}",
+              flush=True)
+        return False
+    print(f"SIMULATOR BOOT phase={phase} udid={udid} ready={'true' if status.returncode == 0 else 'false'} "
+          f"exit={status.returncode} seconds={time.monotonic() - started:.1f} "
+          f"budget_seconds={BOOT_TIMEOUT_SECONDS}", flush=True)
+    return status.returncode == 0
 
 
 def devices(devices_json: str | None) -> dict:
@@ -212,11 +242,7 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             print(f"SIMULATOR ISOLATION shutdown timed out phase={args.phase} udid={udid}", flush=True)
     if keep:
-        simctl("boot", keep)  # "already booted" is fine; bootstatus below is the actual check
-        status = simctl("bootstatus", keep, "-b", timeout=BOOT_TIMEOUT_SECONDS)
-        if status.returncode != 0:
-            print(f"SIMULATOR ISOLATION FAILED phase={args.phase} keep={keep} "
-                  f"bootstatus_exit={status.returncode}: {status.stderr.strip()[-300:]}")
+        if not boot(args.phase, keep):
             return 1
         if args.settle:
             did_settle = settle(args.phase, keep)

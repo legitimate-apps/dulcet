@@ -7973,6 +7973,12 @@ The fixed 1180 × 760 Mac capture window has a measured 1180 × 732 content surf
 with macOS 27's 28-point title bar. Rendered references, fixture layout and geometry
 verification use that content height; the reviewed 1180 × 728 controls retain their
 existing bytes and hashes. New control candidates use the current reference size.
+Simulator readiness uses one streamed `bootstatus -b` invocation and a monotonic
+660-second deadline, sized from the observed first-boot boundary and retained
+separately from application-test clocks. The [timing investigation](../../investigations/2026-10-27-xcode27-simulator-readiness.md)
+records the main and preview-image samples. Album tiles publish their button
+label, traits and identifier on the complete context-menu/drag interaction so
+that accessibility follows the visible control on iOS 27.
 Runner image failures are reported with their logs. The dispatch-only evidence classes in §21.3.1 retain their scope.
 
 **2026-10-25 - Integrate Discover and Wishlist native clients and finite proof jobs.**

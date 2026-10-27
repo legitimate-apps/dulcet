@@ -94,6 +94,34 @@ print("SETTLE DECISION CONTROLS PASS 6/6")
 from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import patch
+
+# Boot and readiness share one subprocess deadline. A timed-out or failed boot must
+# stop before service/pressure admission or any app warm-up, and retain timing evidence.
+for outcome, expected, reason in [
+    (subprocess.CompletedProcess([], 0), True, "ready=true"),
+    (subprocess.CompletedProcess([], 149), False, "ready=false"),
+    (subprocess.TimeoutExpired(["xcrun", "simctl", "bootstatus"], 660), False, "reason=deadline"),
+]:
+    with patch.object(tool, "simctl", side_effect=outcome if isinstance(outcome, Exception) else None,
+                      return_value=outcome) as command, \
+            patch.object(tool.time, "monotonic", side_effect=[10.0, 13.5]), \
+            redirect_stdout(StringIO()) as output:
+        assert tool.boot("first-boot-ipad", "IPAD") is expected
+    command.assert_called_once_with("bootstatus", "IPAD", "-b", timeout=660, capture_output=False)
+    assert reason in output.getvalue() and "seconds=3.5" in output.getvalue(), output.getvalue()
+    assert "budget_seconds=660" in output.getvalue(), output.getvalue()
+    print(f"BOOT DEADLINE CONTROL PASS {reason} single-command=true streamed=true")
+
+with patch.object(sys, "argv", [TOOL, "--phase", "first-boot-ipad", "--keep", "IPAD",
+                               "--settle", "--require-settle", "--require-isolation"]), \
+        patch.object(tool, "devices", return_value={"runtime": []}), \
+        patch.object(tool, "boot", return_value=False), patch.object(tool, "settle") as settle, \
+        patch.object(tool, "warm_first_launch") as warm, redirect_stdout(StringIO()):
+    assert tool.main() == 1
+settle.assert_not_called()
+warm.assert_not_called()
+print("BOOT FAILURE CONTROL PASS admission-and-app-launch-not-reached")
+
 for remaining, strict, expected in [(False, True, 0), (True, True, 1), (True, False, 0)]:
     empty = {"runtime": []}
     leftover = {"runtime": [{"udid": "PHONE", "state": "Booted"}]}
@@ -139,7 +167,8 @@ def require_platform_ipad_order(candidate):
     assert "--none --require-isolation" in release, "shutdown requires an empty booted-device acknowledgment"
     assert "timeout-minutes: 6" in boot
     assert "IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}" in boot, "boot must consume the published destination"
-    assert 'xcrun simctl bootstatus "$IPAD_UDID" -b' in boot
+    assert 'tools/ci/isolate-simulator --phase platform-ipad-first-boot' in boot
+    assert '--keep "$IPAD_UDID" --require-isolation' in boot
     assert "resolve-ipad-destination" not in boot, "boot must not rediscover its destination"
     return release, boot
 

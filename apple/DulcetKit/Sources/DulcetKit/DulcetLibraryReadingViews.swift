@@ -644,7 +644,7 @@ struct DulcetReaderTile: View {
 #if os(tvOS)
         if showsTVActionsMenu {
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                styledAction.dulcetReaderItemContextMenu(item)
+                accessibleAction(styledAction).dulcetReaderItemContextMenu(item)
                 // Full-grid holds are unreliable on tvOS. Keep a normal focusable
                 // launcher while Select on the artwork continues to open its detail.
                 Button { presentsTVActions = true } label: {
@@ -658,12 +658,16 @@ struct DulcetReaderTile: View {
             }
             .frame(width: width, alignment: .leading)
         } else {
-            styledAction.dulcetReaderItemContextMenu(item)
+            accessibleAction(styledAction).dulcetReaderItemContextMenu(item)
         }
 #else
-        styledAction
+        // The complete interaction owns its accessibility element. On iOS 27 an album
+        // inserted into My Library remained visible but lost its inner button from AX.
+        // Wrapping the full interaction keeps its button contract outside both wrappers;
+        // hosted coverage checks the unchanged album query, activation and drag behavior.
+        accessibleAction(styledAction
             .dulcetReaderItemContextMenu(item)
-            .dulcetReaderQueueDragSource(item)
+            .dulcetReaderQueueDragSource(item))
 #endif
     }
 
@@ -671,7 +675,12 @@ struct DulcetReaderTile: View {
         tileButton
             .dulcetMediaButtonStyle(hover: .lift)
             .dulcetTakesFocusOnReturn(to: item.route)
+    }
+
+    private func accessibleAction<Content: View>(_ content: Content) -> some View {
+        content
             .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
     }
