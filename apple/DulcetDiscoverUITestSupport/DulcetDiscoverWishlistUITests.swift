@@ -319,8 +319,12 @@ import UIKit
         XCTAssertTrue(recentLink.waitForExistence(timeout: 20)); try photo("library-personal")
         reveal(recentLink); XCTAssertTrue(recentLink.waitForExistence(timeout: 15)); activate(recentLink)
         if sidebarRecent.exists {
-            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: sidebarRecent)
+            // Recently Added is the regular-width Library root. The sidebar selection
+            // deliberately maps this default section to Library, rather than its Recent row.
+            let library = app.buttons["dulcet.sidebar.library"].firstMatch
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: library)
             XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+            XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary"].firstMatch.waitForExistence(timeout: 15))
         } else {
             XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.recent"].waitForExistence(timeout: 15))
         }

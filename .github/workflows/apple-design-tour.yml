@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: Device family to photograph
+        description: Device family to photograph (mobile includes iPhone and iPad)
         type: choice
         default: all
-        options: [all, iphone, ipad, mac, tvos]
+        options: [all, mobile, iphone, ipad, mac, tvos]
       screens:
         description: Optional space-separated capture names for an affected-page reshoot
         type: string
@@ -44,9 +44,9 @@ jobs:
     timeout-minutes: 150
     strategy:
       fail-fast: false
-      # A phone-only fixture reshoot has three affected appearances and no other platform
-      # work. Admit that finite batch together; keep full inventory runs bounded at two.
-      max-parallel: ${{ inputs.device == 'iphone' && inputs.supplement_only && 3 || 2 }}
+      # Mobile fixture reshoots have no desktop or TV work. Admit three affected appearances
+      # together; keep full inventory runs bounded at two.
+      max-parallel: ${{ (inputs.device == 'iphone' || inputs.device == 'mobile') && inputs.supplement_only && 3 || 2 }}
       matrix:
         include:
           - {device: iphone, variant: iphone-light-default}
@@ -63,7 +63,8 @@ jobs:
           REQUESTED_DEVICE: ${{ inputs.device }}
           MATRIX_DEVICE: ${{ matrix.device }}
         run: |
-          if [[ "$REQUESTED_DEVICE" == all || "$REQUESTED_DEVICE" == "$MATRIX_DEVICE" ]]; then
+          if [[ "$REQUESTED_DEVICE" == all || "$REQUESTED_DEVICE" == "$MATRIX_DEVICE" ||
+                ( "$REQUESTED_DEVICE" == mobile && ( "$MATRIX_DEVICE" == iphone || "$MATRIX_DEVICE" == ipad ) ) ]]; then
             echo 'enabled=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Select Xcode 27.0 and record provenance
