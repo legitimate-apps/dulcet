@@ -84,6 +84,11 @@ class TvDiscoverTest {
         val album = source.item("album").copy(availability = DiscoverAvailability("partlyHeld", "known", null, 1, 12, null,
             listOf(ref.copy(type = "album"))))
         assertNull(tvDiscoverLibraryRoute(album, account.providerInstanceId))
+        assertEquals("1 of 12", tvDiscoverAvailabilityText(album.availability))
+        assertEquals("Library match unknown", tvDiscoverAvailabilityText(album.availability.copy(matchedTrackCount = null)))
+        assertEquals("Library match unknown", tvDiscoverAvailabilityText(album.availability.copy(status = "notHeld", completeness = "unknown")))
+        assertEquals("Not in your library", tvDiscoverAvailabilityText(album.availability.copy(status = "notHeld")))
+        assertEquals("Library match unknown", tvDiscoverAvailabilityText(album.availability.copy(status = "future-state")))
         assertNull(tvDiscoverLibraryRoute(source.item("artist").copy(availability =
             DiscoverAvailability("held", "known", null, null, null, null, listOf(ref))), "other-account"))
     }

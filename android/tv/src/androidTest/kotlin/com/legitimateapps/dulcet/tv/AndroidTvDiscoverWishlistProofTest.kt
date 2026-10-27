@@ -9,11 +9,13 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
@@ -55,7 +57,7 @@ class AndroidTvDiscoverWishlistProofTest {
             .getJSONObject("dulcetDiscover").getJSONArray("item").getJSONObject(1)
         val songs=fixture.rest("getDulcetDiscoverShelf",mapOf("id" to "trendingSongs","size" to "24"))
             .getJSONObject("dulcetDiscover").getJSONArray("item")
-        val song=songs.getJSONObject(1)
+        val song=songs.getJSONObject(4)
         val songMbid=song.getJSONObject("externalIds").getString("musicbrainzRecordingId")
         val playlistId=fixture.rest("searchDulcetDiscoverPlaylists",mapOf("size" to "24"))
             .getJSONObject("dulcetDiscoverPlaylists").getJSONArray("playlist").getJSONObject(0).getString("id")
@@ -64,12 +66,17 @@ class AndroidTvDiscoverWishlistProofTest {
         val playlistSong=(0 until playlistEntries.length()).map(playlistEntries::getJSONObject).single {it.getInt("position")==4}.getJSONObject("item")
         val searchSong=fixture.rest("searchDulcetDiscover",mapOf("kind" to "song","query" to "arrival","size" to "20"))
             .getJSONObject("dulcetDiscover").getJSONArray("item").getJSONObject(0)
+        check(listOf(song,playlistSong,searchSong).map {it.getString("title")}.distinct().size==3) {
+            "Shelf, playlist and search wish titles must independently identify their UI rows"
+        }
+        check(songMbid!=mbid(1) && songMbid!=mbid(3)) {"Shelf wish target must be distinct from playlist and arrival targets"}
         launch().use { activity ->
             val cursor=fixture.cursor()
             select("discover.open");awaitTag("discover.home")
             fixture.awaitRequest("getDulcetDiscoverShelf",cursor)
             requireText("Data from MusicBrainz and ListenBrainz")
             requireText("Trending on ListenBrainz")
+            awaitTag("discover.shelf.trendingArtists.item.${artist.getString("id")}.open")
             capture("home")
             select("discover.shelf.trendingArtists.item.${artist.getString("id")}.open")
             awaitTag("discover.artist.surface");requireText("Fixture Artist");capture("artist")
@@ -82,6 +89,8 @@ class AndroidTvDiscoverWishlistProofTest {
             back();awaitTag("discover.shelf.surface")
             check(focused("discover.item.0.open")) {"Back lost the shelf album focus"}
             back();awaitTag("discover.home")
+            compose.onNodeWithTag("discover.home").performScrollToNode(hasTestTag("discover.shelf.trendingSongs"))
+            compose.onNodeWithTag("discover.shelf.trendingSongs.items").performScrollToIndex(4)
             select("discover.wish.${song.getString("id")}")
             val shelfWish=fixture.awaitWish(songMbid)
             checkSource(shelfWish,"shelf","trendingSongs")
@@ -118,11 +127,22 @@ class AndroidTvDiscoverWishlistProofTest {
             fixture.effect(scan,"startScan")
             val arrived=fixture.awaitWish(mbid(1),"fulfilled")
             check(fixture.libraryContains(arrived.getJSONObject("libraryItem").getString("id")))
-            select("wishlist.refresh");requireText("Arrived");capture("arrival")
+            select("wishlist.refresh");awaitArrivedRow("Fixture Song 01");capture("arrival")
+            revealWishlistState("wishlist.state.all",5)
+            select("wishlist.state.fulfilled")
+            check(compose.onNodeWithTag("wishlist.state.fulfilled").fetchSemanticsNode().config.getOrNull(SemanticsProperties.Selected)==true)
+            awaitArrivedRow("Fixture Song 01");capture("arrived-filter")
+            revealWishlistState("wishlist.state.fulfilled",0)
+            select("wishlist.state.all")
             val index=wishRow("Fixture Song 01")
             select("wishlist.remove.$index")
-            fixture.awaitNoWish(mbid(1));capture("removed")
-            println("DISCOVER TV shelf-page=24 artist-open=true album-open=true shelf-source=true playlist-source=true playlist-page=24 duplicates=true missing-mbid-unwishable=true everywhere=true wishlist=true scan-arrival=true removed=true remote-center=true back-focus=true")
+            fixture.awaitNoWish(mbid(1))
+            await("removed wish absent from Wishlist UI") {
+                exists("wishlist.surface") && wishRowNodes().none {nodeText(it).contains("Fixture Song 01")}
+            }
+            fixture.awaitWish(songMbid);fixture.awaitWish(mbid(3))
+            capture("removed")
+            println("DISCOVER TV shelf-page=24 artist-open=true album-open=true shelf-source=true playlist-source=true playlist-page=24 duplicates=true missing-mbid-unwishable=true everywhere=true wishlist=true scan-arrival=true arrived-filter=true removed=true remote-center=true back-focus=true")
         }
     }
 
@@ -194,30 +214,39 @@ class AndroidTvDiscoverWishlistProofTest {
                 .put("requestAccepted",requestAccepted ?: JSONObject.NULL).put("focused",focused(tag)).put("focusedTags",JSONArray(tags)).toString())
         }
         queryFocusReceipt("requested")
-        if(tag=="discover.query" && !focused(tag) && compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.Role)!=androidx.compose.ui.semantics.Role.Button) {
-            var downs=0
-            while(!focused(tag) && downs<4) {
-                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-                compose.waitForIdle();downs++
-            }
-            val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
-            File(directory,"query-focus.json").writeText(JSONObject().put("downKeys",downs).put("focused",focused(tag)).toString())
-        }
         await("focus $tag"){focused(tag)}
         queryFocusReceipt("settled")
         if(tag.startsWith("discover.shelf.trendingArtists.item.") && tag.endsWith(".open")) capture("focused-artist-action")
+        if(tag=="wishlist.state.fulfilled") capture("focused-arrived-filter")
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
         compose.waitForIdle()
     }
+    private fun revealWishlistState(anchor:String,index:Int) {
+        ensureDisplayed(anchor)
+        val scrollRow=SemanticsMatcher("native Wishlist state scroller") {node ->
+            node.config.getOrNull(SemanticsActions.ScrollToIndex)!=null &&
+                node.config.getOrNull(SemanticsProperties.HorizontalScrollAxisRange)!=null
+        } and hasAnyDescendant(hasTestTag(anchor))
+        compose.onNode(scrollRow,useUnmergedTree=true).performScrollToIndex(index)
+    }
     private fun focused(tag:String)=compose.onAllNodes(hasTestTag(tag),useUnmergedTree=true).fetchSemanticsNodes()
         .any {it.config.getOrNull(SemanticsProperties.Focused)==true}
+    private fun wishRowNodes()=compose.onAllNodes(SemanticsMatcher("wish row") {node ->
+        val tag=node.config.getOrNull(SemanticsProperties.TestTag).orEmpty()
+        tag.startsWith("wishlist.row.") && tag.removePrefix("wishlist.row.").toIntOrNull()!=null
+    },useUnmergedTree=true).fetchSemanticsNodes()
+    private fun awaitArrivedRow(title:String) {
+        await("Arrived state on actual Wishlist row $title") {
+            val index=wishRow(title)
+            compose.onNodeWithTag("wishlist.row.state.$index",useUnmergedTree=true).fetchSemanticsNode()
+                .config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString("") {it.text}=="Arrived"
+        }
+    }
     private fun wishRow(title:String):Int {
         var found:Int?=null
         await("wish row $title") {
             runCatching {compose.onNodeWithTag("wishlist.surface").performScrollToNode(hasText(title,substring=true))}
-            found=compose.onAllNodes(SemanticsMatcher("wish row") { node ->
-                node.config.getOrNull(SemanticsProperties.TestTag)?.matches(Regex("wishlist\\.row\\.[0-9]+"))==true
-            },useUnmergedTree=true).fetchSemanticsNodes().firstOrNull {nodeText(it).contains(title)}
+            found=wishRowNodes().firstOrNull {nodeText(it).contains(title)}
                 ?.config?.getOrNull(SemanticsProperties.TestTag)?.substringAfterLast('.')?.toIntOrNull()
             found!=null
         }

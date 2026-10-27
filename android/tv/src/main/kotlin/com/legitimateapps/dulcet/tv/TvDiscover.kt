@@ -106,6 +106,15 @@ internal fun tvDiscoverLibraryRoute(item: DiscoverItem, provider: String?): Disc
     item.availability.libraryItems.singleOrNull()?.takeIf { it.providerInstanceId == provider && it.type == item.kind &&
         item.availability.status == "held" && (item.kind != "album" || item.availability.completeness == "known") }
 
+internal fun tvDiscoverAvailabilityText(value: DiscoverAvailability): String = when {
+    value.status == "held" -> "In your library"
+    value.status == "partlyHeld" && value.matchedTrackCount != null && value.totalTrackCount != null ->
+        "${value.matchedTrackCount} of ${value.totalTrackCount}"
+    value.completeness == "unknown" -> "Library match unknown"
+    value.status == "notHeld" -> "Not in your library"
+    else -> "Library match unknown"
+}
+
 private fun openLocal(ref: DiscoverLibraryRef, account: SearchAccount, playback: AndroidPlaybackController?, navigator: TvNavigator) {
     if (ref.providerInstanceId != account.providerInstanceId) return
     when (ref.type) {
@@ -148,11 +157,7 @@ internal fun TvDiscoverItem(session: DiscoverWishlistSession, item: DiscoverItem
         if (item.kind != "song") TvDiscoverArtwork(session, item, compact, Modifier.align(Alignment.CenterHorizontally))
         Text(item.title, style = MaterialTheme.typography.titleMedium)
         Text(listOfNotNull(item.artist, item.releaseDate ?: item.year?.toString()).joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
-        Text(when(item.availability.status) {
-            "held" -> "In your library"
-            "partlyHeld" -> "Partly in your library · ${item.availability.matchedTrackCount ?: 0} of ${item.availability.totalTrackCount ?: "?"} tracks"
-            else -> "Not in your library"
-        }, Modifier.testTag("$tag.availability"), style = MaterialTheme.typography.bodyMedium)
+        Text(tvDiscoverAvailabilityText(item.availability), Modifier.testTag("$tag.availability"), style = MaterialTheme.typography.bodyMedium)
         val primaryActions: @Composable () -> Unit = {
         if (local != null) DiscoverButton(if (compact) "Open Library" else "Open ${item.title} in Library", "$tag.open", spokenLabel = "Open ${item.title} in Library") { openLocal(local, account, playback, navigator) }
         else if (openMetadata && item.target != null && item.kind in listOf("artist", "album")) DiscoverButton(if (compact) "Open" else "Open ${item.title}", "$tag.open", spokenLabel = "Open ${item.title}") {
