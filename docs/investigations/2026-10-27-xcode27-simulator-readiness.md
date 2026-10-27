@@ -166,3 +166,19 @@ after boot completion. Load remained above 630 in the final samples and rose to
 widgets and migration services before any application warm-up or UI test.
 The available main comparison logs contain no matching unavailable-service
 failure, so this is not classified as an established main failure.
+
+For callers that request pressure admission, the harness now requires the existing
+host-pressure condition before starting service RPCs. It still requires a fresh
+quiet window after service settling, or after the sacrificial app rendering when
+warm-up is requested. No prior admission witness is removed. Order controls
+require boot, host quiet, services and warm-up in sequence; any failed gate stops
+later operations. Service-query failures now distinguish timeout from nonzero
+exit and report elapsed time.
+
+Host pressure causing the unavailable RPCs is an inference from their overlap,
+not a proven CoreSimulator root cause. The change tests that mechanism while
+keeping each existing pressure threshold, service budget and assertion deadline.
+The new pre-service phase has the same bounded pressure allowance. Existing whole
+phase limits still take precedence, including Discover's 30-minute aggregate
+startup admission and the conformance step's 125-minute envelope; component maxima
+are not summed into a larger grant. A fresh hosted witness must validate the order.
