@@ -249,11 +249,11 @@ with tempfile.TemporaryDirectory() as tmp:
 # ps uses a five-field lstart and can return executable names containing spaces. Preserve both.
 snapshot = module['process_snapshot']
 with patch('subprocess.run', return_value=SimpleNamespace(stdout=(
-        '123 4096 91.2 Fri Oct 23 20:00:00 2026 /tmp/Dulcet DEV\n'
-        '124 2048 50,5 Fri Oct 23 20:00:01 2026 /tmp/Dulcet\n'))):
+        '123 1 4096 91.2 1-02:03:04.50 S Fri Oct 23 20:00:00 2026 /tmp/Dulcet DEV\n'
+        '124 1 2048 50,5 03:04,50 T Fri Oct 23 20:00:01 2026 /tmp/Dulcet\n'))):
     parsed = snapshot()
-assert parsed == [dict(pid=123, rss=4096, cpu=91.2, started=app()['started'], name='Dulcet DEV'),
-                  dict(pid=124, rss=2048, cpu=50.5, started='Fri Oct 23 20:00:01 2026', name='Dulcet')]
+assert parsed == [dict(pid=123, ppid=1, rss=4096, cpu=91.2, cpuSeconds=93784.5, state='S', started=app()['started'], name='Dulcet DEV', executable='/tmp/Dulcet DEV'),
+                  dict(pid=124, ppid=1, rss=2048, cpu=50.5, cpuSeconds=184.5, state='T', started='Fri Oct 23 20:00:01 2026', name='Dulcet', executable='/tmp/Dulcet')]
 print('PS CONTROL PASS PID, launch identity, locale decimal and executable name with spaces')
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -303,7 +303,8 @@ with tempfile.TemporaryDirectory() as tmp:
         assert time.monotonic() - before < 3, 'cleanup must stay bounded'
         worker.wait(timeout=2)
         rows = [json.loads(line) for line in Path(pressure).read_text().splitlines()]
-        assert rows[-2]['status'] == 'job-end-cutoff' and rows[-1]['event'] == 'sampler-stop', rows
+        assert next(r for r in reversed(rows) if r['event'] == 'stack-capture-end')['status'] == 'job-end-cutoff' and rows[-1]['event'] == 'sampler-stop', rows
+        assert rows[-2]['event'] == 'cpu-snapshot' and rows[-2]['cpuProcesses'], rows[-2]
         state = subprocess.run(['ps', '-p', str(child_pid), '-o', 'state='], capture_output=True, text=True).stdout
         assert not state.strip() or state.strip().startswith('Z'), 'sample child must not survive cleanup'
         assert not module['process_matches'](os.getpid(), ' capture an-unrelated-job'), 'PID identity must be checked'
@@ -322,8 +323,51 @@ with tempfile.TemporaryDirectory() as tmp:
         module['stop'](pressure, grace=0)
         assert unrelated.poll() is None, 'a recorded PID with a different command must not be signaled'
         rows = [json.loads(line) for line in Path(pressure).read_text().splitlines()]
-        assert rows[-2]['status'] == 'job-end-worker-unavailable'
+        assert next(r for r in reversed(rows) if r['event'] == 'stack-capture-end')['status'] == 'job-end-worker-unavailable'
     finally:
         unrelated.terminate()
         unrelated.wait(timeout=2)
     print('STACK CLEANUP CONTROL PASS real worker and child cutoff, bounded receipt, unrelated PID spared, repeated stop')
+
+# Same basename, different executable; PID reuse, counter reset and disappearance. A peak
+# percent or sum of lifetime CPU would give the wrong answer for this phase.
+def cpu_process(pid, path, seconds, started='launch-1'):
+    return dict(pid=pid, started=started, executable=path, cpuSeconds=seconds)
+def cpu_read(ms, processes):
+    return dict(wallTimeMillis=ms, cpuProcesses=processes)
+a = cpu_process(1, '/host/diagnosticd', 100)
+b = cpu_process(2, '/runtime/diagnosticd', 5)
+reads = [cpu_read(0, [a, b]), cpu_read(10000, [dict(a, cpuSeconds=103), dict(b, cpuSeconds=12),
+    cpu_process(3, '/runtime/apsd', 90)]),
+    cpu_read(20000, [dict(a, cpuSeconds=105), cpu_process(2, '/runtime/diagnosticd', 1, 'launch-2'),
+        cpu_process(3, '/runtime/apsd', 2)]),
+    cpu_read(30000, [dict(a, cpuSeconds=106)])]
+rows = module['cpu_deltas'](reads)
+assert module['cpu_deltas']([reads[2], reads[0], reads[3], reads[1]]) == rows, 'concurrent append order must not double-count CPU'
+by_id = {(r['pid'], r['started']): r for r in rows}
+assert by_id[1, 'launch-1']['cpuLowerBoundSeconds'] == 6, rows
+assert by_id[1, 'launch-1']['observedSeconds'] == 30, rows
+assert by_id[2, 'launch-1']['cpuLowerBoundSeconds'] == 7, rows
+assert not by_id[2, 'launch-1']['presentAtEnd'], rows
+assert by_id[2, 'launch-2']['intervals'] == 0, rows
+assert by_id[3, 'launch-1']['resets'] == 1, rows
+assert by_id[3, 'launch-1']['cpuLowerBoundSeconds'] == 0, rows
+assert module['cpu_deltas']([cpu_read(0, []), cpu_read(1000, [])]) == []
+assert module['cpu_seconds']('123:45.67') == 7425.67
+assert module['cpu_seconds']('25:00:00') == 90000
+with tempfile.TemporaryDirectory() as tmp:
+    path = Path(tmp) / 'cpu.jsonl'
+    # Boundary snapshots make a 20-second phase independent of the sampler's cadence.
+    records = [dict(event='sampler-start', wallTimeMillis=0),
+        dict(event='phase', name='cpu-phase', **reads[0]),
+        dict(event='sample', **reads[1], pageouts=0, swapouts=0, **base),
+        dict(event='phase', name='next', **reads[2]),
+        dict(event='sample', **reads[3], pageouts=0, swapouts=0, **base)]
+    path.write_text(''.join(json.dumps(r) + '\n' for r in records))
+    result = run('summarize', str(path))
+    totals = [json.loads(line.removeprefix('HOST PRESSURE CPU-TIME '))
+        for line in result.stdout.splitlines() if line.startswith('HOST PRESSURE CPU-TIME {')]
+    host = next(row for row in totals if row['phase'] == 'cpu-phase' and row['pid'] == 1)
+    assert host['cpuLowerBoundSeconds'] == 5 and host['observedSeconds'] == 20, result.stdout
+    assert {row['executable'] for row in totals} >= {'/host/diagnosticd', '/runtime/diagnosticd'}, totals
+print('CPU TIME CONTROL PASS boundaries, separate executable paths, reuse, reset, birth/exit gaps')
