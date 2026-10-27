@@ -7967,8 +7967,9 @@ Apple build, test, release and soak workflows select GA Xcode 27.0 (27A266a) on 
 standard hosted `xcode-27` preview image. The central pin also identifies the toolchain
 for local builds. Deployment floors remain macOS 14 / iOS 17 / tvOS 17, and newer APIs
 require availability checks. The CI policy counts `xcode-27` jobs toward the same
-Apple concurrency and required-evidence gates. Runner image failures are reported with
-their logs. The dispatch-only evidence classes in §21.3.1 retain their scope.
+Apple concurrency and required-evidence gates. The iPad resolver recognizes Xcode 27's
+compatible-destinations section and retains its iPad and scheme eligibility checks.
+Runner image failures are reported with their logs. The dispatch-only evidence classes in §21.3.1 retain their scope.
 
 **2026-10-25 - Integrate Discover and Wishlist native clients and finite proof jobs.**
 

@@ -125,6 +125,26 @@ def discovery_fixture(transcripts: list[str], query_duration: float = 0,
 
 
 def main() -> None:
+    # Xcode 27.0, hosted run 40544160667, uses compatible/incompatible section names.
+    # A simulator in the incompatible section must stay excluded even without an error field.
+    xcode27 = '\n'.join([
+        'Destinations compatible with the "DulcetiOS" scheme:',
+        '  { platform:iOS Simulator, id:EEE, OS:27.0, name:iPad Pro 13-inch (M5) }',
+        '  { platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder, name:Any iOS Simulator Device }',
+        'Destinations incompatible with the "DulcetiOS" scheme:',
+        '  { platform:iOS Simulator, id:FFF, OS:27.0, name:iPad Pro 13-inch (M5) }',
+    ])
+    eligible = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+        device("iPad Pro 13-inch (M5)", "EEE"), device("iPad Pro 13-inch (M5)", "FFF"),
+    ]}}
+    selected = run(eligible, xcode27, "udid")
+    assert selected.returncode == 0 and selected.stdout == "EEE\n", selected.stderr
+    excluded = run({"devices": {IOS: [device("iPad Pro 13-inch (M5)", "FFF")]}}, xcode27, "udid")
+    assert excluded.returncode != 0 and not excluded.stdout, excluded.stdout
+    wrong_scheme = run(eligible, xcode27.replace('"DulcetiOS"', '"OtherScheme"'), "udid")
+    assert wrong_scheme.returncode != 0 and not wrong_scheme.stdout, wrong_scheme.stdout
+    print("XCODE 27 CONTROL PASS compatible_ipad_selected=true incompatible_and_wrong_scheme_rejected=true")
+
     # Every fresh query needs 75s; killing at 60s cannot be repaired by starting another query.
     slow_answer = discovery_fixture([destinations("EEE")], query_duration=75, budgets=None)
     if (slow_answer["status"] != 0 or slow_answer["stdout"] != "EEE\n"
@@ -307,7 +327,10 @@ def main() -> None:
                     )
             else:
                 raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: query did not fail")
-            process.assert_called_once_with(command, capture_output=True, text=True, timeout=60, check=False)
+            invoked = process.call_args.args[0]
+            assert invoked[:-2] == command and invoked[-2] == "-derivedDataPath", invoked
+            assert not Path(invoked[-1]).exists(), "temporary query DerivedData was retained"
+            process.assert_called_once_with(invoked, capture_output=True, text=True, timeout=60, check=False)
         print(f"NEGATIVE CONTROL PASS {label}_rejected=true query_timeout_seconds=60 "
               f"retryable={is_timeout}")
 
