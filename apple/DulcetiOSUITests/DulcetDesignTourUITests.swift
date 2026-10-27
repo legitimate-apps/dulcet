@@ -318,8 +318,7 @@ final class DulcetDesignTourUITests: XCTestCase {
             step(screen, app) {
                 guard self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
                 let link = app.buttons["dulcet.reader.home.\(row).all"].firstMatch
-                guard link.waitForExistence(timeout: 15), self.scrollIntoView(link, in: app) else { return false }
-                link.tap()
+                guard self.openSectionLink(link, in: app) else { return false }
                 return app.navigationBars[title].firstMatch.waitForExistence(timeout: 15)
                     && self.settle(app, seconds: 2)
             }
@@ -459,8 +458,13 @@ final class DulcetDesignTourUITests: XCTestCase {
         step("playlist-edit", app) {
             let edit = app.buttons["dulcet.playlist.edit"].firstMatch
             guard edit.waitForExistence(timeout: 10), self.scrollIntoView(edit, in: app) else { return false }
-            edit.tap()
-            return app.buttons["dulcet.playlist.done"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+            let done = app.buttons["dulcet.playlist.done"].firstMatch
+            for _ in 0..<2 {
+                _ = self.settle(app, seconds: 0.8)
+                edit.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                if done.waitForExistence(timeout: 5) { return self.settle(app) }
+            }
+            return false
         }
         if app.buttons["dulcet.playlist.done"].firstMatch.exists { app.buttons["dulcet.playlist.done"].firstMatch.tap() }
         step("playlist-more", app) {
@@ -522,8 +526,8 @@ final class DulcetDesignTourUITests: XCTestCase {
             guard field.waitForExistence(timeout: 10) else { return false }
             field.tap()
             field.typeText("Threshold")
-            guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
             self.dismissKeyboard(in: app)
+            guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
             return self.settle(app)
         }
         step("search-recents", app) {
@@ -545,8 +549,14 @@ final class DulcetDesignTourUITests: XCTestCase {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
             let track = app.buttons["dulcet.reader.track"].firstMatch
             guard track.waitForExistence(timeout: 20), self.scrollIntoView(track, in: app) else { return false }
-            track.press(forDuration: 1)
-            return app.buttons["dulcet.track.addToPlaylist"].firstMatch.waitForExistence(timeout: 5) && self.settle(app)
+            for _ in 0..<2 {
+                _ = self.settle(app, seconds: 0.8)
+                // The row also contains pin and favourite buttons. Hold its primary text
+                // area, whose vertical midpoint was verified visible, away from those actions.
+                track.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).press(forDuration: 1.2)
+                if app.buttons["dulcet.track.addToPlaylist"].firstMatch.waitForExistence(timeout: 5) { return self.settle(app) }
+            }
+            return false
         }
         step("playlist-add", app) {
             let add = app.buttons["dulcet.track.addToPlaylist"].firstMatch
@@ -601,6 +611,9 @@ final class DulcetDesignTourUITests: XCTestCase {
     @MainActor
     private func shoot(_ screen: String, _ app: XCUIApplication) {
         shotNumber += 1
+        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
         let name = String(format: "%02d-%@", shotNumber, screen)
         // Element screenshots use a stale crop rectangle after landscape rotation on Simulator.
         // The screen request preserves the whole iPad display and its orientation metadata.
@@ -705,8 +718,8 @@ final class DulcetDesignTourUITests: XCTestCase {
         guard row.waitForExistence(timeout: 30), scrollIntoView(row, in: app) else { return false }
         row.tap()
         // The page names the artist over its album tiles.
-        return app.staticTexts.matching(NSPredicate(format: "label == %@", artist)).firstMatch.waitForExistence(timeout: 10)
-            && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 20)
+        let title = app.staticTexts["dulcet.artist.title"].firstMatch
+        return title.waitForExistence(timeout: 15) && waitFor(timeout: 5) { title.label == artist }
     }
 
     @MainActor

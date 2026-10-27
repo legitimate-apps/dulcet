@@ -16,6 +16,19 @@ on:
         description: Reshoot the finite Library and Discover tour without the general tour
         type: boolean
         default: false
+      general_variant:
+        description: Optional general-tour variant to repair alongside a supplemental reshoot
+        type: string
+        default: ''
+      general_screens:
+        description: Optional general-tour capture names, independent of supplemental screens
+        type: string
+        default: ''
+      phase:
+        description: General-tour phase, use connected when account photographs already passed
+        type: choice
+        default: all
+        options: [all, account, connected]
 
 permissions:
   contents: read
@@ -93,11 +106,12 @@ jobs:
           esac
           ./gradlew --no-daemon --max-workers=2 "$task"
       - name: Photograph real app pages against the disposable server
-        if: steps.selection.outputs.enabled == 'true' && (!inputs.supplement_only || matrix.device == 'tvos')
+        if: steps.selection.outputs.enabled == 'true' && (!inputs.supplement_only || matrix.device == 'tvos' || inputs.general_variant == matrix.variant)
         env:
           CAPTURE_DEVICE: ${{ matrix.device }}
           CAPTURE_VARIANT: ${{ matrix.variant }}
-          DULCET_DESIGN_TOUR_SCREENS: ${{ inputs.screens }}
+          DULCET_DESIGN_TOUR_SCREENS: ${{ inputs.general_screens || inputs.screens }}
+          DULCET_DESIGN_TOUR_PHASE: ${{ inputs.phase }}
         run: |
           if [[ "$CAPTURE_DEVICE" == iphone || "$CAPTURE_DEVICE" == ipad ]]; then
             export DULCET_DESIGN_TOUR_VARIANT="$CAPTURE_VARIANT"
@@ -106,7 +120,7 @@ jobs:
           export DULCET_FFMPEG
           tools/design-tour-apple "$RUNNER_TEMP/captures" --device "$CAPTURE_DEVICE"
       - name: Package review and report coverage gaps
-        if: always() && steps.selection.outputs.enabled == 'true' && (!inputs.supplement_only || matrix.device == 'tvos')
+        if: always() && steps.selection.outputs.enabled == 'true' && (!inputs.supplement_only || matrix.device == 'tvos' || inputs.general_variant == matrix.variant)
         run: tools/apple-restyle-review "$RUNNER_TEMP/captures" --revision "$GITHUB_SHA" --logs "$RUNNER_TEMP/design-tour/logs"
       - name: Capture personal Library and Discover fixture states
         if: always() && steps.selection.outputs.enabled == 'true'
