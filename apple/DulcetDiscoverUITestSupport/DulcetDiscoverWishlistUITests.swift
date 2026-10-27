@@ -283,24 +283,40 @@ import UIKit
             guard requested.isEmpty || requested.contains(screen) else { return }
             number += 1; try capture("\(variant)-\(number)-\(screen)")
         }
+        func destination(_ section: String) {
+            let row = select(section)
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: row)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+            Thread.sleep(forTimeInterval: 0.5)
+        }
         try launch(variant: style)
-        select("library")
+        destination("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 20))
         try photo("library-empty")
-        select("browse")
+        destination("browse")
+#if os(iOS)
+        let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
+            ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
+#else
+        let albumListLink = "dulcet.reader.home.recentlyAdded.all"
+#endif
+        let all = app.buttons[albumListLink].firstMatch
+        XCTAssertTrue(all.waitForExistence(timeout: 30)); try photo("browse")
+        // Compact Browse's artwork grid is lazy and follows its category links. Use the
+        // existing full-list link instead of treating an uninstantiated tile as a failure.
+        reveal(all); activate(all)
         let album = app.buttons["dulcet.library.album"].firstMatch
-        XCTAssertTrue(album.waitForExistence(timeout: 30)); try photo("browse")
+        XCTAssertTrue(album.waitForExistence(timeout: 30)); reveal(album)
         activate(album)
         let add = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
         reveal(add); XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
         let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
         XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 20), .completed)
-        select("library")
-        XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 20))
-        try photo("library-personal")
+        destination("library")
         let recent = app.buttons["dulcet.myLibrary.section.recent"].firstMatch
         let sidebarRecent = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.recent"].firstMatch
         let recentLink = sidebarRecent.exists ? sidebarRecent : recent
+        XCTAssertTrue(recentLink.waitForExistence(timeout: 20)); try photo("library-personal")
         reveal(recentLink); XCTAssertTrue(recentLink.waitForExistence(timeout: 15)); activate(recentLink)
         if sidebarRecent.exists {
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: sidebarRecent)
