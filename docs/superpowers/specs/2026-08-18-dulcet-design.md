@@ -7969,6 +7969,10 @@ for local builds. Deployment floors remain macOS 14 / iOS 17 / tvOS 17, and newe
 require availability checks. The CI policy counts `xcode-27` jobs toward the same
 Apple concurrency and required-evidence gates. The iPad resolver recognizes Xcode 27's
 compatible-destinations section and retains its iPad and scheme eligibility checks.
+The fixed 1180 × 760 Mac capture window has a measured 1180 × 732 content surface
+with macOS 27's 28-point title bar. Rendered references, fixture layout and geometry
+verification use that content height; the reviewed 1180 × 728 controls retain their
+existing bytes and hashes. New control candidates use the current reference size.
 Runner image failures are reported with their logs. The dispatch-only evidence classes in §21.3.1 retain their scope.
 
 **2026-10-25 - Integrate Discover and Wishlist native clients and finite proof jobs.**
