@@ -126,11 +126,16 @@ note "server $SERVER_URL ($SERVER_LINE)"
 rm -f "$WORK/faults/endpoints.json"
 "$REPO/tools/design-tour-faults" --upstream "$SERVER_URL" --work "$WORK/faults" > "$LOGS/faults.log" 2>&1 &
 FAULT_PID=$!
-for _ in {1..100}; do
+for _ in {1..600}; do
   [[ ! -f "$WORK/faults/endpoints.json" ]] || break
   kill -0 "$FAULT_PID" 2>/dev/null || { cat "$LOGS/faults.log" >&2; exit 1; }
   sleep 0.1
 done
+[[ -f "$WORK/faults/endpoints.json" ]] || {
+  echo "fault fixture did not become ready within 60 seconds" >&2
+  cat "$LOGS/faults.log" >&2
+  exit 1
+}
 PROXY_URL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["proxy"])' "$WORK/faults/endpoints.json")
 TLS_URL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["bad_tls"])' "$WORK/faults/endpoints.json")
 export TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$PROXY_URL" DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$PROXY_URL"
