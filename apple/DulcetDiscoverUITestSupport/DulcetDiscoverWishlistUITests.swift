@@ -345,6 +345,13 @@ import UIKit
             XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.songs"].waitForExistence(timeout: 15))
         }
         try photo("songs")
+        if !sidebarSongs.exists {
+            // Tabs retain their navigation stacks. Leave Library at its root before
+            // opening Discover so the later Wishlist visit can use its real root link.
+            let back = app.navigationBars.buttons["BackButton"].firstMatch
+            XCTAssertTrue(back.waitForExistence(timeout: 10)); activate(back)
+            XCTAssertTrue(recent.waitForExistence(timeout: 15))
+        }
         try search()
         XCTAssertTrue(item("artist", 100).waitForExistence(timeout: 30)); try photo("discover-search")
         activate(item("artist", 100))
