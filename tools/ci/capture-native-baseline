@@ -42,3 +42,12 @@ if [[ ! -x "$navidrome" ]]; then
 fi
 tools/ci/with-discover-wishlist-fixture --evidence "$output/fixture" --navidrome "$navidrome" \
   --ffmpeg "$(command -v ffmpeg)" -- tools/ci/run-discover-wishlist-proofs "$mode"
+python3 - "$output/native/captures" "${DULCET_NATIVE_BASELINE_VARIANT:?}" "${DULCET_NATIVE_BASELINE_SCREENS:-}" <<'PY'
+from pathlib import Path
+import sys
+root=Path(sys.argv[1])
+variants=['mac-light','mac-dark'] if sys.argv[2]=='mac' else [sys.argv[2]]
+missing=[variant+':'+screen for variant in variants for screen in sys.argv[3].split()
+         if not list(root.glob(variant+'-[0-9]*-'+screen+'.jpg'))]
+if missing:raise SystemExit('Selected native captures missing: '+', '.join(missing))
+PY

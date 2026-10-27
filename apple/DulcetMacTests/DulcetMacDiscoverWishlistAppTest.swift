@@ -224,11 +224,14 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
 
     /// The receiver photographs this owned window with the compositor, preserving system glass.
     private func nativeBaselineTour() async throws {
+        let query = URLComponents(string: try required("CAPTURE_UPLOAD_URL"))?.queryItems
+        let requested = Set((query?.first(where: { $0.name == "screens" })?.value ?? "").split(separator: " ").map(String.init))
         for style in ["light", "dark"] {
             _ = try await control("reset", [:])
             let app = try await launch(variant: style)
             var number = 80
             func photo(_ screen: String) async throws {
+                guard requested.isEmpty || requested.contains(screen) else { return }
                 number += 1
                 NSApp.activate(ignoringOtherApps: true); app.window.makeKeyAndOrderFront(nil)
                 app.window.display()
@@ -255,6 +258,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.myLibrary.recent")
             try await waitUntil(timeout: .seconds(15), "Recently Added section selected") { app.store.myLibrarySection == .recent }
             try await photo("recently-added")
+            if requested == ["recently-added"] { app.close(); continue }
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.myLibrary.songs")
             try await waitUntil(timeout: .seconds(15), "Songs section selected") { app.store.myLibrarySection == .songs }
             try await photo("songs")

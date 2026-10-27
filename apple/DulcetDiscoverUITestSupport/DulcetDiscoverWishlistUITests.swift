@@ -276,8 +276,13 @@ import UIKit
         if UIDevice.current.userInterfaceIdiom == .pad { XCUIDevice.shared.orientation = .landscapeLeft }
 #endif
         let style = variant.contains("dark") ? "dark" : variant.contains("accessibility") ? "largest" : "light"
+        let query = URLComponents(string: env["DULCET_DISCOVER_CAPTURE_UPLOAD_URL"] ?? "")?.queryItems
+        let requested = Set((query?.first(where: { $0.name == "screens" })?.value ?? "").split(separator: " ").map(String.init))
         var number = 80
-        func photo(_ screen: String) throws { number += 1; try capture("\(variant)-\(number)-\(screen)") }
+        func photo(_ screen: String) throws {
+            guard requested.isEmpty || requested.contains(screen) else { return }
+            number += 1; try capture("\(variant)-\(number)-\(screen)")
+        }
         try launch(variant: style)
         select("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 20))
@@ -304,6 +309,7 @@ import UIKit
             XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.recent"].waitForExistence(timeout: 15))
         }
         try photo("recently-added")
+        if requested == ["recently-added"] { return }
         if !sidebarRecent.exists {
             let back = app.navigationBars.buttons["BackButton"].firstMatch
             XCTAssertTrue(back.waitForExistence(timeout: 10)); activate(back)

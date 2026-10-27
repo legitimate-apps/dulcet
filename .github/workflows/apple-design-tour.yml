@@ -114,6 +114,7 @@ jobs:
         env:
           CAPTURE_DEVICE: ${{ matrix.device }}
           DULCET_NATIVE_BASELINE_VARIANT: ${{ matrix.variant }}
+          DULCET_NATIVE_BASELINE_SCREENS: ${{ inputs.screens }}
         run: |
           ./gradlew --no-daemon --max-workers=2 :server:installDist
           if [[ "$CAPTURE_DEVICE" == tvos ]]; then
