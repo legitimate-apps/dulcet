@@ -2834,7 +2834,8 @@ jobs:
     needs: [apple-plan, apple-platform]
     if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 60
+    # Includes both finite proof inventories and their independent fixture/startup costs.
+    timeout-minutes: 95
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -2881,6 +2882,18 @@ jobs:
             "$RUNNER_TEMP/discover-macos/native/proof.xcresult" \
             "$RUNNER_TEMP/dulcet-discover-macos-junit/TEST-DulcetMacDiscoverWishlistAppTest.xml" \
             DulcetMacDiscoverWishlistAppTest
+      - name: Drive Discover shelves and public playlists through the native macos app
+        # A separate exact inventory keeps step-2 and shelf evidence independently fail-closed.
+        timeout-minutes: 30
+        env:
+          DULCET_DISCOVER_PROOF_OUTPUT: ${{ runner.temp }}/discover-macos/shelves
+        run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-macos/shelves-fixture" -- tools/ci/run-discover-wishlist-proofs --shelves macos
+      - name: Stage finalized shelf parity results
+        run: |
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/discover-macos/shelves/proof.xcresult" \
+            "$RUNNER_TEMP/dulcet-discover-macos-junit/TEST-DulcetMacDiscoverWishlistAppTest-shelves.xml" \
+            DulcetMacDiscoverWishlistAppTest
       - name: Upload native proof and captures
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -2904,7 +2917,8 @@ jobs:
     needs: [apple-plan, apple-conformance-ipad-iphone]
     if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 95
+    # Includes both finite proof inventories and their independent fixture/startup costs.
+    timeout-minutes: 135
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -2955,6 +2969,19 @@ jobs:
             "$RUNNER_TEMP/discover-iphone/native/proof.xcresult" \
             "$RUNNER_TEMP/dulcet-discover-iphone-junit/TEST-DulcetDiscoverWishlistUITests.xml" \
             DulcetDiscoverWishlistUITests
+      - name: Drive Discover shelves and public playlists through the native iphone app
+        # A separate exact inventory keeps step-2 and shelf evidence independently fail-closed.
+        timeout-minutes: 35
+        env:
+          DULCET_DISCOVER_PROOF_OUTPUT: ${{ runner.temp }}/discover-iphone/shelves
+          DULCET_DISCOVER_PREBUILT: "true"
+        run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-iphone/shelves-fixture" -- tools/ci/run-discover-wishlist-proofs --shelves iphone
+      - name: Stage finalized shelf parity results
+        run: |
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/discover-iphone/shelves/proof.xcresult" \
+            "$RUNNER_TEMP/dulcet-discover-iphone-junit/TEST-DulcetDiscoverWishlistUITests-shelves.xml" \
+            DulcetDiscoverWishlistUITests
       - name: Upload native proof and captures
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -2978,7 +3005,8 @@ jobs:
     needs: [apple-plan, discover-wishlist-macos]
     if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 95
+    # Includes both finite proof inventories and their independent fixture/startup costs.
+    timeout-minutes: 165
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -3030,6 +3058,19 @@ jobs:
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/discover-ipad/native/proof.xcresult" \
             "$RUNNER_TEMP/dulcet-discover-ipad-junit/TEST-DulcetDiscoverWishlistIPadUITests.xml" \
+            DulcetDiscoverWishlistIPadUITests
+      - name: Drive Discover shelves and public playlists through the native ipad app
+        # A separate exact inventory keeps step-2 and shelf evidence independently fail-closed.
+        timeout-minutes: 45
+        env:
+          DULCET_DISCOVER_PROOF_OUTPUT: ${{ runner.temp }}/discover-ipad/shelves
+          DULCET_DISCOVER_PREBUILT: "true"
+        run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-ipad/shelves-fixture" -- tools/ci/run-discover-wishlist-proofs --shelves ipad
+      - name: Stage finalized shelf parity results
+        run: |
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/discover-ipad/shelves/proof.xcresult" \
+            "$RUNNER_TEMP/dulcet-discover-ipad-junit/TEST-DulcetDiscoverWishlistIPadUITests-shelves.xml" \
             DulcetDiscoverWishlistIPadUITests
       - name: Upload native proof and captures
         if: ${{ always() }}

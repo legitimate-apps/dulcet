@@ -24,7 +24,7 @@ if not a.mode:p.error('mode is required')
 if not a.build_for_testing and os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
 if a.mode=='android':
     helper=str(Path(__file__).resolve().parent/'run-discover-wishlist-android')
-    os.execv(helper,[helper])
+    os.execv(helper,[helper]+(["--shelves"] if a.shelves else []))
 repo=Path(__file__).resolve().parents[2]
 def completed_native_report(bundle, suite, selected, output):
     """Convert only a complete XCTest transcript; never infer execution from a build exit."""
@@ -238,12 +238,13 @@ def apple_proof(mode):
         env['TEST_RUNNER_DULCET_DISCOVER_CAPTURE_UPLOAD_URL']='http://127.0.0.1:'+str(capture_server.server_address[1])
         env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
         selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
-        from discover_proof_report import shelf_tests
+        from discover_proof_report import shelf_tests, selected_tests
         selected_shelves=shelf_tests(mode) if a.shelves and '/' not in selected else None
+        selected_methods=selected_tests(mode,selected,a.shelves)
         command=['xcodebuild',action,'-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
-        if selected_shelves:
+        if selected_methods:
             command=[arg for arg in command if not arg.startswith('-only-testing:')]
-            command += ['-only-testing:'+target+'/'+suite+'/'+name for name in selected_shelves]
+            command += ['-only-testing:'+target+'/'+suite+'/'+name for name in selected_methods]
         if mode=='macos':
             # Match the app-hosted Mac proofs: finite disposable tests use ad hoc signing.
             command += ['CODE_SIGN_STYLE=Manual','CODE_SIGN_IDENTITY=-','CODE_SIGN_ENTITLEMENTS=','DEVELOPMENT_TEAM=','PROVISIONING_PROFILE_SPECIFIER=',

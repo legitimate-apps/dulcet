@@ -14,6 +14,12 @@ def shelf_tests(mode):
     return ['testDiscoverShelvesEmptyCachedFailureAndNavidrome',
         'testIPadDiscoverShelvesSidebarCompactResizeAndBack' if mode=='ipad' else 'testIPhoneDiscoverShelvesLargestTextPagesAndSources']
 
+def selected_tests(mode, selected=None, shelves=False):
+    """Keep the two proof inventories distinct even when they share a test class."""
+    if selected and '/' in selected:
+        return [selected.rsplit('/', 1)[-1]]
+    return shelf_tests(mode) if shelves else expected_tests(mode)
+
 @dataclass(frozen=True)
 class Verdict:
     first_cause: str | None = None

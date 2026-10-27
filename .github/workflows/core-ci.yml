@@ -464,7 +464,7 @@ jobs:
     outputs:
       attempt: ${{ github.run_attempt }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 70
     env:
       TZ: UTC
       EMULATOR_API_LEVEL: '34'
@@ -516,7 +516,7 @@ jobs:
       - name: Select the phone evidence directory
         run: echo "DULCET_DISCOVER_ANDROID_OUTPUT=$RUNNER_TEMP/discover-android/native" >> "$GITHUB_ENV"
       - name: Drive Discover and Wishlist through the native phone app
-        timeout-minutes: 25
+        timeout-minutes: 40
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: ${{ env.EMULATOR_API_LEVEL }}
@@ -528,6 +528,7 @@ jobs:
           script: |
             python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
             ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-android/fixture" -- tools/ci/run-discover-wishlist-proofs android
+            ANDROID_SERIAL=emulator-5554 DULCET_DISCOVER_ANDROID_OUTPUT="$RUNNER_TEMP/discover-android/shelves" tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-android/shelves-fixture" -- tools/ci/run-discover-wishlist-proofs --shelves android
       - name: Upload native proof and captures
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

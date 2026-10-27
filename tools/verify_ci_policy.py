@@ -514,14 +514,15 @@ def method_emission_associations(source: str, cited: dict[str, set[str]]) -> set
             after = words.index("--") + 1
             if after < len(words) and words[after] == proof:position = after
         if position is not None:
-            mode = words[position + 1] if position + 1 < len(words) else ""
-            # Each mode executes a whole, distinct XCTest suite; its runtime report guard requires
-            # exact identities and the matching device idiom before this emission can run.
-            suites = {"iphone": "DulcetDiscoverWishlistUITests",
-                      "ipad": "DulcetDiscoverWishlistIPadUITests",
-                      "macos": "DulcetMacDiscoverWishlistAppTest"}
-            selected = {(suite, method) for suite in [suites.get(mode)]
-                        for method, names in cited.items() if suite in names}
+            arguments = words[position + 1:]
+            mode = next((word for word in arguments if word in {"iphone", "ipad", "macos"}), "")
+            # Each invocation emits an exact legacy or shelf inventory. The native runtime
+            # guard independently requires those identities and the matching device idiom.
+            sys.path.insert(0, str(Path(__file__).resolve().parent / "ci"))
+            from discover_proof_report import expected_suite, expected_tests, shelf_tests
+            inventory = (shelf_tests(mode) if "--shelves" in arguments else expected_tests(mode)) if mode and "--build-for-testing" not in arguments else []
+            selected = {(expected_suite(mode), method) for method in inventory
+                        if expected_suite(mode) in cited.get(method, set())}
         if words[:2] == ["python3", "tools/swift-testing-junit"]:
             if len(words) == 5:
                 resolved.update(pair for pair in selected if pair[0] == words[4])

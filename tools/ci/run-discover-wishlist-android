@@ -97,7 +97,19 @@ def self_test():
         assert 'obscured' in capture_window_cause(folder,'proof')
         receipt.write_text(json.dumps({'foregroundPackage':PACKAGE}))
         assert capture_window_cause(folder,'proof') is None
-    print('Discover Android runner self-test: four foreground capture controls; seven parser controls, original 10/shelves 6 phase inventories and unique/environment output controls passed')
+    # A green prefix cannot satisfy the full selected inventory, even with no failed XML.
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as temporary:
+        runner=object.__new__(Runner)
+        runner.out=Path(temporary);runner.reports=[]
+        runner.args=argparse.Namespace(method=None,shelves=True,red_baseline=False)
+        for index in range(6):
+            folder=runner.out/str(index);folder.mkdir()
+            junit(folder/'TEST-DiscoverWishlist.xml',SHELF_METHODS[0],'normal','passed','',0)
+            with contextlib.redirect_stdout(io.StringIO()):accepted=runner.finish()
+            assert accepted==(index==5)
+    print('Discover Android runner self-test: four foreground capture controls; seven parser controls, exact original 10/shelves 6 phase inventories, incomplete green-prefix rejection and unique/environment output controls passed')
 
 class Runner:
     def __init__(self,args):
@@ -217,7 +229,9 @@ class Runner:
             for key in counts:counts[key]+=int(root.get(key,'0'))
         (self.out/'summary.json').write_text(json.dumps({'counts':counts,'invocations':self.reports},indent=2))
         print('DISCOVER ANDROID JUNIT '+json.dumps(counts),flush=True)
-        return counts['tests']>0 and all(counts[key]==0 for key in ('failures','errors','skipped'))
+        expected=sum(len(phases(method,self.args.red_baseline)) for method in
+                     (self.args.method or (SHELF_METHODS if self.args.shelves else METHODS)))
+        return counts['tests']==expected and all(counts[key]==0 for key in ('failures','errors','skipped'))
     def close(self):
         self.stop_owned_app()
         if hasattr(self,'old_scale') and self.old_scale!='null':self.shell('settings','put','system','font_scale',self.old_scale)
