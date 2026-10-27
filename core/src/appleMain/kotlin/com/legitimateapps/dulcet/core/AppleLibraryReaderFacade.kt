@@ -73,6 +73,7 @@ public class AppleLibraryReaderClient internal constructor(
     private val readerDispatcher: CloseableCoroutineDispatcher,
     mainDispatcher: CoroutineDispatcher,
     private val identityAuthorization: AppleLibraryReaderIdentityAuthorization = AppleLibraryReaderIdentityAuthorization(),
+    internal val discoverProviderInstanceId:String = "",
 ) {
     /**
      * One account's reader over the app's database. [databaseName] is the same database the other
@@ -112,7 +113,7 @@ public class AppleLibraryReaderClient internal constructor(
         readsDownloads: Boolean, authorization: AppleLibraryReaderIdentityAuthorization,
     ) : this(
         productionComposer(databaseName, account, readsDownloads, authorization), foreground,
-        newLibraryReaderDispatcher(), Dispatchers.Main, authorization,
+        newLibraryReaderDispatcher(), Dispatchers.Main, authorization, account.providerInstanceId,
     )
 
     internal val identityAuthorizationToken: Long? get() = identityAuthorization.currentToken()
@@ -123,6 +124,17 @@ public class AppleLibraryReaderClient internal constructor(
         onReader { composition?.session?.reader?.rejectServerIdentity() }
     }
 
+    private val discoverClients=AtomicReference<Set<AppleDiscoverClient>>(emptySet())
+    internal fun registerDiscover(client:AppleDiscoverClient):Boolean {
+        if(isClosed)return false
+        updateDiscover {it+client}
+        if(isClosed){unregisterDiscover(client);return false}
+        return true
+    }
+    internal fun unregisterDiscover(client:AppleDiscoverClient){updateDiscover {it-client}}
+    private fun updateDiscover(transform:(Set<AppleDiscoverClient>)->Set<AppleDiscoverClient>){
+        while(true){val before=discoverClients.load();if(discoverClients.compareAndSet(before,transform(before)))return}
+    }
     private val closed = AtomicBoolean(false)
 
     /**
@@ -167,6 +179,12 @@ public class AppleLibraryReaderClient internal constructor(
             }
         }
     }
+
+    /** Resolves a scoped local song directly, including a one-character title and an uncached
+     * reference. Uses this reader's transport/cache/identity fence; never searches by title. */
+    public fun lookupLibrarySong(reference: AppleDiscoverLibraryRef,
+        completion: (AppleLibrarySongLookup) -> Unit): AppleLibraryReaderOperation =
+        lookupScopedLibrarySong(this, reference, completion)
 
     // ---- Library windows --------------------------------------------------------------------------------
 
@@ -342,14 +360,18 @@ public class AppleLibraryReaderClient internal constructor(
      */
     public fun close() {
         if (!closed.compareAndSet(false, true)) return
+        val closingDiscover=discoverClients.load()
+        closingDiscover.forEach {it.close()}
         try {
             readerScope.launch {
                 val closing = composition
                 composition = null
                 try {
+                    closingDiscover.forEach {it.closeFromReader()}
                     windows.toList().forEach(AppleLibraryWindowSubscription::closeFromClient)
                     searches.toList().forEach(AppleLibrarySearchSubscription::closeFromClient)
                     outcomeSubscriptions.toList().forEach(AppleLibraryFavouriteOutcomeSubscription::closeFromClient)
+                    closing?.session?.closeDiscoverClients()
                     closing?.session?.reader?.setForeground(false)
                 } catch (_: Throwable) {
                     // Closing is best effort and exports nothing.
@@ -427,15 +449,12 @@ public class AppleLibraryReaderClient internal constructor(
      * after every call made before it, or does nothing once the client is closed or when the
      * session could not be built. [block] must not throw.
      */
-    internal fun onSession(block: (LibraryReaderSession) -> Unit): Boolean = onReader {
-        val session = composition?.session ?: return@onReader
-        try {
-            block(session)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Throwable) {
-            uncaughtFailures += failure
-        }
+    internal fun onSession(block:(LibraryReaderSession)->Unit):Boolean = onSession({},block)
+    internal fun onSession(onUnavailable:()->Unit,block:(LibraryReaderSession)->Unit):Boolean = onReader {
+        val session=composition?.session
+        if(session==null){onUnavailable();return@onReader}
+        try {block(session)} catch(cancelled:CancellationException){throw cancelled}
+        catch(failure:Throwable){uncaughtFailures+=failure;onUnavailable()}
     }
 
     internal fun register(subscription: AppleLibraryWindowSubscription) {

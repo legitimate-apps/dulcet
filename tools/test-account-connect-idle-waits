@@ -50,6 +50,10 @@ navigation_path = 'apple/DulcetiOSUITests/DulcetiOSUITests.swift'
 navigation_source = (subprocess.check_output(['git', 'show', f'{args.navigation_source_ref}:{navigation_path}'], cwd=ROOT, text=True)
                      if args.navigation_source_ref else (ROOT / navigation_path).read_text())
 open_destination = declaration('    private func openDestination(', navigation_source).replace('Date()', 'AccountWaitClock.now')
+tour_path = 'apple/DulcetiOSUITests/DulcetDesignTourUITests.swift'
+tour_source = (subprocess.check_output(['git', 'show', f'{args.navigation_source_ref}:{tour_path}'], cwd=ROOT, text=True)
+               if args.navigation_source_ref else (ROOT / tour_path).read_text())
+tour_destination = declaration('    private func openDestination(', tour_source).replace('func openDestination(', 'func openDesignTourDestination(', 1)
 scroll = method('scrollIntoView')
 stable = method('waitForStableHitTarget')
 snapshot_polling = 'matching target: HitTarget' in stable
@@ -148,6 +152,7 @@ final class XCUIApplication: NSObject {
     var connectionOpens = 0
     override var debugDescription: String { state }
     var selectedTab = "Connection"
+    var sidebarButtonIdentifier: String?
     var ignoredNavigationTaps = 0
     var navigationTaps = 0
     var tabBars: ElementQuery { ElementQuery(app: self, scope: "tab") }
@@ -183,6 +188,9 @@ struct Element {
                      "presence polling must come from the same snapshot as geometry")
         precondition(key != "Sign Out" || !app.awaitingConnection,
                      "Sign Out must not traverse Library before Connection is opened")
+        // Captured iPad AX: the identifier belongs to the Button, while its text child has
+        // only label "Connection". A text query must not invent that child's identifier.
+        if key == app.sidebarButtonIdentifier { return scope == "root" }
         if scope == "tab" || scope == "sidebar" { return true }
         if key == "moving-button" || key == "window" { return true }
         if key == "dulcet.account-connect.primary-action" { return app.state == "signed-out" }
@@ -266,6 +274,12 @@ struct Element {
     var label: String { key == "dulcet.account-connect.primary-action" ? "Connect" : "Sign Out" }
     func waitForExistence(timeout: TimeInterval) -> Bool { exists }
     func tap() {
+        if key == app.sidebarButtonIdentifier {
+            precondition(scope == "root", "activate the identified sidebar button")
+            app.navigationTaps += 1
+            app.selectedTab = key
+            return
+        }
         if scope == "tab" || scope == "sidebar" {
             app.navigationTaps += 1
             if app.ignoredNavigationTaps > 0 { app.ignoredNavigationTaps -= 1 }
@@ -363,6 +377,16 @@ struct Check {
         precondition(app.selectedTab == "Search" && app.navigationTaps == 3,
                      "A completed tap without the selected destination must not authorize a field lookup")
         print("missed compact tab tap / observed selection after retry: PASS")
+        let sidebarApp = XCUIApplication()
+        sidebarApp.sidebarButtonIdentifier = "dulcet.sidebar.settings"
+        precondition(proof.openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: sidebarApp, compact: false))
+        precondition(sidebarApp.navigationTaps == 1 && sidebarApp.selectedTab == "dulcet.sidebar.settings")
+        print("captured iPad sidebar Button identifier / text child without identifier / actual activation: PASS")
+        sidebarApp.navigationTaps = 0
+        sidebarApp.selectedTab = "Library"
+        precondition(proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: sidebarApp, compact: false))
+        precondition(sidebarApp.navigationTaps == 1 && sidebarApp.selectedTab == "dulcet.sidebar.settings")
+        print("design tour / captured iPad sidebar Button / actual activation: PASS")
         // A hittable control may still overlap native chrome. Keep the fixture independent of
         // the implementation's safe-viewport arithmetic, including a nonzero window origin.
         let geometryApp = XCUIApplication()
@@ -465,6 +489,6 @@ checks = checks.replace('MATCHING ', 'matching: .identifier("moving-button"), ' 
 with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
     path = Path(temporary)
     swift = path / 'control.swift'
-    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + await_sign_out + '\n' + open_destination + '\n' + helpers + '\n' + scroll + '\n' + stable + checks)
+    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + await_sign_out + '\n' + open_destination + '\n' + tour_destination + '\n' + helpers + '\n' + scroll + '\n' + stable + checks)
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(path / 'control')], check=True)
     subprocess.run([str(path / 'control')], check=True)

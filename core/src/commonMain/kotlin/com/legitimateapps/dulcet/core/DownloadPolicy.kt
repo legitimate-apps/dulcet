@@ -717,6 +717,7 @@ internal class DownloadPolicyEngine(
             database.libraryDepthQueries.deleteEntriesForServer(serverId)
             database.offlineLibraryQueries.deleteSettings(serverId)
             database.offlineLibraryQueries.deleteSourceSnapshots(serverId)
+            database.wishlistQueries.deleteProtectedForServer(serverId)
             queries.deleteMutationOutboxForServer(serverId)
             queries.deleteDownloadsForServer(serverId)
             queries.deleteResumePositionsForServer(serverId)

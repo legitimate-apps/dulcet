@@ -51,6 +51,8 @@ jobs:
         run: python3 tools/verify_ci_policy.py
       - name: Verify deployment configuration
         run: python3 tools/verify_os_floors.py --configuration-only
+      - name: Prove Gradle workers use ordered schema retrieval
+        run: python3 tools/test-gradle-schema-scheduler
       - name: Verify protected-data migration semantics
         run: python3 tools/migration_gate.py
       - name: Verify Apple presents every playback phase the core can send
@@ -70,6 +72,35 @@ jobs:
               :core:allMetadataJar :core:jvmTest :core:testAndroidHostTest \
               :core:bundleAndroidMainAar :core:licensee
           '
+      - name: Install pinned server test media tools
+        run: |
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = "ubuntu:24.04"
+          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
+          # https://github.com/actions/runner-images/issues/14823
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5 lsof
+          test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
+          ffmpeg -version
+          ffprobe -version
+      - name: Build and self-test the Discover fixture
+        timeout-minutes: 10
+        run: |
+          tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist
+          python3 tools/ci/prepare-discover-fixture
+          export DULCET_DISCOVER_NAVIDROME_BIN="$RUNNER_TEMP/discover-bin/navidrome"
+          python3 tools/test-discover-wishlist-fixture --junit build/discover-fixture-junit.xml
+          tools/ci/run-discover-wishlist-proofs --self-test
+          tools/ci/run-discover-wishlist-android --self-test
+          tools/ci/with-discover-wishlist-fixture -- tools/ci/run-discover-wishlist-proofs components
+          mkdir -p build/discover-components-junit
+          cp core-conformance/build/test-results/jvmTest/TEST-*.xml build/discover-components-junit/
+          tools/ci/with-discover-wishlist-fixture -- tools/ci/run-discover-wishlist-proofs sessions
+          mkdir -p build/discover-sessions-junit
+          cp core-conformance/build/test-results/jvmTest/TEST-*.xml build/discover-sessions-junit/
       - name: Upload core test results
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -78,6 +109,9 @@ jobs:
           path: |
             core/build/test-results/jvmTest
             core/build/test-results/testAndroidHostTest
+            build/discover-fixture-junit.xml
+            build/discover-components-junit
+            build/discover-sessions-junit
           if-no-files-found: warn
           retention-days: 7
       # The Android shell builds here rather than in a job of its own. This runner already provisions
@@ -113,20 +147,6 @@ jobs:
       # probe real audio: install both tools instead of replacing media behaviour with a stub.
       # Ubuntu Noble's exact package version: https://packages.ubuntu.com/noble/ffmpeg
       # This is FFmpeg 6.1.1, also used by the pinned Linux conformance environment.
-      - name: Install pinned server test media tools
-        run: |
-          . /etc/os-release
-          test "$ID:$VERSION_ID" = "ubuntu:24.04"
-          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
-          # https://github.com/actions/runner-images/issues/14823
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
-          fi
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
-          test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
-          ffmpeg -version
-          ffprobe -version
       - name: Test safe Discover verification evidence
         run: python3 -m unittest discover -s tools/server -p 'test_*.py'
       - name: Test Dulcet Server
@@ -439,13 +459,92 @@ jobs:
   # and a skipped required check does not block a merge, and it fails unless every job it needs
   # reports `success`. Only then does it read evidence, so evidence from a job that did not succeed
   # is never read at all.
+  discover-wishlist-android:
+    name: discover-wishlist-android
+    outputs:
+      attempt: ${{ github.run_attempt }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TZ: UTC
+      EMULATOR_API_LEVEL: '34'
+      EMULATOR_TARGET: google_apis
+      EMULATOR_ARCH: x86_64
+      EMULATOR_BUILD_TOOLS: '37.0.0'
+      EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Use hosted SDK command-line tools
+        run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+      - name: Install Android emulator SDK packages (infrastructure, bounded retry)
+        timeout-minutes: 10
+        shell: bash
+        env:
+          COMPILE_SDK: ${{ steps.pins.outputs.compile_sdk }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/discover-android"
+          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --action-log "$RUNNER_TEMP/discover-android/sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/discover-android/sdk-install.log"
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle --timeout=30
+          test -w /dev/kvm
+      - name: Provision the pinned disposable fixture
+        timeout-minutes: 5
+        run: |
+          # Use the same Ubuntu archive fallback as the existing server conformance leg.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg lsof
+          python3 tools/ci/prepare-discover-fixture
+      - name: Build the real app and fixture
+        timeout-minutes: 15
+        run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest
+      - name: Select the phone evidence directory
+        run: echo "DULCET_DISCOVER_ANDROID_OUTPUT=$RUNNER_TEMP/discover-android/native" >> "$GITHUB_ENV"
+      - name: Drive Discover and Wishlist through the native phone app
+        timeout-minutes: 25
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: ${{ env.EMULATOR_API_LEVEL }}
+          arch: ${{ env.EMULATOR_ARCH }}
+          target: ${{ env.EMULATOR_TARGET }}
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
+            ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-android/fixture" -- tools/ci/run-discover-wishlist-proofs android
+      - name: Upload native proof and captures
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: discover-wishlist-android-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/discover-android
+          if-no-files-found: error
+          retention-days: 14
+
   core-ci:
     name: core-ci
     if: ${{ always() }}
-    needs: [core-build, conformance-env-linux, android-emulator]
+    needs: [core-build, conformance-env-linux, android-emulator, discover-wishlist-android]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
+      DISCOVER_ANDROID_RESULT: ${{ needs.discover-wishlist-android.result }}
       CORE_BUILD_RESULT: ${{ needs.core-build.result }}
       CONFORMANCE_ENV_LINUX_RESULT: ${{ needs.conformance-env-linux.result }}
       ANDROID_EMULATOR_RESULT: ${{ needs.android-emulator.result }}
@@ -456,6 +555,7 @@ jobs:
           echo "core-build=$CORE_BUILD_RESULT"
           echo "conformance-env-linux=$CONFORMANCE_ENV_LINUX_RESULT"
           echo "android-emulator=$ANDROID_EMULATOR_RESULT"
+          test "$DISCOVER_ANDROID_RESULT" = success
           test "$CORE_BUILD_RESULT" = success
           test "$CONFORMANCE_ENV_LINUX_RESULT" = success
           test "$ANDROID_EMULATOR_RESULT" = success
@@ -500,6 +600,11 @@ jobs:
         with:
           name: dulcet-android-emulator-tv-${{ github.run_id }}-${{ needs.android-emulator.outputs.attempt-tv }}
           path: android-emulator-tv-results
+      - name: Download Android Discover native evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: discover-wishlist-android-${{ github.run_id }}-${{ needs.discover-wishlist-android.outputs.attempt }}
+          path: android-discover-native-results
       - name: Verify Android parity evidence executed and passed
         run: >-
           python3 tools/verify-parity-evidence
@@ -507,3 +612,4 @@ jobs:
           android-app-results
           android-emulator-phone-results
           android-emulator-tv-results
+          android-discover-native-results

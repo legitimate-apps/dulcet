@@ -27,6 +27,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FilterInputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -282,29 +283,59 @@ class AndroidDownloadControllerTest {
     }
 
     @Test fun aClosedControllersRunningTransferStopsAndIsAwaited() = runBlocking {
-        val stopped = CountDownLatch(1)
-        WireServer { request -> rangeAware(request, stopped) }.use { server ->
+        val readEntered = CountDownLatch(1)
+        val releaseRead = CountDownLatch(1)
+        WireServer { WireReply(200, AUDIO) }.use { server ->
             val tasks = RecordingTasks()
-            val controller = controller(server, tasks)
+            val account = PlaybackEndpointAccount(SERVER_ID, server.url, USER, PASSWORD, true)
+            val authorizer = AuthenticatedEndpointClient(
+                AuthenticatedEndpointCredentials(server.url, USER, PASSWORD, true), "download-held-read-test")
+            opened += AutoCloseable { authorizer.close() }
+            val controller = controller(server, tasks, openTransfer = { plan ->
+                val resource = AndroidHttpPlaybackResource(account, plan, authorizer)
+                AndroidPlaybackResource { position, length ->
+                    val response = resource.open(position, length)
+                    val heldInput = object : FilterInputStream(response.input) {
+                        private var delivered = 0
+                        override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                            if (delivered >= STOP_AT) {
+                                readEntered.countDown()
+                                check(releaseRead.await(10, TimeUnit.SECONDS)) { "the test never released the client read" }
+                            }
+                            val requested = if (delivered < STOP_AT) minOf(length, STOP_AT - delivered) else length
+                            val count = super.read(bytes, offset, requested)
+                            if (count > 0) delivered += count
+                            return count
+                        }
+                    }
+                    AndroidPlaybackResponse(response.status, response.headers, heldInput,
+                        response.authorizeRead, response.close)
+                }
+            })
             controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
             val task = tasks.started.single()
             val partial = File(controller.temporaryPathForTest(task))
             val run = CoroutineScope(Dispatchers.IO).async { controller.runTask(task) }
-            withTimeout(10_000) { while (partial.length() < STOP_AT) delay(5) }
+            try {
+                // Bytes on disk do not prove the next client read has begun: close can win
+                // between reads. Hold that actual read boundary before testing the waiter.
+                assertTrue(withContext(Dispatchers.IO) { readEntered.await(10, TimeUnit.SECONDS) })
+                assertEquals(STOP_AT.toLong(), partial.length())
+                controller.close()
+                val waiter = CoroutineScope(Dispatchers.IO).async { controller.awaitTasksStopped(10_000) }
+                delay(200)
+                assertFalse(waiter.isCompleted, "a transfer still inside its read is still running, and is waited for")
+                releaseRead.countDown()
 
-            controller.close()
-            val waiter = CoroutineScope(Dispatchers.IO).async { controller.awaitTasksStopped(10_000) }
-            delay(200)
-            assertFalse(waiter.isCompleted, "a transfer still inside its read is still running, and is waited for")
-            stopped.countDown()
-
-            assertTrue(waiter.await(), "the transfer stopped within the wait")
-            assertTrue(run.isCompleted)
-            assertFailsWith<CancellationException> { run.await() }
-            val kept = partial.length()
-            delay(400)
-            assertEquals(kept, partial.length(), "nothing is written after the wait returns")
-            assertTrue(kept < AUDIO.size, "the closed controller stopped before the whole body")
+                assertTrue(waiter.await(), "the transfer stopped within the wait")
+                assertFailsWith<CancellationException> { run.await() }
+                val kept = partial.length()
+                delay(400)
+                assertEquals(kept, partial.length(), "nothing is written after the wait returns")
+                assertTrue(kept < AUDIO.size, "the closed controller stopped before the whole body")
+            } finally {
+                releaseRead.countDown()
+            }
         }
     }
 
@@ -1091,6 +1122,7 @@ class AndroidDownloadControllerTest {
         fileSystem: FileSystem = FileSystem.SYSTEM,
         serverId: String = SERVER_ID,
         validateIdentityBeforeTransfer: Boolean = false,
+        openTransfer: ((RemotePlaybackWirePlan) -> AndroidPlaybackResource)? = null,
     ): AndroidDownloadController = AndroidDownloadController(
         account = PlaybackEndpointAccount(serverId, server.url, USER, PASSWORD, allowLocalHttp = true),
         openStore = { openStore() },
@@ -1098,7 +1130,7 @@ class AndroidDownloadControllerTest {
         tasks = tasks,
         wall = wall,
         diskBudgetBytes = { 10L * 1024 * 1024 * 1024 },
-        openTransfer = null,
+        openTransfer = openTransfer,
         onDownloadedChanged = onChanged,
         fileSystem = fileSystem,
         validateIdentityBeforeTransfer = validateIdentityBeforeTransfer,

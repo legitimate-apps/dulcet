@@ -99,18 +99,19 @@ def accepted_ids(transcript: str, scheme: str) -> set[str]:
 RUNTIME_IOS = re.compile(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)(?:-(\d+))?(?:-(\d+))?$")
 
 
-def load_devices(path: str | None) -> dict:
+def load_devices(path: str | None, timeout: float = XCODE_QUERY_TIMEOUT) -> dict:
     if path:
         with open(path) as handle:
             return json.load(handle)
-    result = subprocess.run(
-        ["xcrun", "simctl", "list", "devices", "available", "--json"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["xcrun", "simctl", "list", "devices", "available", "--json"],
+            capture_output=True, text=True, check=False, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(f"simctl device inventory timed out after {timeout:g}s; inventory UNKNOWN") from error
     if result.returncode != 0:
-        raise SystemExit(f"could not list simulators: {result.stderr.strip()}")
+        raise ValueError(f"could not list simulators: {result.stderr.strip()}")
     return json.loads(result.stdout)
 
 
@@ -165,9 +166,9 @@ def main() -> None:
     parser.add_argument("--project", default="apple/Dulcet.xcodeproj")
     parser.add_argument("--scheme", default="DulcetiOS")
     parser.add_argument("--discovery-timeout", type=float, default=DISCOVERY_TIMEOUT,
-                        help="overall Xcode discovery deadline in seconds (default: 120)")
+                        help="overall inventory and Xcode discovery deadline in seconds (default: 120)")
     parser.add_argument("--query-timeout", type=float, default=XCODE_QUERY_TIMEOUT,
-                        help="per-attempt xcodebuild query timeout in seconds (default: 60). "
+                        help="per inventory/Xcode query timeout in seconds (default: 60). "
                              "Each attempt receives the smaller of this value and the remaining "
                              "discovery budget, so a timed-out query leaves the rest of the "
                              "deadline available to later attempts.")
@@ -178,12 +179,19 @@ def main() -> None:
     if not math.isfinite(args.query_timeout) or args.query_timeout <= 0:
         parser.error("--query-timeout must be finite and positive")
 
-    document = load_devices(args.devices_json)
+    started = time.monotonic()
+    deadline = started + args.discovery_timeout
+    inventory_timeout = min(args.query_timeout, args.discovery_timeout)
+    print(f"IPAD DISCOVERY phase=inventory-start timeout={inventory_timeout:g}s", file=sys.stderr, flush=True)
+    try:
+        document = load_devices(args.devices_json, timeout=inventory_timeout)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"cannot determine Xcode-drivable iPads: phase=inventory {error}; "
+                         f"elapsed={time.monotonic() - started:.3f}s deadline={args.discovery_timeout:g}s") from error
+    print(f"IPAD DISCOVERY phase=inventory-complete elapsed={time.monotonic() - started:.3f}s", file=sys.stderr, flush=True)
     candidates = ipad_candidates(document)
     transcript = "(query did not produce output)"
     timed_out: DestinationQueryTimeout | None = None
-    started = time.monotonic()
-    deadline = started + args.discovery_timeout
     attempts = 0
     try:
         while True:
@@ -193,6 +201,9 @@ def main() -> None:
                     raise timed_out
                 raise ValueError("Xcode discovery deadline expired with zero concrete iOS Simulator destinations")
             attempts += 1
+            print(f"IPAD DISCOVERY phase=xcode-query-start attempt={attempts} "
+                  f"timeout={min(args.query_timeout, remaining):g}s remaining={remaining:.3f}s",
+                  file=sys.stderr, flush=True)
             try:
                 transcript = load_destinations(args.destinations_file, args.project, args.scheme,
                                                min(args.query_timeout, remaining))
@@ -203,9 +214,14 @@ def main() -> None:
                 # deadline unspent. No sleep here: the attempt already waited its own timeout,
                 # so it cannot spin.
                 timed_out = error
+                print(f"IPAD DISCOVERY phase=xcode-query-timeout attempt={attempts} "
+                      f"elapsed={time.monotonic() - started:.3f}s", file=sys.stderr, flush=True)
                 continue
             timed_out = None
             accepted = accepted_ids(transcript, args.scheme)
+            print(f"IPAD DISCOVERY phase=xcode-query-complete attempt={attempts} "
+                  f"concrete={len(accepted)} elapsed={time.monotonic() - started:.3f}s",
+                  file=sys.stderr, flush=True)
             if time.monotonic() >= deadline:
                 raise ValueError("Xcode discovery deadline expired before destinations could be accepted")
             # A populated set is authoritative, including a genuine mismatch with simctl's iPads.

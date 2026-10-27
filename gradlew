@@ -64,6 +64,14 @@
 #
 ##############################################################################
 
+# SQLDelight 2.3.2 bundles SchemaCrawler 16.19.2. Its table graph assigns
+# mutable sort indexes alongside a task that sorts those same tables. Select
+# SchemaCrawler's serial scheduler so each comparison sees a stable catalog.
+# This environment setting reaches SQLDelight's isolated Gradle worker process;
+# a Gradle system property alone does not. Migration checks remain enabled.
+SC_SINGLE_THREADED=true
+export SC_SINGLE_THREADED
+
 # Attempt to set APP_HOME
 
 # Resolve links: $0 may be a link

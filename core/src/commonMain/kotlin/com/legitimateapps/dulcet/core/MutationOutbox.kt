@@ -927,6 +927,15 @@ internal class LibraryReaderSession(
     identityAuthorization: () -> Long? = { 0L },
 ) {
     val outbox = MutationOutbox(database, cache)
+    private val discoverDatabase=database
+    private val discoverStore=DiscoverStore(database,cache.serverId)
+    private var discoverAccountRef:DiscoverAccount?=null
+    private var discoverClosed=false
+    private fun discoverAccount():DiscoverAccount = discoverAccountRef ?: DiscoverAccount(discoverDatabase,reader) {
+        reader.scope.launch {myLibrary.refresh()}
+    }.also {discoverAccountRef=it;if(discoverClosed)it.close()}
+    fun openDiscoverClient():DiscoverClient {reader.checkConfined();return discoverAccount().open()}
+    fun closeDiscoverClients(){discoverClosed=true;discoverAccountRef?.close()}
     private lateinit var favouritesRef: LibraryFavourites
     private lateinit var playlistsRef: PlaylistEditor
 
@@ -951,6 +960,7 @@ internal class LibraryReaderSession(
         outboxes = ReconnectOutboxes {
             flushRecordingFailure { favouritesRef.flush() }
             flushRecordingFailure { playlistsRef.flush() }
+            flushRecordingFailure { if(discoverAccountRef!=null || discoverStore.pendingCount()!=0L)discoverAccount().flush() }
             flushRecordingFailure { otherOutboxes.flush() }
         },
         playlistOverlay = object : LibraryPlaylistOverlay {
@@ -985,7 +995,8 @@ internal class LibraryReaderSession(
     fun pendingChangeCount(): Long? {
         val favourites = favourites.pendingCount() ?: return null
         val playlists = playlists.pendingCount() ?: return null
-        return favourites + playlists
+        val wishes=discoverStore.pendingCount() ?: return null
+        return favourites + playlists + wishes
     }
 
     private suspend fun flushRecordingFailure(flush: suspend () -> Unit) {
@@ -1012,6 +1023,7 @@ internal class LibraryReaderSession(
     init {
         reader.setForeground(foreground)
         reader.localCollectionsChanged = { myLibrary.preferencesChanged() }
+        reader.addVisibleSurface {discoverAccountRef?.revalidate()}
         // The reader, not this session, owns reachability: it revalidates the searches when it goes
         // offline and when a reconnect revalidates the screen, whichever entry point the shell called.
         reader.addVisibleSurface {

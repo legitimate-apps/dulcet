@@ -6,7 +6,12 @@
       "image": "deluan/navidrome@sha256:38246ebb80d6f7e2724eecab4acafa7b14ec66ae800b2454aa6da4c19f80a9ce",
       "index_digest": "sha256:9012939114fbb1bb641b81cf96dec5ded15f0aafefe8d47a511d7cb919658e40",
       "manifest_digest": "sha256:38246ebb80d6f7e2724eecab4acafa7b14ec66ae800b2454aa6da4c19f80a9ce",
-      "architecture": "amd64"
+      "architecture": "amd64",
+      "binary": {
+        "asset": "navidrome_0.63.2_linux_amd64.tar.gz",
+        "url": "https://github.com/navidrome/navidrome/releases/download/v0.63.2/navidrome_0.63.2_linux_amd64.tar.gz",
+        "sha256": "224c6d6fe5cc11a9c9387b97988666423de38bb5ef2e2f43ecc43d0a3dded4f0"
+      }
     },
     "darwin": {
       "asset": "navidrome_0.63.2_darwin_arm64.tar.gz",

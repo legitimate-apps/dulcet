@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""Behavioural tests of the finite Discover fixture. No installed server is contacted."""
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import signal
+import shutil
+import subprocess
+import sys
+# Extensionless module caches resemble controls to the recursive CI policy inventory.
+# Keep fixture/helper imports source-only, including independently launched children.
+sys.dont_write_bytecode = True
+import tempfile
+import time
+import concurrent.futures
+import unittest
+from unittest.mock import patch
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+
+REPO=Path(__file__).resolve().parents[1]
+FIXTURE=REPO/'tools/ci/with-discover-wishlist-fixture'
+
+def module():
+    loader=importlib.machinery.SourceFileLoader('discover_fixture',str(FIXTURE))
+    spec=importlib.util.spec_from_loader(loader.name,loader);m=importlib.util.module_from_spec(spec);loader.exec_module(m);return m
+
+def call(url,path,body=None):
+    req=urllib.request.Request(url+path,data=None if body is None else json.dumps(body).encode(),headers={'Content-Type':'application/json'})
+    with urllib.request.urlopen(req,timeout=40) as r:return json.load(r)
+
+class ModuleLoadingTests(unittest.TestCase):
+    def test_mediaOutlastsNativePlaybackObservation(self):
+        # Native AX snapshots can consume much of a 30-second observation window.
+        # Exercise the actual generated file, including its tags and decoded duration.
+        fixture = module().DiscoverFixture()
+        self.assertIsNotNone(fixture.ffmpeg, "ffmpeg is required by the fixture")
+        with tempfile.TemporaryDirectory(prefix='discover-media-control-') as scratch:
+            fixture.root = Path(scratch)
+            try:
+                media = fixture.media('control.flac', 10, 0, 300, 1)
+                probe = subprocess.run([str(Path(fixture.ffmpeg).with_name('ffprobe')),
+                    '-v', 'error', '-show_entries', 'format=duration:format_tags=title',
+                    '-of', 'json', str(media)], capture_output=True, text=True, check=True)
+                decoded = json.loads(probe.stdout)['format']
+                self.assertEqual('Fixture Song 10', decoded['tags']['title'])
+                self.assertGreaterEqual(float(decoded['duration']), 120,
+                    'The native player observation must not race a two-second EOF')
+            finally:
+                fixture.process_owner.close()
+
+    def test_fixtureListenerBindsWithoutReverseDns(self):
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        with patch('socket.getfqdn',side_effect=AssertionError('numeric listener resolved a hostname')):
+            with proxy.LoopbackFixtureServer(('127.0.0.1',0),proxy.Handler) as server:
+                self.assertEqual('127.0.0.1',server.server_name)
+                self.assertGreater(server.server_port,0)
+
+    def test_unrelatedSearchCannotReleaseTheOldQueryHold(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import io
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        state=proxy.FixtureProxy({'server':'http://127.0.0.1:1'})
+        state.name='delayed-old-query';state.revision=1
+        response=MagicMock(status=200)
+        response.read.return_value=json.dumps({'subsonic-response':{'dulcetDiscover':{'item':[]}}}).encode()
+        response.getheaders.return_value=[]
+        connection=MagicMock();connection.getresponse.return_value=response
+        # The native failure acknowledged a previous positive search as the old hold.
+        # Neither that response nor an intermediate keyboard edit may release it.
+        for query in ['positive','ol','Fi']:
+            handler=SimpleNamespace(path='/rest/searchDulcetDiscover?kind=song&query='+query,
+                headers={},rfile=io.BytesIO(),command='GET',server=SimpleNamespace(role='proxy',fixture=state),
+                reply=lambda *args: None)
+            with patch.object(proxy.http.client,'HTTPConnection',return_value=connection):
+                proxy.Handler.handle_request(handler)
+            self.assertFalse(state.query_release.is_set(),'an unrelated search released the delayed old query')
+            self.assertEqual('other',state.effects[-1]['payload'])
+        for query in ['new','Fixture']:
+            state.query_release.clear()
+            handler.path='/rest/searchDulcetDiscover?kind=song&query='+query
+            with patch.object(proxy.http.client,'HTTPConnection',return_value=connection):
+                proxy.Handler.handle_request(handler)
+            self.assertTrue(state.query_release.is_set())
+            self.assertEqual('new',state.effects[-1]['payload'])
+
+    def test_oldQuerySurvivesSlowNativeEditingUntilNewAnswer(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import io
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        state=proxy.FixtureProxy({'server':'http://127.0.0.1:1'})
+        state.name='delayed-old-query';state.revision=1
+        # Model the observed native keyboard edit taking twenty seconds. An old read
+        # must still await the newer answer, with a finite upper bound, at that point.
+        waits=[]
+        def newer_answer(timeout):
+            waits.append(timeout)
+            return timeout>=20
+        state.query_release=SimpleNamespace(wait=newer_answer)
+        replies=[]
+        handler=SimpleNamespace(path='/rest/searchDulcetDiscover?kind=song&query=old',
+            headers={},rfile=io.BytesIO(),command='GET',server=SimpleNamespace(role='proxy',fixture=state),
+            reply=lambda status,data,headers=None: replies.append((status,data)))
+        response=MagicMock(status=200)
+        response.read.return_value=json.dumps({'subsonic-response':{'dulcetDiscover':{'item':[{'title':'Fixture Song'}]}}}).encode()
+        response.getheaders.return_value=[]
+        connection=MagicMock();connection.getresponse.return_value=response
+        with patch.object(proxy.http.client,'HTTPConnection',return_value=connection),patch.object(proxy.time,'sleep'):
+            proxy.Handler.handle_request(handler)
+        self.assertEqual(200,replies[0][0],'old read expired before the native editor could submit its new query')
+        self.assertLessEqual(waits[0],90,'the fixture hold remains finite')
+        self.assertEqual('old',state.effects[-1]['payload'])
+        self.assertTrue(json.loads(replies[0][1])['subsonic-response']['dulcetDiscover']['item'][0]['title'].startswith('Obsolete old query'))
+
+    def test_wishlistReadWaitsForAnAcknowledgedExplicitRelease(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import io
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        state=proxy.FixtureProxy({'server':'http://127.0.0.1:1'})
+        self.assertIn('held-wishlist',state.scenarios,'native loading capture has no acknowledged Wishlist hold')
+        revision=state.scenario('held-wishlist')['revision']
+        response=MagicMock(status=200);response.read.return_value=b'{"subsonic-response":{"dulcetWishlist":{"wish":[]}}}'
+        response.getheaders.return_value=[]
+        connection=MagicMock();connection.getresponse.return_value=response
+        replies=[]
+        handler=SimpleNamespace(path='/rest/getDulcetWishlist',headers={},rfile=io.BytesIO(),command='GET',
+            server=SimpleNamespace(role='proxy',fixture=state),reply=lambda *args:replies.append(args))
+        release_replies=[]
+        release=SimpleNamespace(path='/control/release-read',headers={},rfile=io.BytesIO(),command='POST',
+            server=handler.server,reply=lambda *args:release_replies.append(args))
+        with patch.object(proxy.http.client,'HTTPConnection',return_value=connection),concurrent.futures.ThreadPoolExecutor() as pool:
+            pending=pool.submit(proxy.Handler.handle_request,handler)
+            try:
+                deadline=time.monotonic()+2
+                while not state.state()['effects'] and time.monotonic()<deadline:time.sleep(.005)
+                self.assertTrue(any(e.get('held') and e['revision']==revision for e in state.state()['effects']))
+                self.assertFalse(pending.done(),'Wishlist read answered before the loading capture could run')
+                self.assertEqual([],replies)
+                proxy.Handler.handle_request(release)
+                self.assertEqual(200,release_replies[0][0]);self.assertTrue(release_replies[0][1]['released'])
+                pending.result(timeout=2)
+                self.assertEqual(200,replies[0][0])
+                self.assertTrue(any(e.get('released') and e['revision']==revision for e in state.state()['effects']))
+            finally:state.detail_release.set()
+
+    def test_lostReceiptReplayWitnessContainsOnlyExactMutationFields(self):
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        mutation=dict(kind='song',mbid='recording',title='Recorded title',artist='Recorded artist',
+                      year='2026',artworkId='art',sourceType='search',sourceId='opaque source',
+                      operationId='operation A',actionTime='2026-10-23T00:00:00Z')
+        params={key:[value] for key,value in mutation.items()}
+        params.update(u=['private-user'],t=['private-token'],s=['private-salt'],p=['private-password'],
+                      jwt=['private-jwt'],unknown=['not part of the mutation'])
+        self.assertEqual(mutation,proxy.wish_replay_parameters(params))
+
+    def test_fixtureModuleLoadsDoNotWriteBytecode(self):
+        # Copy only our fixture sources: an existing cache cannot hide a write or force
+        # cleanup of somebody else's checkout. run_path itself does not cache its input.
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for relative in ['tools/test-discover-wishlist-fixture','tools/ci/with-discover-wishlist-fixture','tools/ci/discover_process_owner.py','tools/discover-wishlist-ui-proxy','tools/discover-wishlist-fixtures/fixture.py']:
+                target=root/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(REPO/relative,target)
+            code="""
+import importlib.machinery, importlib.util, runpy, sys
+from pathlib import Path
+root=Path(sys.argv[1])
+sys.dont_write_bytecode=False
+loaded=runpy.run_path(str(root/'tools/test-discover-wishlist-fixture'))
+wrapper=loaded['module']()
+assert wrapper.DiscoverFixture
+loader=importlib.machinery.SourceFileLoader('proxy',str(root/'tools/discover-wishlist-ui-proxy'))
+spec=importlib.util.spec_from_loader(loader.name,loader)
+proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+assert proxy.FixtureProxy
+"""
+            result=subprocess.run([sys.executable,'-c',code,str(root)],capture_output=True,text=True)
+            self.assertEqual(0,result.returncode,result.stderr)
+            self.assertEqual([],list(root.rglob('*.pyc')),'fixture module/helper loading wrote bytecode')
+            for relative in ['tools/ci/with-discover-wishlist-fixture','tools/ci/discover_process_owner.py','tools/discover-wishlist-ui-proxy']:
+                env={k:v for k,v in os.environ.items() if k!='PYTHONDONTWRITEBYTECODE'}
+                child=subprocess.run([sys.executable,str(root/relative),'--help'],env=env,capture_output=True,text=True)
+                self.assertEqual(0,child.returncode,child.stderr)
+                self.assertEqual([],list(root.rglob('*.pyc')),'fixture child helper import wrote bytecode')
+
+class FixtureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.m=module();cls.fixture=cls.m.DiscoverFixture();cls.fixture.start()
+    @classmethod
+    def tearDownClass(cls):cls.fixture.close()
+    def setUp(self):self.fixture.scenario('normal')
+    def test_fixtureFaultMustBeAcknowledgedBeforeAssertion(self):
+        f=self.fixture;url=f.urls['controlUrl'];before=call(url,'/control/state')
+        with self.assertRaises(urllib.error.HTTPError) as error:call(url,'/control/scenario',{'name':'typo'})
+        self.assertEqual(400,error.exception.code)
+        self.assertEqual(before['revision'],call(url,'/control/state')['revision'])
+        self.assertTrue(f.rest('searchDulcetDiscover',kind='song',query='Positive')['dulcetDiscover']['item'])
+        ack=f.scenario('rate-limit-120');self.assertTrue(ack['armed'])
+        self.assertEqual('rate-limit-120',ack['scenario']);self.assertGreater(ack['revision'],before['revision'])
+        with self.assertRaises(urllib.error.HTTPError) as error:f.rest('searchDulcetDiscover',kind='song',query='Rate')
+        self.assertEqual(429,error.exception.code);self.assertEqual('120',error.exception.headers['Retry-After'])
+        state=call(url,'/control/state');self.assertEqual(ack['revision'],state['revision'])
+        self.assertEqual(1,state['hits']);self.assertEqual('searchDulcetDiscover',state['effects'][-1]['endpoint'])
+    def test_healthyNavidromeBaselineBeforeEmptyFeatureAssertion(self):
+        f=self.fixture;baseline=call(f.urls['controlUrl'],'/control/baseline')
+        self.assertTrue(baseline['login']);self.assertGreater(baseline['albums'],0)
+        self.assertFalse(baseline['discoverAdvertised']);self.assertFalse(baseline['wishlistAdvertised'])
+        rows=call(f.urls['controlUrl'],'/control/requests')['requests']
+        nav=[r['endpoint'] for r in rows if r['channel']=='navidrome']
+        self.assertIn('ping',nav);self.assertIn('getAlbumList2',nav);self.assertIn('getOpenSubsonicExtensions',nav)
+        self.assertFalse(any('Dulcet' in name for name in nav))
+    def test_generatedCatalogPagesArtworkAndAvailability(self):
+        f=self.fixture;body=f.rest('searchDulcetDiscover',kind='song',query='Fixture',size='20')['dulcetDiscover']
+        self.assertEqual(20,len(body['item']));self.assertTrue(body['nextCursor'])
+        self.assertGreater(len(f.rest('searchDulcetDiscover',kind='song',query='Fixture',size='20',cursor=body['nextCursor'])['dulcetDiscover']['item']),0)
+        groups=f.rest('searchDulcetDiscover',kind='album',query='Fixture')['dulcetDiscover']['item']
+        self.assertEqual('partlyHeld',groups[0]['availability']['status'])
+        self.assertEqual(8,groups[0]['availability']['matchedTrackCount']);self.assertEqual(12,groups[0]['availability']['totalTrackCount'])
+        self.assertEqual('held',groups[1]['availability']['status']);self.assertEqual('unknown',groups[2]['availability']['completeness'])
+        art=f.binary('getDulcetDiscoverCoverArt',id=groups[0]['artworkId']);self.assertTrue(art.startswith(b'\x89PNG\r\n\x1a\n'))
+        wishes=f.rest('getDulcetWishlist',size='20')['dulcetWishlist'];self.assertEqual(20,len(wishes['wish']));self.assertTrue(wishes['nextCursor'])
+    def test_scenariosWitnessDelayStaleOfflineAndFutureMetadata(self):
+        f=self.fixture;url=f.urls['controlUrl']
+        ack=f.scenario('delayed-old-query');started=time.monotonic()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pending=pool.submit(f.rest,'searchDulcetDiscover',kind='song',query='old')
+            deadline=time.monotonic()+10
+            while not any(e.get('held') for e in call(url,'/control/state')['effects']):
+                self.assertLess(time.monotonic(),deadline);time.sleep(.02)
+            self.assertFalse(pending.done())
+            new=f.rest('searchDulcetDiscover',kind='song',query='Fixture')['dulcetDiscover']['item']
+            old=pending.result(timeout=5)['dulcetDiscover']['item']
+        self.assertGreaterEqual(time.monotonic()-started,.6)
+        payloads=[e['payload'] for e in call(url,'/control/state')['effects'] if e.get('response')]
+        self.assertEqual(['new','old'],payloads,'new response must precede obsolete response')
+        self.assertNotEqual([r['title'] for r in old],[r['title'] for r in new])
+        self.assertTrue(all(r['title'].startswith('Obsolete old query · ') for r in old))
+        self.assertTrue(all(not r['title'].startswith('Obsolete old query · ') for r in new))
+        self.assertEqual({'old','new'},{e.get('payload') for e in call(url,'/control/state')['effects'] if e.get('response')})
+        self.assertEqual(ack['revision'],call(url,'/control/state')['effects'][-1]['revision'])
+        f.scenario('stale-answer');page=f.rest('searchDulcetDiscover',kind='song',query='stale')['dulcetDiscover']
+        self.assertTrue(page['stale']);self.assertEqual(7200,page['ageSeconds'])
+        f.scenario('future-metadata');page=f.rest('searchDulcetDiscover',kind='song',query='future')['dulcetDiscover']
+        self.assertEqual('future',page['item'][0]['kind']);self.assertFalse(page['item'][0]['wishable'])
+        f.scenario('offline')
+        with self.assertRaises((OSError,urllib.error.URLError)):f.rest('ping')
+        self.assertGreater(call(url,'/control/state')['hits'],0)
+    def test_detailHoldAcknowledgesPendingAndExplicitRelease(self):
+        f=self.fixture;url=f.urls['controlUrl'];ack=f.scenario('held-detail')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pending=pool.submit(f.rest,'getDulcetDiscoverAlbum',mbid='000000c8-1111-4111-8111-111111111111')
+            try:
+                deadline=time.monotonic()+10
+                while not any(e.get('held') for e in call(url,'/control/state')['effects']):
+                    self.assertLess(time.monotonic(),deadline);time.sleep(.05)
+                self.assertFalse(pending.done(),'held acknowledgement must precede completion')
+                self.assertEqual(ack['revision'],call(url,'/control/state')['revision'])
+            finally:call(url,'/control/release-detail',{})
+            self.assertEqual('ok',pending.result(timeout=15)['status'])
+        effects=call(url,'/control/state')['effects']
+        self.assertTrue(any(e.get('released') is True and e['revision']==ack['revision'] for e in effects))
+
+    def test_realScanArrivalLostReceiptAndRemoveBeforeAdd(self):
+        import uuid
+        f=self.fixture;target=f.ids['arrival'];op=str(uuid.uuid4())
+        f.scenario('lost-add-receipt')
+        with self.assertRaises((OSError,urllib.error.URLError)):
+            f.rest('addToDulcetWishlist',kind='song',mbid=target,title='Arrival',sourceType='search',operationId=op)
+        effects=call(f.urls['controlUrl'],'/control/state')['effects']
+        replay_parameters=next(e['replay'] for e in effects if e.get('delivered'))
+        self.assertEqual(dict(kind='song',mbid=target,title='Arrival',sourceType='search',operationId=op),replay_parameters)
+        f.scenario('normal');wishes=f.rest('getDulcetWishlist',size='100')['dulcetWishlist']['wish']
+        wish=next(w for w in wishes if w['externalIds'].get('musicbrainzRecordingId')==target)
+        ack=f.scenario('scan-arrival');self.assertTrue(ack['scan']['completed'])
+        arrived=f.rest('getDulcetWish',id=wish['id'])['dulcetWish'];self.assertEqual('fulfilled',arrived['state'])
+        members=f.rest('getDulcetLibrary',type='song',size='100')['dulcetLibrary']['song']
+        self.assertIn(arrived['libraryItem']['id'],[r['id'] for r in members])
+        f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
+        replay=f.rest('addToDulcetWishlist',**replay_parameters)['dulcetWishMutation']
+        self.assertTrue(replay['removed']);self.assertNotIn('wish',replay)
+        self.assertIn(arrived['libraryItem']['id'],[r['id'] for r in f.rest('getDulcetLibrary',type='song',size='100')['dulcetLibrary']['song']])
+        from concurrent.futures import ThreadPoolExecutor
+        op=str(uuid.uuid4());ack=f.scenario('remove-before-add')
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending=pool.submit(f.rest,'addToDulcetWishlist',kind='song',mbid=f.ids['cancel'],title='Cancelled',sourceType='search',operationId=op)
+            deadline=time.monotonic()+1.5
+            while time.monotonic()<deadline:
+                effects=call(f.urls['controlUrl'],'/control/state')['effects']
+                if any(e['revision']==ack['revision'] and e.get('held') for e in effects):break
+                time.sleep(.02)
+            else:self.fail('in-flight add hold was not acknowledged')
+            self.assertFalse(pending.done(),'add was not held while removal was sent')
+            f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
+            self.assertTrue(pending.result(timeout=5)['dulcetWishMutation']['removed'])
+            effects=call(f.urls['controlUrl'],'/control/state')['effects']
+            for endpoint in ['addToDulcetWishlist','removeFromDulcetWishlist']:
+                self.assertTrue(any(e['revision']==ack['revision'] and e['endpoint']==endpoint and e.get('delivered') for e in effects),
+                    'completed mutation has no delivery acknowledgement: '+endpoint)
+            self.assertTrue(any(e['revision']==ack['revision'] and e.get('holdReleased') for e in effects),
+                'held add has no release acknowledgement')
+    def test_removeBeforeAddAcknowledgesCompletedMutations(self):
+        import uuid
+        f=self.fixture;op=str(uuid.uuid4());ack=f.scenario('remove-before-add')
+        result=f.rest('addToDulcetWishlist',kind='song',mbid=f.ids['cancel'],title='Delivery witness',sourceType='search',operationId=op)
+        self.assertIn('wish',result['dulcetWishMutation'],'known successful add before testing its removal')
+        f.rest('removeFromDulcetWishlist',addOperationId=op,operationId=str(uuid.uuid4()))
+        effects=call(f.urls['controlUrl'],'/control/state')['effects']
+        for endpoint in ['addToDulcetWishlist','removeFromDulcetWishlist']:
+            self.assertTrue(any(e['revision']==ack['revision'] and e['endpoint']==endpoint and e.get('delivered') for e in effects),
+                'completed mutation has no delivery acknowledgement: '+endpoint)
+        self.assertTrue(any(e['revision']==ack['revision'] and e.get('holdReleased') for e in effects),
+            'held add has no release acknowledgement')
+    def test_identityReplacementAndResetAreAcknowledged(self):
+        f=self.fixture;before=f.discovery()['instanceId'];ack=f.scenario('identity-replacement')
+        self.assertNotEqual(before,ack['identity']['instanceId']);self.assertEqual(ack['identity']['instanceId'],f.discovery()['instanceId'])
+        reset=call(f.urls['controlUrl'],'/control/reset',{})
+        self.assertTrue(reset['reset']);self.assertNotEqual(before,reset['identity']['instanceId'])
+        self.assertEqual(23,len(f.rest('getDulcetWishlist',size='100')['dulcetWishlist']['wish']))
+
+class LifecycleTests(unittest.TestCase):
+    def test_fixtureCleansOnlyOwnedPids(self):
+        module() # A missing implementation must fail before a command could use another server.
+        sentinel=subprocess.Popen([sys.executable,'-c','import time;time.sleep(180)'])
+        try:
+            for mode in ['success','failure','signal']:
+                with self.subTest(mode=mode),tempfile.TemporaryDirectory() as evidence:
+                    root=Path(evidence)/'report'
+                    command=[str(FIXTURE),'--evidence',str(root),'--',sys.executable,'-c', 'import time;time.sleep(120)' if mode=='signal' else 'import sys;sys.exit('+('7' if mode=='failure' else '0')+')']
+                    process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+                    try:
+                        deadline=time.monotonic()+100
+                        while not (root/'ready.json').exists() and process.poll() is None:
+                            if time.monotonic()>deadline:self.fail('fixture did not become ready')
+                            time.sleep(.1)
+                        self.assertTrue((root/'ready.json').exists())
+                        if mode=='signal':process.send_signal(signal.SIGTERM)
+                        output,_=process.communicate(timeout=40)
+                        self.assertEqual({'success':0,'failure':7,'signal':143}[mode],process.returncode,output)
+                        report=json.loads((root/'cleanup.json').read_text())
+                        self.assertTrue(report['rootDeleted']);self.assertFalse(Path(report['root']).exists())
+                        self.assertGreaterEqual(len(report['children']),4)
+                        for child in report['children']:
+                            self.assertTrue(child['reaped'])
+                            with self.assertRaises(ProcessLookupError):os.kill(child['pid'],0)
+                        self.assertIsNone(sentinel.poll(),'unrelated positive-control process was stopped')
+                        print('CLEANUP PROOF',mode,json.dumps(report),flush=True)
+                    finally:
+                        if process.poll() is None:process.terminate();process.wait(timeout=30)
+        finally:sentinel.terminate();sentinel.wait()
+
+class XmlResult(unittest.TextTestResult):
+    def startTest(self,test):super().startTest(test);self.started=time.monotonic()
+    def stopTest(self,test):
+        bad=next((text for case,text in self.failures+self.errors if case==test),None)
+        case=ET.SubElement(self.xml,'testcase',name=test._testMethodName,classname=type(test).__name__,time=str(time.monotonic()-self.started))
+        if bad:ET.SubElement(case,'failure').text=bad
+        super().stopTest(test)
+    def __init__(self,*args,**kwargs):super().__init__(*args,**kwargs);self.xml=ET.Element('testsuite',name='DiscoverWishlistFixture')
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser();parser.add_argument('--junit',type=Path,required=True);parser.add_argument('--test',action='append');args=parser.parse_args()
+    suite=unittest.defaultTestLoader.loadTestsFromNames(args.test,sys.modules[__name__]) if args.test else unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+    result=unittest.TextTestRunner(verbosity=2,resultclass=XmlResult).run(suite)
+    result.xml.attrib.update(tests=str(result.testsRun),failures=str(len(result.failures)),errors=str(len(result.errors)),skipped=str(len(result.skipped)))
+    args.junit.parent.mkdir(parents=True,exist_ok=True);ET.ElementTree(result.xml).write(args.junit,encoding='utf-8',xml_declaration=True)
+    sys.exit(0 if result.wasSuccessful() else 1)
