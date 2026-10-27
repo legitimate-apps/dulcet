@@ -68,7 +68,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             app.launch()
             guard let section = self.launchSection(app) else { return false }
             if section == "Connection" {
-                guard app.navigationBars["Listen Now"].waitForExistence(timeout: 60) else { return false }
+                // The preceding persistence-error photograph deliberately launches with a
+                // missing active account. A saved-account restore can publish after the DEBUG
+                // credentials, leaving its reconnect form selected. Submit the actual form
+                // with this tour's credentials before trying to photograph connected pages.
+                guard self.connectContentTourByRemote(app, server: (url, username, password)) else { return false }
             }
             return self.selectSection(app, "listenNow")
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
@@ -204,6 +208,24 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         tourLibrarySections(app, server: (url, username, password))
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
+    }
+
+    @MainActor
+    private func connectContentTourByRemote(_ app: XCUIApplication, server: Server) -> Bool {
+        guard selectSection(app, "settings") else { return false }
+        if element(labelPrefix: "Connected to", in: app).exists { return true }
+        let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
+        let username = app.textFields["dulcet.account-connect.username"].firstMatch
+        let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
+        let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
+        guard setLocalHTTPByRemote(app, on: true),
+              typeByRemote(server.url, into: address, in: app),
+              typeByRemote(server.username, into: username, in: app),
+              typeByRemote(server.password, into: password, in: app, secure: true),
+              pressByRemote(primary, in: app, name: "Connect") else { return false }
+        return waitFor(60) {
+            app.navigationBars["Listen Now"].exists || self.element(labelPrefix: "Connected to", in: app).exists
+        }
     }
 
     @MainActor
