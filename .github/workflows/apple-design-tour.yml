@@ -25,7 +25,7 @@ on:
         type: string
         default: ''
       phase:
-        description: General-tour phase, use connected when account photographs already passed
+        description: iOS general-tour phase, use connected when account photographs already passed
         type: choice
         default: all
         options: [all, account, connected]
@@ -111,7 +111,7 @@ jobs:
           CAPTURE_DEVICE: ${{ matrix.device }}
           CAPTURE_VARIANT: ${{ matrix.variant }}
           DULCET_DESIGN_TOUR_SCREENS: ${{ inputs.general_screens || inputs.screens }}
-          DULCET_DESIGN_TOUR_PHASE: ${{ inputs.phase }}
+          DULCET_DESIGN_TOUR_PHASE: ${{ (matrix.device == 'iphone' || matrix.device == 'ipad') && inputs.phase || 'all' }}
         run: |
           if [[ "$CAPTURE_DEVICE" == iphone || "$CAPTURE_DEVICE" == ipad ]]; then
             export DULCET_DESIGN_TOUR_VARIANT="$CAPTURE_VARIANT"
