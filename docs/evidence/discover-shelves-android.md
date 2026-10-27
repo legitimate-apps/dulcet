@@ -62,3 +62,10 @@ The final phone variants used local JVM options `-XX:TieredStopAtLevel=1 -XX:Res
 The required core metadata, Android AAR, license and iOS simulator compile tasks pass. These are compile/package checks and have no test count. Android TV host tests compile and execute without adding TV UI. Parity and CI policy checks pass; no feature-support cell is promoted in this part.
 
 The same Opus 5.5 medium review thread then inspected five new final JPEGs: light and dark home, largest-text home and playlist, and a full shelf tail. All five passed. The review confirms the complete centered Listen Now label, distinct Discover/Browse icons, card and action fit, readable contrast, largest-text wrapping and separate duplicate playlist rows. This visual verdict complements the executed native layout and semantic checks; it does not establish networking behavior.
+
+## Dispatched host soaks
+
+Both 20-repetition runs were dispatched on `feat/discover-shelves` at `80f68fde`, whose implementation and proof sources match `54570627`. They use normal Linux JVM settings and filters `*DiscoverPagedReaderTest,*PhoneDiscoverShelvesTest,*PhoneNavigationTest,*PhoneDiscoverTest,*PhoneWishlistTest`. The last two cover the shared presentation double and existing wish actions. Dispatch is observed; outcomes are not claimed or watched here.
+
+- DEV `:android:app:testDevDebugUnitTest`: [40454579204](https://github.com/legitimate-apps/dulcet/actions/runs/40454579204).
+- PROD `:android:app:testProdDebugUnitTest`: [40454592593](https://github.com/legitimate-apps/dulcet/actions/runs/40454592593).
