@@ -37,6 +37,36 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private let navidrome = "http://127.0.0.1:4785"
 
+    @MainActor
+    func testNativeBaselineTour() throws {
+        guard ProcessInfo.processInfo.environment["DULCET_NATIVE_BASELINE_OUT"] != nil else {
+            throw XCTSkip("Opt-in disposable visual census")
+        }
+        continueAfterFailure = false
+        try setOffline(false)
+        let album = try fixtureAlbum()
+        try removeAlbum(album.id)
+        try launch()
+        try select("library")
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
+        try capture("tvos-81-library-empty")
+        try select("browse")
+        XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
+        try capture("tvos-82-browse")
+        try openAlbum(album.title)
+        let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
+        let added = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
+        XCTAssertEqual(XCTWaiter.wait(for: [added], timeout: 20), .completed)
+        try select("library"); try capture("tvos-83-library-personal")
+        let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
+        XCTAssertTrue(songs.waitForExistence(timeout: 15)); activate(songs)
+        try capture("tvos-84-songs")
+        try setOffline(true)
+        try select("browse"); try capture("tvos-85-offline-library")
+        try setOffline(false)
+    }
+
 #if os(tvOS)
     @MainActor
     func testFullGridMoreOpensAlbumActionsAndMembershipReachesServer() throws {
@@ -867,6 +897,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.jpeg")
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        if let directory = ProcessInfo.processInfo.environment["DULCET_NATIVE_BASELINE_OUT"] {
+            try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".jpg"))
+        }
     }
     private func fixtureAlbum() throws -> (id: String, title: String) {
         let response = try rest("getAlbumList2", params: ["type": "newest", "size": "500"])

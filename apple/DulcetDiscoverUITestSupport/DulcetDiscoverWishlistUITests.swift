@@ -249,7 +249,8 @@ import UIKit
         let data = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.65]))
 #else
         let window = app.windows.firstMatch
-        let image = window.screenshot().image
+        let image = baselineVariant != nil && UIDevice.current.userInterfaceIdiom == .pad
+            ? XCUIScreen.main.screenshot().image : window.screenshot().image
         let frame = window.frame
         print("DISCOVER_CAPTURE name=\(name) imageSize=\(image.size) windowFrame=\(frame) imageOrientation=\(image.imageOrientation.rawValue) deviceOrientation=\(XCUIDevice.shared.orientation.rawValue)")
         XCTAssertGreaterThan(frame.width, 0)
@@ -264,6 +265,67 @@ import UIKit
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
 
+    private var baselineVariant: String? {
+        guard let url = env["DULCET_DISCOVER_CAPTURE_UPLOAD_URL"] else { return nil }
+        return URLComponents(string: url)?.queryItems?.first(where: { $0.name == "baseline" })?.value
+    }
+
+    /// Extra visual census, opt-in through the finite capture receiver rather than product flags.
+    private func nativeBaselineTour(_ variant: String) throws {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad { XCUIDevice.shared.orientation = .landscapeLeft }
+#endif
+        let style = variant.contains("dark") ? "dark" : variant.contains("accessibility") ? "largest" : "light"
+        var number = 80
+        func photo(_ screen: String) throws { number += 1; try capture("\(variant)-\(number)-\(screen)") }
+        try launch(variant: style)
+        select("library")
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 20))
+        try photo("library-empty")
+        select("browse")
+        let album = app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertTrue(album.waitForExistence(timeout: 30)); try photo("browse")
+        activate(album)
+        let add = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
+        reveal(add); XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
+        let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 20), .completed)
+        select("library")
+        XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 20))
+        try photo("library-personal")
+        let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
+        let sidebarSongs = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.songs"].firstMatch
+        let songLink = sidebarSongs.exists ? sidebarSongs : songs
+        reveal(songLink); XCTAssertTrue(songLink.waitForExistence(timeout: 15)); activate(songLink)
+        XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.songs"].waitForExistence(timeout: 15))
+        try photo("songs")
+        try search()
+        XCTAssertTrue(item("artist", 100).waitForExistence(timeout: 30)); try photo("discover-search")
+        activate(item("artist", 100))
+        XCTAssertTrue(app.staticTexts["discover.artist.title"].waitForExistence(timeout: 30)); try photo("discover-artist")
+        activate(item("album", 200))
+        XCTAssertTrue(app.staticTexts["discover.album.title"].waitForExistence(timeout: 30)); try photo("discover-album")
+        let wish = app.buttons["discover.wish"].firstMatch
+        reveal(wish); XCTAssertTrue(wish.waitForExistence(timeout: 15))
+        _ = try scenario("offline"); activate(wish)
+        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15)); try photo("wishlist-pending")
+        wishlist(); XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15)); try photo("wishlist")
+        _ = try scenario("normal")
+        let held = try scenario("held-wishlist")
+        activate(app.buttons["wishlist.refresh"].firstMatch)
+        try effect("held-wishlist", revision: held, flag: "held")
+        XCTAssertTrue(app.descendants(matching: .any)["wishlist.loading"].waitForExistence(timeout: 15))
+        try photo("wishlist-loading")
+        _ = try control("release-read", [:]); try effect("held-wishlist", revision: held, flag: "released")
+        _ = try scenario("normal")
+        let busy = try scenario("rate-limit-120")
+        try search("BusyBaseline")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Server is busy")).firstMatch.waitForExistence(timeout: 20))
+        try effect("rate-limit-120", revision: busy); try photo("discover-error")
+        _ = try scenario("normal")
+        print("NATIVE BASELINE variant=\(variant) supplemental=\(number - 80)")
+    }
+
     func assertPlaybackReference(_ localId: String) {
         let log = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
         XCTAssertTrue(log.waitForExistence(timeout: 10))
@@ -274,6 +336,7 @@ import UIKit
         XCTAssertEqual(parts.last, localId, "Actual track supplied to the existing player")
     }
     func everywherePagesAndHeldRouting() throws {
+        if let variant = baselineVariant { try nativeBaselineTour(variant); return }
         try launch(navigationReceipts: true)
         let revision = try scenario("delayed-old-query")
         try search("old")

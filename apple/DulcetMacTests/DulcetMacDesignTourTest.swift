@@ -218,6 +218,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 print("DULCET DESIGN TOUR screen=quality-options reached=false reason=quality-picker-menu-not-opened")
                 XCTFail("The production streaming quality picker must open its native choices")
             }
+            settingsWindow.setContentSize(NSSize(width: 560, height: 760))
+            await step("settings-storage") { await self.find("dulcet.streaming-quality.unmetered") != nil }
             settingsWindow.close()
             self.window = window
             hostingView = hosting
@@ -305,6 +307,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             await step("now-playing") {
                 guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
                 guard await self.waitFor(seconds: 20, { store.showsNowPlayingBar }) else { return false }
+                await self.shoot("mini-player")
                 store.selectDestination(.nowPlaying)
                 return await self.find("dulcet.now-playing.title") != nil
             }
@@ -385,10 +388,24 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 return field.stringValue == "Evening Mix"
             }
             await dismissAlert()
+            await step("search-landing") {
+                store.selectDestination(.search)
+                store.searchQuery = ""
+                return await self.find("dulcet.search.field") != nil
+            }
             await step("search") {
                 store.selectDestination(.search)
                 store.searchQuery = "Threshold"
                 return await self.find("dulcet.search.result.0", seconds: 20) != nil
+            }
+            await step("search-recents") {
+                session.rememberSearch("Threshold")
+                store.searchQuery = ""
+                return await self.find("dulcet.search.recent.Threshold", seconds: 10) != nil
+            }
+            await step("search-empty") {
+                store.searchQuery = "BaselineAbsentQuery75319"
+                return await self.findLabel("No matches") != nil
             }
             await step("downloads-populated") {
                 guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }

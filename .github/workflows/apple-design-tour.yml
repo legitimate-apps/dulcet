@@ -24,7 +24,7 @@ jobs:
   capture:
     name: capture-${{ matrix.variant }}
     runs-on: xcode-27
-    timeout-minutes: 100
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -103,6 +103,19 @@ jobs:
       - name: Package review and report coverage gaps
         if: always() && steps.selection.outputs.enabled == 'true'
         run: tools/apple-restyle-review "$RUNNER_TEMP/captures" --revision "$GITHUB_SHA" --logs "$RUNNER_TEMP/design-tour/logs"
+      - name: Capture personal Library and Discover fixture states
+        if: always() && steps.selection.outputs.enabled == 'true'
+        timeout-minutes: 45
+        env:
+          CAPTURE_DEVICE: ${{ matrix.device }}
+          DULCET_NATIVE_BASELINE_VARIANT: ${{ matrix.variant }}
+        run: |
+          ./gradlew --no-daemon --max-workers=2 :server:installDist
+          if [[ "$CAPTURE_DEVICE" == tvos ]]; then
+            tools/ci/capture-native-tv-baseline "$RUNNER_TEMP/supplement"
+          else
+            tools/ci/capture-native-baseline "$CAPTURE_DEVICE" "$RUNNER_TEMP/supplement"
+          fi
       - name: Upload captures, coverage and test logs
         if: always() && steps.selection.outputs.enabled == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -111,5 +124,6 @@ jobs:
           path: |
             ${{ runner.temp }}/captures
             ${{ runner.temp }}/design-tour/logs
+            ${{ runner.temp }}/supplement
           if-no-files-found: error
           retention-days: 14

@@ -152,8 +152,15 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // Lyrics off, and paused for the rest of the tour: the simulator's audio is the host's.
         if lyrics.exists, lyrics.hasFocus, lyrics.label == "Hide Lyrics" { remote.press(.select) }
         remote.press(.playPause)
+        step("up-next", app) {
+            app.staticTexts["Up Next"].firstMatch.waitForExistence(timeout: 10) && self.settle(1)
+        }
 
         // Search with results, by remote: the section bar, the field, the query typed, Done.
+        step("search-landing", app) {
+            self.selectSection(app, "search") && app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 15)
+                && self.settle(1)
+        }
         step("search", app) {
             guard self.selectSection(app, "search") else { return false }
             let field = app.textFields["dulcet.search.field"].firstMatch
@@ -173,6 +180,17 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             _ = self.press(.down, until: { self.focused(in: results) != nil }, bound: 3)
             return self.settle(1.5)
         }
+        step("search-recents", app) {
+            guard self.enterBaselineSearch("", in: app) else { return false }
+            let recent = app.buttons["dulcet.search.recent.Threshold"].firstMatch
+            guard recent.waitForExistence(timeout: 15) else { return false }
+            _ = self.press(.down, until: { recent.hasFocus }, bound: 4)
+            return self.settle(1)
+        }
+        step("search-empty", app) {
+            self.enterBaselineSearch("BaselineAbsentQuery75319", in: app)
+                && app.staticTexts["No matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(1)
+        }
 
         // Settings, with focus on the streaming-quality choice.
         step("settings-quality", app) {
@@ -186,6 +204,21 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         tourLibrarySections(app, server: (url, username, password))
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
+    }
+
+    @MainActor
+    private func enterBaselineSearch(_ text: String, in app: XCUIApplication) -> Bool {
+        guard selectSection(app, "search") else { return false }
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        guard field.waitForExistence(timeout: 10), press(.down, until: { field.hasFocus }, bound: 4) else { return false }
+        let current = field.value as? String ?? ""
+        XCUIRemote.shared.press(.select)
+        guard app.keyboards.firstMatch.waitForExistence(timeout: 8) else { return false }
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + text)
+        let done = app.buttons["done"].firstMatch
+        guard done.waitForExistence(timeout: 8), press(.down, until: { done.hasFocus }, bound: 6) else { return false }
+        XCUIRemote.shared.press(.select)
+        return app.keyboards.firstMatch.waitForNonExistence(timeout: 8)
     }
 
     // MARK: - Steps and shots

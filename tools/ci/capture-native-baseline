@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Supplemental real-app photographs on the finite Discover/Wishlist fixture.
+set -euo pipefail
+device="${1:?iphone|ipad|mac}"
+output="${2:?output directory}"
+case "$device" in
+  iphone) mode=iphone; suite=DulcetDiscoverWishlistUITests; name='Dulcet Design Tour iPhone' ;;
+  ipad) mode=ipad; suite=DulcetDiscoverWishlistIPadUITests; name='Dulcet Design Tour iPad' ;;
+  mac) mode=macos; suite=DulcetMacDiscoverWishlistAppTest; name= ;;
+  *) echo 'Expected iphone, ipad or mac' >&2; exit 2 ;;
+esac
+mkdir -p "$output"
+export DULCET_DISCOVER_ONLY_TEST="$suite/testEverywhereQueryPagesAndHeldRouting"
+export DULCET_DISCOVER_PROOF_OUTPUT="$output/native"
+if [[ -n "$name" ]]; then
+  DULCET_DISCOVER_PROOF_UDID=$(xcrun simctl list devices available --json | python3 -c '
+import json,sys
+name=sys.argv[1]
+matches=[d["udid"] for runtime,ds in json.load(sys.stdin)["devices"].items() if ".iOS-27-" in runtime for d in ds if d["name"]==name]
+print(matches[0] if matches else "")' "$name")
+  [[ -n "$DULCET_DISCOVER_PROOF_UDID" ]] || { echo 'General tour must create the assigned iOS 27 device first' >&2; exit 1; }
+  export DULCET_DISCOVER_PROOF_UDID
+fi
+navidrome="${DULCET_DESIGN_TOUR_WORK:?}/server/bin/navidrome"
+if [[ ! -x "$navidrome" ]]; then
+  tools/conformance-env/prepare-darwin --output "$output/navidrome"
+  navidrome="$output/navidrome/navidrome"
+fi
+tools/ci/with-discover-wishlist-fixture --evidence "$output/fixture" --navidrome "$navidrome" \
+  --ffmpeg "$(command -v ffmpeg)" -- tools/ci/run-discover-wishlist-proofs "$mode"

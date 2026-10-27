@@ -173,6 +173,10 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
     }
 
     func testEverywhereQueryPagesAndHeldRouting() async throws {
+        if URLComponents(string: try required("CAPTURE_UPLOAD_URL"))?.queryItems?.contains(where: { $0.name == "baseline" }) == true {
+            try await nativeBaselineTour()
+            return
+        }
         let app = try await launch()
         let revision = try await scenario("delayed-old-query")
         try await search("old", in: app)
@@ -216,6 +220,61 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         XCTAssertEqual(app.store.readerPath.last, .album(.init(providerInstanceID: try XCTUnwrap(app.session.account?.providerInstanceID), rawID: try XCTUnwrap(album["id"] as? String))))
         try await search(in: app); try await open("Fixture Song 10", in: app); try await press("discover.openLibrary", in: app)
         try await waitUntil(timeout: .seconds(20), "Exact held track must play") { app.store.snapshot.nowPlaying?.current.title == "Fixture Song 10" }
+    }
+
+    /// The receiver photographs this owned window with the compositor, preserving system glass.
+    private func nativeBaselineTour() async throws {
+        for style in ["light", "dark"] {
+            _ = try await control("reset", [:])
+            let app = try await launch(variant: style)
+            var number = 80
+            func photo(_ screen: String) async throws {
+                number += 1
+                NSApp.activate(ignoringOtherApps: true); app.window.makeKeyAndOrderFront(nil)
+                app.window.display()
+                try await Task.sleep(for: .milliseconds(800))
+                let ack = try await request(required("CAPTURE_UPLOAD_URL"), body: [
+                    "name": "mac-\(style)-\(number)-\(screen)", "windowNumber": app.window.windowNumber,
+                ])
+                XCTAssertEqual(ack["stored"] as? Bool, true)
+            }
+            try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.library")
+            _ = try await app.element(identifiedBy: "dulcet.myLibrary.browse", timeout: .seconds(20))
+            try await photo("library-empty")
+            try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.browse")
+            _ = try await app.element(identifiedBy: "dulcet.library.album", timeout: .seconds(30))
+            try await photo("browse")
+            let album = try await app.element(identifiedBy: "dulcet.library.album", timeout: .seconds(20))
+            try app.press(album, named: "Album")
+            let add = try await app.element(timeout: .seconds(20), described: "album membership") {
+                (app.identifier($0) ?? "").hasPrefix("dulcet.membership.album.")
+            }
+            try app.press(add, named: "Add to Library")
+            try await waitUntil(timeout: .seconds(20), "album added") { !app.session.myLibrary.albums.isEmpty }
+            try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.library"); try await photo("library-personal")
+            try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.myLibrary.songs")
+            _ = try await app.element(identifiedBy: "dulcet.myLibrary.sectionPage.songs", timeout: .seconds(15))
+            try await photo("songs")
+            try await search(in: app)
+            _ = try await item("Fixture Artist 00", in: app); try await photo("discover-search")
+            try await open("Fixture Artist 00", in: app); try await photo("discover-artist")
+            try await open("Fixture Album 00", in: app); try await photo("discover-album")
+            try await scenario("offline"); try await press("discover.wish", in: app)
+            _ = try await app.element(identifiedBy: "wishlist.pending", timeout: .seconds(15))
+            try await photo("wishlist-pending")
+            try await wishlist(app)
+            _ = try await app.element(identifiedBy: "wishlist.pending", timeout: .seconds(15)); try await photo("wishlist")
+            try await scenario("normal")
+            let held = try await scenario("held-wishlist"); try await press("wishlist.refresh", in: app)
+            try await effect("held-wishlist", revision: held, flag: "held")
+            _ = try await app.element(identifiedBy: "wishlist.loading", timeout: .seconds(15)); try await photo("wishlist-loading")
+            _ = try await control("release-read", [:]); try await effect("held-wishlist", revision: held, flag: "released")
+            try await scenario("normal")
+            let busy = try await scenario("rate-limit-120"); try await search("BusyBaseline", in: app)
+            _ = try await app.element(timeout: .seconds(20), described: "busy error") { (app.label($0) ?? "").contains("Server is busy") }
+            try await effect("rate-limit-120", revision: busy); try await photo("discover-error")
+            try await scenario("normal"); app.close()
+        }
     }
 
     func testOfflineWishRelaunchRemoveAndScanArrival() async throws {

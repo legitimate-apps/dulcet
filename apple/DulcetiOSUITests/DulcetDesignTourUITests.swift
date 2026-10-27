@@ -287,6 +287,12 @@ final class DulcetDesignTourUITests: XCTestCase {
             let quality = app.descendants(matching: .any)["dulcet.streaming-quality"].firstMatch
             return quality.waitForExistence(timeout: 10) && self.scrollIntoView(quality, in: app) && self.settle(app)
         }
+        step("settings-storage", app) {
+            let settings = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+            let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
+            return settings.waitForExistence(timeout: 10)
+                && self.scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settings) && self.settle(app)
+        }
         step("quality-options", app) {
             let choice = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
             guard choice.waitForExistence(timeout: 10), self.scrollIntoView(choice, in: app) else { return false }
@@ -389,6 +395,7 @@ final class DulcetDesignTourUITests: XCTestCase {
             guard bar.waitForExistence(timeout: 20), self.waitFor(timeout: 20, { bar.label.contains("Twenty Nine Seconds") }) else {
                 return false
             }
+            self.shoot("mini-player", app)
             bar.tap()
             let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
             return title.waitForExistence(timeout: 10) && self.settle(app, seconds: 2)
@@ -505,6 +512,10 @@ final class DulcetDesignTourUITests: XCTestCase {
             return (field.value as? String) == "Evening Mix" && self.settle(app)
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
+        step("search-landing", app) {
+            self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact)
+                && app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+        }
         step("search", app) {
             guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
             let field = app.textFields["dulcet.search.field"].firstMatch
@@ -514,6 +525,21 @@ final class DulcetDesignTourUITests: XCTestCase {
             guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
             self.dismissKeyboard(in: app)
             return self.settle(app)
+        }
+        step("search-recents", app) {
+            let field = app.textFields["dulcet.search.field"].firstMatch
+            guard field.exists else { return false }
+            field.tap(); field.typeText("\n")
+            field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
+            self.dismissKeyboard(in: app)
+            return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
+        }
+        step("search-empty", app) {
+            let field = app.textFields["dulcet.search.field"].firstMatch
+            guard field.exists else { return false }
+            field.tap(); field.typeText("BaselineAbsentQuery75319")
+            self.dismissKeyboard(in: app)
+            return app.staticTexts["No matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
         step("track-menu", app) {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
@@ -530,7 +556,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
-        XCTAssertEqual(shotNumber, compact ? 34 : 36, "The connected tour must photograph every requested destination and overlay")
+        XCTAssertEqual(shotNumber, compact ? 40 : 42, "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
 

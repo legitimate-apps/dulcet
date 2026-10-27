@@ -2,6 +2,8 @@
 
 Status: proposed target for baseline review, 2026-10-27. No page has visual sign-off yet.
 Deployment floors and product capabilities stay as defined in the main design specification.
+The iPhone account toolbar button replacing the Connection tab and later Android Material 3
+information-architecture parity are confirmed direction; this baseline change implements neither.
 
 ## Evidence and sources
 

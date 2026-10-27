@@ -112,7 +112,16 @@ def apple_proof(mode):
                     self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(b'{"stored":true}'); return
                 name=body['name']
                 if not re.fullmatch(r'[A-Za-z0-9_-]+',name): raise ValueError('capture name')
-                data=base64.b64decode(body['jpeg'],validate=True)
+                if 'windowNumber' in body:
+                    window=body['windowNumber']
+                    if not isinstance(window,int) or window <= 0:raise ValueError('positive owned window number required')
+                    screen=captures/(name+'.png')
+                    subprocess.run(['screencapture','-x','-o','-l'+str(window),str(screen)],check=True,timeout=20)
+                    subprocess.run(['sips','-Z','1000','-s','format','jpeg','-s','formatOptions','55',str(screen),'--out',str(captures/(name+'.jpg'))],check=True,stdout=subprocess.DEVNULL,timeout=20)
+                    screen.unlink()
+                    data=(captures/(name+'.jpg')).read_bytes()
+                    body['captureKind']='screen'
+                else:data=base64.b64decode(body['jpeg'],validate=True)
                 if not data.startswith(bytes.fromhex('ffd8')): raise ValueError('JPEG required')
                 (captures/(name+'.jpg')).write_bytes(data)
                 if 'captureKind' in body:(captures/(name+'.source.json')).write_text(json.dumps({'captureKind':body['captureKind']},sort_keys=True))
@@ -231,17 +240,20 @@ def apple_proof(mode):
         for key,value in os.environ.items():
             if key.startswith('DULCET_DISCOVER_'):env['TEST_RUNNER_'+key]=value
         env['TEST_RUNNER_DULCET_DISCOVER_CAPTURES']=str(captures)
-        env['TEST_RUNNER_DULCET_DISCOVER_CAPTURE_UPLOAD_URL']='http://127.0.0.1:'+str(capture_server.server_address[1])
+        capture_url='http://127.0.0.1:'+str(capture_server.server_address[1])
+        baseline=os.environ.get('DULCET_NATIVE_BASELINE_VARIANT')
+        if baseline:capture_url+='?baseline='+baseline
+        env['TEST_RUNNER_DULCET_DISCOVER_CAPTURE_UPLOAD_URL']=capture_url
         env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
         selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
         command=['xcodebuild',action,'-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
         if mode=='macos':
             # Match the app-hosted Mac proofs: finite disposable tests use ad hoc signing.
             command += ['CODE_SIGN_STYLE=Manual','CODE_SIGN_IDENTITY=-','CODE_SIGN_ENTITLEMENTS=','DEVELOPMENT_TEAM=','PROVISIONING_PROFILE_SPECIFIER=',
-                        '-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','180']
+                        '-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','900' if baseline else '180']
             for key in ['SERVER_URL','NAVIDROME_URL','CONTROL_URL','USERNAME','PASSWORD','OTHER_USERNAME','OTHER_PASSWORD','DISPOSABLE']:
                 command.append('DULCET_TEST_DISCOVER_'+key+'='+os.environ['DULCET_DISCOVER_'+key])
-            command.append('DULCET_TEST_DISCOVER_CAPTURE_UPLOAD_URL=http://127.0.0.1:'+str(capture_server.server_address[1]))
+            command.append('DULCET_TEST_DISCOVER_CAPTURE_UPLOAD_URL='+capture_url)
         host_gate()
         (output/'invocation.json').write_text(json.dumps(dict(mode=mode,suite=suite,udid=udid,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()),indent=2))
         import time
@@ -287,6 +299,12 @@ def apple_proof(mode):
         for capture in list(captures.glob('*.png'))+list(captures.glob('*.jpg')):
             run(['sips','-Z','800','-s','format','jpeg','-s','formatOptions','50',str(capture),'--out',str(capture.with_suffix('.jpg'))],stdout=subprocess.DEVNULL)
             if capture.suffix=='.png':capture.unlink()
+        if baseline:
+            counts=json.loads(summary)
+            valid=(counts.get('totalTestCount')==1 and counts.get('passedTests')==1 and counts.get('failedTests')==0)
+            (output/'counts.json').write_text(json.dumps(dict(**counts,baseline=baseline,finalized=valid,xcodebuildExitCode=code),indent=2))
+            print('NATIVE BASELINE '+json.dumps(dict(variant=baseline,captures=len(list(captures.glob('*.jpg'))),valid=valid)))
+            return 0 if valid and code==0 else 1
         from discover_proof_report import apple_report, validate_report, native_exit_status
         acknowledgements=[json.loads(line) for line in (output/'acknowledgements.jsonl').read_text().splitlines()] if (output/'acknowledgements.jsonl').exists() else []
         report=apple_report(mode,json.loads(summary),json.loads(tests),acknowledgements,
