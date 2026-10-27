@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Fetch the digest-pinned static Linux Navidrome release for a finite loopback fixture."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import subprocess
+import tarfile
+import tempfile
+import urllib.request
+
+repo=Path(__file__).resolve().parents[2]
+pins=json.loads((repo/'tools/conformance-env/pins.json').read_text())
+if platform.system()!='Linux' or platform.machine()!='x86_64':raise SystemExit('Linux fixture requires Linux/x86_64')
+release=pins['navidrome']['linux']['binary']
+output=Path(os.environ['RUNNER_TEMP'])/'discover-bin';output.mkdir(exist_ok=True)
+with tempfile.TemporaryFile() as downloaded:
+    with urllib.request.urlopen(release['url'],timeout=60) as response:
+        digest=hashlib.sha256()
+        while block:=response.read(1024*1024):downloaded.write(block);digest.update(block)
+    if digest.hexdigest()!=release['sha256']:raise SystemExit('Navidrome archive checksum mismatch')
+    downloaded.seek(0)
+    with tarfile.open(fileobj=downloaded,mode='r:gz') as archive:
+        member=next(m for m in archive if m.isfile() and Path(m.name).name=='navidrome')
+        (output/'navidrome').write_bytes(archive.extractfile(member).read())
+(output/'navidrome').chmod(0o755)
+version=subprocess.check_output([str(output/'navidrome'),'--version'],text=True)
+if pins['navidrome']['version'] not in version:raise SystemExit('Navidrome version mismatch')
+with open(os.environ['GITHUB_ENV'],'a') as env:env.write('DULCET_DISCOVER_NAVIDROME_BIN='+str(output/'navidrome')+'\n')
+print(version)

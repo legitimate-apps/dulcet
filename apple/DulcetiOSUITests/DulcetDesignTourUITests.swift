@@ -629,7 +629,7 @@ final class DulcetDesignTourUITests: XCTestCase {
             if tab == "Library" { button.tap() }
             return true
         }
-        let row = app.staticTexts[sidebar].firstMatch
+        let row = app.buttons[sidebar].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else { return false }
         row.tap()
         return true
@@ -637,7 +637,7 @@ final class DulcetDesignTourUITests: XCTestCase {
 
     @MainActor
     private func tapSidebarSection(_ section: String, in app: XCUIApplication) -> Bool {
-        let row = app.staticTexts["dulcet.sidebar.section.\(section)"].firstMatch
+        let row = app.descendants(matching: .any)["dulcet.sidebar.section.\(section)"].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else { return false }
         row.tap()
         return true
@@ -695,7 +695,7 @@ final class DulcetDesignTourUITests: XCTestCase {
     @MainActor
     private func openPlaylists(in app: XCUIApplication, compact: Bool) -> Bool {
         let hasBrowse = compact ? app.tabBars.buttons["Browse"].firstMatch.exists
-            : app.staticTexts["dulcet.sidebar.browse"].firstMatch.exists
+            : app.descendants(matching: .any)["dulcet.sidebar.browse"].firstMatch.exists
         guard openDestination(hasBrowse ? "Browse" : "Library", sidebar: hasBrowse ? "dulcet.sidebar.browse" : "dulcet.sidebar.library", in: app, compact: compact) else { return false }
         if !compact { return tapSidebarSection("playlists", in: app) }
         let link = app.buttons["dulcet.reader.section.playlists"].firstMatch

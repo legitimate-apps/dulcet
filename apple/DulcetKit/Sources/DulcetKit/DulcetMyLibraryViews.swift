@@ -267,6 +267,9 @@ struct DulcetMyLibraryView: View {
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     Text(DulcetStrings.libraryPersonalTitle).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                     Text(DulcetStrings.libraryPersonalHint).font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+                    if store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
+                        DulcetReaderHomeLink(title: DulcetStrings.wishlist, symbolName: "bookmark", identifier: "wishlist.destination") { store.pushReaderPage(.wishlist) }
+                    }
                     DulcetLibraryDepthHome(width: geometry.size.width)
                     if let library = store.librarySession?.myLibrary {
                         DulcetMyLibraryShuffle(songs: library.songs)

@@ -7960,6 +7960,46 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-25 - Integrate Discover and Wishlist native clients and finite proof jobs.**
+
+Step 2 composes the existing REST extension reader and durable wish outbox with Search Everywhere,
+artist/album metadata and Library Wishlist on iPhone, iPad, Mac and Android phone. Account changes
+share the saved-lineage authorization fence; native Swift publications copy Objective-C DTOs into
+values. The iPad reader stack replays an initially unpresented path after destination registration.
+An ordinary push in the same account and destination keeps its requested path visible while the
+presentation acknowledgement catches up, preventing a synthetic empty binding write from popping the
+newly appeared page. The Mac proofs use app-hosted XCTest. iOS Search metadata links carry their
+destination views explicitly inside the shell, avoiding a nested stack value-registration
+dependency. Concrete Discover pages receive the existing shell player-bar configuration above the
+iOS split presentation owner. Identical concurrent album reads keep independent cancellation during
+stack replacement; a different requested edition still revokes the older reads. The requested
+identity stays separate from a resolved default edition. Android restores a visible query into a
+replacement reader using that reader's current publication, including when a retained Compose
+collection still exposes the previous reader's frame. Finite hosted proof jobs keep separate
+device/runtime, finalized test, fixture-effect and capture evidence, with explicit expected
+identities and negative runner controls. The existing hosted pressure-admission dependency precedes
+destination confirmation and keeps the exact selected-device acknowledgement. A dispatch-only
+Discover diagnostic option runs the three fixture proofs without baseline legs; it cannot satisfy
+the full release-run gate. Android captures additionally require the actual foreground package to be
+Dulcet; a system error overlay cannot count as clean visual evidence. Large-text track rows wrap
+their titles and put actions below them. At iOS accessibility sizes the edition menu lets its
+visible date/count label grow vertically while retaining native picker choices. The iPad resize
+proof requires the actual compact tab shell as well as the smaller window. It requires the exact
+title, Back action and durable pending intent after the transition. The pending compact-detail
+failure is recorded in the evidence document. Wishlist dates name their meaning, pair labels with
+values and omit an Updated value identical at the displayed precision. Wishlist loading indicators
+keep an inset from the content edge; Mac loading captures wait for an acknowledged held read and
+visible loading control, then require explicit release. Mac hosted view renders record their
+vibrant-material limitation, and the environment variant does not claim enlarged Mac text. Artist
+captures wait for loaded metadata; Search proof reentry uses native Back controls through its
+retained metadata stack. Native matrix promotion awaits the final integrated-head proofs in
+`docs/evidence/discover-wishlist-clients.md`. Shelves and playlist pages remain step 3, television
+UI step 4; production terms and upstream rights conditions are unchanged.
+
+Main's queue migration retains schema 13; Discover uses the additive 13-to-14 migration and fixture
+v14. The integration migration proof preserves queue context, pending My Library intents and scoped
+media ownership. Native cells still require the corresponding native proof.
+
 **2026-10-25 — Reuse exact-tree Apple merge proof on main pushes (§21.6, #390).**
 
 A main push can plan no macOS legs when one merged, same-repository PR produced it, its tree
@@ -7997,7 +8037,6 @@ a full run. `tools/test-plan-apple-legs` executes the event/input plans;
 `tools/test-release-channel` accepts a full suite and refuses a conformance-only run, including
 when an earlier full suite or a separate platform success is available. `docs/MERGING.md`
 documents the opt-in command and the conclusions a maintainer must inspect.
-
 
 **2026-10-24 — Retry interrupted AutoPlay searches and retain queue musical context.**
 

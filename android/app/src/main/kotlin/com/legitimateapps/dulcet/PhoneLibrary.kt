@@ -2,8 +2,6 @@ package com.legitimateapps.dulcet
 
 import com.legitimateapps.dulcet.library.trackDisplayTitle
 import com.legitimateapps.dulcet.library.canBeQueued
-import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -34,11 +32,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,7 +58,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
@@ -152,6 +147,7 @@ internal fun LibraryHome(
     playingRawId: String? = null,
     title: Int = R.string.tab_library,
     myLibrary: MyLibrarySession? = null,
+    wishlist: (@Composable () -> Unit)? = null,
 ) {
     var view by rememberSaveable { mutableStateOf(LibraryView.Home) }
     val observation by session.observation.collectAsState()
@@ -164,6 +160,7 @@ internal fun LibraryHome(
                 }
             },
         )
+        wishlist?.invoke()
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (option in LibraryView.entries) FilterChip(
@@ -692,33 +689,31 @@ internal fun AlbumScreen(
                         StatementText(resources.unavailableLine(unavailable.reason, LibrarySubject.Album), "album.unavailable")
                     }
                     if (album != null) {
-                        Artwork(account, album.artworkKey, album.title, null,
-                            Modifier.fillMaxWidth(0.72f).aspectRatio(1f).shadow(16.dp, RoundedCornerShape(16.dp)))
-                        Spacer(Modifier.height(20.dp))
-                        Text(album.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center, modifier = Modifier.testTag("album.title"))
-                        album.artistName?.let { artist ->
-                            Text(artist, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = album.artistRawId != null) {
-                                    album.artistRawId?.let(actions.openArtist)
-                                }.padding(4.dp))
-                        }
                         val songs = album.songCount ?: tracks.size.takeIf { current.itemsState == AndroidLibraryItemsState.Present }
-                        Text(listOfNotNull(album.year?.toString(),
-                            songs?.let { pluralStringResource(R.plurals.album_song_count, it, it) },
-                            album.durationMilliseconds?.takeIf { it > 0 }?.let { longDuration(it) }).joinToString(" · "),
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        LocalContext.current.resources.albumDownloadLine(AlbumDownloads.of(tracks, downloads))?.let { line ->
-                            Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.testTag("album.download.progress"))
+                        LibraryDetailHeader(
+                            title = album.title,
+                            artwork = {
+                                Artwork(account, album.artworkKey, album.title, null,
+                                    Modifier.fillMaxWidth(0.72f).aspectRatio(1f).shadow(16.dp, RoundedCornerShape(16.dp)))
+                            },
+                            titleTag = "album.title",
+                            subtitle = album.artistName,
+                            onSubtitle = album.artistRawId?.let { id -> { actions.openArtist(id) } },
+                            metadata = listOfNotNull(album.year?.toString(),
+                                songs?.let { pluralStringResource(R.plurals.album_song_count, it, it) },
+                                album.durationMilliseconds?.takeIf { it > 0 }?.let { longDuration(it) }).joinToString(" · "),
+                            status = {
+                                LocalContext.current.resources.albumDownloadLine(AlbumDownloads.of(tracks, downloads))?.let { line ->
+                                    Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.testTag("album.download.progress"))
+                                }
+                            },
+                        ) {
+                            PlayShuffleButtons(
+                                onPlay = { actions.playAlbum(current, 0, false) },
+                                onShuffle = { actions.playAlbum(current, 0, true) },
+                                enabled = anyPlayable, tagPrefix = "album")
                         }
-                        Spacer(Modifier.height(16.dp))
-                        PlayShuffleButtons(
-                            onPlay = { actions.playAlbum(current, 0, false) },
-                            onShuffle = { actions.playAlbum(current, 0, true) },
-                            enabled = anyPlayable, tagPrefix = "album")
-                        Spacer(Modifier.height(8.dp))
                     }
                 }
             }
@@ -845,17 +840,17 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     ListStatus(current, "artist", session::retry)
                     if (artist != null) {
-                        Monogram(artist.name, 120.dp)
-                        Spacer(Modifier.height(12.dp))
-                        Text(artist.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center)
-                        if (listed) Text(pluralStringResource(R.plurals.library_album_count, albums.size, albums.size),
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(16.dp))
-                        // Whether anything can play is the tracks' playability, known once each album is
-                        // open; if nothing can, the tap says so.
-                        PlayShuffleButtons(onPlay = { play(current, false) }, onShuffle = { play(current, true) },
-                            enabled = listed && albums.isNotEmpty() && collecting == null, tagPrefix = "artist")
+                        LibraryDetailHeader(
+                            title = artist.name,
+                            artwork = { Monogram(artist.name, 120.dp) },
+                            metadata = if (listed) pluralStringResource(R.plurals.library_album_count, albums.size, albums.size) else null,
+                            artworkSpacing = 12.dp,
+                        ) {
+                            // Whether anything can play is the tracks' playability, known once each album is
+                            // open; if nothing can, the tap says so.
+                            PlayShuffleButtons(onPlay = { play(current, false) }, onShuffle = { play(current, true) },
+                                enabled = listed && albums.isNotEmpty() && collecting == null, tagPrefix = "artist")
+                        }
                         note?.let { StatementText(it, "artist.note") }
                         OutcomeLines(outcomeLines, target, "artist.outcome")
                     }
@@ -1005,32 +1000,23 @@ internal fun AlbumCard(
     val subtitle = (item as? AndroidLibraryItem.Album)?.let { album ->
         listOfNotNull(album.artistName, album.originalReleaseDate?.take(4) ?: album.year?.toString()).joinToString(" · ")
     }
-    // A long press opens the card's membership menu, as Apple Music's does. The caller's modifier —
-    // its tag — stays on the clickable card, so a test's click and text find the same node as before.
-    var menuOpen by remember { mutableStateOf(false) }
-    Box {
-        Column(modifier.clip(RoundedCornerShape(12.dp)).let { base ->
-            if (library != null) base.combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
-            else base.clickable(onClick = onClick)
-        }) {
-            Artwork(account, artwork, title, null, Modifier.fillMaxWidth().aspectRatio(1f))
-            Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
-                overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-            subtitle?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    AlbumCardVisual(
+        title = title,
+        subtitle = subtitle,
+        modifier = modifier,
+        artwork = { Artwork(account, artwork, title, null, Modifier.fillMaxWidth().aspectRatio(1f)) },
+        menuItems = library?.let { membership ->
+            { closeMenu: () -> Unit ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(if (membership.added) SharedR.string.library_remove_from_library else SharedR.string.library_add_to_library)) },
+                    leadingIcon = { Icon(if (membership.added) DulcetIcons.Check else DulcetIcons.Add, null) },
+                    onClick = { closeMenu(); membership.toggle() },
+                    modifier = Modifier.testTag(membership.tag + ".library"),
+                )
             }
-        }
-        if (library != null) DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(if (library.added) SharedR.string.library_remove_from_library else SharedR.string.library_add_to_library)) },
-                leadingIcon = { Icon(if (library.added) DulcetIcons.Check else DulcetIcons.Add, null) },
-                onClick = { menuOpen = false; library.toggle() },
-                modifier = Modifier.testTag(library.tag + ".library"),
-            )
-        }
-    }
+        },
+        onClick = onClick,
+    )
 }
 
 @Composable
@@ -1098,30 +1084,20 @@ internal fun TrackRow(
 ) {
     val durationUnknown = track.durationMilliseconds == null
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
-    val accent = when {
-        playing -> MaterialTheme.colorScheme.primary
-        unavailable || durationUnknown -> MaterialTheme.colorScheme.onSurfaceVariant
-        else -> MaterialTheme.colorScheme.onSurface
-    }
     val resources = libraryResources()
     val downloadLine = download?.status?.takeIf { !it.playsOffline }?.let { LocalContext.current.resources.downloadLine(it) }
     val supporting = if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
         else if (durationUnknown) resources.getString(SharedR.string.library_duration_required)
         else downloadLine ?: track.artistName
     val rowTag = rowTagOverride ?: favouriteTag?.removeSuffix(".favourite")
-    ListItem(
-        headlineContent = {
-            Text(resources.trackDisplayTitle(track.title), maxLines = 1, overflow = TextOverflow.Ellipsis, color = accent)
-        },
-        supportingContent = supporting?.let { text -> { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-        leadingContent = {
-            Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
-                if (playing) Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing), tint = accent)
-                else Text((track.trackNumber ?: number).toString(), color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium)
-            }
-        },
-        trailingContent = if (track.durationMilliseconds == null && onFavourite == null && onAddToPlaylist == null && download == null && library == null) null else {
+    TrackRowVisual(
+        title = resources.trackDisplayTitle(track.title),
+        supporting = supporting?.let { text -> { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+        number = track.trackNumber ?: number,
+        modifier = modifier,
+        playing = playing,
+        unavailable = unavailable || durationUnknown,
+        trailing = if (track.durationMilliseconds == null && onFavourite == null && onAddToPlaylist == null && download == null && library == null) null else {
             {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // The downloaded marker: this track plays with no network (spec §14.5).
@@ -1138,38 +1114,24 @@ internal fun TrackRow(
                 }
             }
         },
-        modifier = modifier.clickable(enabled = !durationUnknown) { if (unavailable) onUnavailable() else onClick() },
+        enabled = !durationUnknown,
+        onClick = { if (unavailable) onUnavailable() else onClick() },
     )
 }
 
 @Composable
 internal fun PlayShuffleButtons(onPlay: () -> Unit, onShuffle: () -> Unit, enabled: Boolean, tagPrefix: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Button(onClick = onPlay, enabled = enabled, modifier = Modifier.width(148.dp).testTag("$tagPrefix.play")) {
-            Icon(DulcetIcons.Play, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
-            Text(stringResource(R.string.action_play))
-        }
-        FilledTonalButton(onClick = onShuffle, enabled = enabled, modifier = Modifier.width(148.dp).testTag("$tagPrefix.shuffle")) {
-            Icon(DulcetIcons.Shuffle, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
-            Text(stringResource(R.string.action_shuffle))
-        }
-    }
+    DetailActionButtons(
+        DetailAction(R.string.action_play, DulcetIcons.Play, "$tagPrefix.play", enabled, onPlay),
+        DetailAction(R.string.action_shuffle, DulcetIcons.Shuffle, "$tagPrefix.shuffle", enabled, onShuffle),
+    )
 }
 
 /** Cover art from the core repository, with a tonal placeholder while loading or when there is none. */
 @Composable
 internal fun Artwork(account: SearchAccount, key: String?, title: String, size: Dp?, modifier: Modifier = Modifier) {
     val pixels = size?.let { (it.value * 3).toInt() } ?: 512
-    val image = rememberArtwork(account, key, pixels)
-    val shape = RoundedCornerShape(if (size != null && size < 80.dp) 8.dp else 12.dp)
-    val sized = if (size != null) modifier.size(size) else modifier
-    Box(sized.clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
-        Crossfade(image, label = "artwork") { loaded ->
-            if (loaded != null) Image(loaded, stringResource(R.string.artwork_description, title), Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop)
-            else Icon(DulcetIcons.Album, null, Modifier.fillMaxSize(0.4f), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
+    ArtworkFrame(rememberArtwork(account, key, pixels), stringResource(R.string.artwork_description, title), size, modifier)
 }
 
 @Composable

@@ -1,8 +1,6 @@
 package com.legitimateapps.dulcet
 
 import com.legitimateapps.dulcet.library.trackDisplayTitle
-import android.content.Context
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -18,7 +16,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -88,6 +85,8 @@ internal fun MobileSearchScreen(
     onPlay: ((SearchResultItem) -> Unit)? = null,
     /** Play Next and Add to Queue for a track result; null disables the items (spec §14.1). */
     onQueue: ((SearchResultItem, AndroidQueueInsertion) -> Unit)? = null,
+    /** Scope host supplies the Search heading and status-bar inset when extensions are available. */
+    embedded: Boolean = false,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
     val recents by presenter.recents.collectAsStateWithLifecycle()
@@ -95,10 +94,10 @@ internal fun MobileSearchScreen(
     var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp, vertical = 16.dp),
+            modifier = Modifier.fillMaxSize().then(if (embedded) Modifier else Modifier.statusBarsPadding()).padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium,
+            if (!embedded) Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold)
             OutlinedTextField(
                 value = state.query,
@@ -232,9 +231,9 @@ private fun MobileSearchResult(
         SearchResultType.Track -> R.string.search_kind_track
     })
     val credits = result.credits.joinToString { it.name }
-    ListItem(
-        headlineContent = { Text(resources.trackDisplayTitle(result.title), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = {
+    PhoneMediaRow(
+        title = resources.trackDisplayTitle(result.title),
+        supporting = {
             val notes = listOfNotNull(
                 resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
@@ -243,11 +242,12 @@ private fun MobileSearchResult(
             Text((listOf(kind, credits) + notes).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         },
-        leadingContent = {
-            if (account != null && result.type != SearchResultType.Artist) Artwork(account, result.artworkKey, resources.trackDisplayTitle(result.title), 48.dp)
-            else Icon(if (result.type == SearchResultType.Artist) DulcetIcons.Person else DulcetIcons.MusicNote, null)
+        leading = {
+            if (result.type == SearchResultType.Artist) Monogram(result.title, 48.dp)
+            else if (account != null) Artwork(account, result.artworkKey, resources.trackDisplayTitle(result.title), 48.dp)
+            else Icon(DulcetIcons.MusicNote, null)
         },
-        trailingContent = if (onPlay == null && onQueue == null) null else {
+        trailing = if (onPlay == null && onQueue == null) null else {
             {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     onPlay?.let { play ->
@@ -261,7 +261,9 @@ private fun MobileSearchResult(
                 }
             }
         },
-        modifier = Modifier.fillMaxWidth().clickable(enabled = result.type != SearchResultType.Track || (!unavailableOffline && result.duration != null), onClick = onActivate).testTag("search.result.$index"),
+        modifier = Modifier.testTag("search.result.$index"),
+        enabled = result.type != SearchResultType.Track || (!unavailableOffline && result.duration != null),
+        onClick = onActivate,
     )
 }
 
