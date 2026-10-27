@@ -116,7 +116,7 @@ import UIKit
         element.tap()
 #endif
     }
-    func select(_ section: String) {
+    @discardableResult func select(_ section: String) -> XCUIElement {
 #if os(macOS)
         let row = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #else
@@ -133,25 +133,56 @@ import UIKit
         let reachable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: row)
         XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 30), .completed, "Destination must be reachable before activation")
         activate(row)
+        return row
     }
     func selectSavedServer(_ button: XCUIElement) {
         XCTAssertTrue(button.waitForExistence(timeout: 30), "Saved account must appear before checking whether it is enabled: " + app.debugDescription)
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 30), .completed)
-        print("DISCOVER_SAVED_ACCOUNT identifier=\(button.identifier) exists=true enabled=true")
+        let identifier = button.identifier
+        print("DISCOVER_SAVED_ACCOUNT identifier=\(identifier) exists=true enabled=true")
         activate(button)
-        // Connecting a saved account returns the real app to Listen Now. Reopen Connection
-        // before checking its current-account label; the departing button cannot stay visible.
-        let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false OR (label CONTAINS %@ AND enabled == true)", "Current server"), object: button)
-        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 45), .completed)
-        if !button.exists { select("settings") }
-        let committed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@ AND enabled == true", "Current server"), object: button)
-        XCTAssertEqual(XCTWaiter.wait(for: [committed], timeout: 45), .completed, "Saved account must commit before navigating: " + app.debugDescription)
+        let started = ProcessInfo.processInfo.systemUptime
+        repeat {
+            // One snapshot keeps the current-server label, enabled state and frame together.
+            if let root = try? app.snapshot() {
+                var pending: [XCUIElementSnapshot] = [root]
+                var displayed = false
+                while let node = pending.popLast() {
+                    if node.elementType == .button && node.identifier == identifier {
+                        let frame = node.frame
+                        let usable = !frame.isEmpty && frame.origin.x.isFinite && frame.origin.y.isFinite
+                            && frame.width.isFinite && frame.height.isFinite
+                        displayed = displayed || usable
+                        if usable && node.isEnabled && node.label.contains("Current server") { return }
+                    }
+                    pending.append(contentsOf: node.children)
+                }
+                // A retained Connection tab can keep an off-screen row in the accessibility tree.
+                if !displayed { select("settings") }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while ProcessInfo.processInfo.systemUptime - started < 180
+        XCTFail("Saved account must commit before navigating; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s: " + app.debugDescription)
     }
     func search(_ query: String = "Fixture") throws {
-        select("search")
+        var destination = select("search")
         let everywhere = app.buttons["Everywhere"].firstMatch
 #if os(iOS)
+        // The selected Search tab or sidebar row identifies the destination before using Back.
+        var selected = false
+        for attempt in 0..<3 {
+            if attempt > 0 { destination = select("search") }
+            let selection = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: destination)
+            if XCTWaiter.wait(for: [selection], timeout: 15) == .completed {
+                selected = true
+                break
+            }
+        }
+        guard selected else {
+            XCTFail("Search must become the selected destination before returning to its root: " + app.debugDescription)
+            return
+        }
         // Search retains its metadata stack when Open in Library changes destinations.
         // Use the same native Back controls as a person before entering another query.
         let back = app.navigationBars.buttons["BackButton"].firstMatch

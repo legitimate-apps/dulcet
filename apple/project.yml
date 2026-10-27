@@ -352,6 +352,7 @@ targets:
         excludes:
           - Host-Info.plist
       - DulcetSignedDeviceUITestSupport
+      - DulcetWindowUITestSupport
     dependencies:
       - target: DulcetSignedIPadHost
     settings:
@@ -580,6 +581,7 @@ targets:
     sources:
       - DulcetiOSUITests
       - DulcetMyLibraryUITestSupport
+      - DulcetWindowUITestSupport
       - DulcetDiscoverUITestSupport
     dependencies:
       - target: DulcetiOS

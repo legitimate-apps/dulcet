@@ -482,7 +482,7 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     iPad/iPhone jobs in the 2026-10-20..24 census include five failures of the first My Library
     test, four at the first connected query; load alone does not separate passes from failures.
     `run-my-library-proofs` now requires `--settle-pressure` after service stability, before the
-    first iPhone/iPad proof and the booted iPad destination confirmation. The platform leg also
+    first iPhone/iPad proof. The platform leg also
     waits before its first iPhone native test and before its booted iPad destination confirmation
     (the latter query timed out in [run 40083176763](https://github.com/legitimate-apps/dulcet/actions/runs/40083176763)). The sampler's kernel
     counters must show a full minute with every interval at <=20 MiB/s page-ins, <=1 MiB/s combined
@@ -491,6 +491,13 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     the prerequisite; no proof is skipped, retried or given a larger allowance. Waiting has its
     own `post-boot-pressure-*` phase, so moving the burst out of the proof stays visible. Free
     pages and resident swap are logged but do not independently establish active I/O.
+
+    In [run 40327304186](https://github.com/legitimate-apps/dulcet/actions/runs/40327304186),
+    attempts 2 and 3 passed pressure admission but each post-isolation destination query produced
+    no output before two 60-second kills; restarting discovery cannot finish a query needing
+    more than that cap, so discovery now allows 180 seconds per attempt within 240 seconds,
+    records query durations and bounded simctl responsiveness, and My Library reuses the
+    job-start Xcode-accepted UDID kept by isolation.
 
     **OBSERVED in [platform run 40142840023](https://github.com/legitimate-apps/dulcet/actions/runs/40142840023)
     (2026-10-25 UTC):** both pressure gates and every platform proof passed. The table describes
