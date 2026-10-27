@@ -24,7 +24,7 @@ public enum DulcetDiscoverDestination: Hashable, Sendable {
 public struct DulcetDiscoverItemPresentation: Sendable {
     public let item: DulcetDiscoverItem
     public init(item: DulcetDiscoverItem) { self.item = item }
-    public var canWish: Bool { item.wishable && item.target != nil }
+    public var canWish: Bool { item.wishable && item.target != nil && ["artist", "album", "song"].contains(item.kind) }
     public var availabilityText: String {
         let availability = item.availability
         if availability.status == "partlyHeld", let count = availability.matchedTrackCount, let total = availability.totalTrackCount {
@@ -109,7 +109,7 @@ public struct DulcetDiscoverStatus: Sendable {
     }
     func row(for item: DulcetDiscoverItem) -> DulcetWishRow? {
         guard let target = item.target else { return nil }
-        return publication?.wishes.first { ($0.wish?.target ?? $0.pendingAdd?.target) == target }
+        return ((publication?.wishes ?? []) + (publication?.home?.recentWishes ?? [])).first { ($0.wish?.target ?? $0.pendingAdd?.target) == target }
     }
     func add(_ item: DulcetDiscoverItem, source: DulcetWishSource) {
         mutationError = nil

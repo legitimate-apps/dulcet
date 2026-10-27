@@ -360,7 +360,7 @@ private struct DulcetTVSectionNavigation: View {
                 }
                 .buttonStyle(.borderless)
                 .focused($focusedSection, equals: destination)
-                .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
+                .accessibilityIdentifier(destination == .discover ? "discover.destination" : "dulcet.tab.\(destination.rawValue)")
                 .accessibilityLabel(destination.windowTitle)
                 .accessibilityAddTraits(destination == selected ? .isSelected : [])
             }
@@ -396,7 +396,7 @@ private struct DulcetIOSShell: View {
     /// Show Now Playing command, a restored selection) opens the player over that place.
     @State private var lastPlace: DulcetSidebarDestination = .listenNow
 
-    static let places: [DulcetSidebarDestination] = [.listenNow, .library, .search, .settings]
+    static let places: [DulcetSidebarDestination] = [.listenNow, .discover, .library, .search, .settings]
 
     private var compact: Bool { horizontalSizeClass == .compact }
 
@@ -564,10 +564,15 @@ private struct DulcetCompactShell: View {
     @Bindable var store: DulcetPresentationStore
     @Binding var lastTab: DulcetSidebarDestination
     let onOpenPlayer: () -> Void
+    @State private var connectionPresented = false
+    private var places: [DulcetSidebarDestination] {
+        let available = store.destinations(DulcetIOSShell.places)
+        return available.count > 5 ? available.filter { $0 != .settings } : available
+    }
 
     var body: some View {
         TabView(selection: tabSelection) {
-            ForEach(store.destinations(DulcetIOSShell.places)) { destination in
+            ForEach(places) { destination in
                 DulcetDestinationStack(
                     store: store,
                     tab: destination,
@@ -576,10 +581,20 @@ private struct DulcetCompactShell: View {
                 )
                     .tabItem {
                         Label(destination.windowTitle, systemImage: destination.symbolName)
-                            .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
+                            .accessibilityIdentifier(destination == .discover ? "discover.destination" : "dulcet.tab.\(destination.rawValue)")
                     }
                     .tag(destination)
             }
+        }
+        .sheet(isPresented: $connectionPresented, onDismiss: {
+            if store.selectedDestination == .settings { store.navigate(to: lastTab) }
+        }) {
+            DulcetDestinationStack(store: store, tab: .settings)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { connectionPresented = false } } }
+        }
+        .onChange(of: store.selectedDestination) { _, destination in
+            if destination == .settings && !places.contains(.settings) { connectionPresented = true }
+            else if destination != .settings { connectionPresented = false }
         }
     }
 
@@ -615,6 +630,7 @@ struct DulcetDestinationStack: View {
     private enum StackRoute: Hashable {
         case reader(DulcetReaderRoute)
         case library(DulcetLibraryRoute)
+        case discover(DulcetDiscoverHomeRoute)
     }
     @Bindable var store: DulcetPresentationStore
     var tab: DulcetSidebarDestination?
@@ -635,6 +651,12 @@ struct DulcetDestinationStack: View {
     }
     private typealias ReaderPresentation = DulcetReaderStackPresentation<DulcetReaderRoute, ReaderContext>
     @State private var readerPresentation = ReaderPresentation()
+    private typealias DiscoverPresentation = DulcetReaderStackPresentation<DulcetDiscoverHomeRoute, ReaderContext>
+    @State private var discoverPresentation = DiscoverPresentation()
+    private var discoverRequest: DiscoverPresentation.Request {
+        .init(context: .init(destination: destination, generation: store.librarySession?.readerGeneration ?? 0, enabled: destination == .discover),
+              path: destination == .discover ? store.discoverNavigation.path : [])
+    }
 
     private var readerRequest: ReaderPresentation.Request {
         .init(context: .init(destination: destination, generation: store.librarySession?.readerGeneration ?? 0,
@@ -653,9 +675,11 @@ struct DulcetDestinationStack: View {
         // One concrete root and one destination registration survive reader/snapshot changes.
         // Group distributes a registration into its changing children; a split column or a
         // retained tab must keep the navigation owner even while those children change.
-        NavigationStack(path: usesReader ? readerPath : snapshotPath) {
+        NavigationStack(path: destination == .discover ? discoverPath : usesReader ? readerPath : snapshotPath) {
             ZStack {
-                if usesReader {
+                if destination == .discover {
+                    DulcetDiscoverHomeDestination()
+                } else if usesReader {
                     if destination == .listenNow { DulcetListenNowView() }
                     else { DulcetReaderCollectionRoot(destination: destination) }
                 } else if let displayed = displayedSnapshot {
@@ -669,10 +693,27 @@ struct DulcetDestinationStack: View {
             .modifier(bar(drawsNotices: showing && (usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty)))
             .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
         }
+#if os(iOS)
+        .toolbar {
+            if tab != nil && tab != .settings && store.destinations(DulcetIOSShell.places).count > 5 {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(DulcetStrings.settings, systemImage: "server.rack") { store.selectDestination(.settings) }
+                        .accessibilityIdentifier("dulcet.connection")
+                }
+            }
+        }
+#endif
         // Concrete NavigationLink destinations need the same page chrome as store routes.
         .environment(\.dulcetPageNowPlayingBar, bar(drawsNotices: showing))
         // The split detail keeps its navigation owner when a destination changes. Recreating
         // it with an already-pushed path causes SwiftUI to write its initial [] over that push.
+        .onChange(of: discoverRequest, initial: true) { _, request in discoverPresentation.request(request) }
+        .task(id: discoverPresentation.pendingReplay) {
+            guard let request = discoverPresentation.pendingReplay else { return }
+            await Task.yield()
+            guard !Task.isCancelled, discoverRequest == request else { return }
+            discoverPresentation.replay(request)
+        }
         .onAppear(perform: retainLibrary)
         .onChange(of: store.snapshot) { _, _ in retainLibrary() }
         .onChange(of: readerRequest, initial: true) { _, request in
@@ -716,6 +757,14 @@ struct DulcetDestinationStack: View {
     }
 
     /// The common route type is rendered completely by the stack's sole registration.
+    private var discoverPath: Binding<[StackRoute]> {
+        Binding(get: { discoverPresentation.displayedPath(for: discoverRequest).map(StackRoute.discover) }, set: { updated in
+            guard store.selectedDestination == .discover else { return }
+            let routes = updated.compactMap { if case let .discover(route) = $0 { return route }; return nil }
+            guard routes.count == updated.count else { return }
+            if discoverPresentation.wrote(routes) { store.discoverNavigation.path = routes }
+        })
+    }
     @ViewBuilder private func stackPage(_ path: StackRoute) -> some View {
         switch path {
         case let .reader(route):
@@ -727,6 +776,9 @@ struct DulcetDestinationStack: View {
                 }
                 .environment(\.dulcetReaderPage, route)
                 .modifier(bar(drawsNotices: showing && store.readerPath.last == route))
+        case let .discover(route):
+            DulcetDiscoverHomeDestination(route: route).modifier(bar(drawsNotices: showing))
+                .onAppear { discoverPresentation.appeared(route) }
         case let .library(route):
             DulcetLibraryRouteView(store: store, route: route)
                 .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.last == route))
@@ -952,7 +1004,7 @@ private struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore
     /// The rows to show. The Mac lists Now Playing as a place; iOS presents it over the content
     /// from the now-playing bar instead, and leaves it out.
-    var destinations: [DulcetSidebarDestination] = [.listenNow, .library, .search, .nowPlaying, .settings]
+    var destinations: [DulcetSidebarDestination] = [.listenNow, .discover, .library, .search, .nowPlaying, .settings]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// The column takes more room at the accessibility text sizes: at the default width the rows'
@@ -967,6 +1019,10 @@ private struct DulcetSidebar: View {
                 Section {
                     if destinations.contains(.listenNow) {
                         sidebarRow(DulcetStrings.listenNow, symbol: "play.circle", destination: .listenNow)
+                    }
+                    if destinations.contains(.discover), store.librarySession?.discoverPublication?.access.discoverAvailable == true {
+                        sidebarChoice(.destination(.discover)) { Label("Discover", systemImage: "sparkles") }
+                            .accessibilityLabel("Discover").accessibilityIdentifier("discover.destination")
                     }
                     if destinations.contains(.library) {
                         sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
@@ -1208,6 +1264,12 @@ private struct DulcetStateSurface: View {
                 store: store,
                 allowsProgrammaticFocus: allowsProgrammaticFocus
             )
+        case .discover:
+#if !os(tvOS)
+            DulcetDiscoverHomeDestination()
+#else
+            librarySurface
+#endif
         case .listenNow:
             if store.readerOwnsLibrary { DulcetListenNowView() } else { librarySurface }
         case .library, .browse:
@@ -1365,6 +1427,7 @@ private extension DulcetStateSurface {
 extension DulcetSidebarDestination {
     var symbolName: String {
         switch self {
+        case .discover: "sparkles"
         case .listenNow: "play.circle"
         case .library: "rectangle.grid.2x2"
         case .browse: "globe"
@@ -1376,6 +1439,7 @@ extension DulcetSidebarDestination {
 
     var windowTitle: String {
         switch self {
+        case .discover: "Discover"
         case .listenNow: DulcetStrings.listenNow
         case .library: DulcetStrings.library
         case .browse: DulcetStrings.browseSection
