@@ -301,10 +301,15 @@ def apple_proof(mode):
             if capture.suffix=='.png':capture.unlink()
         if baseline:
             counts=json.loads(summary)
-            valid=(counts.get('totalTestCount')==1 and counts.get('passedTests')==1 and counts.get('failedTests')==0)
-            (output/'counts.json').write_text(json.dumps(dict(**counts,baseline=baseline,finalized=valid,xcodebuildExitCode=code),indent=2))
+            if completed:
+                valid=(completed.get('total')==1 and completed.get('passed')==1 and completed.get('failed')==0)
+            else:
+                valid=(bool(counts.get('finishTime')) and counts.get('totalTestCount')==1 and counts.get('passedTests')==1 and counts.get('failedTests')==0)
+            (output/'counts.json').write_text(json.dumps(dict(**counts,baseline=baseline,testSuiteCompleted=valid,
+                resultBundleFinalized=bool(counts.get('finishTime')),finalizationInterrupted=interrupted,
+                completedTranscript=completed,xcodebuildExitCode=code),indent=2))
             print('NATIVE BASELINE '+json.dumps(dict(variant=baseline,captures=len(list(captures.glob('*.jpg'))),valid=valid)))
-            return 0 if valid and code==0 else 1
+            return 0 if valid and (code==0 or interrupted) else 1
         from discover_proof_report import apple_report, validate_report, native_exit_status
         acknowledgements=[json.loads(line) for line in (output/'acknowledgements.jsonl').read_text().splitlines()] if (output/'acknowledgements.jsonl').exists() else []
         report=apple_report(mode,json.loads(summary),json.loads(tests),acknowledgements,

@@ -297,7 +297,12 @@ import UIKit
         let sidebarSongs = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.songs"].firstMatch
         let songLink = sidebarSongs.exists ? sidebarSongs : songs
         reveal(songLink); XCTAssertTrue(songLink.waitForExistence(timeout: 15)); activate(songLink)
-        XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.songs"].waitForExistence(timeout: 15))
+        if sidebarSongs.exists {
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: sidebarSongs)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+        } else {
+            XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.songs"].waitForExistence(timeout: 15))
+        }
         try photo("songs")
         try search()
         XCTAssertTrue(item("artist", 100).waitForExistence(timeout: 30)); try photo("discover-search")

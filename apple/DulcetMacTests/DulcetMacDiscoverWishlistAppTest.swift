@@ -253,12 +253,14 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             try await waitUntil(timeout: .seconds(20), "album added") { !app.session.myLibrary.albums.isEmpty }
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.library"); try await photo("library-personal")
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.myLibrary.songs")
-            _ = try await app.element(identifiedBy: "dulcet.myLibrary.sectionPage.songs", timeout: .seconds(15))
+            try await waitUntil(timeout: .seconds(15), "Songs section selected") { app.store.myLibrarySection == .songs }
             try await photo("songs")
             try await search(in: app)
             _ = try await item("Fixture Artist 00", in: app); try await photo("discover-search")
-            try await open("Fixture Artist 00", in: app); try await photo("discover-artist")
-            try await open("Fixture Album 00", in: app); try await photo("discover-album")
+            try await open("Fixture Artist 00", in: app)
+            _ = try await app.element(identifiedBy: "discover.artist.title", timeout: .seconds(20)); try await photo("discover-artist")
+            try await open("Fixture Album 00", in: app)
+            _ = try await app.element(identifiedBy: "discover.album.title", timeout: .seconds(20)); try await photo("discover-album")
             try await scenario("offline"); try await press("discover.wish", in: app)
             _ = try await app.element(identifiedBy: "wishlist.pending", timeout: .seconds(15))
             try await photo("wishlist-pending")
@@ -270,6 +272,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             _ = try await app.element(identifiedBy: "wishlist.loading", timeout: .seconds(15)); try await photo("wishlist-loading")
             _ = try await control("release-read", [:]); try await effect("held-wishlist", revision: held, flag: "released")
             try await scenario("normal")
+            app.store.navigate(to: .search); app.store.popReader(to: [])
             let busy = try await scenario("rate-limit-120"); try await search("BusyBaseline", in: app)
             _ = try await app.element(timeout: .seconds(20), described: "busy error") { (app.label($0) ?? "").contains("Server is busy") }
             try await effect("rate-limit-120", revision: busy); try await photo("discover-error")

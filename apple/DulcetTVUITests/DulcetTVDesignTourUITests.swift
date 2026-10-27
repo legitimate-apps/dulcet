@@ -153,7 +153,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if lyrics.exists, lyrics.hasFocus, lyrics.label == "Hide Lyrics" { remote.press(.select) }
         remote.press(.playPause)
         step("up-next", app) {
-            app.staticTexts["Up Next"].firstMatch.waitForExistence(timeout: 10) && self.settle(1)
+            app.staticTexts["Queue"].firstMatch.waitForExistence(timeout: 10) && self.settle(1)
         }
 
         // Search with results, by remote: the section bar, the field, the query typed, Done.
