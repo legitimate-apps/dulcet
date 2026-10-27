@@ -76,6 +76,7 @@ tv-material = { module = "androidx.tv:tv-material", version.ref = "compose-tv-ma
 tv-foundation = { module = "androidx.tv:tv-foundation", version.ref = "compose-tv-foundation" }
 
 [plugins]
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 android-application = { id = "com.android.application", version.ref = "android-gradle-plugin" }
 android-library = { id = "com.android.library", version.ref = "android-gradle-plugin" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

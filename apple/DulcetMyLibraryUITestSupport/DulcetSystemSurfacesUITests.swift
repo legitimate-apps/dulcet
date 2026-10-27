@@ -57,7 +57,7 @@ final class DulcetSystemSurfacesUITests: XCTestCase {
 #if os(iOS)
     func testHomeWidgetRendersAndItsIntentResumesPlayback() throws {
         let app = try connectedApp(proofFlag: "DULCET_WIDGET_HOST_PROOF")
-        let sidebar = app.staticTexts["dulcet.sidebar.search"].firstMatch
+        let sidebar = app.descendants(matching: .any)["dulcet.sidebar.search"].firstMatch
         if sidebar.exists { sidebar.tap() } else { app.tabBars.buttons["Search"].tap() }
         let search = app.textFields["dulcet.search.field"].firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 10), app.debugDescription)

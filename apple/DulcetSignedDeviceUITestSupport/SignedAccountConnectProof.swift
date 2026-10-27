@@ -46,7 +46,7 @@ enum SignedAccountConnectProof {
             XCTAssertEqual(app.state, .notRunning, "Relaunch must end the prior app process")
         }
         func connection() {
-            let row = app.staticTexts["dulcet.sidebar.settings"].firstMatch
+            let row = app.descendants(matching: .any)["dulcet.sidebar.settings"].firstMatch
             if row.waitForExistence(timeout: 3) {
                 // Right after Connect the sidebar is still settling and the row is briefly not
                 // hittable (signed iPad, 2026-10-10); wait for it rather than sample once.
@@ -187,7 +187,7 @@ enum SignedAccountConnectProof {
             expectMarker("connected=PASS")
             XCTAssertTrue(connected.waitForExistence(timeout: 10))
             expectHittable(app.buttons["Sign Out"])
-            let libraryRow = app.staticTexts["dulcet.sidebar.library"].firstMatch
+            let libraryRow = app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch
             expectHittable(libraryRow, "Landscape keeps Library navigation reachable")
         }
         quit()

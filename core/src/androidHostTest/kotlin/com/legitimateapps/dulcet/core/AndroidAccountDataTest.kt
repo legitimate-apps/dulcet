@@ -71,6 +71,35 @@ class AndroidAccountDataTest {
         downloads.deleteRecursively()
     }
 
+    @Test fun accountRemovalCountsAndDeletesInactiveWishNamespaces() = runBlocking {
+        withStore { store ->
+            DiscoverStore(store.database,SERVER).enqueue(sampleAdd())
+            DiscoverStore(store.database,OTHER).enqueue(sampleAdd("other"))
+            assertTrue(SERVER in store.database.serverDataQueries.selectServerIdsWithRows().executeAsList())
+        }
+        assertTrue(rowsFor(SERVER)>0,"known positive inventory before deletion")
+        data(SERVER).removeAccountData()
+        withStore { store ->
+            assertEquals(0L,DiscoverStore(store.database,SERVER).pendingCount())
+            assertEquals(1L,DiscoverStore(store.database,OTHER).pendingCount())
+        }
+        assertEquals(0L,rowsFor(SERVER));assertEquals(listOf("reader.closed"),closes)
+    }
+
+    @Test fun sweepDeletesWishOnlyInactiveNamespaceAndKeepsSavedAccount() = runBlocking {
+        withStore { store ->
+            DiscoverStore(store.database,SERVER).enqueue(sampleAdd())
+            DiscoverStore(store.database,OTHER).enqueue(sampleAdd("other"))
+        }
+        assertTrue(rowsFor(SERVER)>0)
+        sweep {OTHER}
+        withStore { store ->
+            assertEquals(0L,DiscoverStore(store.database,SERVER).pendingCount())
+            assertEquals(1L,DiscoverStore(store.database,OTHER).pendingCount())
+        }
+        assertEquals(0L,rowsFor(SERVER))
+    }
+
     @Test fun pendingPlaysAreTheAccountsOwnByIdentity() = runBlocking {
         seed(SERVER, plays = 3, edits = 2)
         seed(OTHER, plays = 5, edits = 4)

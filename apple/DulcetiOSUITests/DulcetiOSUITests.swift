@@ -242,7 +242,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertFalse(
-            app.staticTexts["dulcet.sidebar.library"].firstMatch.exists,
+            app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.exists,
             "A compact window must not fall back to the sidebar list"
         )
         // The fixture opens on the Connection tab. A compact window must not raise the keyboard
@@ -549,7 +549,7 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(nowPlayingTitle.waitForNonExistence(timeout: 10), "Close must dismiss the player")
         // Checks the experiment: the turn must actually have produced the regular shell.
         let regularShell = !app.tabBars.firstMatch.exists
-            && app.staticTexts["dulcet.sidebar.library"].firstMatch.waitForExistence(timeout: 5)
+            && app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.waitForExistence(timeout: 5)
         XCTAssertTrue(regularShell,
                       "Landscape must be a regular-width window (sidebar, no tab bar); a device that"
                         + " stays compact never crosses the boundary. width=\(landscapeWidth)")
@@ -944,7 +944,7 @@ final class DulcetiOSUITests: XCTestCase {
     /// sideways and so cannot bring a named album into view by scrolling the page.
     @MainActor
     private func openSidebarLibrarySection(_ section: String, in app: XCUIApplication) -> Bool {
-        let row = app.staticTexts["dulcet.sidebar.section.\(section)"].firstMatch
+        let row = app.descendants(matching: .any)["dulcet.sidebar.section.\(section)"].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else {
             XCTFail("The sidebar must list the library's \(section) section: " + app.debugDescription)
             return false
@@ -982,9 +982,9 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The \(tabTitle) tab must become selected: " + app.debugDescription)
             return false
         }
-        // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
-        // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
-        let row = app.staticTexts[sidebarIdentifier].firstMatch
+        // The explicit sidebar button owns the destination identifier. Its child label carries
+        // only the visible title, so resolve the actionable control rather than a text child.
+        let row = app.buttons[sidebarIdentifier].firstMatch
         guard row.waitForExistence(timeout: 5), row.isHittable else {
             XCTFail("The \(tabTitle) row must be visible in the sidebar: " + app.debugDescription)
             return false
@@ -2503,16 +2503,14 @@ final class DulcetiOSUITests: XCTestCase {
     /// proofs count what the drag adds to them.
     @MainActor
     private func awaitSettledUpNext(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool) -> [String]? {
-        let deadline = Date().addingTimeInterval(45)
-        var previous: [String]?
-        repeat {
-            guard let read = upNextLabels(openingFrom: bar, in: app, compact: compact) else { return nil }
-            if read == previous { return read }
-            previous = read
-            RunLoop.current.run(until: Date().addingTimeInterval(1.5))
-        } while Date() < deadline
-        XCTFail("Up Next must settle before a drag is counted; it last read \(previous ?? [])")
-        return nil
+        var labels: [String]?
+        // A hosted open/read/dismiss cycle took the entire settling window and produced only
+        // one sample. Keep the player open while comparing actual queue snapshots, then close
+        // it once. The 45-second stability window starts with its first positively read list.
+        withoutIdleWaits(app) {
+            labels = self.readUpNextLabels(openingFrom: bar, in: app, compact: compact, requireStable: true)
+        }
+        return labels
     }
 
     /// Up Next's entries, read from the player opened from the bar, which is then closed again.
@@ -2529,7 +2527,9 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func readUpNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool) -> [String]? {
+    private func readUpNextLabels(
+        openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool, requireStable: Bool = false
+    ) -> [String]? {
         bar.tap()
         if compact {
             let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
@@ -2547,27 +2547,29 @@ final class DulcetiOSUITests: XCTestCase {
             format: "identifier == %@ OR identifier BEGINSWITH %@",
             "dulcet.upNext.empty", "dulcet.upNext.row."
         )).firstMatch
-        guard contents.waitForExistence(timeout: 2) else {
-            XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
-            return nil
-        }
         // Read through snapshots, which throw when a row has gone, instead of recording a failure
         // as a bare `.label` does: the queue can change between counting its rows and reading them
         // (OBSERVED: a restored queue replaced under the read, "No matches found for Element at
         // index 1"), and a read that raced is taken again.
-        var labels: [String] = []
-        var attempts = 0
-        while true {
-            attempts += 1
-            if let read = try? rows.allElementsBoundByIndex.map({ try $0.snapshot().label }) {
-                labels = read
-                break
-            }
-            guard attempts < 4 else {
-                XCTFail("Up Next's rows kept changing under the read: " + app.debugDescription)
+        guard var labels = currentUpNextLabels(rows, contents: contents, in: app) else { return nil }
+        if requireStable {
+            let deadline = Date().addingTimeInterval(45)
+            var stable = false
+            print("DULCET UP NEXT stability sample=\(labels)")
+            repeat {
+                RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+                guard let next = currentUpNextLabels(rows, contents: contents, in: app) else { return nil }
+                print("DULCET UP NEXT stability sample=\(next)")
+                if next == labels {
+                    stable = true
+                    break
+                }
+                labels = next
+            } while Date() < deadline
+            guard stable else {
+                XCTFail("Up Next must settle before a drag is counted; it last read \(labels)")
                 return nil
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(1))
         }
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
@@ -2587,6 +2589,27 @@ final class DulcetiOSUITests: XCTestCase {
         }
         print("DULCET UP NEXT read=\(labels)")
         return labels
+    }
+
+    @MainActor
+    private func currentUpNextLabels(
+        _ rows: XCUIElementQuery, contents: XCUIElement, in app: XCUIApplication
+    ) -> [String]? {
+        // Require a rendered empty state or row for every sample, including the second
+        // stability read. A missing list must never count as an agreeing empty queue.
+        guard contents.waitForExistence(timeout: 10) else {
+            XCTFail("Up Next must render its empty state or queued rows: " + app.debugDescription)
+            return nil
+        }
+        for attempt in 1...4 {
+            if let labels = try? rows.allElementsBoundByIndex.map({ try $0.snapshot().label }) {
+                return labels
+            }
+            guard attempt < 4 else { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        XCTFail("Up Next's rows kept changing under the read: " + app.debugDescription)
+        return nil
     }
 
     /// Drags `source` onto the now-playing bar until Up Next holds `count` more entries than
@@ -4457,7 +4480,8 @@ final class DulcetiOSUITests: XCTestCase {
                 let frame = item.frame
                 return frame.origin.x.isFinite && frame.origin.y.isFinite
                     && frame.width.isFinite && frame.height.isFinite
-                    && frame.width > 0 && frame.height > 0 && item.isHittable
+                    && frame.width > 0 && frame.height > 0
+                    && app.windows.firstMatch.frame.contains(frame) && item.isHittable
             }, object: item)
             if XCTWaiter.wait(for: [ready], timeout: 30) == .completed {
                 usable = true
@@ -4479,7 +4503,10 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The picker must offer a hittable \(option) after two presentations: " + app.debugDescription)
             return false
         }
-        item.tap()
+        // A native menu row can report a usable frame and hittability while XCTest cannot
+        // compute its accessibility activation point. Send the same native tap at the checked
+        // row center; the selected value and subsequent stream assertion still prove its effect.
+        item.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let deadline = Date().addingTimeInterval(5)
         while !pickerShows(option, picker), Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
@@ -5366,7 +5393,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertFalse(
-            app.staticTexts["dulcet.sidebar.nowPlaying"].exists,
+            app.descendants(matching: .any)["dulcet.sidebar.nowPlaying"].exists,
             "Now Playing is presented from the bar on iPad, never listed as a sidebar place"
         )
 
@@ -5881,7 +5908,7 @@ final class DulcetiOSUITests: XCTestCase {
         // staticTexts, not descendants(matching: .any): the row's identifier is carried by BOTH its
         // SF Symbol image and its label (OBSERVED in the captured hierarchy), so an .any query is
         // ambiguous and resolves against the decorative image, whose isHittable is false.
-        let sidebar = app.staticTexts["dulcet.sidebar.library"].firstMatch
+        let sidebar = app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch
         let detail = app.staticTexts["dulcet.account-connect.title"].firstMatch
 
         XCTAssertTrue(sidebar.waitForExistence(timeout: 10), "The Library row must be in the sidebar")

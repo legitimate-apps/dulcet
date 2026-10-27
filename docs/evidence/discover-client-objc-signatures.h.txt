@@ -1,0 +1,299 @@
+/* Generated declarations extracted verbatim from DulcetCore.framework/Headers/DulcetCore.h.
+ * Build: ./gradlew :core:linkDebugFrameworkMacosArm64
+ * Evidence only. Compile against the complete framework header.
+ * These declarations inherit NS_ASSUME_NONNULL_BEGIN from that header.
+ */
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverTarget")))
+@interface DulcetCoreAppleDiscoverTarget : DulcetCoreBase
+- (instancetype)initWithKind:(NSString *)kind mbid:(NSString *)mbid __attribute__((swift_name("init(kind:mbid:)"))) __attribute__((objc_designated_initializer));
+@property (readonly) NSString *kind __attribute__((swift_name("kind")));
+@property (readonly) NSString *mbid __attribute__((swift_name("mbid")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverLibraryRef")))
+@interface DulcetCoreAppleDiscoverLibraryRef : DulcetCoreBase
+- (instancetype)initWithProviderInstanceId:(NSString *)providerInstanceId type:(NSString *)type id:(NSString *)id __attribute__((swift_name("init(providerInstanceId:type:id:)"))) __attribute__((objc_designated_initializer));
+@property (readonly) NSString *id __attribute__((swift_name("id")));
+@property (readonly) NSString *providerInstanceId __attribute__((swift_name("providerInstanceId")));
+@property (readonly) NSString *type __attribute__((swift_name("type")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverLink")))
+@interface DulcetCoreAppleDiscoverLink : DulcetCoreBase
+- (instancetype)initWithRelation:(NSString *)relation url:(NSString *)url __attribute__((swift_name("init(relation:url:)"))) __attribute__((objc_designated_initializer));
+@property (readonly) NSString *relation __attribute__((swift_name("relation")));
+@property (readonly) NSString *url __attribute__((swift_name("url")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverAge")))
+@interface DulcetCoreAppleDiscoverAge : DulcetCoreBase
+@property (readonly) DulcetCoreLong * _Nullable fetchedAtMillis __attribute__((swift_name("fetchedAtMillis")));
+@property (readonly) BOOL fromDeviceCache __attribute__((swift_name("fromDeviceCache")));
+@property (readonly) int64_t receivedAtMillis __attribute__((swift_name("receivedAtMillis")));
+@property (readonly) DulcetCoreLong * _Nullable sourceAgeSeconds __attribute__((swift_name("sourceAgeSeconds")));
+@property (readonly) BOOL stale __attribute__((swift_name("stale")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverAvailability")))
+@interface DulcetCoreAppleDiscoverAvailability : DulcetCoreBase
+- (DulcetCoreAppleDiscoverLibraryRef * _Nullable)libraryItemAtIndex:(int32_t)index __attribute__((swift_name("libraryItemAt(index:)")));
+@property (readonly) NSString *completeness __attribute__((swift_name("completeness")));
+@property (readonly) NSString * _Nullable editionReleaseId __attribute__((swift_name("editionReleaseId")));
+@property (readonly) int32_t libraryItemCount __attribute__((swift_name("libraryItemCount")));
+@property (readonly) NSString * _Nullable matchedBy __attribute__((swift_name("matchedBy")));
+@property (readonly) DulcetCoreInt * _Nullable matchedTrackCount __attribute__((swift_name("matchedTrackCount")));
+@property (readonly) NSString *status __attribute__((swift_name("status")));
+@property (readonly) DulcetCoreInt * _Nullable totalTrackCount __attribute__((swift_name("totalTrackCount")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverItem")))
+@interface DulcetCoreAppleDiscoverItem : DulcetCoreBase
+- (DulcetCoreAppleDiscoverLink * _Nullable)linkAtIndex:(int32_t)index __attribute__((swift_name("linkAt(index:)")));
+@property (readonly) NSString * _Nullable artist __attribute__((swift_name("artist")));
+@property (readonly) NSString * _Nullable artworkId __attribute__((swift_name("artworkId")));
+@property (readonly) DulcetCoreAppleDiscoverAvailability *availability __attribute__((swift_name("availability")));
+@property (readonly) DulcetCoreInt * _Nullable disc __attribute__((swift_name("disc")));
+@property (readonly) NSString *id __attribute__((swift_name("id")));
+@property (readonly) NSString *kind __attribute__((swift_name("kind")));
+@property (readonly) int32_t linkCount __attribute__((swift_name("linkCount")));
+@property (readonly) DulcetCoreLong * _Nullable listenCount __attribute__((swift_name("listenCount")));
+@property (readonly) DulcetCoreInt * _Nullable position __attribute__((swift_name("position")));
+@property (readonly) NSString * _Nullable primaryType __attribute__((swift_name("primaryType")));
+@property (readonly) NSString * _Nullable releaseDate __attribute__((swift_name("releaseDate")));
+@property (readonly) DulcetCoreAppleDiscoverTarget * _Nullable target __attribute__((swift_name("target")));
+@property (readonly) NSString *title __attribute__((swift_name("title")));
+@property (readonly) BOOL wishable __attribute__((swift_name("wishable")));
+@property (readonly) DulcetCoreInt * _Nullable year __attribute__((swift_name("year")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverPage")))
+@interface DulcetCoreAppleDiscoverPage : DulcetCoreBase
+- (DulcetCoreAppleDiscoverItem * _Nullable)itemAtIndex:(int32_t)index __attribute__((swift_name("itemAt(index:)")));
+@property (readonly) DulcetCoreAppleDiscoverAge *age __attribute__((swift_name("age")));
+@property (readonly) int32_t itemCount __attribute__((swift_name("itemCount")));
+@property (readonly) NSString * _Nullable nextCursor __attribute__((swift_name("nextCursor")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverEdition")))
+@interface DulcetCoreAppleDiscoverEdition : DulcetCoreBase
+- (DulcetCoreAppleDiscoverLink * _Nullable)linkAtIndex:(int32_t)index __attribute__((swift_name("linkAt(index:)")));
+@property (readonly) int32_t linkCount __attribute__((swift_name("linkCount")));
+@property (readonly) NSString * _Nullable releaseDate __attribute__((swift_name("releaseDate")));
+@property (readonly) NSString *releaseId __attribute__((swift_name("releaseId")));
+@property (readonly) DulcetCoreInt * _Nullable trackCount __attribute__((swift_name("trackCount")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverArtist")))
+@interface DulcetCoreAppleDiscoverArtist : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverPage *albums __attribute__((swift_name("albums")));
+@property (readonly) DulcetCoreAppleDiscoverItem *item __attribute__((swift_name("item")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverAlbum")))
+@interface DulcetCoreAppleDiscoverAlbum : DulcetCoreBase
+- (DulcetCoreAppleDiscoverEdition * _Nullable)editionAtIndex:(int32_t)index __attribute__((swift_name("editionAt(index:)")));
+@property (readonly) int32_t editionCount __attribute__((swift_name("editionCount")));
+@property (readonly) DulcetCoreAppleDiscoverItem *item __attribute__((swift_name("item")));
+@property (readonly) NSString * _Nullable selectedReleaseId __attribute__((swift_name("selectedReleaseId")));
+@property (readonly) DulcetCoreAppleDiscoverPage *tracks __attribute__((swift_name("tracks")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverFailure")))
+@interface DulcetCoreAppleDiscoverFailure : DulcetCoreBase
+@property (readonly) NSString *code __attribute__((swift_name("code")));
+@property (readonly) DulcetCoreLong * _Nullable retryAtMillis __attribute__((swift_name("retryAtMillis")));
+@property (readonly) BOOL retryable __attribute__((swift_name("retryable")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleWishSnapshot")))
+@interface DulcetCoreAppleWishSnapshot : DulcetCoreBase
+- (instancetype)initWithTitle:(NSString *)title artist:(NSString * _Nullable)artist year:(DulcetCoreInt * _Nullable)year artworkId:(NSString * _Nullable)artworkId __attribute__((swift_name("init(title:artist:year:artworkId:)"))) __attribute__((objc_designated_initializer));
+@property (readonly) NSString * _Nullable artist __attribute__((swift_name("artist")));
+@property (readonly) NSString * _Nullable artworkId __attribute__((swift_name("artworkId")));
+@property (readonly) NSString *title __attribute__((swift_name("title")));
+@property (readonly) DulcetCoreInt * _Nullable year __attribute__((swift_name("year")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleWishSource")))
+@interface DulcetCoreAppleWishSource : DulcetCoreBase
+- (instancetype)initWithType:(NSString *)type id:(NSString * _Nullable)id __attribute__((swift_name("init(type:id:)"))) __attribute__((objc_designated_initializer));
+@property (readonly) NSString * _Nullable id __attribute__((swift_name("id")));
+@property (readonly) NSString *type __attribute__((swift_name("type")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverWish")))
+@interface DulcetCoreAppleDiscoverWish : DulcetCoreBase
+@property (readonly) int64_t addedAtMillis __attribute__((swift_name("addedAtMillis")));
+@property (readonly) DulcetCoreAppleDiscoverAvailability *availability __attribute__((swift_name("availability")));
+@property (readonly) DulcetCoreLong * _Nullable fulfilledAtMillis __attribute__((swift_name("fulfilledAtMillis")));
+@property (readonly) NSString *id __attribute__((swift_name("id")));
+@property (readonly) NSString *kind __attribute__((swift_name("kind")));
+@property (readonly) DulcetCoreAppleDiscoverLibraryRef * _Nullable libraryItem __attribute__((swift_name("libraryItem")));
+@property (readonly) NSString * _Nullable note __attribute__((swift_name("note")));
+@property (readonly) DulcetCoreLong * _Nullable noteAtMillis __attribute__((swift_name("noteAtMillis")));
+@property (readonly) NSString *revision __attribute__((swift_name("revision")));
+@property (readonly) DulcetCoreAppleWishSnapshot *snapshot __attribute__((swift_name("snapshot")));
+@property (readonly) DulcetCoreAppleWishSource *source __attribute__((swift_name("source")));
+@property (readonly) NSString *state __attribute__((swift_name("state")));
+@property (readonly) DulcetCoreAppleDiscoverTarget * _Nullable target __attribute__((swift_name("target")));
+@property (readonly) int64_t updatedAtMillis __attribute__((swift_name("updatedAtMillis")));
+@property (readonly) NSString *userId __attribute__((swift_name("userId")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleWishFilter")))
+@interface DulcetCoreAppleWishFilter : DulcetCoreBase
+- (instancetype)initWithKind:(NSString * _Nullable)kind state:(NSString * _Nullable)state includeFulfilledHistory:(BOOL)includeFulfilledHistory __attribute__((swift_name("init(kind:state:includeFulfilledHistory:)"))) __attribute__((objc_designated_initializer));
+@property (readonly) BOOL includeFulfilledHistory __attribute__((swift_name("includeFulfilledHistory")));
+@property (readonly) NSString * _Nullable kind __attribute__((swift_name("kind")));
+@property (readonly) NSString * _Nullable state __attribute__((swift_name("state")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverFeatureAccess")))
+@interface DulcetCoreAppleDiscoverFeatureAccess : DulcetCoreBase
+@property (readonly) BOOL canAddWish __attribute__((swift_name("canAddWish")));
+@property (readonly) BOOL canReadWishlist __attribute__((swift_name("canReadWishlist")));
+@property (readonly) BOOL canRejectMatch __attribute__((swift_name("canRejectMatch")));
+@property (readonly) BOOL canRemoveWish __attribute__((swift_name("canRemoveWish")));
+@property (readonly) BOOL canSearch __attribute__((swift_name("canSearch")));
+@property (readonly) NSString *detection __attribute__((swift_name("detection")));
+@property (readonly) BOOL discoverAvailable __attribute__((swift_name("discoverAvailable")));
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) BOOL wishlistAvailable __attribute__((swift_name("wishlistAvailable")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverGroup")))
+@interface DulcetCoreAppleDiscoverGroup : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) NSString *kind __attribute__((swift_name("kind")));
+@property (readonly) BOOL loading __attribute__((swift_name("loading")));
+@property (readonly) DulcetCoreAppleDiscoverPage * _Nullable page __attribute__((swift_name("page")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("ApplePendingWishAdd")))
+@interface DulcetCoreApplePendingWishAdd : DulcetCoreBase
+@property (readonly) int64_t actionTimeMillis __attribute__((swift_name("actionTimeMillis")));
+@property (readonly) NSString *operationId __attribute__((swift_name("operationId")));
+@property (readonly) DulcetCoreAppleWishSnapshot *snapshot __attribute__((swift_name("snapshot")));
+@property (readonly) DulcetCoreAppleWishSource *source __attribute__((swift_name("source")));
+@property (readonly) DulcetCoreAppleDiscoverTarget *target __attribute__((swift_name("target")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleWishRow")))
+@interface DulcetCoreAppleWishRow : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) NSString *key __attribute__((swift_name("key")));
+@property (readonly) BOOL pending __attribute__((swift_name("pending")));
+@property (readonly) DulcetCoreApplePendingWishAdd * _Nullable pendingAdd __attribute__((swift_name("pendingAdd")));
+@property (readonly) DulcetCoreAppleDiscoverWish * _Nullable wish __attribute__((swift_name("wish")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverPublication")))
+@interface DulcetCoreAppleDiscoverPublication : DulcetCoreBase
+- (DulcetCoreAppleDiscoverGroup * _Nullable)groupAtIndex:(int32_t)index __attribute__((swift_name("groupAt(index:)")));
+- (DulcetCoreAppleWishRow * _Nullable)wishAtIndex:(int32_t)index __attribute__((swift_name("wishAt(index:)")));
+@property (readonly) DulcetCoreAppleDiscoverFeatureAccess *access __attribute__((swift_name("access")));
+@property (readonly) NSString *connection __attribute__((swift_name("connection")));
+@property (readonly) int64_t generation __attribute__((swift_name("generation")));
+@property (readonly) int32_t groupCount __attribute__((swift_name("groupCount")));
+@property (readonly) DulcetCoreLong * _Nullable pendingChangeCount __attribute__((swift_name("pendingChangeCount")));
+@property (readonly) NSString *providerInstanceId __attribute__((swift_name("providerInstanceId")));
+@property (readonly) NSString *query __attribute__((swift_name("query")));
+@property (readonly) int32_t wishCount __attribute__((swift_name("wishCount")));
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable wishlistError __attribute__((swift_name("wishlistError")));
+@property (readonly) BOOL wishlistLoading __attribute__((swift_name("wishlistLoading")));
+@property (readonly) BOOL wishlistSettled __attribute__((swift_name("wishlistSettled")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleWishEnqueued")))
+@interface DulcetCoreAppleWishEnqueued : DulcetCoreBase
+@property (readonly) NSString *operationId __attribute__((swift_name("operationId")));
+@property (readonly) NSString *rowKey __attribute__((swift_name("rowKey")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverArtistResult")))
+@interface DulcetCoreAppleDiscoverArtistResult : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) DulcetCoreAppleDiscoverArtist * _Nullable value __attribute__((swift_name("value")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverAlbumResult")))
+@interface DulcetCoreAppleDiscoverAlbumResult : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) DulcetCoreAppleDiscoverAlbum * _Nullable value __attribute__((swift_name("value")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverPageResult")))
+@interface DulcetCoreAppleDiscoverPageResult : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) DulcetCoreAppleDiscoverPage * _Nullable value __attribute__((swift_name("value")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleWishEnqueueResult")))
+@interface DulcetCoreAppleWishEnqueueResult : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) DulcetCoreAppleWishEnqueued * _Nullable value __attribute__((swift_name("value")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverArtworkResult")))
+@interface DulcetCoreAppleDiscoverArtworkResult : DulcetCoreBase
+@property (readonly) NSData * _Nullable bytes __attribute__((swift_name("bytes")));
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverClient")))
+@interface DulcetCoreAppleDiscoverClient : DulcetCoreBase
+- (instancetype)initWithReader:(DulcetCoreAppleLibraryReaderClient *)reader __attribute__((swift_name("init(reader:)"))) __attribute__((objc_designated_initializer));
+- (DulcetCoreAppleLibraryReaderOperation *)addItem:(DulcetCoreAppleDiscoverItem *)item source:(DulcetCoreAppleWishSource *)source completion:(void (^)(DulcetCoreAppleWishEnqueueResult *))completion __attribute__((swift_name("add(item:source:completion:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)albumMbid:(NSString *)mbid releaseId:(NSString * _Nullable)releaseId completion:(void (^)(DulcetCoreAppleDiscoverAlbumResult *))completion __attribute__((swift_name("album(mbid:releaseId:completion:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)albumTracksMbid:(NSString *)mbid releaseId:(NSString *)releaseId cursor:(NSString * _Nullable)cursor completion:(void (^)(DulcetCoreAppleDiscoverPageResult *))completion __attribute__((swift_name("albumTracks(mbid:releaseId:cursor:completion:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)artistMbid:(NSString *)mbid completion:(void (^)(DulcetCoreAppleDiscoverArtistResult *))completion __attribute__((swift_name("artist(mbid:completion:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)artistAlbumsMbid:(NSString *)mbid cursor:(NSString * _Nullable)cursor completion:(void (^)(DulcetCoreAppleDiscoverPageResult *))completion __attribute__((swift_name("artistAlbums(mbid:cursor:completion:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)artworkArtworkId:(NSString *)artworkId completion:(void (^)(DulcetCoreAppleDiscoverArtworkResult *))completion __attribute__((swift_name("artwork(artworkId:completion:)")));
+- (void)close __attribute__((swift_name("close()")));
+- (void)loadMoreKind:(NSString *)kind __attribute__((swift_name("loadMore(kind:)")));
+- (DulcetCoreAppleDiscoverSubscription *)observeListener:(id<DulcetCoreAppleDiscoverListener>)listener __attribute__((swift_name("observe(listener:)")));
+- (void)refreshWishlistFilter:(DulcetCoreAppleWishFilter *)filter __attribute__((swift_name("refreshWishlist(filter:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)rejectItem:(DulcetCoreAppleDiscoverItem *)item libraryItem:(DulcetCoreAppleDiscoverLibraryRef *)libraryItem wishId:(NSString * _Nullable)wishId completion:(void (^)(DulcetCoreAppleWishEnqueueResult *))completion __attribute__((swift_name("reject(item:libraryItem:wishId:completion:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)removeRowKey:(NSString *)rowKey completion:(void (^)(DulcetCoreAppleWishEnqueueResult *))completion __attribute__((swift_name("remove(rowKey:completion:)")));
+- (void)setQueryQuery:(NSString *)query __attribute__((swift_name("setQuery(query:)")));
+@end
+
+__attribute__((swift_name("AppleDiscoverListener")))
+@protocol DulcetCoreAppleDiscoverListener
+@required
+- (void)onPublicationPublication:(DulcetCoreAppleDiscoverPublication *)publication __attribute__((swift_name("onPublication(publication:)")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverSubscription")))
+@interface DulcetCoreAppleDiscoverSubscription : DulcetCoreBase
+- (void)close __attribute__((swift_name("close()")));
+@end

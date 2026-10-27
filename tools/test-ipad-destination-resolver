@@ -27,6 +27,20 @@ TIMEOUT = object()
 IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 OLD_IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
 
+# Keep the real CLI/subprocess boundary and file parsing, but make fixture-only
+# selection independent of host scheduling. The deadline controls below advance
+# their clocks explicitly; none of these controls changes the production budget.
+FIXTURE_CLOCK = """
+import runpy, sys
+from unittest.mock import patch
+elapsed = [0.0]
+def advance(seconds):
+    elapsed[0] += seconds
+sys.argv = sys.argv[1:]
+with patch("time.monotonic", side_effect=lambda: elapsed[0]), patch("time.sleep", side_effect=advance):
+    runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+
 
 def destinations(*ids: str) -> str:
     return 'Available destinations for the "DulcetiOS" scheme:\n' + "\n".join(
@@ -44,7 +58,7 @@ def run(payload: dict, transcript: str | None = None, field: str = "name") -> su
             *(d["udid"] for devices in payload["devices"].values() for d in devices)
         ))
         return subprocess.run(
-            [sys.executable, str(RESOLVER), "--devices-json", str(path),
+            [sys.executable, "-c", FIXTURE_CLOCK, str(RESOLVER), "--devices-json", str(path),
              "--destinations-file", str(accepted), "--discovery-timeout", "0.1", "--print", field],
             # Fixtures must be sufficient: neither Apple executable can be found in these controls.
             env={**os.environ, "PATH": ""},
@@ -59,12 +73,18 @@ def device(name: str, udid: str, available: bool = True) -> dict:
 
 
 def discovery_fixture(transcripts: list[str], query_duration: float = 0,
+                      inventory_duration: float = 0,
                       budgets: tuple[float, float] | None = (120, 60)) -> dict:
     """Drive main with a query sequence and a virtual monotonic clock, without Apple tools."""
     resolver = runpy.run_path(str(RESOLVER))
     elapsed = 0.0
     timeouts, sleeps = [], []
     stdout, stderr = io.StringIO(), io.StringIO()
+
+    def inventory(*args, **kwargs):
+        nonlocal elapsed
+        elapsed += inventory_duration
+        return {"devices": {IOS: [device("iPad Pro 13-inch (M5)", "EEE")]}}
 
     def query(path, project, scheme, timeout):
         nonlocal elapsed
@@ -86,7 +106,7 @@ def discovery_fixture(transcripts: list[str], query_duration: float = 0,
         elapsed += seconds
 
     with (patch.dict(resolver["main"].__globals__, {
-              "load_devices": lambda _: {"devices": {IOS: [device("iPad Pro 13-inch (M5)", "EEE")]}},
+              "load_devices": inventory,
               "load_destinations": query,
           }), patch("time.monotonic", side_effect=lambda: elapsed),
           patch("time.sleep", side_effect=sleep),
@@ -111,6 +131,48 @@ def main() -> None:
             or slow_answer["attempts"] != 1 or slow_answer["elapsed"] != 75):
         raise SystemExit(f"SLOW QUERY CONTROL FAILED every_query_needs_75s: {slow_answer}")
     print("SLOW QUERY CONTROL PASS every_query_needs_75s exit_code=0 attempts=1 virtual_elapsed=75s stdout='EEE'")
+    # Inventory is part of discovery, not untimed work before its advertised deadline.
+    # A 45-second inventory leaves only 75 seconds for Xcode in the same 120-second budget.
+    budget = discovery_fixture([TIMEOUT], inventory_duration=45)
+    if (budget["status"] != 1 or budget["elapsed"] != 120 or budget["timeouts"] != [60, 15]
+            or budget["stdout"]):
+        raise SystemExit(f"INVENTORY DEADLINE CONTROL FAILED: inventory escaped the total discovery budget: {budget}")
+    print("INVENTORY DEADLINE CONTROL PASS inventory=45s xcode=75s total=120s stdout_empty=true")
+
+    combined = discovery_fixture([destinations("EEE")], query_duration=75,
+                                 inventory_duration=45, budgets=None)
+    assert combined["status"] == 0 and combined["stdout"] == "EEE\n", combined
+    assert combined["elapsed"] == 120 and combined["timeouts"] == [180], combined
+    print("INVENTORY SLOW QUERY CONTROL PASS inventory=45s xcode=75s total=120s deadline=240s attempts=1")
+
+    resolver = runpy.run_path(str(RESOLVER))
+    inventory_command = ["xcrun", "simctl", "list", "devices", "available", "--json"]
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(inventory_command, 7)) as process:
+        try:
+            resolver["load_devices"](None, timeout=7)
+        except ValueError as error:
+            assert "inventory timed out after 7s" in str(error) and "UNKNOWN" in str(error), error
+        else:
+            raise SystemExit("INVENTORY DEADLINE CONTROL FAILED: stalled inventory accepted")
+        process.assert_called_once_with(inventory_command, capture_output=True, text=True,
+                                        check=False, timeout=7)
+    assert "phase=inventory-start" in budget["stderr"] and "phase=inventory-complete" in budget["stderr"]
+    assert "phase=xcode-query-start" in budget["stderr"] and "phase=xcode-query-timeout" in budget["stderr"]
+    print("INVENTORY DEADLINE CONTROL PASS stalled_inventory_bounded=true phase_receipts=true")
+
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with (patch("subprocess.run", side_effect=subprocess.TimeoutExpired(inventory_command, 7)),
+          patch.object(sys, "argv", [str(RESOLVER), "--discovery-timeout", "7", "--print", "udid"]),
+          redirect_stdout(stdout), redirect_stderr(stderr)):
+        try:
+            resolver["main"]()
+        except SystemExit as error:
+            assert "phase=inventory" in str(error) and "inventory timed out after 7s" in str(error), error
+        else:
+            raise SystemExit("INVENTORY DEADLINE CONTROL FAILED: inventory timeout returned a destination")
+    assert not stdout.getvalue() and "phase=inventory-start timeout=7s" in stderr.getvalue()
+    assert "xcode-query-start" not in stderr.getvalue(), stderr.getvalue()
+    print("INVENTORY DEADLINE CONTROL PASS inventory_timeout_fails_closed=true no_xcode_attempt=true stdout_empty=true")
 
     # 1. An image with no iPad at all must fail, and must say what it looked for.
     iphones_only = run({"devices": {IOS: [device("iPhone 17 Pro", "AAA")]}})
@@ -182,6 +244,22 @@ def main() -> None:
             raise SystemExit(f"MUTATION CONTROL FAILED {label}: {result.stdout}{result.stderr}")
         print(f"MUTATION CONTROL PASS {label} stdout={result.stdout.strip()!r} stderr={result.stderr.strip()!r}")
 
+    # Fixture selection is a pure CLI control, not a host scheduling benchmark. A real
+    # inventory I/O pause must not exhaust the virtual deadline used by these controls.
+    with TemporaryDirectory() as tmp:
+        paused_resolver = Path(tmp) / "resolve-ipad-destination"
+        source = RESOLVER.read_text()
+        header = "def load_devices(path: str | None, timeout: float = XCODE_QUERY_TIMEOUT) -> dict:\n"
+        if source.count(header) != 1:
+            raise SystemExit("FIXTURE CLOCK CONTROL FAILED: cannot locate inventory entry point")
+        paused_resolver.write_text(source.replace(
+            header, header + "    __import__('threading').Event().wait(0.2)\n", 1))
+        with patch.dict(run.__globals__, {"RESOLVER": paused_resolver}):
+            paused = run(inventory, destinations("FFF", "EEE"), "udid")
+    if paused.returncode != 0 or paused.stdout.strip() != "EEE":
+        raise SystemExit(f"FIXTURE CLOCK CONTROL FAILED: scheduling consumed fixture budget: {paused.stderr}")
+    print("FIXTURE CLOCK CONTROL PASS slow_inventory_uses_virtual_budget=true cli_boundary=true")
+
     for label, transcript in (
         ("empty_intersection", destinations("UNRELATED")),
         ("placeholders_only", destinations("dvtdevice-DVTiOSDeviceSimulatorPlaceholder")),
@@ -243,7 +321,7 @@ def main() -> None:
         stdout, stderr = io.StringIO(), io.StringIO()
         # Invoke main itself so no failure can accidentally fall back to simctl's first iPad.
         with (patch.dict(resolver["main"].__globals__, {
-                  "load_devices": lambda _: inventory,
+                  "load_devices": lambda *args, **kwargs: inventory,
                   "load_destinations": lambda *args: (_ for _ in ()).throw(error),
               }), patch.object(sys, "argv", [str(RESOLVER)]),
               redirect_stdout(stdout), redirect_stderr(stderr)):
@@ -386,7 +464,7 @@ def main() -> None:
 
     stdout, stderr = io.StringIO(), io.StringIO()
     with (patch.dict(resolver["main"].__globals__, {
-              "load_devices": lambda _: {"devices": {IOS: [device("iPad Pro 13-inch (M5)", "EEE")]}},
+              "load_devices": lambda *args, **kwargs: {"devices": {IOS: [device("iPad Pro 13-inch (M5)", "EEE")]}},
               "simulator_responsiveness": lambda: "simctl-probe=responsive",
           }), patch("subprocess.run", side_effect=timeout_then_listing),
           patch("time.monotonic", side_effect=lambda: elapsed),
@@ -418,7 +496,7 @@ def main() -> None:
         raise subprocess.TimeoutExpired(args, kwargs["timeout"], b"", b"")
     stdout, stderr = io.StringIO(), io.StringIO()
     with (patch.dict(resolver["main"].__globals__, {
-              "load_devices": lambda _: inventory,
+              "load_devices": lambda *args, **kwargs: inventory,
           }), patch("subprocess.run", side_effect=hung_process),
           patch("time.monotonic", side_effect=lambda: elapsed),
           patch.object(sys, "argv", [str(RESOLVER), "--print", "udid"]),

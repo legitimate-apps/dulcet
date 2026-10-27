@@ -52,7 +52,7 @@ PROJECT = APPLE / "Dulcet.xcodeproj" / "project.pbxproj"
 VERSIONS = REPO / "gradle" / "libs.versions.toml"
 
 # Modules that ship inside the platform SDK, so a standalone -typecheck resolves them.
-SYSTEM_MODULES = {"XCTest", "Foundation", "UIKit", "AppKit", "SwiftUI", "CoreGraphics", "Security", "CryptoKit", "ObjectiveC"}
+SYSTEM_MODULES = {"XCTest", "Foundation", "UIKit", "AppKit", "SwiftUI", "CoreGraphics", "Security", "CryptoKit", "ObjectiveC", "AppIntentsTesting"}
 
 SWIFT_VERSION = re.compile(r"SWIFT_VERSION = ([0-9]+)(?:\.[0-9]+)*;")
 IMPORT = re.compile(r"^\s*(?:@testable\s+)?import\s+([A-Za-z_][A-Za-z0-9_]*)", re.M)
@@ -291,6 +291,8 @@ def discover() -> tuple[list[tuple[str, Platform, list[Path]]], list[str]]:
             sources += sorted((APPLE / "DulcetSignedDeviceUITestSupport").glob("*.swift"))
         if directory.name in {"DulcetiOSUITests", "DulcetSignedIPadUITests", "DulcetSignedIPhoneUITests"}:
             sources += sorted((APPLE / "DulcetWindowUITestSupport").glob("*.swift"))
+        if directory.name == "DulcetiOSUITests":
+            sources += sorted((APPLE / "DulcetDiscoverUITestSupport").glob("*.swift"))
         if directory.name in {"DulcetiOSUITests", "DulcetTVUITests"}:
             sources += sorted((APPLE / "DulcetMyLibraryUITestSupport").glob("*.swift"))
         if not sources:

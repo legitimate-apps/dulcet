@@ -20,6 +20,7 @@
     "cache_track",
     "credit",
     "deletion_reconciliation",
+    "discover_read",
     "download",
     "download_policy_state",
     "genre",
@@ -43,7 +44,11 @@
     "sync_checkpoint",
     "sync_generation",
     "sync_seen",
-    "track"
+    "track",
+    "wish_clock",
+    "wish_intent",
+    "wish_receipt",
+    "wishlist_snapshot"
   ],
   "reserved_unpopulated_table_names": [
     "artwork_cache",
