@@ -44,7 +44,9 @@ jobs:
     timeout-minutes: 150
     strategy:
       fail-fast: false
-      max-parallel: 2
+      # A phone-only fixture reshoot has three affected appearances and no other platform
+      # work. Admit that finite batch together; keep full inventory runs bounded at two.
+      max-parallel: ${{ inputs.device == 'iphone' && inputs.supplement_only && 3 || 2 }}
       matrix:
         include:
           - {device: iphone, variant: iphone-light-default}
