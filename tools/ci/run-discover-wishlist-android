@@ -18,6 +18,7 @@ REPO=Path(__file__).resolve().parents[2]
 PACKAGE='com.legitimateapps.dulcet.dev'
 CLASS='com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest'
 SHELF_METHODS=('shelvesRoutesAndSourceWishes','shelvesMixedAndCachedOffline','shelvesNavidromeControl','shelvesAccessibilityAndRestoration')
+TV_METHODS=('discoverShelfPlaylistSearchAndWishlistArrival','navidromeControl')
 METHODS=('everywherePagesAndHeldRoute','offlineWishRelaunchRemoveRaceAndArrival','busyStaleAndNavidromeControl','accountSwitchIdentityFence','largestFontAndTalkBackLabels')
 
 def default_output(env=None,stamp=None):
@@ -53,6 +54,7 @@ def junit(path,method,phase,result,detail,seconds):
     ET.ElementTree(suite).write(path,encoding='utf-8',xml_declaration=True)
 
 def phases(method,red):
+    if method in TV_METHODS:return [('normal','dark','1.0')]
     if method=='shelvesAccessibilityAndRestoration':return [('light','light','1.0')] if red else [('light','light','1.0'),('dark','dark','1.0'),('largest','dark','2.0')]
     if method in SHELF_METHODS:return [('normal','light','1.0')]
     if method==METHODS[1]:return [('before-death','light','1.0')] if red else [('before-death','light','1.0'),('after-death','light','1.0')]
@@ -72,6 +74,7 @@ def capture_window_cause(directory,label):
     return None
 
 def self_test():
+    global CLASS
     def sample(code=0,name=METHODS[0]):return f'INSTRUMENTATION_STATUS: class={CLASS}\nINSTRUMENTATION_STATUS: test={name}\nINSTRUMENTATION_STATUS_CODE: {code}\nINSTRUMENTATION_CODE: -1\n'
     assert parse_status(sample(),METHODS[0])[0]=='passed'
     assert parse_status(sample(-2),METHODS[0])[0]=='failure'
@@ -84,6 +87,10 @@ def self_test():
     assert sum(len(phases(method,True)) for method in METHODS)==5
     assert sum(len(phases(method,False)) for method in SHELF_METHODS)==6
     assert sum(len(phases(method,True)) for method in SHELF_METHODS)==4
+    assert selected_methods(argparse.Namespace(tv=True,shelves=False))==TV_METHODS
+    assert sum(len(phases(method,False)) for method in TV_METHODS)==2
+    assert parse_status(sample(name=TV_METHODS[0]),TV_METHODS[0])[0]=='passed'
+    assert parse_status('OK (0 tests)',TV_METHODS[0])[0]=='error'
     assert default_output({},1)!=default_output({},2)
     assert default_output({'DULCET_DISCOVER_ANDROID_OUTPUT':'/tmp/owned-discover-output'},1)==Path('/tmp/owned-discover-output')
     import tempfile
@@ -109,7 +116,23 @@ def self_test():
             junit(folder/'TEST-DiscoverWishlist.xml',SHELF_METHODS[0],'normal','passed','',0)
             with contextlib.redirect_stdout(io.StringIO()):accepted=runner.finish()
             assert accepted==(index==5)
-    print('Discover Android runner self-test: four foreground capture controls; seven parser controls, exact original 10/shelves 6 phase inventories, incomplete green-prefix rejection and unique/environment output controls passed')
+    saved_class=CLASS
+    CLASS='com.legitimateapps.dulcet.tv.AndroidTvDiscoverWishlistProofTest'
+    assert parse_status(sample(name=TV_METHODS[0]),TV_METHODS[0])[0]=='passed'
+    wrong_class=sample(name=TV_METHODS[0]).replace(CLASS,saved_class)
+    assert parse_status(wrong_class,TV_METHODS[0])[0]=='error'
+    with tempfile.TemporaryDirectory() as temporary:
+        runner=object.__new__(Runner)
+        runner.out=Path(temporary);runner.reports=[]
+        runner.args=argparse.Namespace(method=None,shelves=False,red_baseline=False,tv=True)
+        with contextlib.redirect_stdout(io.StringIO()):assert not runner.finish()
+        for index,method in enumerate(TV_METHODS):
+            folder=runner.out/str(index);folder.mkdir()
+            junit(folder/'TEST-DiscoverWishlist.xml',method,'normal','passed','',0)
+            with contextlib.redirect_stdout(io.StringIO()):accepted=runner.finish()
+            assert accepted==(index==len(TV_METHODS)-1)
+    CLASS=saved_class
+    print('Discover Android runner self-test: foreground controls; parser/zero/wrong-class controls; exact phone 10, shelves 6 and TV 2 inventories; incomplete inventory rejection; output controls passed')
 
 class Runner:
     def __init__(self,args):
@@ -145,12 +168,14 @@ class Runner:
     def prepare(self):
         if self.adb_run('get-state',capture_output=True,text=True).stdout.strip()!='device':raise RuntimeError('leased emulator is not online')
         if self.shell('getprop','ro.kernel.qemu')!='1':raise RuntimeError('physical devices are outside this proof')
+        if self.args.tv and 'android.software.leanback' not in self.shell('pm','list','features'):raise RuntimeError('Android TV proof requires a TV system image')
         if not self.control_json('/control/state').get('healthy'):raise RuntimeError('fixture proxy is not healthy')
         if not self.args.no_build:
             executable=os.environ.get('DULCET_DISCOVER_GRADLE_RUNNER',str(REPO/'tools/run-gradle-exclusive'))
-            self.run([executable,':android:app:assembleDevDebug',':android:app:assembleDevDebugAndroidTest'])
-        apk=REPO/'android/app/build/outputs/apk/dev/debug/app-dev-debug.apk'
-        tests=REPO/'android/app/build/outputs/apk/androidTest/dev/debug/app-dev-debug-androidTest.apk'
+            tasks=[':android:tv:assembleDebug',':android:tv:assembleDebugAndroidTest'] if self.args.tv else [':android:app:assembleDevDebug',':android:app:assembleDevDebugAndroidTest']
+            self.run([executable]+tasks)
+        apk=REPO/('android/tv/build/outputs/apk/debug/tv-debug.apk' if self.args.tv else 'android/app/build/outputs/apk/dev/debug/app-dev-debug.apk')
+        tests=REPO/('android/tv/build/outputs/apk/androidTest/debug/tv-debug-androidTest.apk' if self.args.tv else 'android/app/build/outputs/apk/androidTest/dev/debug/app-dev-debug-androidTest.apk')
         if not apk.is_file() or not tests.is_file():raise RuntimeError('build both explicit DEV APKs before --no-build')
         self.adb_run('install','-r',str(apk),capture_output=True,text=True)
         self.adb_run('install','-r',str(tests),capture_output=True,text=True)
@@ -161,7 +186,7 @@ class Runner:
         self.adb_run('reverse',f'tcp:{self.port}',f'tcp:{self.port}',capture_output=True,text=True);self.reversed=True
         self.old_scale=self.shell('settings','get','system','font_scale')
         self.old_night=self.shell('settings','get','secure','ui_night_mode')
-        metadata={'serial':self.serial,'api':self.shell('getprop','ro.build.version.sdk'),'model':self.shell('getprop','ro.product.model'),'head':self.run(['git','rev-parse','HEAD'],capture_output=True,text=True).stdout.strip(),'class':CLASS,'redBaseline':self.args.red_baseline}
+        metadata={'serial':self.serial,'api':self.shell('getprop','ro.build.version.sdk'),'model':self.shell('getprop','ro.product.model'),'head':self.run(['git','rev-parse','HEAD'],capture_output=True,text=True).stdout.strip(),'class':CLASS,'redBaseline':self.args.red_baseline,'tvFontScale':self.args.tv_font_scale if self.args.tv else None}
         (self.out/'device.json').write_text(json.dumps(metadata,indent=2))
     def invoke(self,method,phase,theme,scale):
         label=method+'-'+phase
@@ -230,7 +255,7 @@ class Runner:
         (self.out/'summary.json').write_text(json.dumps({'counts':counts,'invocations':self.reports},indent=2))
         print('DISCOVER ANDROID JUNIT '+json.dumps(counts),flush=True)
         expected=sum(len(phases(method,self.args.red_baseline)) for method in
-                     (self.args.method or (SHELF_METHODS if self.args.shelves else METHODS)))
+                     (self.args.method or selected_methods(self.args)))
         return counts['tests']==expected and all(counts[key]==0 for key in ('failures','errors','skipped'))
     def close(self):
         self.stop_owned_app()
@@ -238,21 +263,37 @@ class Runner:
         if hasattr(self,'old_night'):self.shell('cmd','uimode','night',{'0':'auto','1':'no','2':'yes'}.get(self.old_night,'auto'))
         if self.reversed:self.adb_run('reverse','--remove',f'tcp:{self.port}',check=False,capture_output=True,text=True)
 
+def selected_methods(args):
+    return TV_METHODS if getattr(args,'tv',False) else (SHELF_METHODS if args.shelves else METHODS)
+
 def main():
+    global PACKAGE, CLASS
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,default=default_output(),help='new evidence directory; default DULCET_DISCOVER_ANDROID_OUTPUT or unique build/discover-wishlist-android/<monotonic-ns>')
     parser.add_argument('--no-build',action='store_true')
     parser.add_argument('--red-baseline',action='store_true',help='one missing-feature phase for each selected method; reds remain failing')
+    parser.add_argument('--tv',action='store_true',help='real Android TV app, TV system image and full TV proof inventory')
+    parser.add_argument('--tv-font-scale',choices=['1.0','2.0'],default='1.0',help='TV-only native font scale, also applied to an explicit --method diagnostic')
     parser.add_argument('--shelves',action='store_true',help='Discover home, shelf and public playlist proof suite')
-    parser.add_argument('--method',action='append',choices=METHODS+SHELF_METHODS,help='explicit subset of executed proof identities')
+    parser.add_argument('--method',action='append',choices=METHODS+SHELF_METHODS+TV_METHODS,help='explicit subset of executed proof identities')
     parser.add_argument('--self-test',action='store_true')
     args=parser.parse_args()
     if args.self_test:self_test();return 0
+    if args.tv:
+        PACKAGE='com.legitimateapps.dulcet.tv'
+        CLASS='com.legitimateapps.dulcet.tv.AndroidTvDiscoverWishlistProofTest'
+        if args.shelves:parser.error('--tv already runs shelves and Search Everywhere together')
+        if args.method and any(method not in TV_METHODS for method in args.method):parser.error('--tv accepts only TV proof identities')
+    elif args.method and any(method in TV_METHODS for method in args.method):parser.error('TV proof identities require --tv')
+    elif args.tv_font_scale!='1.0':parser.error('--tv-font-scale requires --tv')
     runner=Runner(args)
     try:
         runner.prepare()
-        for method in args.method or (SHELF_METHODS if args.shelves else METHODS):
+        for method in args.method or selected_methods(args):
             for phase,theme,scale in phases(method,args.red_baseline):
+                if args.tv:
+                    scale=args.tv_font_scale
+                    if scale=='2.0':phase='largest'
                 # Every failure remains in XML; continue to observe all expected identities.
                 try:runner.invoke(method,phase,theme,scale)
                 except Exception as error:

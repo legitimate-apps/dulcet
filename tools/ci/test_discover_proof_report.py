@@ -37,6 +37,24 @@ class ReportTests(unittest.TestCase):
                 self.assertTrue(executable.endswith('/run-discover-wishlist-android'))
                 self.assertEqual([executable, *flags], arguments)
 
+    def test_android_tv_dispatch_selects_tv_app_inventory(self):
+        import os
+        from pathlib import Path
+        import runpy
+        import sys
+        from unittest.mock import patch
+        class Dispatched(Exception):
+            pass
+        runner = Path(__file__).with_name('run-discover-wishlist-proofs')
+        with patch.object(sys, 'argv', [str(runner), 'android-tv']), \
+             patch.dict(os.environ, {'DULCET_DISCOVER_DISPOSABLE': 'true'}), \
+             patch('os.execv', side_effect=Dispatched) as dispatched:
+            with self.assertRaises(Dispatched):
+                runpy.run_path(str(runner), run_name='__main__')
+            executable, arguments = dispatched.call_args.args
+            self.assertTrue(executable.endswith('/run-discover-wishlist-android'))
+            self.assertEqual([executable, '--tv'], arguments)
+
     def test_shelf_proof_requires_exact_tests_and_effect_receipts(self):
         for mode,idiom in [('iphone','phone'),('ipad','pad'),('macos','mac')]:
             names=shelf_tests(mode)

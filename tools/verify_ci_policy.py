@@ -1160,7 +1160,7 @@ def discover_native_fixture_errors(lines: list[str]) -> list[str]:
     """Each dedicated native job drives its full mode inside the finite fixture."""
     errors = []
     for name, start, end in job_spans(lines):
-        modes = {"discover-wishlist-" + mode: mode for mode in ("iphone", "ipad", "macos", "android")}
+        modes = {"discover-wishlist-" + mode: mode for mode in ("iphone", "ipad", "macos", "android", "android-tv")}
         if name not in modes:
             continue
         invoked = False

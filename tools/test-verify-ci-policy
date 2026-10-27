@@ -2061,15 +2061,15 @@ fixture_functions=[n for n in ast.parse(VERIFIER.read_text()).body if isinstance
 fixture_namespace={**condition_namespace,'shlex':shlex}
 exec(compile(ast.Module(body=fixture_functions,type_ignores=[]),str(VERIFIER),'exec'),fixture_namespace)
 fixture_check=fixture_namespace['discover_native_fixture_errors']
-for mode in ['iphone','ipad','macos','android']:
+for mode in ['iphone','ipad','macos','android','android-tv']:
     prefix='jobs:\n  discover-wishlist-'+mode+':\n    steps:\n'
     command='tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/proof/fixture" -- tools/ci/run-discover-wishlist-proofs '+mode
     good='      - run: '+command+'\n'
-    if mode=='android':good='      - uses: emulator@pin\n        with:\n          script: ANDROID_SERIAL=emulator-5554 '+command+'\n'
+    if mode in {'android','android-tv'}:good='      - uses: emulator@pin\n        with:\n          script: ANDROID_SERIAL=emulator-5554 '+command+'\n'
     assert fixture_check((prefix+good).splitlines())==[]
     for bad in [good.replace('tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/proof/fixture" -- ',''),good.replace(command,'echo '+command),good.replace('proofs '+mode,'proofs components'),good.replace('proofs '+mode,'proofs '+mode+' --self-test'),good.replace('proofs '+mode,'proofs '+mode+' --build-for-testing'),good+'        continue-on-error: true\n',good+'        if: false\n']:
         assert fixture_check((prefix+bad).splitlines()),bad
-print('Finite native fixture invocation controls: 32/32, all four surfaces and seven negative mutations each')
+print('Finite native fixture invocation controls: 40/40, all five surfaces and seven negative mutations each')
 
 # A framework build does not compile commonTest/appleTest for the iOS target.
 compile_functions=[n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='discover_ios_test_compile_errors']
