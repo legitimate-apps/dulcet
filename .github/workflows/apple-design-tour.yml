@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: Device family to photograph (mobile includes iPhone and iPad)
+        description: Device family (mobile includes iPhone and iPad; mobile-tv also includes TV)
         type: choice
         default: all
-        options: [all, mobile, iphone, ipad, mac, tvos]
+        options: [all, mobile, mobile-tv, iphone, ipad, mac, tvos]
       screens:
         description: Optional space-separated capture names for an affected-page reshoot
         type: string
@@ -25,7 +25,7 @@ on:
         type: string
         default: ''
       phase:
-        description: iOS general-tour phase, use connected when account photographs already passed
+        description: iOS and TV general-tour phase, use connected when account photographs passed
         type: choice
         default: all
         options: [all, account, connected]
@@ -44,9 +44,9 @@ jobs:
     timeout-minutes: 150
     strategy:
       fail-fast: false
-      # Mobile fixture reshoots have no desktop or TV work. Admit three affected appearances
-      # together; keep full inventory runs bounded at two.
-      max-parallel: ${{ (inputs.device == 'iphone' || inputs.device == 'mobile') && inputs.supplement_only && 3 || 2 }}
+      # Affected-platform repair batches can admit three jobs together. Keep full inventory
+      # runs bounded at two so they leave room for other Apple checks.
+      max-parallel: ${{ (inputs.device == 'iphone' || inputs.device == 'mobile' || inputs.device == 'mobile-tv') && inputs.supplement_only && 3 || 2 }}
       matrix:
         include:
           - {device: iphone, variant: iphone-light-default}
@@ -64,7 +64,8 @@ jobs:
           MATRIX_DEVICE: ${{ matrix.device }}
         run: |
           if [[ "$REQUESTED_DEVICE" == all || "$REQUESTED_DEVICE" == "$MATRIX_DEVICE" ||
-                ( "$REQUESTED_DEVICE" == mobile && ( "$MATRIX_DEVICE" == iphone || "$MATRIX_DEVICE" == ipad ) ) ]]; then
+                ( "$REQUESTED_DEVICE" == mobile && ( "$MATRIX_DEVICE" == iphone || "$MATRIX_DEVICE" == ipad ) ) ||
+                ( "$REQUESTED_DEVICE" == mobile-tv && "$MATRIX_DEVICE" != mac ) ]]; then
             echo 'enabled=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Select Xcode 27.0 and record provenance
@@ -113,8 +114,8 @@ jobs:
         env:
           CAPTURE_DEVICE: ${{ matrix.device }}
           CAPTURE_VARIANT: ${{ matrix.variant }}
-          DULCET_DESIGN_TOUR_SCREENS: ${{ inputs.general_screens || inputs.screens }}
-          DULCET_DESIGN_TOUR_PHASE: ${{ (matrix.device == 'iphone' || matrix.device == 'ipad') && inputs.phase || 'all' }}
+          DULCET_DESIGN_TOUR_SCREENS: ${{ (!inputs.general_variant || inputs.general_variant == matrix.variant) && inputs.general_screens || inputs.screens }}
+          DULCET_DESIGN_TOUR_PHASE: ${{ matrix.device != 'mac' && inputs.phase || 'all' }}
         run: |
           if [[ "$CAPTURE_DEVICE" == iphone || "$CAPTURE_DEVICE" == ipad ]]; then
             export DULCET_DESIGN_TOUR_VARIANT="$CAPTURE_VARIANT"

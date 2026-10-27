@@ -51,7 +51,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
             return
         }
-        tourAccountStates(app, server: (url, username, password))
+        if environment["DULCET_DESIGN_TOUR_PHASE"] != "connected" {
+            tourAccountStates(app, server: (url, username, password))
+        }
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "account" { return }
         app.terminate()
         app.launchArguments = [
@@ -66,14 +68,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // while the account connects, so the tour waits for that and launches again.
         step("listen-now", app) {
             app.launch()
-            guard let section = self.launchSection(app) else { return false }
-            if section == "Connection" {
-                // The preceding persistence-error photograph deliberately launches with a
-                // missing active account. A saved-account restore can publish after the DEBUG
-                // credentials, leaving its reconnect form selected. Submit the actual form
-                // with this tour's credentials before trying to photograph connected pages.
-                guard self.connectContentTourByRemote(app, server: (url, username, password)) else { return false }
-            }
+            // A saved-account restore can also land on an offline Listen Now page. Establish
+            // the real account through its form regardless of which destination launched.
+            guard self.launchSection(app) != nil,
+                  self.connectContentTourByRemote(app, server: (url, username, password)) else { return false }
             return self.selectSection(app, "listenNow")
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
                 && self.focusedSection(app) == nil && self.settle(3)
@@ -218,6 +216,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         let username = app.textFields["dulcet.account-connect.username"].firstMatch
         let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
         let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
+        guard primary.waitForExistence(timeout: 15) else { return false }
+        if primary.label.contains("Cancel") {
+            guard pressByRemote(primary, in: app, name: "Cancel"),
+                  waitFor(15, { !primary.label.contains("Cancel") }) else { return false }
+        }
         guard setLocalHTTPByRemote(app, on: true),
               typeByRemote(server.url, into: address, in: app),
               typeByRemote(server.username, into: username, in: app),
