@@ -293,6 +293,21 @@ import UIKit
         select("library")
         XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 20))
         try photo("library-personal")
+        let recent = app.buttons["dulcet.myLibrary.section.recent"].firstMatch
+        let sidebarRecent = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.recent"].firstMatch
+        let recentLink = sidebarRecent.exists ? sidebarRecent : recent
+        reveal(recentLink); XCTAssertTrue(recentLink.waitForExistence(timeout: 15)); activate(recentLink)
+        if sidebarRecent.exists {
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: sidebarRecent)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+        } else {
+            XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.recent"].waitForExistence(timeout: 15))
+        }
+        try photo("recently-added")
+        if !sidebarRecent.exists {
+            let back = app.navigationBars.buttons["BackButton"].firstMatch
+            XCTAssertTrue(back.waitForExistence(timeout: 10)); activate(back)
+        }
         let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
         let sidebarSongs = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.songs"].firstMatch
         let songLink = sidebarSongs.exists ? sidebarSongs : songs

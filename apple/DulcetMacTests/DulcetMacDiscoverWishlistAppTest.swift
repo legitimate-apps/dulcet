@@ -252,6 +252,9 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             try app.press(add, named: "Add to Library")
             try await waitUntil(timeout: .seconds(20), "album added") { !app.session.myLibrary.albums.isEmpty }
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.library"); try await photo("library-personal")
+            try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.myLibrary.recent")
+            try await waitUntil(timeout: .seconds(15), "Recently Added section selected") { app.store.myLibrarySection == .recent }
+            try await photo("recently-added")
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.myLibrary.songs")
             try await waitUntil(timeout: .seconds(15), "Songs section selected") { app.store.myLibrarySection == .songs }
             try await photo("songs")
