@@ -211,10 +211,12 @@ public final class DulcetPresentationStore {
     }
     var discoverNavigation = DulcetDiscoverNavigation()
     var wishlistScrollKey: String?
+    #if !os(tvOS)
     public func openWishlist(rowKey: String? = nil) {
         wishlistScrollKey = rowKey
         showReaderPage(.wishlist)
     }
+    #endif
     public func resetReaderNavigation() {
         discoverNavigation.close()
         wishlistScrollKey = nil

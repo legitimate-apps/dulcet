@@ -62,6 +62,18 @@ import Testing
         reader.playlistListCompletions[2](.success(.init(items: [], age: age)))
         #expect(model.playlists?.items == [summary] && !model.loading)
     }
+    @Test func playlistPagingUsesSubmittedQueryAndFailedReplacementLabelsOldAnswer() {
+        let reader = DiscoverProofReader()
+        let model = DulcetDiscoverListModel(reader: reader, route: .playlists)
+        model.query = "first"; model.submitQuery()
+        reader.playlistListCompletions[0](.success(.init(items: [.init(id: "p", title: "First")], nextCursor: "opaque", age: age)))
+        model.query = "draft"; model.more()
+        #expect(reader.playlistListRequests[1].0 == "first" && reader.playlistListRequests[1].1 == "opaque")
+        model.submitQuery()
+        reader.playlistListCompletions[2](.failure(.init(code: "offline", retryable: true)))
+        #expect(model.answerQuery == "first" && model.submittedQuery == "draft")
+        #expect(model.playlists?.items.first?.title == "First" && model.nextCursor == nil)
+    }
     @Test func sourceAwareWishesUseExactItemAndRecentPendingOverlay() {
         let reader = DiscoverProofReader(), song = item()
         let model = DulcetDiscoverModel(reader: reader); model.open()
@@ -78,7 +90,10 @@ import Testing
         var song = item(); song.target = nil
         #expect(!DulcetDiscoverItemPresentation(item: song).canWish)
         var unknown = item(); unknown.kind = "future"
+        unknown.availability = .init(status: "held", completeness: "known", libraryItems: [.init(providerInstanceId: "local", type: "song", id: "local-song")])
         #expect(!DulcetDiscoverItemPresentation(item: unknown).canWish)
+        #expect(DulcetDiscoverItemPresentation(item: unknown).libraryReferences.isEmpty)
+        if case .item = DulcetDiscoverDestination(item: unknown) {} else { Issue.record("Unknown kind must stay neutral") }
         let album = DulcetDiscoverItem(id: "a", kind: "album", target: .init(kind: "album", mbid: "external"), title: "Partial", availability: .init(status: "partlyHeld", completeness: "unknown"))
         #expect(DulcetDiscoverDestination(item: album) == .album(mbid: "external", releaseId: nil))
         #expect(DulcetDiscoverStatus(age: nil, error: .init(code: "offline", retryable: true), connection: "offline").canRetry == false)

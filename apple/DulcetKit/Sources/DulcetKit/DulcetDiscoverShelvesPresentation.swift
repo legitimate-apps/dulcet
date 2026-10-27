@@ -63,6 +63,8 @@ enum DulcetDiscoverHomeRoute: Hashable {
     var playlists: DulcetDiscoverPlaylistList?
     var playlist: DulcetDiscoverPlaylist?
     var query = ""
+    private(set) var submittedQuery = ""
+    private(set) var answerQuery = ""
     var loading = false
     var error: DulcetDiscoverFailure?
     var scrollID: String?
@@ -70,7 +72,10 @@ enum DulcetDiscoverHomeRoute: Hashable {
     @ObservationIgnored private let selection = DulcetDiscoverDetailSelection()
     init(reader: any DulcetDiscoverReading, route: DulcetDiscoverHomeRoute) { self.reader = reader; self.route = route }
     var hasPage: Bool { shelf != nil || playlists != nil || playlist != nil }
-    var nextCursor: String? { shelf?.nextCursor ?? playlists?.nextCursor ?? playlist?.nextCursor }
+    var nextCursor: String? {
+        if route == .playlists { return answerQuery == submittedQuery ? playlists?.nextCursor : nil }
+        return shelf?.nextCursor ?? playlist?.nextCursor
+    }
     var age: DulcetDiscoverAge? { shelf?.age ?? playlists?.age ?? playlist?.age }
     var source: DulcetWishSource {
         switch route {
@@ -97,13 +102,14 @@ enum DulcetDiscoverHomeRoute: Hashable {
                 }
             }
         case .playlists:
-            operation = reader.playlists(query: query, cursor: cursor) { [weak self] result in
+            let requestedQuery = submittedQuery
+            operation = reader.playlists(query: requestedQuery, cursor: cursor) { [weak self] result in
                 guard let self, self.selection.accepts(generation) else { return }
                 self.loading = false
                 switch result {
                 case var .success(page):
                     if cursor != nil { page.items = (self.playlists?.items ?? []) + page.items }
-                    self.playlists = page; self.error = page.refreshError
+                    self.playlists = page; self.answerQuery = requestedQuery; self.error = page.refreshError
                 case let .failure(error): self.failed(error, cursor: cursor)
                 }
             }
@@ -127,7 +133,8 @@ enum DulcetDiscoverHomeRoute: Hashable {
         if error.code != "cancelled" { self.error = error }
     }
     func submitQuery() {
-        // Keep a failed replacement's previous answer visible, labelled with its query.
+        // Draft edits do not change paging identity until the person submits them.
+        submittedQuery = query
         load()
     }
     func close() { selection.close(); operation?.cancel(); operation = nil; loading = false }

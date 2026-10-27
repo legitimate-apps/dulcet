@@ -13,6 +13,9 @@ public enum DulcetDiscoverDestination: Hashable, Sendable {
     case album(mbid: String, releaseId: String?)
     case item(DulcetDiscoverItem, source: DulcetWishSource)
     public init(item: DulcetDiscoverItem, source: DulcetWishSource? = nil) {
+        guard ["artist", "album", "song"].contains(item.kind), item.target?.kind == item.kind else {
+            self = .item(item, source: source ?? .init(type: "search", id: item.id)); return
+        }
         switch item.target?.kind {
         case "artist": self = .artist(mbid: item.target!.mbid)
         case "album": self = .album(mbid: item.target!.mbid, releaseId: nil)
@@ -24,7 +27,7 @@ public enum DulcetDiscoverDestination: Hashable, Sendable {
 public struct DulcetDiscoverItemPresentation: Sendable {
     public let item: DulcetDiscoverItem
     public init(item: DulcetDiscoverItem) { self.item = item }
-    public var canWish: Bool { item.wishable && item.target != nil && ["artist", "album", "song"].contains(item.kind) }
+    public var canWish: Bool { item.wishable && item.target?.kind == item.kind && ["artist", "album", "song"].contains(item.kind) }
     public var availabilityText: String {
         let availability = item.availability
         if availability.status == "partlyHeld", let count = availability.matchedTrackCount, let total = availability.totalTrackCount {
@@ -35,7 +38,8 @@ public struct DulcetDiscoverItemPresentation: Sendable {
         return DulcetStrings.discoverUnknown
     }
     public var libraryReferences: [DulcetDiscoverLibraryRef] {
-        guard ["held", "partlyHeld"].contains(item.availability.status) else { return [] }
+        guard item.target?.kind == item.kind, ["artist", "album", "song"].contains(item.kind),
+              ["held", "partlyHeld"].contains(item.availability.status) else { return [] }
         return item.availability.libraryItems
     }
 }

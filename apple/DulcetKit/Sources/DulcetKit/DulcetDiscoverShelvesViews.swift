@@ -105,7 +105,7 @@ struct DulcetDiscoverHomeView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityIdentifier("discover.recentWishes.item." + row.key)
             }
-        }.accessibilityIdentifier("discover.recentWishes")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("discover.recentWishes")
     }
 }
 
@@ -122,7 +122,7 @@ struct DulcetDiscoverShelfStatus: View {
     private var status: DulcetDiscoverStatus { .init(age: age, error: error, connection: connection, now: max(retryNow, .now)) }
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            if let ageText = status.ageText {
+            if age != nil, let ageText = status.ageText {
                 VStack(alignment: .leading) {
                     Text(ageText.contains("Cached answer") ? ageText : "Cached answer. " + ageText)
                     if let fetchedAt = age?.fetchedAt { Text("Fetched " + fetchedAt.formatted(date: .abbreviated, time: .shortened)) }
@@ -134,6 +134,9 @@ struct DulcetDiscoverShelfStatus: View {
                      connection == "offline" || error.code == "offline" ? "Connect to your server to explore music." : "Discovery is temporarily unavailable.")
                     .accessibilityIdentifier(prefix + ".error")
                 if error.retryable {
+                    if let deadline = error.retryAt, !status.canRetry, connection != "offline" {
+                        Text("Retry available at " + deadline.formatted(date: .omitted, time: .shortened)).font(.caption)
+                    }
                     Button("Retry", action: retry).disabled(!status.canRetry).accessibilityIdentifier(prefix + ".retry")
                 }
             }
@@ -162,7 +165,8 @@ struct DulcetDiscoverShelfItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
             Button {
-                if item.availability.status == "held", (item.kind != "album" || item.availability.completeness == "known"),
+                if item.target?.kind == item.kind, ["artist", "album", "song"].contains(item.kind),
+                   item.availability.status == "held", (item.kind != "album" || item.availability.completeness == "known"),
                    item.availability.libraryItems.count == 1, let ref = item.availability.libraryItems.first {
                     openLibrary(ref)
                 } else { navigate(.init(item: item, source: source)) }
@@ -171,10 +175,16 @@ struct DulcetDiscoverShelfItem: View {
                 .accessibilityLabel([item.title, item.artist, DulcetDiscoverItemPresentation(item: item).availabilityText, row?.pending == true ? "Waiting to sync" : nil].compactMap { $0 }.joined(separator: ", "))
             if row?.pending == true { Text("Waiting to sync").font(.caption) }
             if row?.error != nil { Text("Not saved").font(.caption) }
-            if model.publication?.access.canAddWish == true, DulcetDiscoverItemPresentation(item: item).canWish {
-                Button(row?.wish != nil || row?.pending == true ? "Wished for \(item.title)" : "Wish for \(item.title)", systemImage: "bookmark") { model.add(item, source: source) }
-                    .disabled(row?.wish != nil || row?.pending == true)
+            if row?.wish != nil || row?.pending == true {
+                Label("Wished for \(item.title)", systemImage: "bookmark.fill")
+                    .font(.callout).dulcetForeground(.secondaryTextOnWindow)
+                    .accessibilityIdentifier(identifier + ".wished")
+            } else if model.publication?.access.canAddWish == true, DulcetDiscoverItemPresentation(item: item).canWish {
+                Button("Wish for \(item.title)", systemImage: "bookmark") { model.add(item, source: source) }
                     .accessibilityIdentifier(identifier + ".wish")
+            }
+            if item.target == nil {
+                Text("Recording information unavailable").font(.caption).dulcetForeground(.secondaryTextOnWindow)
             }
             if model.mutationError != nil { Text("Not saved").font(.caption) }
         }.fixedSize(horizontal: false, vertical: true)
@@ -243,6 +253,9 @@ struct DulcetDiscoverListView: View {
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                    if page.route == .playlists, page.hasPage, page.answerQuery != page.submittedQuery {
+                        Text(page.answerQuery.isEmpty ? "Showing all public playlists" : "Showing results for " + page.answerQuery).font(.caption)
+                    }
                     if let summary = page.playlist?.summary { DulcetDiscoverPlaylistLabel(summary: summary) }
                     DulcetDiscoverShelfStatus(age: page.age, error: page.error, loading: page.loading, empty: empty,
                         emptyText: emptyText, connection: model.publication?.connection ?? "online", prefix: prefix) { page.load() }
@@ -254,7 +267,10 @@ struct DulcetDiscoverListView: View {
                             .buttonStyle(.plain).accessibilityIdentifier("discover.playlists.item." + summary.id).id(summary.id)
                     }
                     ForEach(page.playlist?.entries ?? [], id: \.position) { entry in
-                        itemView(entry.item, id: prefix + ".entry.\(entry.position)").id(String(entry.position))
+                        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                            Text("Song \(entry.position)").font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                            itemView(entry.item, id: prefix + ".entry.\(entry.position)")
+                        }.id(String(entry.position))
                     }
                     if page.nextCursor != nil {
                         Button("Load more") { page.more() }.disabled(page.loading).accessibilityIdentifier(prefix + ".more").id("more")
@@ -263,6 +279,7 @@ struct DulcetDiscoverListView: View {
                 }.padding(DulcetSpacing.md).frame(maxWidth: .infinity, alignment: .leading).scrollTargetLayout()
             }.scrollPosition(id: $page.scrollID, anchor: .top)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(prefix).navigationTitle(title).dulcetForeground(.primaryTextOnWindow)
         .onAppear { model.open(); page.open() }.onDisappear { page.close(); model.close() }
     }

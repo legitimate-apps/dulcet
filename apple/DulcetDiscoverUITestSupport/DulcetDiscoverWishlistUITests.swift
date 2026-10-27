@@ -286,7 +286,12 @@ import UIKit
         activate(shelfReveal("discover.shelf.publicPlaylists.all"))
         let id = "00000258-1111-4111-8111-111111111111"
         let playlist = app.buttons["discover.playlists.item." + id].firstMatch
-        XCTAssertTrue(playlist.waitForExistence(timeout: 30)); activate(playlist)
+        XCTAssertTrue(playlist.waitForExistence(timeout: 30))
+        activate(shelfReveal("discover.playlists.more"))
+        let playlistTail = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "discover.playlists.item.", "Fixture Public Mix 23")).firstMatch
+        reveal(playlistTail); XCTAssertTrue(playlistTail.isHittable)
+        XCTAssertFalse(app.buttons["discover.playlists.more"].exists)
+        reveal(playlist); activate(playlist)
         let prefix = "discover.playlist." + id
         let first = app.buttons[prefix + ".entry.1"].firstMatch
         let second = app.buttons[prefix + ".entry.2"].firstMatch

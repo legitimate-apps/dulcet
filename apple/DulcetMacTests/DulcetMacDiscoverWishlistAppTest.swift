@@ -4,7 +4,7 @@ import XCTest
 @testable import DulcetKit
 @testable import DulcetMac
 
-/// The six Discover proofs use the CI Mac host, its production root/controller/reader and the
+/// The Discover proofs use the CI Mac host, its production root/controller/reader and the
 /// same disposable fixture as iOS. Only initial connection uses the store; feature actions go
 /// through the rendered accessibility controls, native text events, sidebar or context menu.
 @MainActor
@@ -435,7 +435,12 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         try await discoverHome(app)
         try app.press(try await shelfElement("discover.shelf.publicPlaylists.all", in: app), named: "See all public playlists")
         let id = "00000258-1111-4111-8111-111111111111"
-        let summary = try await app.element(identifiedBy: "discover.playlists.item." + id, timeout: .seconds(30))
+        _ = try await app.element(identifiedBy: "discover.playlists.item." + id, timeout: .seconds(30))
+        try app.press(try await shelfElement("discover.playlists.more", in: app), named: "Load more public playlists")
+        _ = try await reveal("public playlist tail", in: app) { (app.label($0) ?? "").contains("Fixture Public Mix 23") }
+        XCTAssertNil(app.firstElement { app.identifier($0) == "discover.playlists.more" })
+        try await capture("Shelves-Public-Playlists-Tail", app)
+        let summary = try await shelfElement("discover.playlists.item." + id, in: app)
         try await focusAndPress(summary, key: " ", code: 49, in: app)
         let prefix = "discover.playlist." + id
         let first = try await app.element(identifiedBy: prefix + ".entry.1", timeout: .seconds(20))
@@ -455,7 +460,18 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         _ = try await shelfElement(prefix + ".entry.24", in: app)
         XCTAssertEqual(app.store.discoverNavigation.path, [.playlists, .playlist(id)])
         try await capture("Shelves-Playlist-Minimum", app)
-        try await discoverHome(app)
+        for expectedDepth in [1, 0] {
+            let back = try await app.element(timeout: .seconds(10), described: "native Discover Back", in: app.window.contentView?.superview) {
+                let label = app.label($0) ?? ""
+                let help = app.value("accessibilityHelp", of: $0) as? String ?? ""
+                return (label == "Back" || help == "Back") && app.isAccessibilityEnabled($0)
+            }
+            let frame = try app.frame(back)
+            print("DISCOVER_MAC_BACK label=\(app.label(back) ?? "nil") role=\(String(describing: app.value("accessibilityRole", of: back))) frame=\(frame) oldPath=\(app.store.discoverNavigation.path)")
+            try app.click(atScreenPoint: NSPoint(x: frame.midX, y: frame.midY))
+            try await waitUntil(timeout: .seconds(10), "Back must pop exactly one Discover page") { app.store.discoverNavigation.path.count == expectedDepth }
+            if expectedDepth == 1 { _ = try await app.element(identifiedBy: "discover.playlists.query", timeout: .seconds(10)) }
+        }
         _ = try await app.element(identifiedBy: "discover.home.refresh", timeout: .seconds(20))
         try app.press(try await shelfElement("discover.recentWishes.all", in: app), named: "Recent wishes")
         _ = try await row("Fixture Song 03", in: app)
