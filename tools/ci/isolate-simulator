@@ -12,7 +12,7 @@ CoreSimulator to report boot complete before the phase starts its clocks.
 Usage:
   isolate-simulator --phase NAME --none
   isolate-simulator --phase NAME --keep UDID
-  isolate-simulator --phase NAME --keep-name "iPhone 17 Pro"     # newest runtime, as OS=latest does
+  isolate-simulator --phase NAME --keep-name "iPhone 18 Pro"     # newest runtime, as OS=latest does
   isolate-simulator --phase NAME --keep UDID --settle             # wait for stable service counts
   isolate-simulator --phase NAME --keep UDID --settle --settle-pressure # require quiet memory/CPU
   isolate-simulator --devices-json FILE --plan ...               # offline: print the plan, touch nothing

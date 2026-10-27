@@ -26,7 +26,7 @@ concurrency:
 jobs:
   soak:
     name: contention-soak (${{ matrix.arm }})
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 150
     strategy:
       fail-fast: false

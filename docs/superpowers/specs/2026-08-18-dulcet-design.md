@@ -6648,7 +6648,7 @@ change rather than either a silent pass or a permanently red build.
 
 ### 21.1 The split, and why — corrected 2026-08-18
 
-**Apple builds run on GitHub-hosted `macos-latest`. Kotlin, Android, lint, conformance and the parity
+**Apple builds run on GitHub-hosted `xcode-27` with GA Xcode 27.0 (27A266a). Kotlin, Android, lint, conformance and the parity
 gate run on `ubuntu-latest`. Ordinary CI uses hosted runners; §21.3.1 bounds the evidence exceptions.**
 
 Revision 2 specified a self-hosted macOS runner on the premise that hosted macOS had to be avoided on
@@ -6676,8 +6676,9 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 
 1. **Only STANDARD runners are free on public repositories. Larger and premium macOS runners are always
    billed** — included minutes cannot be applied to them. **No workflow in this repo may request a
-   larger-runner label.** `runs-on` for Apple jobs is exactly `macos-latest` (or a pinned
-   `macos-<version>` when a toolchain pin demands it, §4.4) and never a larger-runner label. Linux jobs
+   larger-runner label.** `runs-on` for Apple build, test, release and soak jobs is exactly `xcode-27`,
+   a standard hosted preview image. Xcode 27.0 is pinned in `gradle/libs.versions.toml`;
+   the macOS 14 / iOS 17 / tvOS 17 deployment floors stay unchanged. Linux jobs
    use `ubuntu-latest`, or a pinned standard `ubuntu-<LTS version>` when a job installs an exact
    distribution package (`core-build`'s FFmpeg). A CI lint
    step asserts this, because the failure mode is a silent bill rather than a broken build.
@@ -6701,11 +6702,11 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 |---|---|---|
 | `core-ci.yml` | `ubuntu-latest`; `core-build` pinned to `ubuntu-24.04` | `core-build` runs the Gradle build/test/licence baseline and the Android shell unit tests; the `android-emulator` matrix runs the phone and TV playback proofs on an emulator, one leg per surface, and exports one attempt output per surface (`attempt-phone`, `attempt-tv`); `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator first requires every job it needs to report `success`, then downloads the Android-only JUnit artifacts, each by the attempt that produced it (a job output, as in §21.5 item 4), and resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | pinned standard `macos-26` for the three legs (four slots: the iPadOS-and-iPhone leg is a two-member device matrix); `ubuntu-latest` for the aggregator | three parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance-core`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, the macOS app-host proofs, the library-sync, download and playback-integration legs on macOS, iOS/iPadOS and tvOS, the `core-conformance` suites on all three, and the tvOS UI proofs. `apple-conformance-ipad-iphone`, one member per device, each with the same closure, corpus and preconditions on its own server and the iOS-simulator framework: `apple-conformance-ipad` builds the iPadOS scheme and runs the play-count canary and the iPadOS proofs; `apple-conformance-iphone` builds the iPhone scheme and runs the iPhone search proof and the iPhone proofs through the skip probe and the streaming-quality cap. Each member uploads its own evidence artifact and reports its own attempt output (`attempt-ipad`, `attempt-iphone`), as `core-ci`'s emulator matrix does. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned every leg resolves every Apple `FEATURES.yml` evidence identity against every leg's JUnit. Future Apple-only measurements and tests join one of the three legs, never a fifth macOS slot without a §21.5 change |
+| `apple-ci.yml` | pinned standard `xcode-27` for the three legs (four slots: the iPadOS-and-iPhone leg is a two-member device matrix); `ubuntu-latest` for the aggregator | three parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance-core`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, the macOS app-host proofs, the library-sync, download and playback-integration legs on macOS, iOS/iPadOS and tvOS, the `core-conformance` suites on all three, and the tvOS UI proofs. `apple-conformance-ipad-iphone`, one member per device, each with the same closure, corpus and preconditions on its own server and the iOS-simulator framework: `apple-conformance-ipad` builds the iPadOS scheme and runs the play-count canary and the iPadOS proofs; `apple-conformance-iphone` builds the iPhone scheme and runs the iPhone search proof and the iPhone proofs through the skip probe and the streaming-quality cap. Each member uploads its own evidence artifact and reports its own attempt output (`attempt-ipad`, `attempt-iphone`), as `core-ci`'s emulator matrix does. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned every leg resolves every Apple `FEATURES.yml` evidence identity against every leg's JUnit. Future Apple-only measurements and tests join one of the three legs, never a fifth macOS slot without a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
 | `android-test-soak.yml` | `ubuntu-latest` | `workflow_dispatch` only: repeats one `--tests` filter of an Android host-test task N times, counting each repetition from its JUnit XML; fails on any failing repetition or on a filter that executes zero tests. A measurement instrument, never a gate |
-| `apple-core-test-soak.yml` | `macos-26` | `workflow_dispatch` only: the same instrument for a Kotlin/Native core test task (default `:core:macosArm64Test`) on apple-ci's macOS image, with optional busy loops (`cpu_load`) because apple-ci runs these tests while linking every framework. A measurement instrument, never a gate |
-| `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22.6). `workflow_dispatch` only, in the approval-gated `release` environment; DEV is dispatched on significant merges, PROD from a `v<version>`-tagged commit. Before any secret is read it requires every required check and every `apple-ci` leg green on the commit it archives (§21.6). The only workflow able to read signing secrets |
+| `apple-core-test-soak.yml` | `xcode-27` | `workflow_dispatch` only: the same instrument for a Kotlin/Native core test task (default `:core:macosArm64Test`) on apple-ci's macOS image, with optional busy loops (`cpu_load`) because apple-ci runs these tests while linking every framework. A measurement instrument, never a gate |
+| `release.yml` | `xcode-27` (standard) | archive + TestFlight upload for **both channels** (§22.6). `workflow_dispatch` only, in the approval-gated `release` environment; DEV is dispatched on significant merges, PROD from a `v<version>`-tagged commit. Before any secret is read it requires every required check and every `apple-ci` leg green on the commit it archives (§21.6). The only workflow able to read signing secrets |
 
 **Note on the Linux-only claim:** GitHub Actions **service containers** require a Linux runner, so the
 `services:`-based Navidrome cannot run in an Apple job. That is a statement about the Actions feature,
@@ -6871,7 +6872,7 @@ its JUnit artifact while the artifact lives (seven days for the signed host); th
 cannot, because artifacts expire. OBSERVED 2026-10-08: it verified run 37771411282's receipt.
 
 **What is NOT admitted, and stays exactly as §21.3 left it:** every ordinary Apple build and test
-job runs on hosted `macos-latest`; non-Apple CI stays on `ubuntu-latest`; no larger or premium
+job runs on hosted `xcode-27`; non-Apple CI stays on `ubuntu-latest`; no larger or premium
 runner label, ever (§21.1 caveat 1), which remains the one place real money can appear.
 
 ⚠️ **If either evidence workflow is ever changed to accept `pull_request` or `push`, the exposure in
@@ -6952,7 +6953,7 @@ because the median is above 75 minutes. Either reading adopts the split.
 
 **Normative:**
 
-1. **Three legs on the pinned standard `macos-26` label and one required aggregator** (two legs
+1. **Three legs on the pinned standard `xcode-27` label and one required aggregator** (two legs
    from 2026-09-25, three since 2026-10-03; §28 has both). `apple-platform` runs the macOS shell, its
    presentation and registered-pair contrast tests, the deterministic capture and the shipping
    reference; the iPhone, iPadOS and tvOS shells with their DulcetKit and Keychain tests; the compact
@@ -7959,6 +7960,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-27 - Apple toolchain uses Xcode 27.0**
+
+Apple build, test, release and soak workflows select GA Xcode 27.0 (27A266a) on the
+standard hosted `xcode-27` preview image. The central pin also identifies the toolchain
+for local builds. Deployment floors remain macOS 14 / iOS 17 / tvOS 17, and newer APIs
+require availability checks. The CI policy counts `xcode-27` jobs toward the same
+Apple concurrency and required-evidence gates. Runner image failures are reported with
+their logs. The dispatch-only evidence classes in §21.3.1 retain their scope.
 
 **2026-10-25 - Integrate Discover and Wishlist native clients and finite proof jobs.**
 

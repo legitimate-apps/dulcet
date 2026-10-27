@@ -61,7 +61,7 @@ concurrency:
 jobs:
   release:
     name: ${{ inputs.channel }} ${{ inputs.platform }} release
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 100
     environment: release
     env:

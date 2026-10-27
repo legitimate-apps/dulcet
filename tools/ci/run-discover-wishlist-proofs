@@ -161,7 +161,7 @@ def apple_proof(mode):
         if mode!='macos':
             udid=os.environ.get('DULCET_DISCOVER_PROOF_UDID')
             if not udid:
-                device=os.environ.get('DULCET_DISCOVER_PROOF_DEVICE','iPad Pro 13-inch (M4)' if mode=='ipad' else 'iPhone 17 Pro')
+                device=os.environ.get('DULCET_DISCOVER_PROOF_DEVICE','iPad Pro 13-inch (M4)' if mode=='ipad' else 'iPhone 18 Pro')
                 command=['sim-lease','create','--project','dulcet','--device',device,'--owner-pid',str(os.getpid()),'--purpose',session]
                 if os.environ.get('DULCET_DISCOVER_PROOF_RUNTIME'):command+=['--runtime',os.environ['DULCET_DISCOVER_PROOF_RUNTIME']]
                 owned_device=True
