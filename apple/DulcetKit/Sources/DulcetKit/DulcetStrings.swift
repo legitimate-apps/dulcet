@@ -24,8 +24,8 @@ enum DulcetStrings {
     static let offlineMusic = text("offline.music", "Offline Music")
     static let offlineAutomaticDownloads = text("offline.automaticDownloads", "Automatic Downloads")
     static let offlineAutomaticHint = text("offline.automaticHint", "Keep music you add to Library available on this device.")
-    static let offlineDownloads = text("offline.downloads", "Completed Downloads")
-    static let offlineStreamingCache = text("offline.streamingCache", "Completed Streaming Cache")
+    static let offlineDownloads = text("offline.downloads", "Downloads")
+    static let offlineStreamingCache = text("offline.streamingCache", "Streaming Cache")
     static let offlineArtworkCache = text("offline.artworkCache", "Artwork Cache")
     static let offlineCacheSize = text("offline.cacheSize", "Cache Size")
     static let offlineCacheOff = text("offline.cache.off", "Off")
@@ -34,8 +34,12 @@ enum DulcetStrings {
     static let offlineCache1GB = text("offline.cache.1gb", "1 GB")
     static let offlineCache2GB = text("offline.cache.2gb", "2 GB")
     static let offlineCacheHint = text("offline.cache.hint", "Downloaded music stays protected when the streaming cache is cleared.")
-    static let offlineClearCache = text("offline.cache.clear", "Clear Cache")
+    static let offlineClearCache = text("offline.cache.clear", "Clear Streaming Cache")
     static let keepDownload = text("action.download.keep", "Keep Download")
+    static let offlineStorage = text("offline.storage", "Storage")
+    static func clearCacheBody(size: String) -> String {
+        formatted("offline.clear.bodySized", "This removes %@ of cached music. Downloaded music stays on this device.", size)
+    }
     static func offlineDownloadProgress(completed: Int, remaining: Int) -> String {
         formatted("offline.downloadProgress", "%1$@ downloaded · %2$@ remaining", groupedNumber(completed), groupedNumber(remaining))
     }
@@ -218,9 +222,16 @@ enum DulcetStrings {
     static let signOutErrorTitle = text("account.remove.error.title", "Dulcet couldn’t finish signing out")
     static let signOutErrorBody = text("account.remove.error.body", "The account is still connected and its loaded library has not been cleared.")
     static let keepAccount = text("account.remove.keep", "Keep Account")
+    static func signOutConfirmationTitle(_ address: String) -> String {
+        formatted("account.remove.confirm.titleNamed", "Sign out of %@?", address)
+    }
+    static let notConnected = text("status.notConnected", "Not Connected")
     static let streamingQualityTitle = text("settings.streamingQuality.title", "Streaming Quality")
     static let streamingQualityUnmetered = text("settings.streamingQuality.unmetered", "On Wi-Fi")
     static let streamingQualityMetered = text("settings.streamingQuality.metered", "On Cellular")
+    static let streamingQualityStandardNetworks = text("settings.streamingQuality.standardNetworks", "On Most Networks")
+    static let streamingQualityLimitedNetworks = text("settings.streamingQuality.limitedNetworks", "On Limited Networks")
+    static let streamingQualityLimitedFootnote = text("settings.streamingQuality.limitedFootnote", "Limited means a personal hotspot or Low Data Mode. Changes apply to the next song.")
     static let streamingQualityFootnote = text("settings.streamingQuality.footnote", "Changes apply to the next song. Downloads keep the original quality.")
     static let streamingQualityOriginal = text("settings.streamingQuality.original", "Original")
     static func streamingQualityKbps(_ kbps: Int) -> String {

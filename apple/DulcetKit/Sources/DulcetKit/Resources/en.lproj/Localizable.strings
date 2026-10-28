@@ -7,6 +7,7 @@
 "sidebar.accountSection" = "Account";
 "sidebar.noServer" = "No server connected";
 "status.online" = "Online";
+"status.notConnected" = "Not Connected";
 "status.disconnected" = "Disconnected";
 "status.serverDisconnected" = "%@ · Disconnected";
 "status.connectionFailed" = "Connection failed";
@@ -150,10 +151,14 @@
 "settings.streamingQuality.title" = "Streaming Quality";
 "settings.streamingQuality.unmetered" = "On Wi-Fi";
 "settings.streamingQuality.metered" = "On Cellular";
+"settings.streamingQuality.standardNetworks" = "On Most Networks";
+"settings.streamingQuality.limitedNetworks" = "On Limited Networks";
+"settings.streamingQuality.limitedFootnote" = "Limited means a personal hotspot or Low Data Mode. Changes apply to the next song.";
 "settings.streamingQuality.footnote" = "Changes apply to the next song. Downloads keep the original quality.";
 "settings.streamingQuality.original" = "Original";
 "settings.streamingQuality.kbps" = "%@ kbps";
 "account.remove.confirm.title" = "Sign out of this server?";
+"account.remove.confirm.titleNamed" = "Sign out of %@?";
 "account.remove.confirm.body" = "Dulcet will delete this account’s Keychain credential and clear its loaded library from this app.";
 "account.remove.progress.title" = "Signing out…";
 "account.remove.progress.body" = "Dulcet is deleting the saved credential before clearing account data.";
@@ -473,8 +478,8 @@
 "offline.music" = "Offline Music";
 "offline.automaticDownloads" = "Automatic Downloads";
 "offline.automaticHint" = "Keep music you add to Library available on this device.";
-"offline.downloads" = "Completed Downloads";
-"offline.streamingCache" = "Completed Streaming Cache";
+"offline.downloads" = "Downloads";
+"offline.streamingCache" = "Streaming Cache";
 "offline.artworkCache" = "Artwork Cache";
 "offline.cacheSize" = "Cache Size";
 "offline.cache.off" = "Off";
@@ -483,7 +488,8 @@
 "offline.cache.1gb" = "1 GB";
 "offline.cache.2gb" = "2 GB";
 "offline.cache.hint" = "Downloaded music stays protected when the streaming cache is cleared.";
-"offline.cache.clear" = "Clear Cache";
+"offline.cache.clear" = "Clear Streaming Cache";
+"offline.storage" = "Storage";
 "action.download.keep" = "Keep Download";
 "offline.downloadProgress" = "%1$@ downloaded · %2$@ remaining";
 
@@ -542,5 +548,6 @@
 "library.noServerBody" = "Connect a server to start listening.";
 "offline.clear.title" = "Clear Streaming Cache?";
 "offline.clear.body" = "Downloaded music stays on this device.";
+"offline.clear.bodySized" = "This removes %@ of cached music. Downloaded music stays on this device.";
 
 "reader.freshness" = "Last Updated";

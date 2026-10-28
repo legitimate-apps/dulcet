@@ -61,6 +61,17 @@ struct DulcetAccountConnectionView: View {
         return nil
     }
 
+    private var primaryActionTitle: String {
+        isConnecting ? DulcetStrings.cancel : (savedServerName == nil ? DulcetStrings.signIn : DulcetStrings.reconnect)
+    }
+
+    private var signOutConfirmationTitle: String {
+        if case let .connected(account) = store.snapshot.accountConnection {
+            return DulcetStrings.signOutConfirmationTitle(DulcetServerAddressDisplay.text(account.normalizedServerURL))
+        }
+        return DulcetStrings.signOutConfirmationTitle
+    }
+
     private func setInitialFocusIfNeeded() {
         guard allowsProgrammaticFocus, focusedControl == nil else { return }
 #if os(iOS)
@@ -82,11 +93,11 @@ struct DulcetAccountConnectionView: View {
         // Connection is a launch surface: its navigation bar's identifier is how tests read the
         // launch section, so the bar stays (and the content begins below it).
         .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: true)
-#if !os(tvOS)
+#if os(iOS)
         .toolbar {
             if !store.snapshot.accountConnection.isConnected {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isConnecting ? DulcetStrings.cancel : (savedServerName == nil ? DulcetStrings.signIn : DulcetStrings.reconnect)) {
+                    Button(primaryActionTitle) {
                         performAccountPrimaryAction()
                     }
                     .disabled(!isConnecting && !canSubmit)
@@ -148,7 +159,7 @@ struct DulcetAccountConnectionView: View {
             focusDidChange?(current)
         }
         .confirmationDialog(
-            DulcetStrings.signOutConfirmationTitle,
+            signOutConfirmationTitle,
             isPresented: $showingSignOutConfirmation,
             titleVisibility: .visible
         ) {
@@ -161,6 +172,7 @@ struct DulcetAccountConnectionView: View {
         }
     }
 
+#if os(tvOS)
     @ViewBuilder
     private var savedServers: some View {
         if !store.savedServers.isEmpty {
@@ -192,6 +204,55 @@ struct DulcetAccountConnectionView: View {
             .buttonStyle(.borderless)
         }
     }
+#else
+    /// Saved servers, one row each under a system section header, with Add Server as a tinted
+    /// action row after them.
+    @ViewBuilder
+    private var savedServerSection: some View {
+        if !store.savedServers.isEmpty {
+            Section {
+                ForEach(store.savedServers) { server in
+                    Button {
+                        store.selectSavedServer(server.id)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(DulcetServerAddressDisplay.text(server.serverURL))
+                                    .dulcetForeground(.primaryTextOnControl)
+                                Text(server.username)
+                                    .font(.subheadline)
+                                    .dulcetForeground(.secondaryTextOnControl)
+                            }
+                            Spacer()
+                            if server.isActive {
+                                Image(systemName: "checkmark")
+                                    .dulcetForeground(.accentIconOnWindow)
+                                    .accessibilityLabel(DulcetStrings.currentServer)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("dulcet.account.server.\(server.id)")
+                    .disabled(isConnecting)
+                }
+                Button {
+                    store.addServer()
+                } label: {
+                    Label(DulcetStrings.addServer, systemImage: "plus")
+                        .dulcetForeground(.accentTextOnWindow)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("dulcet.account.add-server")
+                .disabled(isConnecting)
+            } header: {
+                Text(DulcetStrings.savedServers)
+            }
+        }
+    }
+#endif
 
     @ViewBuilder
     private var accountSurface: some View {
@@ -232,11 +293,39 @@ struct DulcetAccountConnectionView: View {
             .frame(maxWidth: .infinity)
             .focusScope(accountFocusScope)
         }
+#elseif os(macOS)
+        // A Mac form submits from a default push button at its bottom trailing edge, as the
+        // system's account sign-in forms do; the window's toolbar stays the pane picker.
+        VStack(spacing: 0) {
+            nativeAccountForm
+            if !store.snapshot.accountConnection.isConnected { macPrimaryActionBar }
+        }
 #else
         nativeAccountForm
-
 #endif
     }
+
+#if os(macOS)
+    private var macPrimaryActionBar: some View {
+        HStack(spacing: DulcetSpacing.sm) {
+            if isConnecting {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityHidden(true)
+            }
+            Spacer()
+            Button(primaryActionTitle) {
+                performAccountPrimaryAction()
+            }
+            .disabled(!isConnecting && !canSubmit)
+            .keyboardShortcut(.defaultAction)
+            .accessibilityIdentifier("dulcet.account-connect.primary-action")
+            .focused($focusedControl, equals: primaryFocus)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 16)
+    }
+#endif
 
 #if !os(tvOS)
     private var canSubmit: Bool {
@@ -253,19 +342,29 @@ struct DulcetAccountConnectionView: View {
                 Section { accountRemovalFailure }
             } else if case let .connected(account) = store.snapshot.accountConnection {
                 Section {
-                    Label(account.serverName, systemImage: "person.crop.circle")
+                    Label(account.serverName, systemImage: "server.rack")
                         .font(.headline)
                     if let user = account.canonicalUsername, !user.isEmpty {
                         LabeledContent(DulcetStrings.username, value: user)
                     }
-                    LabeledContent(DulcetStrings.serverAddress, value: account.serverName)
-                    Label(DulcetStrings.online, systemImage: "checkmark.circle")
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .accessibilityLabel(DulcetStrings.connectedTo(account.serverName))
-                        .accessibilityIdentifier("dulcet.account.connected")
+                    // The address the account connects to, without credentials or query.
+                    LabeledContent(DulcetStrings.serverAddress) {
+                        Text(DulcetServerAddressDisplay.text(account.normalizedServerURL))
+                            .dulcetSelectableText()
+                    }
+                    Label {
+                        Text(DulcetStrings.online)
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill")
+                            .dulcetForeground(.accentIconOnWindow)
+                    }
+                    .accessibilityLabel(DulcetStrings.connectedTo(account.serverName))
+                    .accessibilityIdentifier("dulcet.account.connected")
                 }
                 .accessibilityIdentifier("dulcet.account-connect.title")
                 .accessibilityHint(store.librarySession?.serverReportsNoEpoch == true ? DulcetStrings.readerNoEpoch : String())
+#if !os(macOS)
+                // A Mac reaches these as its Settings window's own panes, never as links here.
                 Section {
                     NavigationLink { DulcetPlaybackSettingsPage(store: store) } label: {
                         Label(DulcetStrings.playbackSettings, systemImage: "play.circle")
@@ -276,23 +375,44 @@ struct DulcetAccountConnectionView: View {
                         }.accessibilityIdentifier("dulcet.account.downloadsStorage")
                     }
                 }
-                Section { savedServers }
+#endif
+                savedServerSection
                 Section {
-                    Button(DulcetStrings.signOut, role: .destructive) { showingSignOutConfirmation = true }
-                        .accessibilityIdentifier("dulcet.account.signOut")
+                    signOutButton
                 }
             } else {
-                if !store.savedServers.isEmpty { Section { savedServers } }
+                if savedServerName != nil && !isConnecting {
+                    Section {
+                        Label {
+                            Text(DulcetStrings.notConnected)
+                        } icon: {
+                            Image(systemName: "wifi.slash")
+                                .dulcetForeground(.offlineIconOnTint)
+                        }
+                        .accessibilityIdentifier("dulcet.account.notConnected")
+                    } footer: {
+                        Text(DulcetStrings.savedAccountReconnectBody)
+                    }
+                }
+                savedServerSection
                 Section {
                     connectionForm
                 } footer: {
-                    Text(DulcetStrings.accountShortFooter)
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                        if showsLocalHTTPConsent { Text(DulcetStrings.allowLocalHTTPHint) }
+                        Text(DulcetStrings.accountShortFooter)
+                    }
                 }
                 .accessibilityIdentifier("dulcet.account-connect.title")
                 if case let .failed(failure) = store.snapshot.accountConnection,
                    failure.kind != .invalidServerURL && failure.kind != .invalidCredentials {
                     Section {
-                        Label(failure.title, systemImage: "exclamationmark.triangle")
+                        Label {
+                            Text(failure.title)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .dulcetForeground(.dangerIconOnTint)
+                        }
                         if failure.kind == .tlsUntrusted {
                             Link(DulcetStrings.openCertificateHelp, destination: DulcetLinks.certificateInstallationGuide)
                         }
@@ -309,8 +429,40 @@ struct DulcetAccountConnectionView: View {
         .formStyle(.grouped)
         .accessibilityIdentifier("dulcet.account.settingsForm")
 #if os(macOS)
-        .frame(minWidth: 480, minHeight: 480)
+        .frame(minWidth: 480, minHeight: 280)
 #endif
+    }
+
+    /// The final section's action. A phone or tablet shows the system's red, centred row; a Mac
+    /// shows an ordinary push button, as its account panes do. Both confirm first.
+    private var signOutButton: some View {
+#if os(macOS)
+        HStack {
+            Button(DulcetStrings.signOut) { showingSignOutConfirmation = true }
+                .accessibilityIdentifier("dulcet.account.signOut")
+            Spacer()
+        }
+#else
+        Button(role: .destructive) {
+            showingSignOutConfirmation = true
+        } label: {
+            Text(DulcetStrings.signOut)
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("dulcet.account.signOut")
+#endif
+    }
+
+    private func fieldError(_ failure: DulcetAccountFailurePresentation) -> some View {
+        Label {
+            Text(failure.title)
+        } icon: {
+            Image(systemName: "exclamationmark.circle.fill")
+                .dulcetForeground(.dangerIconOnTint)
+        }
+        .font(.footnote)
+        .dulcetForeground(.primaryTextOnControl)
+        .accessibilityHint(failure.message)
     }
 #endif
 
@@ -346,7 +498,7 @@ struct DulcetAccountConnectionView: View {
                     .focused($focusedControl, equals: .serverAddress)
             }
             if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidServerURL {
-                Text(failure.title).font(.footnote).dulcetForeground(.primaryTextOnControl).accessibilityHint(failure.message)
+                fieldError(failure)
             }
             credentialRow(DulcetStrings.username) {
                 TextField(DulcetStrings.username, text: $store.accountUsername)
@@ -365,17 +517,13 @@ struct DulcetAccountConnectionView: View {
                     .focused($focusedControl, equals: .password)
             }
             if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidCredentials {
-                Text(failure.title).font(.footnote).dulcetForeground(.primaryTextOnControl).accessibilityHint(failure.message)
+                fieldError(failure)
             }
             if showsLocalHTTPConsent {
                 Toggle(DulcetStrings.allowLocalHTTP, isOn: $store.accountAllowLocalHTTP)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
                     .focused($focusedControl, equals: .allowLocalHTTP)
-                Text(DulcetStrings.allowLocalHTTPHint)
-                    .font(.footnote)
-                    .dulcetForeground(.secondaryTextOnControl)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .disabled(isConnecting)

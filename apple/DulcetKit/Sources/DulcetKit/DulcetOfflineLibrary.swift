@@ -70,38 +70,69 @@ struct DulcetOfflineLibrarySection: View {
     var body: some View {
         if store.offlineLibraryStorage != nil {
             if inForm {
-                // A Form gives each control its own row. Wrapping them in one VStack lets
-                // automatic picker/button hit areas intercept the neighboring switch and button.
+                // Three groups, as the system's storage pages have: what is kept offline, what it
+                // occupies, and the streaming cache with its own action. A Form gives each control
+                // its own row; one shared row would let a picker's hit area take a neighbour's tap.
                 Section {
-                    controls
+                    automaticDownloadsToggle
                 } header: {
                     Text(DulcetStrings.offlineMusic)
-                } footer: { Text(DulcetStrings.offlineAutomaticHint) }
+                } footer: {
+                    offlineMusicFooter
+                }
                 .accessibilityElement(children: .contain)
+                Section(DulcetStrings.offlineStorage) {
+                    storageSizes
+                }
+                Section {
+                    cacheSizePicker
+                    clearCacheAction
+                } header: {
+                    Text(DulcetStrings.offlineStreamingCache)
+                } footer: {
+                    Text(DulcetStrings.offlineCacheHint)
+                }
             } else {
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     Text(DulcetStrings.offlineMusic).font(.headline)
-                    controls
+                    automaticDownloadsToggle
+                    offlineMusicFooter.font(.footnote).dulcetForeground(.secondaryTextOnWindow)
+                    storageSizes
+                    cacheSizePicker
+                    Text(DulcetStrings.offlineCacheHint).font(.footnote).dulcetForeground(.secondaryTextOnWindow)
+                    clearCacheAction
                 }
                 .accessibilityElement(children: .contain)
             }
         }
     }
 
-    @ViewBuilder
-    private var controls: some View {
+    private var automaticDownloadsToggle: some View {
         Toggle(DulcetStrings.offlineAutomaticDownloads, isOn: Binding(
             get: { storage.automaticDownloadsEnabled },
             set: { store.setAutomaticDownloadsEnabled($0) }
         )).accessibilityIdentifier("dulcet.offline.automaticDownloads")
-        if !inForm { Text(DulcetStrings.offlineAutomaticHint).font(.footnote).dulcetForeground(.secondaryTextOnWindow) }
-        if storage.automaticDownloadsEnabled {
-            Text(DulcetStrings.offlineDownloadProgress(completed: storage.completedAutomaticCount, remaining: storage.queuedAutomaticCount))
-                .font(.caption).accessibilityIdentifier("dulcet.offline.progress")
+    }
+
+    @ViewBuilder
+    private var offlineMusicFooter: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+            Text(DulcetStrings.offlineAutomaticHint)
+            if storage.automaticDownloadsEnabled {
+                Text(DulcetStrings.offlineDownloadProgress(completed: storage.completedAutomaticCount, remaining: storage.queuedAutomaticCount))
+                    .accessibilityIdentifier("dulcet.offline.progress")
+            }
         }
+    }
+
+    @ViewBuilder
+    private var storageSizes: some View {
         LabeledContent(DulcetStrings.offlineDownloads, value: bytes(storage.downloadBytes))
         LabeledContent(DulcetStrings.offlineStreamingCache, value: bytes(storage.cacheBytes))
         LabeledContent(DulcetStrings.offlineArtworkCache, value: bytes(storage.artworkBytes))
+    }
+
+    private var cacheSizePicker: some View {
         Picker(DulcetStrings.offlineCacheSize, selection: Binding(get: { storage.cacheBudgetBytes },
                                                 set: { store.setStreamingCacheBudgetBytes($0) })) {
             Text(DulcetStrings.offlineCacheOff).tag(Int64(0))
@@ -110,18 +141,52 @@ struct DulcetOfflineLibrarySection: View {
             Text(DulcetStrings.offlineCache1GB).tag(Int64(1_024 * 1_024 * 1_024))
             Text(DulcetStrings.offlineCache2GB).tag(Int64(2 * 1_024 * 1_024 * 1_024))
         }.pickerStyle(.menu).accessibilityIdentifier("dulcet.offline.cacheSize")
-        Text(DulcetStrings.offlineCacheHint)
-            .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
+    }
+
+    /// A Mac form carries an ordinary push button at the row's trailing edge; a phone, tablet or
+    /// TV form carries a destructive row. Both confirm, naming the cache and the space it frees.
+    @ViewBuilder
+    private var clearCacheAction: some View {
+#if os(macOS)
+        HStack {
+            Spacer()
+            Button(DulcetStrings.offlineClearCache) { confirmsClearCache = true }
+                .accessibilityIdentifier("dulcet.offline.clearCache")
+        }
+        .modifier(clearCacheConfirmation)
+#else
         Button(role: .destructive) { confirmsClearCache = true } label: {
             Text(DulcetStrings.offlineClearCache)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         }
-            .accessibilityIdentifier("dulcet.offline.clearCache")
-            .confirmationDialog(DulcetStrings.clearCacheTitle, isPresented: $confirmsClearCache, titleVisibility: .visible) {
-                Button(DulcetStrings.offlineClearCache, role: .destructive) { store.clearStreamingCache() }
-                Button(DulcetStrings.cancel, role: .cancel) {}.dulcetDefaultActionShortcut()
-            } message: { Text(DulcetStrings.clearCacheBody) }
+        .accessibilityIdentifier("dulcet.offline.clearCache")
+        .modifier(clearCacheConfirmation)
+#endif
     }
+
+    private var clearCacheConfirmation: DulcetClearCacheConfirmation {
+        DulcetClearCacheConfirmation(
+            isPresented: $confirmsClearCache,
+            message: storage.cacheBytes > 0
+                ? DulcetStrings.clearCacheBody(size: bytes(storage.cacheBytes))
+                : DulcetStrings.clearCacheBody,
+            clear: { store.clearStreamingCache() }
+        )
+    }
+
     private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
+}
+
+private struct DulcetClearCacheConfirmation: ViewModifier {
+    @Binding var isPresented: Bool
+    let message: String
+    let clear: () -> Void
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(DulcetStrings.clearCacheTitle, isPresented: $isPresented, titleVisibility: .visible) {
+            Button(DulcetStrings.offlineClearCache, role: .destructive, action: clear)
+            Button(DulcetStrings.cancel, role: .cancel) {}.dulcetDefaultActionShortcut()
+        } message: { Text(message) }
+    }
 }
