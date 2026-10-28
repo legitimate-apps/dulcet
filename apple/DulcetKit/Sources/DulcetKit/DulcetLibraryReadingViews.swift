@@ -12,7 +12,7 @@ private struct DulcetAccountMessageShownKey: EnvironmentKey {
     static let defaultValue = false
 }
 
-private extension EnvironmentValues {
+extension EnvironmentValues {
     var dulcetAccountMessageShown: Bool {
         get { self[DulcetAccountMessageShownKey.self] }
         set { self[DulcetAccountMessageShownKey.self] = newValue }
@@ -26,14 +26,23 @@ struct DulcetReaderScreen<Content: View>: View {
     @Environment(DulcetPresentationStore.self) private var store
     @State private var model: DulcetLibraryWindowModel
     private let content: (DulcetLibraryWindowModel) -> Content
+    private let showsDestinationStatus: Bool
 
-    init(query: DulcetLibraryQuery, @ViewBuilder content: @escaping (DulcetLibraryWindowModel) -> Content) {
+    init(query: DulcetLibraryQuery, showsDestinationStatus: Bool = false, @ViewBuilder content: @escaping (DulcetLibraryWindowModel) -> Content) {
         _model = State(initialValue: DulcetLibraryWindowModel(query: query))
         self.content = content
+        self.showsDestinationStatus = showsDestinationStatus
     }
 
     var body: some View {
         content(model)
+            .overlay(alignment: .top) {
+                if showsDestinationStatus {
+                    DulcetReaderStatusView(window: model.window, localCollection: model.query == .downloaded)
+                        .padding(.horizontal, 16)
+                        .background(.background)
+                }
+            }
             .onAppear(perform: open)
             .onDisappear { model.close() }
             // A different account's reader: the rows go, and the screen reads again.
@@ -92,6 +101,7 @@ struct DulcetReaderStatusView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain)
+            .padding(.vertical, 8)
             .accessibilityIdentifier("dulcet.reader.status")
         }
     }
@@ -1040,7 +1050,6 @@ struct DulcetReaderListBody<Rows: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             if let window = model.window {
-                DulcetReaderStatusView(window: window, localCollection: model.query == .downloaded)
                 if case let .unavailable(reason) = window.freshness, window.items.isEmpty {
                     DulcetReaderUnavailableView(reason: reason, subject: subject)
                 } else if window.items.isEmpty, window.freshness != .loading, window.itemsState != .loading {
@@ -1222,7 +1231,6 @@ struct DulcetReaderHomeView: View {
     var body: some View {
         GeometryReader { geometry in
             List {
-                DulcetReaderAccountBanner()
                 Section {
                     ForEach(DulcetLibrarySection.allCases.filter { $0 != .home && $0 != .favourites }) { section in
                         DulcetReaderNavigationLink(title: section.title, symbol: section.symbolName,
@@ -1238,6 +1246,7 @@ struct DulcetReaderHomeView: View {
             }
             .listStyle(.plain)
         }
+        .overlay(alignment: .top) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
         .dulcetNavigationTitle(DulcetStrings.browseSection, keepsTVNavigationBar: true)
         .environment(\.dulcetAccountMessageShown, store.librarySession?.ownsConnectionMessage == true)
 #if !os(tvOS)
@@ -1403,7 +1412,7 @@ struct DulcetReaderAlbumGridView: View {
     var keepsTVNavigationBar = true
 
     var body: some View {
-        DulcetReaderScreen(query: .albums(type)) { model in
+        DulcetReaderScreen(query: .albums(type), showsDestinationStatus: true) { model in
             DulcetReaderPage(title: title, keepsTVNavigationBar: keepsTVNavigationBar) { width in
                 DulcetReaderListBody(model: model) { _ in
                     DulcetReaderGrid(model: model, width: width)
@@ -1447,7 +1456,7 @@ struct DulcetReaderSimpleListView: View {
     let title: String
 
     var body: some View {
-        DulcetReaderScreen(query: query) { model in
+        DulcetReaderScreen(query: query, showsDestinationStatus: true) { model in
             DulcetReaderPage(title: title) { _ in
                 if query == .artists { DulcetLibraryCategoryControls(category: "artists", offersArtist: false) }
                 DulcetReaderListBody(model: model) { window in
@@ -1469,7 +1478,7 @@ struct DulcetReaderFavouritesView: View {
     @Environment(DulcetPresentationStore.self) private var store
 
     var body: some View {
-        DulcetReaderScreen(query: .favourites) { model in
+        DulcetReaderScreen(query: .favourites, showsDestinationStatus: true) { model in
             DulcetReaderPage(title: DulcetStrings.readerFavorites) { width in
                 DulcetReaderListBody(model: model) { window in
                     let items = Array(window.items.enumerated())
@@ -1557,7 +1566,7 @@ struct DulcetReaderTrackListPage: View {
     var genreName: String?
 
     var body: some View {
-        DulcetReaderScreen(query: query) { model in
+        DulcetReaderScreen(query: query, showsDestinationStatus: true) { model in
 #if os(tvOS)
             // A television album uses the screen's width: art and actions on the left, the track
             // list scrolling on the right. Everything else keeps the stacked page, as does the
@@ -1840,7 +1849,7 @@ struct DulcetReaderArtistPage: View {
     let id: DulcetProviderItemID
 
     var body: some View {
-        DulcetReaderScreen(query: .artist(rawID: id.rawID)) { model in
+        DulcetReaderScreen(query: .artist(rawID: id.rawID), showsDestinationStatus: true) { model in
             DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false, titleInHeader: true) { width in
                 if let window = model.window {
                     if let header = window.header {

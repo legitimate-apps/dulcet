@@ -25,7 +25,6 @@ struct DulcetListenNowView: View {
     @Environment(DulcetPresentationStore.self) private var store
     var body: some View {
         DulcetReaderPage(title: DulcetStrings.listenNow) { width in
-            DulcetReaderAccountBanner()
             ForEach(DulcetListenNowShelf.allCases) { shelf in
                 DulcetListenNowShelfView(shelf: shelf, width: width)
             }
@@ -36,6 +35,7 @@ struct DulcetListenNowView: View {
 #if os(macOS) || os(tvOS)
         .toolbar { ToolbarItem(placement: .primaryAction) { DulcetListenNowRefresh() } }
 #endif
+        .overlay(alignment: .top) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
         .accessibilityIdentifier("dulcet.listenNow")
     }
 }
@@ -146,7 +146,7 @@ struct DulcetListenNowShelfPage: View {
     @Environment(DulcetPresentationStore.self) private var store
     let shelf: DulcetListenNowShelf
     var body: some View {
-        DulcetReaderScreen(query: .listenNow(shelf)) { model in
+        DulcetReaderScreen(query: .listenNow(shelf), showsDestinationStatus: true) { model in
             DulcetReaderPage(title: shelf.title) { width in
                 DulcetReaderListBody(model: model) { window in
                     if window.items.first?.kind == .track {

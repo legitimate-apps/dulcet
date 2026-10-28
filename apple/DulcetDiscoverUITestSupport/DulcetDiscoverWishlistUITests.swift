@@ -139,7 +139,9 @@ import UIKit
             let titles = ["listenNow": "Listen Now", "library": "Library", "browse": "Browse", "search": "Search", "settings": "Connection"]
             tab = app.tabBars.buttons[titles[section] ?? section].firstMatch
         }
-        let row = UIDevice.current.userInterfaceIdiom == .pad && !tab.exists ? app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch : tab
+        let nativeSidebar = app.descendants(matching: .any)["dulcet.tab.\(section)"].firstMatch
+        let legacySidebar = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
+        let row = tab.exists ? tab : nativeSidebar.exists ? nativeSidebar : legacySidebar
 #endif
         XCTAssertTrue(row.waitForExistence(timeout: 30))
         let reachable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: row)

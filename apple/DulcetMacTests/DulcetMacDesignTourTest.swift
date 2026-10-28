@@ -54,8 +54,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
         playback.streamingQuality = quality
         let store = DulcetPresentationStore(source: DulcetAccountDataSource(
             connector: DulcetCoreAccountConnector(), credentialStore: credentials,
-            libraryBrowser: DulcetCoreLibraryBrowser(), artworkFetcher: artwork,
-            serverSearch: DulcetCoreServerSearch(), playbackController: playback,
+            libraryBrowser: DulcetCoreLibraryBrowser(databaseName: databaseName), artworkFetcher: artwork,
+            serverSearch: DulcetCoreServerSearch(databaseName: databaseName), playbackController: playback,
             downloadController: downloads, providerInstanceIDFactory: { providerInstanceID }, librarySession: session
         ))
         store.streamingQualitySetting = quality
@@ -555,14 +555,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 credentials: credentials, frame: hosting.frame, window: window)
         }
         await step("connection-error-persistence") {
-            let key = "com.legitimateapps.dulcet.active-account-id"
-            let previous = UserDefaults.standard.string(forKey: key)
-            UserDefaults.standard.removeObject(forKey: key)
-            defer {
-                if let previous { UserDefaults.standard.set(previous, forKey: key) }
-                else { UserDefaults.standard.removeObject(forKey: key) }
-            }
-            let shippingStore = DulcetMacProduction.makePresentationStore()
+            // Exercise the production connection/persistence failure path without relying
+            // on this host's Keychain entitlement or touching its normal account defaults.
+            let refusingCredentials = DesignTourCredentialStore()
+            refusingCredentials.rejectsSaves = true
+            let shippingStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(), credentialStore: refusingCredentials
+            ))
             let shippingHosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: shippingStore))
             shippingHosting.frame = hosting.frame
             shippingHosting.appearance = self.appearance
@@ -661,11 +660,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
-        // The local capture runner grants foreground activation to this exact test host.
-        // macOS can decline an activation request initiated by a hosted test itself.
+        // Both player-only and general tour runners support the same host activation request.
         if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
-            let request = URL(fileURLWithPath: directory).appendingPathComponent("player-host.activate")
-            try? String(ProcessInfo.processInfo.processIdentifier).write(to: request, atomically: true, encoding: .utf8)
+            for filename in ["player-host.activate", "tour-host.activate"] {
+                try? String(ProcessInfo.processInfo.processIdentifier).write(
+                    to: URL(fileURLWithPath: directory).appendingPathComponent(filename),
+                    atomically: true, encoding: .utf8)
+            }
         }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
@@ -1079,13 +1080,16 @@ private final class DesignTourCredentialStore: DulcetProviderInstanceCredentialS
     private var persisted: DulcetAccountConnectRequest?
     private(set) var providerInstanceID: String?
     private(set) var credentialGeneration: Int64 = 0
+    var rejectsSaves = false
 
     func load() throws -> DulcetAccountConnectRequest? { persisted }
     func save(_ request: DulcetAccountConnectRequest) throws {
+        if rejectsSaves { throw DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement }
         persisted = request
         credentialGeneration += 1
     }
     func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        if rejectsSaves { throw DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement }
         persisted = request
         self.providerInstanceID = providerInstanceID
         credentialGeneration += 1

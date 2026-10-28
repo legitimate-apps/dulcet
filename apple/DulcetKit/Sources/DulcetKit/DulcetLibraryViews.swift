@@ -719,11 +719,24 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// stacks and it sits on the meta line under the full-width title instead of crowding it.
     let trailing: Trailing
     private var extraMenuActions = AnyView(EmptyView())
+    private var allowsTrackDrag = true
+    private var activationIdentifier: String?
+    private var moreIdentifier = "dulcet.track.more"
 
     /// Queue-entry actions are distinct from the track's library and playback actions.
     func additionalMenuActions<Actions: View>(@ViewBuilder _ actions: () -> Actions) -> Self {
         var row = self
         row.extraMenuActions = AnyView(actions())
+        return row
+    }
+
+    /// A queue entry moves an existing entry; dragging a catalog track adds another one.
+    /// The queue owner installs its entry drag behavior outside this row.
+    func queueEntry(activationIdentifier: String, moreIdentifier: String) -> Self {
+        var row = self
+        row.allowsTrackDrag = false
+        row.activationIdentifier = activationIdentifier
+        row.moreIdentifier = moreIdentifier
         return row
     }
 
@@ -765,7 +778,7 @@ struct DulcetTrackRow<Trailing: View>: View {
 
     var body: some View {
         HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: DulcetSpacing.xxs) {
-            labelledRow
+            identifiedRow
                 .frame(maxWidth: .infinity, alignment: .leading)
             Menu {
                 DulcetTrackMenuItems(
@@ -788,7 +801,7 @@ struct DulcetTrackRow<Trailing: View>: View {
             .dulcetForeground(.accentIconOnWindow)
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
-            .accessibilityIdentifier("dulcet.track.more")
+            .accessibilityIdentifier(moreIdentifier)
         }
         .contextMenu {
             DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
@@ -802,6 +815,15 @@ struct DulcetTrackRow<Trailing: View>: View {
                 .tint(.accentColor)
         }
 #endif
+    }
+
+    @ViewBuilder
+    private var identifiedRow: some View {
+        if let activationIdentifier {
+            labelledRow.accessibilityIdentifier(activationIdentifier)
+        } else {
+            labelledRow
+        }
     }
 
     @ViewBuilder
@@ -837,23 +859,30 @@ struct DulcetTrackRow<Trailing: View>: View {
                 .accessibilityValue(downloadStateAccessibilityValue)
                 .accessibilityHint(DulcetStrings.play)
         #else
-            Button(action: performActivation) {
-                rowContent
+            if allowsTrackDrag {
+                touchActivation.dulcetQueueDragSource(
+                    store: store,
+                    artwork: track.artwork,
+                    title: track.title,
+                    isEnabled: track.availability == .playable
+                ) { queueAddition ?? .track(track, in: store) }
+            } else {
+                touchActivation
             }
+        #endif
+        }
+    }
+
+#if !os(macOS)
+    private var touchActivation: some View {
+        Button(action: performActivation) { rowContent }
             .dulcetTrackButtonStyle(prominentTVFocus: prominentTVFocus)
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
             .accessibilityValue(downloadStateAccessibilityValue)
             .accessibilityHint(DulcetStrings.play)
-            .dulcetQueueDragSource(
-                store: store,
-                artwork: track.artwork,
-                title: track.title,
-                isEnabled: track.availability == .playable
-            ) { queueAddition ?? .track(track, in: store) }
-        #endif
-        }
     }
+#endif
 
     private var rowContent: some View {
         Group {

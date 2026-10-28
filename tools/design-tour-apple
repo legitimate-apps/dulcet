@@ -205,6 +205,24 @@ PY
 # capture the screen itself. Region requests are bounded by the test's owned window/menu frames.
 serve_capture_requests() { # shots-dir
   local request name target
+  if [[ -f "$1/tour-host.activate" ]]; then
+    python3 - "$1/tour-host.activate" "$DD" <<'PYTHON'
+from pathlib import Path
+import subprocess, sys
+request = Path(sys.argv[1])
+try:
+    pid = int(request.read_text())
+    command = subprocess.check_output(['ps', '-p', str(pid), '-o', 'comm='], text=True).strip()
+    expected = str(Path(sys.argv[2]).resolve() / 'Build/Products/Debug/Dulcet DEV.app/Contents/MacOS/Dulcet DEV')
+    if command == expected:
+        script = f'tell application "System Events"\nset tourProcess to first process whose unix id is {pid}\nset frontmost of tourProcess to true\nend tell'
+        subprocess.run(['osascript', '-e', script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+except (ValueError, FileNotFoundError, subprocess.CalledProcessError):
+    pass
+finally:
+    request.unlink(missing_ok=True)
+PYTHON
+  fi
   for request in "$1"/*.request; do
     [[ -e "$request" ]] || continue
     name="${request%.request}"

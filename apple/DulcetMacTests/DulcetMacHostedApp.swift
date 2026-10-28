@@ -341,7 +341,8 @@ final class HostedApp {
     /// `attempts` above 1 opens again when no menu began tracking within two seconds: a press on an
     /// element the view replaced reaches nothing and opens no menu, so pressing again is harmless.
     func chooseMenuItem(
-        _ title: String, described description: String, attempts: Int = 1,
+        _ title: String?, described description: String, attempts: Int = 1,
+        inspecting inspect: (@MainActor @Sendable (NSMenu) -> Void)? = nil,
         opening open: () async throws -> Void
     ) async throws -> [String] {
         // A dismissed sheet can leave an inactive hosted test with no key window. A real
@@ -366,10 +367,25 @@ final class HostedApp {
             RunLoop.main.perform(inModes: [.eventTracking, .common]) {
                 MainActor.assumeIsolated {
                     guard let menu = tracking.menu else { return }
-                    if let index = menu.items.firstIndex(where: { $0.title == title && $0.isEnabled }) {
-                        menu.performActionForItem(at: index)
-                        tracking.performed = true
+                    func visit(_ current: NSMenu) {
+                        current.update()
+                        for item in current.items {
+                            if let submenu = item.submenu { visit(submenu) }
+                        }
                     }
+                    visit(menu)
+                    inspect?(menu)
+                    func perform(in current: NSMenu) -> Bool {
+                        for (index, item) in current.items.enumerated() {
+                            if item.title == title && item.isEnabled {
+                                current.performActionForItem(at: index)
+                                return true
+                            }
+                            if let submenu = item.submenu, perform(in: submenu) { return true }
+                        }
+                        return false
+                    }
+                    tracking.performed = title == nil || perform(in: menu)
                     menu.cancelTracking()
                 }
             }
