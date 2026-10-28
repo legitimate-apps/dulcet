@@ -96,9 +96,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // then Select.
         step("album", app) {
             let tiles = app.buttons.matching(identifier: "dulcet.library.album")
-            guard self.press(.down, until: { self.focused(in: tiles) != nil }, bound: 8),
-                  self.press(.right, until: { self.focused(in: tiles)?.label.hasPrefix(Self.album) == true }, bound: 12)
-            else { return false }
+            let target = tiles.matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
+            // Native tabs restore the last focused card. The target can be on either side.
+            guard target.waitForExistence(timeout: 30),
+                  self.focusByRemote(target, in: app, bound: 24) else { return false }
             remote.press(.select)
             let title = app.staticTexts["dulcet.album.title"].firstMatch
             return title.waitForExistence(timeout: 15) && self.waitFor(10) { title.label == Self.album }
@@ -107,7 +108,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
 
         // Now Playing, playing, focus on Play/Pause: the album's own Play, by remote. The first
         // track of the corpus's albums carries synced lyrics, which the lyrics shot needs.
-        let pause = app.buttons["Pause"].firstMatch
+        let pause = app.buttons["dulcet.now-playing.play-pause"].firstMatch
         step("now-playing", app) {
             let play = app.buttons["dulcet.album.play"].firstMatch
             // Play is disabled until the album's tracks have loaded; focus lands beside it.
