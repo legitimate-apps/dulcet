@@ -222,7 +222,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     @MainActor
     private func connectContentTourByRemote(_ app: XCUIApplication, server: Server) -> Bool {
         guard selectSection(app, "settings") else { return false }
-        if element(labelPrefix: "Connected to", in: app).exists { return true }
+        if element(labelPrefix: "Connected to", in: app).exists || app.buttons["Sign Out"].firstMatch.exists { return true }
         let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
         let username = app.textFields["dulcet.account-connect.username"].firstMatch
         let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
