@@ -515,7 +515,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 
     @MainActor
     private func launch(connect: Bool = true, server: String? = nil, username: String? = nil, password: String? = nil, variant: String = "light") throws {
-        var launchArguments = ["-dulcet-debug-ui-markers", variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
+        var launchArguments = ["-dulcet-debug-ui-markers", "-dulcet-debug-navigation-receipts", variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if variant == "largest-text" { launchArguments += ["-dulcet-debug-largest-text"] }
         if connect {
             launchArguments += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server ?? base,
@@ -612,14 +612,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     @MainActor private func select(_ section: String) throws {
 #if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            // Each launch installs a new application process. Scope this navigation to
-            // that process; destination readiness and selected-state checks stay explicit.
-            withoutIdleWaits { [self] in selectDestination(section) }
-            return
-        }
-#endif
+        // Scope native input to this launch's process, as the design tour does.
+        // Destination readiness and selected-state checks remain explicit.
+        withoutIdleWaits { [self] in selectDestination(section) }
+#else
         selectDestination(section)
+#endif
     }
     @MainActor private func selectDestination(_ section: String) {
         let membership = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
@@ -719,7 +717,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         guard let method = class_getInstanceMethod(type(of: app), selector),
               let encoding = method_getTypeEncoding(method).map({ String(cString: $0) }),
               encoding.filter({ !$0.isNumber }) == "v@:I@?" else {
-            print("MY LIBRARY IPAD sidebar interaction options unavailable; using ordinary waits")
+            print("MY LIBRARY IOS destination interaction options unavailable; using ordinary waits")
             body()
             return
         }
@@ -832,7 +830,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 XCTFail("The native destination must have an on-screen frame: " + element.debugDescription)
                 return
             }
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            origin.withOffset(CGVector(dx: frame.midX - app.frame.minX,
+                                       dy: frame.midY - app.frame.minY)).tap()
             return
         }
 #endif
