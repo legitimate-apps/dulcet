@@ -1407,13 +1407,15 @@ func choosingACatalogSidebarSectionLeavesHomeAndKeepsItsOwnNavigationHistory() {
     store.selectLibrarySection(.playlists)
     #expect(store.selectedDestination == .browse, "A catalog sidebar choice must leave Listen Now")
     #expect(store.librarySection == .playlists)
-    #expect(store.readerPath.isEmpty, "The sidebar opens the chosen section's root")
+    #expect(store.readerPath == [.section(.playlists)], "The sidebar opens the chosen page above Browse")
     store.navigate(to: .listenNow)
     #expect(store.readerPath == [album], "Catalog navigation must preserve Home's own detail stack")
     store.selectLibrarySection(.albums)
     #expect(store.selectedDestination == .browse)
     #expect(store.librarySection == .albums)
-    #expect(store.readerPath.isEmpty)
+    #expect(store.readerPath == [.section(.albums)])
+    store.navigate(to: .browse)
+    #expect(store.readerPath.isEmpty, "Reselecting Browse returns to the actual Browse root")
 }
 
 @Test @MainActor
@@ -1459,8 +1461,8 @@ func aPageOpenedIsOwedFocusAndBackNamesWhatThePageItLandedOnHadOpened() {
     // A pop of several pages at once names the page it lands on and the one that page opened.
     store.pushReaderPage(artist)
     store.pushReaderPage(album)
-    store.popReader(to: [])
-    #expect(store.readerReturn == DulcetReaderReturn(page: nil, opened: artist))
+    store.popReader(to: [.section(.artists)])
+    #expect(store.readerReturn == DulcetReaderReturn(page: .section(.artists), opened: artist))
 }
 
 @Test @MainActor
@@ -2155,7 +2157,7 @@ func editingASavedAccountPausesAutomaticRetriesAndRejectsLateCompletion() {
 }
 
 @Test @MainActor
-func browseIsStableAcrossServerCapabilitiesAndKeepsEachNavigationStack() throws {
+func myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack() throws {
     let factory = RecordingReaderFactory()
     let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
     let (store, session, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
@@ -2187,6 +2189,24 @@ func browseIsStableAcrossServerCapabilitiesAndKeepsEachNavigationStack() throws 
     #expect(store.readerPath.isEmpty)
     store.navigate(to: .browse)
     #expect(store.readerPath.isEmpty)
+}
+
+@Test @MainActor
+func personalSidebarCategoriesOpenTheirOwnPagesAndLibraryRemainsARoot() {
+    let factory = RecordingReaderFactory()
+    let (store, _, _) = readerModeStore(
+        persisted: DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener",
+            password: "fixture-password", allowLocalHTTP: false),
+        providerInstanceID: "provider-reader", factory: factory)
+    store.selectMyLibrarySection(.recent)
+    #expect(store.selectedDestination == .library)
+    #expect(store.readerPath == [.myLibrarySection(.recent)])
+    store.selectMyLibrarySection(.songs)
+    #expect(store.myLibrarySection == .songs)
+    #expect(store.readerPath == [.myLibrarySection(.songs)])
+    store.navigate(to: .library)
+    #expect(store.readerPath.isEmpty)
+    #expect(store.destinations([.listenNow, .library, .browse, .search]) == [.listenNow, .library, .browse, .search])
 }
 
 @Test @MainActor

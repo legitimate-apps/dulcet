@@ -154,9 +154,6 @@ struct DulcetMyLibrarySectionPage: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                             if let library = store.librarySession?.myLibrary {
-                                if section != .recent {
-                                    DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
-                                }
                                 DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                                 if section == .songs { DulcetMyLibraryShuffle(songs: library.songs) }
                                 if section == .songs && library.songs.isEmpty && library.syncState != "syncing" {
@@ -180,6 +177,23 @@ struct DulcetMyLibrarySectionPage: View {
         .dulcetForeground(.primaryTextOnWindow)
         .dulcetNavigationTitle(section.title, keepsTVNavigationBar: false)
         .accessibilityIdentifier("dulcet.myLibrary.sectionPage.\(section.rawValue)")
+        .toolbar {
+            if section != .recent && section != .playlists {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
+                    } label: { Label(DulcetStrings.readerSortBy, systemImage: "arrow.up.arrow.down") }
+                    .accessibilityIdentifier("dulcet.myLibrary.\(section.rawValue).options")
+                }
+            }
+#if os(macOS)
+            ToolbarItem(placement: .primaryAction) {
+                Button(DulcetStrings.myLibraryRefresh, systemImage: "arrow.clockwise", action: refresh)
+                    .keyboardShortcut("r", modifiers: .command)
+                    .accessibilityIdentifier("dulcet.myLibrary.refresh")
+            }
+#endif
+        }
         .onAppear { applySort() }
         .onChange(of: store.librarySession?.readerGeneration) { _, _ in applySort() }
     }
@@ -258,6 +272,9 @@ struct DulcetMyLibraryView: View {
                     }
                     DulcetPersonalLibraryLinks()
                 }
+                if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
+                    DulcetPinnedLibraryItems().dulcetHideListRowSeparator()
+                }
                 if let library = store.librarySession?.myLibrary {
                     DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                     if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
@@ -265,7 +282,7 @@ struct DulcetMyLibraryView: View {
                     } else {
                         Section {
                             DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width)
-                                .listRowSeparator(.hidden)
+                                .dulcetHideListRowSeparator()
                         } header: {
                             DulcetShelfHeader(title: DulcetStrings.recentlyAdded,
                                 identifier: "dulcet.myLibrary.section.recent") {
@@ -395,6 +412,9 @@ struct DulcetPersonalLibraryRoot: View {
             DulcetReaderNavigationLink(title: DulcetStrings.readerPlaylists, symbol: "music.note.list",
                 route: .section(.playlists), identifier: "dulcet.reader.section.playlists")
             DulcetPersonalLibraryLinks()
+            if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
+                DulcetPinnedLibraryItems().dulcetHideListRowSeparator()
+            }
         }
         .listStyle(.plain)
         .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)

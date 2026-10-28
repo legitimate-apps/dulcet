@@ -775,7 +775,7 @@ public final class DulcetPresentationStore {
             selectDestination(destination)
         }
         librarySection = section
-        readerPath = []
+        readerPath = section == .home ? [] : [.section(section)]
         readerReturn = nil
         readerArrival = nil
     }

@@ -172,7 +172,7 @@ final class HostedApp {
     /// The Settings scene's content in a window of its own, as Dulcet > Settings… shows it.
     func openSettingsWindow() -> NSWindow {
         let hosting = NSHostingView(rootView: DulcetSettingsView(store: store))
-        hosting.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
+        hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 560)
         let settings = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         settings.isReleasedWhenClosed = false
         settings.contentView = hosting
@@ -193,6 +193,11 @@ final class HostedApp {
     /// menu is the only AppKit object a choice goes through.
     func choose(_ option: String, picker identifier: String, in settings: NSWindow) async throws {
         let root = try XCTUnwrap(settings.contentView)
+        if identifier.hasPrefix("dulcet.streaming-quality."),
+           !descendants(of: root).contains(where: { self.identifier($0) == identifier }),
+           let playback = descendants(of: root).first(where: { self.identifier($0) == "dulcet.account.playback" }) {
+            try press(playback, named: "Playback")
+        }
         let picker = try await element(timeout: .seconds(10), described: identifier, in: root) {
             self.identifier($0) == identifier
         }

@@ -78,13 +78,10 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
     /// The Mac's hearts (spec §16.20, CONF-84), each clicked where it is drawn and read back from
     /// the server:
     ///
-    /// 1. the heart beside the stars in the window's toolbar, for the playing track;
-    /// 2. the heart beside a track's row on its album page.
-    ///
-    /// Each fills with the click, before the server answers, and the server's `starred` reads the
-    /// track starred; a second click empties it at once and the server reads it unstarred. Each
-    /// starts from what the server holds, so an earlier run's star cannot make a write
-    /// unobservable, and the server is left unstarred.
+    /// The player toolbar retains its heart until the player presentation changes. Track rows
+    /// expose Favorite through More. Each UI action is read back from the disposable server,
+    /// and both controls leave the track unstarred. The shared state tests cover optimistic
+    /// publication; this host proof covers the rendered controls and real server writes.
     func toolbarAndRowHeartsStarTheTrackOnTheServerThroughTheHostedMacApp() async throws {
         let server = try disposableServer()
         let album = "Threshold Boundary"
@@ -101,7 +98,7 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         try await toggleAndProve(toolbarHeart, named: "the toolbar's heart", songID: songID, on: server, in: app)
         XCTAssertEqual(app.store.snapshot.nowPlaying?.current.title, track, "Starring must not change what is playing")
 
-        // 2. The heart beside the track's row on its album page.
+        // 2. Favorite in the track row's native More menu.
         try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.section.albums")
         let tile = try await app.element(timeout: .seconds(30), described: "the \(album) tile") {
             app.identifier($0) == "dulcet.library.album" && (app.label($0) ?? "").hasPrefix(album)
@@ -111,18 +108,28 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
             app.identifier($0) == "dulcet.reader.track" && (app.label($0) ?? "").hasPrefix(track)
         }
         let rowFrame = try app.frame(row)
-        let rowHearts = app.windowElements { app.identifier($0) == "dulcet.reader.favorite" }
+        let rowMenus = app.windowElements { app.identifier($0) == "dulcet.track.more" }
             .filter { (try? app.frame($0)).map { $0.midY > rowFrame.minY && $0.midY < rowFrame.maxY } ?? false }
-        XCTAssertEqual(rowHearts.count, 1, "Exactly one heart must sit beside \(track)'s row; row=\(rowFrame)")
-        let rowHeart = try XCTUnwrap(rowHearts.first, "No heart beside \(track)'s row")
-        // The click below is posted to the window directly, so it would land even on a heart the
-        // window clips; the heart must lie wholly inside the window's content to be one a person sees.
-        let heartFrame = try app.frame(rowHeart)
+        XCTAssertEqual(rowMenus.count, 1, "Exactly one More menu must sit beside \(track)'s row; row=\(rowFrame)")
+        let rowMenu = try XCTUnwrap(rowMenus.first, "No More menu beside \(track)'s row")
+        // The menu button must lie wholly inside the content a person can see.
+        let menuFrame = try app.frame(rowMenu)
         let content = app.contentScreenFrame
-        XCTAssertTrue(content.contains(heartFrame), "\(track)'s row heart \(heartFrame) must lie inside the window \(content)")
-        try await toggleAndProve(rowHeart, named: "\(track)'s row heart", songID: songID, on: server, in: app)
+        XCTAssertTrue(content.contains(menuFrame), "\(track)'s row More button \(menuFrame) must lie inside the window \(content)")
+        for expected in [true, false] {
+            try await app.chooseMenuItem(expected ? "Favorite" : "Remove Favorite", described: "the track More menu") {
+                try app.press(rowMenu, named: "the track More button")
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+            var observed = try await server.starred(songID)
+            while observed != expected, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .seconds(1))
+                observed = try await server.starred(songID)
+            }
+            XCTAssertEqual(observed, expected, "The track More action must reach the server")
+        }
         print("DULCET MAC HEARTS PROOF PASS track=\(track.debugDescription) toolbar=true->false row=true->false"
-            + " row-heart=\(heartFrame) content=\(content)")
+            + " row-more=\(menuFrame) content=\(content)")
     }
 
     /// A playlist on the server opens from the sidebar's Playlists and its Play starts it in ITS

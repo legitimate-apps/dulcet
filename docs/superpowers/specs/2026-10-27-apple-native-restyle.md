@@ -76,10 +76,10 @@ platform. They are acceptance criteria, not claims about screenshots already pro
 
 | Platform | Navigation/account | Persistent playback | Detail presentation |
 | --- | --- | --- | --- |
-| iPhone | Listen Now, Library, Browse, Search with search role; account toolbar button opens Connection sheet | System TabView bottom accessory, minimizes with the tab bar; no empty accessory | Native player sheet with supported matched transition, native Back and dismissal |
+| iPhone | Listen Now, Library, Browse, Search with search role; account toolbar button opens Account sheet | System TabView bottom accessory, minimizes with the tab bar; no empty accessory | Native player sheet with supported matched transition, native Back and dismissal |
 | iPad | Adaptive tabs/sidebar, same four places; Account/Connection in sidebar footer | System accessory when tabs are shown; one shared persistent player in sidebar layout | NavigationSplitView, native sheet or inspector for auxiliary content |
 | Mac | Native sidebar; Account and server controls in Settings window, with sidebar account shortcut | One window-level player/transport area, keyboard and pointer controls | Content/detail navigation; queue and lyrics in native inspector or player view |
-| Apple TV | Native TabView section navigation including Connection; verify programmatic selection and focus restoration on 27 | Now Playing section and compact playback context where native layout supports it | Remote-driven stacks; Menu returns one level or restores tab focus |
+| Apple TV | Native TabView section navigation including Account; verify programmatic selection and focus restoration on 27 | Now Playing section and compact playback context where native layout supports it | Remote-driven stacks; Menu returns one level or restores tab focus |
 
 On older iOS, four legacy tabs and one safe-area player are acceptable fallbacks. The fallback
 also opens the same account sheet. Account changes preserve existing reconnect and sign-out flows.
@@ -170,9 +170,9 @@ account access and fallback behavior. Do not change FEATURES.yml until platform 
 
 ## Foundation decisions after baseline critique, 2026-10-27
 
-- The ordinary OpenSubsonic server and Dulcet Server have the same four phone tabs: Listen Now, Library, Browse, Search. Search has the system search role. Account is a toolbar sheet on iPhone, accessible in the adaptive sidebar on iPad, a sidebar shortcut plus Settings window on Mac, and a native Connection tab on TV.
+- The ordinary OpenSubsonic server and Dulcet Server have the same four phone tabs: Listen Now, Library, Browse, Search. Search has the system search role. Account is a toolbar sheet on iPhone, accessible in the adaptive sidebar on iPad, a sidebar shortcut plus Settings window on Mac, and a native Account tab on TV.
 - On Dulcet Server, Library categories are Playlists, Artists, Albums, Songs, Downloaded (where supported), Favorites and Wishlist (where supported), followed by personal Recently Added artwork. There are no Server Songs or Shuffle Server Songs controls in Library. On an ordinary server without the personal-collection extension, Library offers Favorites, Playlists and Downloaded, plus Wishlist only when advertised. It does not label the complete server catalog as personal content. Favorite albums, artists and songs remain grouped in Favorites.
-- Browse on either server offers server Recently Added and other supported discovery shelves, then Albums, Artists, Genres, Playlists and Songs. Shuffle Server Songs acts on that server catalog. Browse has no Downloaded or Favorites row. Device pins remain available through More; pinning does not change personal membership.
+- Browse on either server offers server Recently Added and other supported discovery shelves, then Albums, Artists, Genres, Playlists and Songs. Shuffle Server Songs acts on that server catalog. Browse has no Downloaded or Favorites row. Device pins remain available through More and a Pinned collection in Library; pinning does not change personal membership.
 - One title then content. No hero, subtitle or explanatory paragraph under a root title. New, Edit, More, sort and filter belong in toolbars. Touch refresh is pull to refresh; Mac refresh is a toolbar item and Command-R. Recently Added and Most Played have no sort menu; Most Played shows rank.
 - Track rows use 48-point square artwork (artists use circular art), title and secondary metadata, at most one status glyph and one trailing More menu. Accessibility text reflows metadata below the title. Favorite and pin actions move into More/context menus and swipe actions. Numeric ratings remain in a Rating submenu. The same vocabulary applies to Up Next.
 - Artwork fills its frame with no inset backing card. Compact grids use two columns; accessibility text uses readable rows. Regular grids adapt to width; TV uses large focusable lockups and context actions instead of a More pill under each tile. Shelves reveal the next item and section headers lead to See All. Empty shelves disappear. A one-item shelf may remain when it carries a distinct useful category; hiding the only available new album would remove useful content. Avoid duplication between personalized shelves where the underlying reader permits it.
@@ -184,3 +184,20 @@ account access and fallback behavior. Do not change FEATURES.yml until platform 
 
 Baseline critique identified route mismatches and incomplete data states. A screenshot is comparable only when its manifest records the server type, fixture state, tab set and verified destination. Repaired baseline states accompany the next round: populated Songs; Favorites with albums/artists; matching Mac light/dark data; visible phone storage rows; per-destination errors; downloading/queued/failed downloads; and saved/offline/no-history/resume Listen Now. Existing TV focus capture blockers wait for the shared toolchain fix rather than a parallel repair.
 
+
+## Foundation implementation notes, 2026-10-28
+
+Catalog categories push on Browse's navigation stack on every platform. Selecting Browse again
+returns to its category root. Sidebar selection follows the displayed route, rather than the
+last category selected before returning to the root. Personal categories push from Library in
+the same way. The ordinary-server Browse root did not exist in the paired baseline source;
+its before cell remains an explicit absent-route gap rather than an Albums photograph.
+
+Downloads & Storage retains the existing automatic-download setting, storage totals, retention
+choices and confirmed Clear Streaming Cache action. Removing every downloaded song in one action
+is not an existing capability; this presentation change does not add that operation.
+
+UI proofs retain their test and action identifiers when an action moves into a native More menu.
+Server read-back still proves Favorite and membership writes. A menu action is not an inline
+heart, so the UI proof no longer claims that an inline heart fills before the server answers.
+The shared state tests continue to verify optimistic publication semantics.

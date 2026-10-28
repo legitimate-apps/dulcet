@@ -778,10 +778,8 @@ final class DulcetiOSUITests: XCTestCase {
     /// grid under a phone's Library list, or Albums in a regular window's sidebar.
     @MainActor
     private func openLibraryAlbum(_ album: String, in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
-            return false
-        }
-        if !compact, !openSidebarLibrarySection("albums", in: app) { return false }
+        guard openDestination("Browse", sidebarIdentifier: "dulcet.sidebar.browse", in: app, compact: compact),
+              openSidebarLibrarySection("albums", in: app) else { return false }
         let tile = app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch
         // A phone's Recently Added grid is extended as it scrolls, newest first, so an older album
@@ -906,7 +904,7 @@ final class DulcetiOSUITests: XCTestCase {
         // A connecting launch can navigate to Listen Now during a global Sign Out query.
         // Route to Connection in the bounded loop before querying its connected-state control.
         let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
-        let tryAgain = app.buttons["Try Again"].firstMatch
+        let tryAgain = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         var retries = 0
         let deadline = Date().addingTimeInterval(35)
         repeat {
@@ -944,7 +942,8 @@ final class DulcetiOSUITests: XCTestCase {
     /// sideways and so cannot bring a named album into view by scrolling the page.
     @MainActor
     private func openSidebarLibrarySection(_ section: String, in app: XCUIApplication) -> Bool {
-        let row = app.descendants(matching: .any)["dulcet.sidebar.section.\(section)"].firstMatch
+        let nativeLink = app.buttons["dulcet.reader.section.\(section)"].firstMatch
+        let row = nativeLink.exists ? nativeLink : app.descendants(matching: .any)["dulcet.sidebar.section.\(section)"].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else {
             XCTFail("The sidebar must list the library's \(section) section: " + app.debugDescription)
             return false
@@ -962,31 +961,26 @@ final class DulcetiOSUITests: XCTestCase {
         in app: XCUIApplication,
         compact: Bool
     ) -> Bool {
-        if compact {
-            let tab = app.tabBars.buttons[tabTitle].firstMatch
-            guard tab.waitForExistence(timeout: 5) else {
-                XCTFail("A compact window must present the \(tabTitle) tab: " + app.debugDescription)
+        if tabTitle == "Connection" {
+            let close = app.buttons["dulcet.account.close"].firstMatch
+            if close.exists {
+                if app.navigationBars["Account"].firstMatch.exists { return true }
+                close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false }
+            }
+            let account = app.buttons["dulcet.account.open"].firstMatch
+            guard account.waitForExistence(timeout: 10), account.isHittable else {
+                XCTFail("The account button must be visible: " + app.debugDescription)
                 return false
             }
-            // A synthesized tap can finish without selecting its tab on a loaded host.
-            // Confirm the navigation before a caller queries the destination's controls.
-            for attempt in 1...3 {
-                if tab.isHittable { tab.tap() }
-                let deadline = Date().addingTimeInterval(3)
-                repeat {
-                    if tab.isSelected { return true }
-                    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-                } while Date() < deadline
-                print("DULCET DESTINATION retry tab=\(tabTitle) attempt=\(attempt) reason=not-selected")
-            }
-            XCTFail("The \(tabTitle) tab must become selected: " + app.debugDescription)
-            return false
+            account.tap()
+            return close.waitForExistence(timeout: 10)
         }
-        // The explicit sidebar button owns the destination identifier. Its child label carries
-        // only the visible title, so resolve the actionable control rather than a text child.
-        let row = app.buttons[sidebarIdentifier].firstMatch
-        guard row.waitForExistence(timeout: 5), row.isHittable else {
-            XCTFail("The \(tabTitle) row must be visible in the sidebar: " + app.debugDescription)
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
+        let tab = app.tabBars.buttons[tabTitle].firstMatch
+        let row = tab.exists ? tab : app.buttons[sidebarIdentifier].firstMatch
+        guard row.waitForExistence(timeout: 10), row.isHittable else {
+            XCTFail("The \(tabTitle) destination must be visible: " + app.debugDescription)
             return false
         }
         row.tap()
@@ -1340,33 +1334,38 @@ final class DulcetiOSUITests: XCTestCase {
 
         // 1. Favourite the album, from a known starting point whatever an earlier run left.
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
-        let heart = app.buttons["dulcet.album.favorite"].firstMatch
-        guard heart.waitForExistence(timeout: 10) else {
-            XCTFail("The album page must offer its heart: " + app.debugDescription)
+        let more = app.buttons["dulcet.album.more"].firstMatch
+        func favoriteAction() -> XCUIElement? {
+            guard more.waitForExistence(timeout: 10), more.isHittable else { return nil }
+            more.tap()
+            let action = app.buttons["dulcet.album.favorite"].firstMatch
+            return action.waitForExistence(timeout: 5) ? action : nil
+        }
+        guard var action = favoriteAction() else {
+            XCTFail("The album More menu must offer Favorite: " + app.debugDescription)
             return
         }
-        if heart.label == "Remove Favorite" {
-            heart.tap()
-            guard waitForLabel("Favorite", of: heart, timeout: 5),
-                  awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20) == false else {
-                XCTFail("An earlier run's favourite could not be cleared first")
+        if action.label == "Remove Favorite" {
+            action.tap()
+            guard awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20) == false,
+                  let cleared = favoriteAction(), cleared.label == "Favorite" else {
+                XCTFail("An earlier run's favorite could not be cleared first")
                 return
             }
+            action = cleared
         }
         XCTAssertEqual(readServerAlbumStarred(album, configuration: configuration), false,
-            "The control: the server must not already hold the favourite this proof makes")
-        heart.tap()
-        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
-            "The heart must fill at once, before the server answers; label=\(heart.label)")
+            "The control: the server must not already hold this favorite")
+        action.tap()
         XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: true, timeout: 20), true,
-            "The favourite must reach the server")
+            "The favorite must reach the server")
 
         // 2. Relaunch with nothing but the saved account.
         app.terminate()
         app.launchArguments = liveAccountFixtureArguments(serverURL: configuration.serverURL)
         app.launch()
-        let libraryTile = app.buttons["dulcet.library.album"].firstMatch
-        XCTAssertTrue(libraryTile.waitForExistence(timeout: 15),
+        let libraryRoot = app.navigationBars["Library"].firstMatch
+        XCTAssertTrue(libraryRoot.waitForExistence(timeout: 15),
             "A saved account must open straight into its library: " + app.debugDescription)
         guard openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: compact),
               app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
@@ -1374,8 +1373,9 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
-        XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove Favorite", of: heart, timeout: 5),
-            "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
+        guard let restored = favoriteAction() else { XCTFail("The album More menu must open"); return }
+        XCTAssertEqual(restored.label, "Remove Favorite", "The favorite must survive relaunch")
+        app.tap() // Dismiss the native menu without invoking an action.
         attachScreenshot(named: "saved-launch-connected-favourite", app: app)
 
         // 3. Connected search merges server and device results; its offline scope clears.
@@ -1424,12 +1424,11 @@ final class DulcetiOSUITests: XCTestCase {
         if !(albumTitle.exists && albumTitle.label == album) {
             guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         }
-        guard heart.waitForExistence(timeout: 10) else {
-            XCTFail("The album page must offer its heart after the automatic reconnect: " + app.debugDescription)
+        guard let remove = favoriteAction(), remove.label == "Remove Favorite" else {
+            XCTFail("The album More menu must offer Remove Favorite after reconnect")
             return
         }
-        heart.tap()
-        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        remove.tap()
         XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20), false,
             "Removing the favourite must reach the server")
         print("DULCET READER PROOF PASS destination=\(compact ? "compact" : "regular")"
@@ -4429,7 +4428,15 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func chooseStreamingQuality(_ option: String, row identifier: String, in app: XCUIApplication) -> Bool {
         let picker = app.buttons[identifier].firstMatch
-        let form = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+        if !picker.exists {
+            let playback = app.buttons["dulcet.account.playback"].firstMatch
+            guard playback.waitForExistence(timeout: 10), playback.isHittable else {
+                XCTFail("Account must link to Playback: " + app.debugDescription)
+                return false
+            }
+            playback.tap()
+        }
+        let form = app.descendants(matching: .any)["dulcet.settings.playback"].firstMatch
         guard form.waitForExistence(timeout: 10) else {
             XCTFail("Connection must offer its Settings Form: " + app.debugDescription)
             return false
@@ -4929,17 +4936,16 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("\(album) must list \(track): " + app.debugDescription)
             return
         }
-        let rowHearts = app.buttons.matching(identifier: "dulcet.reader.favorite").allElementsBoundByIndex
+        let moreButtons = app.buttons.matching(identifier: "dulcet.track.more").allElementsBoundByIndex
             .filter { $0.frame.midY > row.frame.minY && $0.frame.midY < row.frame.maxY }
-        guard rowHearts.count == 1, let rowHeart = rowHearts.first else {
-            XCTFail("Exactly one heart must sit beside \(track)'s row; found \(rowHearts.count): " + app.debugDescription)
+        guard moreButtons.count == 1, let more = moreButtons.first else {
+            XCTFail("Exactly one More button must sit beside the track row: " + app.debugDescription)
             return
         }
-        let songStarred = { self.readServerSongStarred(track, album: album, configuration: configuration) }
-        let awaitSong = { (expected: Bool) in
-            self.awaitServerSongStarred(track, album: album, configuration: configuration, expected: expected, timeout: 30)
-        }
-        guard toggleHeartAndProve(rowHeart, in: app, what: "\(track)'s row", read: songStarred, awaitServer: awaitSong) else { return }
+        guard toggleMenuFavoriteAndProve(more, in: app, what: track,
+            read: { self.readServerSongStarred(track, album: album, configuration: configuration) },
+            awaitServer: { self.awaitServerSongStarred(track, album: album, configuration: configuration, expected: $0, timeout: 30) }
+        ) else { return }
 
         // 2. The artist page's heart, reached through the album's artist link.
         let link = app.buttons.matching(NSPredicate(format: "label == %@", artist)).firstMatch
@@ -4982,6 +4988,28 @@ final class DulcetiOSUITests: XCTestCase {
         guard toggleHeartAndProve(artistHeart, in: app, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
         print("DULCET ROW HEARTS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
             + " track=\(track.debugDescription) artist=\(artist.debugDescription) starred=true->false")
+    }
+
+    @MainActor
+    private func toggleMenuFavoriteAndProve(
+        _ more: XCUIElement, in app: XCUIApplication, what: String,
+        read: () -> Bool?, awaitServer: (Bool) -> Bool?
+    ) -> Bool {
+        guard let initial = read() else { XCTFail("The server must answer before changing Favorite"); return false }
+        for expected in [!initial, initial] {
+            more.tap()
+            let action = app.buttons[expected ? "Favorite" : "Remove Favorite"].firstMatch
+            guard action.waitForExistence(timeout: 5) else {
+                XCTFail("\(what): More must offer the current Favorite action: " + app.debugDescription)
+                return false
+            }
+            action.tap()
+            guard awaitServer(expected) == expected else {
+                XCTFail("\(what): Favorite must reach the server")
+                return false
+            }
+        }
+        return true
     }
 
     /// From a known starting point whatever an earlier run left: the heart fills with the tap, the

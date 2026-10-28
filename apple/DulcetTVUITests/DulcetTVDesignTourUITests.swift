@@ -20,7 +20,7 @@ import XCTest
 /// are focused for their shots, never pressed.
 final class DulcetTVDesignTourUITests: XCTestCase {
     /// Section order in the tvOS section bar, which is also the order the remote traverses.
-    private static let sections = ["listenNow", "library", "search", "nowPlaying", "settings"]
+    private static let sections = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"]
     private static let album = "Threshold Boundary"
     private var shotNumber = 0
 
@@ -79,7 +79,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("library", app) {
             app.launch()
             guard let section = self.launchSection(app) else { return false }
-            if section == "Connection" {
+            if section == "Account" {
                 guard app.navigationBars["Listen Now"].waitForExistence(timeout:60) else { return false }
             }
             guard self.selectSection(app, "library") else { return false }
@@ -367,7 +367,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var section: String?
         _ = waitFor(30) {
             let bar = app.navigationBars.firstMatch
-            section = bar.exists && ["Connection", "Listen Now"].contains(bar.identifier) ? bar.identifier : nil
+            section = bar.exists && ["Account", "Listen Now"].contains(bar.identifier) ? bar.identifier : nil
             return section != nil
         }
         return section

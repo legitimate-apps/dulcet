@@ -116,11 +116,9 @@ struct DulcetLibraryPinControl: View {
     }
 }
 
-/// The same entry points are visible on a phone, sidebar-sized window and television.
-struct DulcetLibraryDepthHome: View {
+/// Device pins remain a personal collection, independent of server membership.
+struct DulcetPinnedLibraryItems: View {
     @Environment(DulcetPresentationStore.self) private var store
-    let width: CGFloat
-
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
@@ -143,9 +141,19 @@ struct DulcetLibraryDepthHome: View {
                     }
                 }
                 .id(store.librarySession?.libraryDepthRevision)
-                Text(DulcetStrings.libraryPinsDevice)
-                    .font(.caption).dulcetForeground(.secondaryTextOnWindow)
             }
+        }
+    }
+}
+
+/// The same entry points are visible on a phone, sidebar-sized window and television.
+struct DulcetLibraryDepthHome: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let width: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+            DulcetPinnedLibraryItems()
             DulcetReaderHomeLink(title: store.myLibraryAvailable ? DulcetStrings.libraryServerSongs : DulcetStrings.librarySongs, symbolName: "music.note", identifier: "dulcet.library.songs") {
                 store.pushReaderPage(.songs)
             }

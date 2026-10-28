@@ -48,12 +48,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try removeAlbum(album.id)
         try launch()
         try select("library")
-        XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].waitForExistence(timeout: 30))
         try capture("tvos-81-library-empty")
         try select("browse")
         XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
         try capture("tvos-82-browse")
         try openAlbum(album.title)
+        revealAlbumActions()
         let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
         let added = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
@@ -87,20 +88,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
         focus(tile)
         XCTAssertTrue(tile.hasFocus, "The full-grid tile must hold remote focus")
         let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
-        let more = app.buttons["dulcet.library.item.more.\(album.id)"].firstMatch
-        XCTAssertTrue(more.waitForExistence(timeout: 10))
-        focus(more)
-        XCTAssertTrue(more.hasFocus, "The grid's More control must take independent remote focus")
-        try capture("TV-Full-Grid-More")
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(add.waitForExistence(timeout: 10), "Select on More must open the full-grid tile's actions: " + app.debugDescription)
+        try capture("TV-Full-Grid-Context-Menu")
+        XCUIRemote.shared.press(.select, forDuration: 1.5)
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "Long Select must open the tile's native context actions")
         activate(add)
         try awaitServerMembership(album.id, added: true)
         // The same tile's primary Select action must still open its detail after dismissal.
         focus(tile)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20))
-        print("TV FULL GRID MENU PROOF remoteSelectMore=true membershipServer=true primarySelect=true")
+        print("TV FULL GRID MENU PROOF remoteLongSelect=true membershipServer=true primarySelect=true")
     }
 #endif
 
@@ -112,7 +109,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try removeAlbum(album.id)
         try launch()
         try select("library")
-        XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].waitForExistence(timeout: 30))
         try select("browse")
 #if os(tvOS)
         try addFromFullGridMore(album)
@@ -124,6 +121,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("browse")
 #endif
         try openAlbum(album.title)
+        revealAlbumActions()
         let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
         XCTAssertEqual(add.label, "Add to Library")
@@ -167,16 +165,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
+        revealAlbumActions()
         let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 20))
         activate(remove)
         try select("library")
-        XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].waitForExistence(timeout: 20))
         // Restore online to flush the durable remove, then cut only this fixture's HTTP route.
         app.terminate(); try launch()
         try awaitServerMembership(album.id, added: false)
         try select("browse"); try openAlbum(album.title)
         try setOffline(true)
+        revealAlbumActions()
         let offlineAdd = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         activate(offlineAdd)
         awaitLabel(offlineAdd, "Remove from Library")
@@ -224,6 +224,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch()
         try select("browse")
         try openAlbum(album.title)
+        revealAlbumActions()
         let pin = app.buttons["dulcet.pin.album.\(album.id)"].firstMatch
         XCTAssertTrue(pin.waitForExistence(timeout: 20))
         if !pin.label.hasPrefix("Unpin") { activate(pin) }
@@ -255,6 +256,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try capture("Library-Depth-Downloaded")
         try select("library")
 #endif
+        try select("browse")
         let songs = app.buttons["dulcet.library.songs"].firstMatch
         XCTAssertTrue(songs.waitForExistence(timeout: 10))
         activate(songs)
@@ -271,6 +273,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(false)
         try select("browse")
         try openAlbum(album.title)
+        revealAlbumActions()
         let unpin = app.buttons["dulcet.pin.album.\(album.id)"].firstMatch
         XCTAssertTrue(unpin.waitForExistence(timeout: 20))
         if unpin.label.hasPrefix("Unpin") { activate(unpin) }
@@ -290,21 +293,28 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
         try reveal(albums)
         activate(albums)
+        let options = app.buttons["dulcet.library.albums.options"].firstMatch
+        XCTAssertTrue(options.waitForExistence(timeout: 20)); activate(options)
         let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
         XCTAssertTrue(sort.waitForExistence(timeout: 20))
         activate(sort)
         let release = app.buttons["Release Date"].firstMatch
         XCTAssertTrue(release.waitForExistence(timeout: 10))
         activate(release)
-        XCTAssertTrue(app.staticTexts["Release Date uses the server’s year ordering. Albums without a year are available in Title order."].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(options.waitForExistence(timeout: 10)); activate(options)
+        XCTAssertTrue(sort.waitForExistence(timeout: 10))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
         XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 20))
         try capture("Library-Depth-Release-Sort")
         app.terminate()
         try launch(connect: false)
         try select("browse")
         try reveal(albums); activate(albums)
+        XCTAssertTrue(options.waitForExistence(timeout: 10)); activate(options)
         XCTAssertTrue(sort.waitForExistence(timeout: 20))
-        XCTAssertTrue(sort.label.contains("Release Date"), "Category selection survives a saved-account relaunch: \(sort.label)")
+        XCTAssertTrue(sort.label.contains("Release Date") || (sort.value as? String)?.contains("Release Date") == true,
+            "The sort selection must survive relaunch")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
         // Return through a different tab and reselect Browse to reach its navigation root.
         try select("library"); try select("browse")
         for _ in 0..<8 {
@@ -411,9 +421,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
         continueAfterFailure = false
         try launch(server: navidrome, username: "dulcet-admin", password: "dulcet-ci-canary-password")
         try select("library")
+        XCTAssertTrue(app.buttons["dulcet.reader.section.favourites"].waitForExistence(timeout: 30))
+        XCTAssertTrue(destination("browse").exists, "Browse is stable on every server")
+        try select("browse")
+        try openAlbumList()
         let catalog = app.buttons["dulcet.library.album"].firstMatch
-        XCTAssertTrue(catalog.waitForExistence(timeout: 30), "Positive catalog control must load before asserting absence")
-        XCTAssertFalse(destination("browse").exists)
+        XCTAssertTrue(catalog.waitForExistence(timeout: 30), "The server catalog must load before asserting membership controls are absent")
         XCTAssertFalse(app.descendants(matching: .any)["dulcet.myLibrary"].exists)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.membership.'")).firstMatch.exists)
     }
@@ -428,7 +441,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             try removeAlbum(album.id)
             try launch(variant: variant)
             try select("library")
-            XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
+            XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].waitForExistence(timeout: 30))
             try capture("Library-\(variant)")
             try select("browse")
             let catalogAlbum = app.buttons["dulcet.library.album"].firstMatch
@@ -436,6 +449,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             XCTAssertTrue(catalogAlbum.waitForExistence(timeout: 30))
             try capture("Browse-\(variant)")
             try openAlbum(album.title)
+            revealAlbumActions()
             let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
             XCTAssertTrue(add.waitForExistence(timeout: 30))
             XCTAssertEqual(add.label, "Add to Library")
@@ -465,6 +479,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             "The catalog must be visible before searching its albums: " + app.debugDescription)
         print("MY LIBRARY LARGEST TEXT catalog-scrolls=\(catalogScrolls) catalog-visible=true")
         try openAlbum(album.title)
+        revealAlbumActions()
         let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
         XCTAssertEqual(add.label, "Add to Library")
@@ -583,6 +598,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #elseif os(tvOS)
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
+        let nativeTab = app.tabBars.buttons[section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"].firstMatch
+        if nativeTab.exists { return nativeTab }
         if UIDevice.current.userInterfaceIdiom == .pad {
             // iPad sidebar choices are explicit buttons. Resolve the indexed action itself,
             // including its selected trait, rather than a label or a former List cell.
@@ -604,6 +621,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
         selectDestination(section)
     }
     @MainActor private func selectDestination(_ section: String) {
+        let membership = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
+        if membership.exists {
+#if os(macOS)
+            app.typeKey(.escape, modifierFlags: [])
+#elseif os(tvOS)
+            XCUIRemote.shared.press(.menu)
+#else
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+#endif
+        }
         let control = destination(section)
         XCTAssertTrue(control.waitForExistence(timeout: 30), "Missing destination \(section)")
 #if os(tvOS)
@@ -740,17 +767,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
     }
     @MainActor private func openAlbumList() throws {
-#if os(tvOS)
-        // Browse's section bar keeps TV navigation visible and is reachable by the remote.
         let albumListLink = "dulcet.reader.section.albums"
-#elseif os(iOS)
-        // Compact Browse has section links and a vertical Recently Added grid; it has no
-        // Recently Added See All. Regular-width Browse uses horizontal shelves instead.
-        let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
-            ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
-#else
-        let albumListLink = "dulcet.reader.home.recentlyAdded.all"
-#endif
         let all = app.buttons[albumListLink].firstMatch
         // Wait for the appropriate catalog link to publish before leaving Browse.
         XCTAssertTrue(all.waitForExistence(timeout: 30), "Browse must publish its album-list link: \(albumListLink). \(app.debugDescription)")
@@ -759,7 +776,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func openAlbum(_ title: String) throws {
         // Horizontal Browse shelves instantiate only visible cards. Enter the full list on
         // TV as well, so waiting for a named album does not depend on its shelf position.
-        try openAlbumList()
+        if app.buttons["dulcet.reader.section.albums"].firstMatch.exists { try openAlbumList() }
         let tile = albumTile(title)
 #if !os(tvOS)
         // The sidebar is also a scroll view. Wait for catalog publication and scroll only the
@@ -896,7 +913,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTFail("Remote could not focus " + target.debugDescription)
     }
 #endif
+    @MainActor private func revealAlbumActions() {
+        let action = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
+        if action.exists { return }
+        let more = app.buttons["dulcet.album.more"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 15), "The album must offer More")
+        activate(more)
+        XCTAssertTrue(action.waitForExistence(timeout: 10), "The native menu must offer the membership action")
+    }
+
     @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String) {
+        if element.identifier.hasPrefix("dulcet.membership.album.") || element.identifier.hasPrefix("dulcet.pin.album.") { revealAlbumActions() }
         let expected = NSPredicate(format: "label == %@", label)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)], timeout: 20), .completed)
     }

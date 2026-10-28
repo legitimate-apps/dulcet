@@ -38,6 +38,14 @@ extension EnvironmentValues {
 }
 
 extension View {
+    @ViewBuilder func dulcetHideListRowSeparator() -> some View {
+#if os(tvOS)
+        self
+#else
+        self.listRowSeparator(.hidden)
+#endif
+    }
+
     @ViewBuilder func dulcetReaderFreshness(_ freshness: DulcetReaderFreshness?) -> some View {
         if let freshness, let detail = DulcetReaderCopy.freshnessLine(freshness) {
             self.accessibilityCustomContent(Text(DulcetStrings.readerFreshness), Text(detail))
