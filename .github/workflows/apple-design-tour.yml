@@ -17,6 +17,10 @@ on:
         type: choice
         default: all
         options: [all, iphone, ipad, mac, tvos]
+      include_personal_fixture:
+        description: Include the separate personal Library and Discover fixture tour
+        type: boolean
+        default: true
       supplement_only:
         description: Reshoot the finite Library and Discover tour without the general tour
         type: boolean
@@ -232,7 +236,7 @@ jobs:
         if: always() && steps.selection.outputs.enabled == 'true' && inputs.phase != 'foundation' && (!inputs.supplement_only || matrix.device == 'tvos' || inputs.general_variant == matrix.variant)
         run: tools/apple-restyle-review "$RUNNER_TEMP/captures" --revision "$GITHUB_SHA" --logs "$RUNNER_TEMP/design-tour/logs"
       - name: Capture personal Library and Discover fixture states
-        if: always() && steps.selection.outputs.enabled == 'true' && (inputs.phase != 'foundation' || matrix.variant == 'iphone-light-default')
+        if: always() && steps.selection.outputs.enabled == 'true' && inputs.include_personal_fixture != false && (inputs.phase != 'foundation' || matrix.variant == 'iphone-light-default')
         timeout-minutes: 45
         env:
           CAPTURE_DEVICE: ${{ matrix.device }}

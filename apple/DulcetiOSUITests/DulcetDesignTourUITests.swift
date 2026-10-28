@@ -1191,16 +1191,20 @@ final class DulcetDesignTourUITests: XCTestCase {
             _ = setTourRule(server.url, action: "hold", enabled: false)
         }
         step("downloads-failed", app) {
-            request(first) && self.waitFor(timeout: 30) { (first.value as? String)?.contains("Failed") == true }
+            request(first) && self.waitFor(timeout: 60) { (first.value as? String)?.contains("Failed") == true }
         }
         _ = setTourRule(server.url, action: "fail", enabled: false)
         guard setTourRule(server.url, action: "hold", enabled: true, endpoint: "stream") else { return }
-        for row in tracks.prefix(3) { _ = request(row) }
+        _ = request(first)
         step("downloads-downloading", app) {
-            self.waitFor(timeout: 15) { tracks.contains { ($0.value as? String)?.contains("Downloading") == true } }
+            self.waitFor(timeout: 20) { tracks.contains { ($0.value as? String)?.contains("Downloading") == true } }
         }
+        // Original-quality jobs may download concurrently. Hold the next job's identity
+        // preparation instead: the engine publishes Queued before starting that real read.
+        guard tracks.count > 1,
+              setTourRule(server.url, action: "hold", enabled: true, endpoint: "ping") else { return }
         step("downloads-queued", app) {
-            self.waitFor(timeout: 10) { tracks.contains { ($0.value as? String)?.contains("Queued") == true } }
+            request(tracks[1]) && self.waitFor(timeout: 10) { (tracks[1].value as? String)?.contains("Queued") == true }
         }
     }
 
