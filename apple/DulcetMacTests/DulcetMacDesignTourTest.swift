@@ -599,14 +599,17 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hostingView = target.contentView
         defer { target.close() }
         await step("connection-filled-shipping-scene") {
-            await self.find("dulcet.account-connect.primary-action", seconds: 5) != nil
+            if await self.find("dulcet.account-connect.primary-action", seconds: 2) != nil { return true }
+            // The native Settings scene promotes this into an NSToolbar item and exposes
+            // its title, while the main-window toolbar retains the SwiftUI identifier.
+            return await self.findLabel(DulcetStrings.signIn) != nil
         }
         for element in interactionElements() {
             if let text = label(of: element), text.contains("Sign In") || text.contains("Connect") {
                 print("DULCET SETTINGS SCENE action=\(text) identifier=\(objectValue("accessibilityIdentifier", of: element) ?? "none")")
             }
         }
-        print("DULCET SETTINGS SCENE windows=\(NSApp.windows.count) primaryActionPresent=\(await find("dulcet.account-connect.primary-action", seconds: 1) != nil)")
+        print("DULCET SETTINGS SCENE windows=\(NSApp.windows.count) primaryActionLabelPresent=\(await findLabel(DulcetStrings.signIn) != nil)")
     }
 
     /// Account states use the shipping Settings view when it contains the account tab.
@@ -627,7 +630,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hostingView = settings
         if await find("dulcet.account-connect.title", seconds: 2) != nil {
             accountSettingsWindow = target
-            print("DULCET ACCOUNT CAPTURE container=native-settings-window")
+            print("DULCET ACCOUNT CAPTURE container=shipping-view-in-native-window")
         } else {
             target.orderOut(nil)
             target.close()
