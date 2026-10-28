@@ -1,4 +1,7 @@
 import Foundation
+#if DEBUG && os(iOS)
+import SwiftUI
+#endif
 import Observation
 import os
 
@@ -416,7 +419,17 @@ public final class DulcetLibrarySession {
         if let library = made as? any DulcetMyLibraryReading {
             myLibrarySubscription = library.subscribeMyLibrary { [weak self] publication in
                 guard let self, self.readerGeneration == generation else { return }
+#if DEBUG && os(iOS)
+                DulcetLiveAXDiagnostic.install()
+                DulcetLiveAXDiagnostic.record("phase=publish albums=\(publication.albums.count) artists=\(publication.artists.count) sync=\(publication.syncState) error=\(publication.error?.rawValue ?? "nil") notice=\(self.notice?.id ?? -1)")
+                if DulcetLiveAXDiagnostic.variant == "no-animation" {
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { self.myLibrary = publication }
+                } else { self.myLibrary = publication }
+#else
                 self.myLibrary = publication
+#endif
             }
         }
         setupCheck = made.setupFailed { [weak self] failed in
@@ -936,11 +949,17 @@ public final class DulcetLibrarySession {
     public func post(_ message: String) {
         noticeSequence += 1
         notice = DulcetLibraryNotice(id: noticeSequence, message: message)
+#if DEBUG && os(iOS)
+        DulcetLiveAXDiagnostic.record("phase=notice-post id=\(noticeSequence)")
+#endif
     }
 
     public func dismissNotice(_ id: Int) {
         guard notice?.id == id else { return }
         notice = nil
+#if DEBUG && os(iOS)
+        DulcetLiveAXDiagnostic.record("phase=notice-dismiss id=\(id)")
+#endif
     }
 
     /// Opens a transient window to read the tracks of an album or playlist -- a tile's Play, a

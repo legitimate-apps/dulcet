@@ -1,0 +1,73 @@
+#!/bin/bash
+# Diagnostic branch only: exact production cases with in-process accessibility and live-change controls.
+set -euo pipefail
+: "${RUNNER_TEMP:?}"
+python3 tools/ci/isolate-simulator --phase diagnostic-live-ax --keep-name "iPhone 18 Pro" --settle --require-settle --settle-pressure --require-isolation \
+  --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
+grid_udid="$(xcrun simctl list -j devices | python3 -c 'import json,sys; d=[x["udid"] for group in json.load(sys.stdin)["devices"].values() for x in group if x.get("state")=="Booted" and x.get("name")=="iPhone 18 Pro"]; assert len(d)==1,d; print(d[0])')"
+xcrun simctl spawn "$grid_udid" log stream --style compact --level debug --predicate 'subsystem == "com.legitimateapps.dulcet.live-ax-diagnostic"' > "$RUNNER_TEMP/live-ax-lifecycle.log" 2>&1 &
+grid_log_pid=$!
+finish_grid_log() {
+  kill "$grid_log_pid" 2>/dev/null || true
+  wait "$grid_log_pid" 2>/dev/null || true
+  python3 - "$grid_udid" "$RUNNER_TEMP/live-ax-history.log" <<'PYTHON'
+import subprocess,sys
+with open(sys.argv[2], 'w') as output:
+ try:
+  subprocess.run(['xcrun','simctl','spawn',sys.argv[1],'log','show','--style','compact','--last','3h','--predicate','subsystem == "com.legitimateapps.dulcet.live-ax-diagnostic"'],stdout=output,stderr=subprocess.STDOUT,timeout=30,check=False)
+ except subprocess.TimeoutExpired: output.write('\nGRID HISTORY deadline expired; see live lifecycle log\n')
+PYTHON
+}
+trap finish_grid_log EXIT
+run_live_tests() {
+  local result_name=$1
+  shift
+  xcodebuild test-without-building -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+    -destination "platform=iOS Simulator,id=$grid_udid" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+    -resultBundlePath "$RUNNER_TEMP/$result_name.xcresult" -parallel-testing-enabled NO \
+    -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
+    "$@" 2>&1 | tee "$RUNNER_TEMP/$result_name-tests.log"
+}
+set +e
+run_live_tests live-ax \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveLayoutChangedBrowseAddRemoveRelaunchAndOfflineReplay \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveNoAnimationBrowseAddRemoveRelaunchAndOfflineReplay \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveStableStatusBrowseAddRemoveRelaunchAndOfflineReplay
+matrix_exit=$?
+set -e
+xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/live-ax.xcresult" > "$RUNNER_TEMP/live-ax-results.json"
+xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/live-ax.xcresult" > "$RUNNER_TEMP/live-ax-summary.json"
+python3 - "$RUNNER_TEMP" <<'PYTHON'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]); results={}
+def visit(node):
+ if node.get('nodeType')=='Test Case': results[node['name'].removesuffix('()')]=node['result']
+ for child in node.get('children',[]): visit(child)
+for node in json.loads((p/'live-ax-results.json').read_text())['testNodes']: visit(node)
+base='testBrowseAddRemoveRelaunchAndOfflineReplay'
+expected=[base]+['testLive'+prefix+'BrowseAddRemoveRelaunchAndOfflineReplay' for prefix in ['LayoutChanged','NoAnimation','StableStatus']]
+assert set(results)==set(expected),results
+assert all(r in ['Passed','Failed'] for r in results.values()),results
+print('LIVE AX MATRIX',json.dumps(results,sort_keys=True))
+# Only a reproduced baseline miss plus a passing candidate warrants the other exact cases.
+winner=next((prefix for prefix in ['LayoutChanged','NoAnimation','StableStatus'] if results[base]=='Failed' and results['testLive'+prefix+'BrowseAddRemoveRelaunchAndOfflineReplay']=='Passed'),'')
+(p/'live-ax-winner.txt').write_text(winner)
+print('LIVE AX CANDIDATE',winner or 'none')
+PYTHON
+winner=$(cat "$RUNNER_TEMP/live-ax-winner.txt")
+if [ -n "$winner" ]; then
+  selected=()
+  for method in NonDulcetServerKeepsTheOriginalLibraryNavigation LibraryBrowseAndAlbumInLightDarkAndLargestText LibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable LibrarySearchGroupsAndRecentQuerySurviveRelaunch AlbumAddRemainsVisibleAtLargestTextOnIPhone IPhoneLibrarySortShuffleAndArtistDepth; do
+    selected+=("-only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLive${winner}${method}")
+  done
+  run_live_tests live-ax-candidate "${selected[@]}"
+  xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/live-ax-candidate.xcresult" > "$RUNNER_TEMP/live-ax-candidate-summary.json"
+  python3 - "$RUNNER_TEMP/live-ax-candidate-summary.json" <<'PYTHON'
+import json,sys
+s=json.load(open(sys.argv[1])); assert s['totalTestCount']==6 and s['passedTests']==6 and s['failedTests']==0 and s['skippedTests']==0,s
+print('LIVE AX OTHER EXACT CASES passed=6 failed=0 skipped=0')
+PYTHON
+fi
+exit "$matrix_exit"

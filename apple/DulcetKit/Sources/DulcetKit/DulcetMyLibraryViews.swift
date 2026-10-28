@@ -1,6 +1,129 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
+#if DEBUG && os(iOS)
+import UIKit
+import OSLog
+
+/// Diagnostic branch only. Observes public in-process AX APIs after the original test wait.
+@MainActor
+enum DulcetLiveAXDiagnostic {
+    static let variant: String = {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-dulcet-debug-live-ax"), args.indices.contains(i + 1) else { return "disabled" }
+        return args[i + 1]
+    }()
+    private static let logger = Logger(subsystem: "com.legitimateapps.dulcet.live-ax-diagnostic", category: "boundary")
+    private static var sequence = 0
+    private static var installed = false
+    static func record(_ detail: String) {
+        guard variant != "disabled" else { return }
+        sequence += 1
+        let message = "LIVE_AX sequence=\(sequence) variant=\(variant) \(detail)"
+        logger.notice("\(message, privacy: .public)")
+    }
+    static func install() {
+        guard variant != "disabled", !installed else { return }
+        installed = true
+        for checkpoint in 1...8 {
+            let name = "com.legitimateapps.dulcet.live-ax-diagnostic.dump.\(checkpoint)"
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, name, _, _ in
+                guard let name else { return }
+                let text = name.rawValue as String
+                let checkpoint = Int(text.split(separator: ".").last ?? "0") ?? 0
+                Task { @MainActor in DulcetLiveAXDiagnostic.dump(checkpoint: checkpoint) }
+            }, name as CFString, nil, .deliverImmediately)
+        }
+        record("phase=installed")
+    }
+    static func contentChanged(_ library: DulcetMyLibrarySnapshot, destination: String, reason: String) {
+        record("phase=content reason=\(reason) dest=\(destination) albums=\(library.albums.count) artists=\(library.artists.count) sync=\(library.syncState) error=\(library.error?.rawValue ?? "nil")")
+        guard variant == "layout-changed", !library.albums.isEmpty else { return }
+        // Yield the current update so the notification follows the rendered content change.
+        DispatchQueue.main.async {
+            record("phase=post-layoutChanged reason=\(reason) dest=\(destination)")
+            UIAccessibility.post(notification: .layoutChanged, argument: nil)
+        }
+    }
+    static func dump(checkpoint: Int) {
+        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        guard let key = windows.first(where: \.isKeyWindow) else {
+            record("phase=dump checkpoint=\(checkpoint) error=no-key-window")
+            DulcetUIProofMarkers.record("AX_DONE|checkpoint=\(checkpoint)|error=no-key-window")
+            return
+        }
+        record("phase=dump-start checkpoint=\(checkpoint) window=\(key.frame) VoiceOver=\(UIAccessibility.isVoiceOverRunning)")
+        var receipts: [String] = []
+        // AX first. automationElements is a distinct public tree and is measured separately.
+        for plane in ["accessibility", "automation"] {
+            var seen = Set<ObjectIdentifier>()
+            var albums = 0, artists = 0, realAlbums = 0, realArtists = 0
+            var limited = false
+            func walk(_ object: NSObject, path: String, depth: Int, edge: String) {
+                guard depth < 80, seen.count < 3000 else { limited = true; return }
+                guard seen.insert(ObjectIdentifier(object)).inserted else { return }
+                let identifier = (object as? any UIAccessibilityIdentification)?.accessibilityIdentifier ?? ""
+                let frame = object.accessibilityFrame
+                if identifier.hasPrefix("dulcet.library.album") { albums += 1; if frame.width > 0 && frame.height > 0 { realAlbums += 1 } }
+                if identifier.hasPrefix("dulcet.library.artist") { artists += 1; if frame.width > 0 && frame.height > 0 { realArtists += 1 } }
+                var children: [(NSObject, String)] = []
+                let elements = object.accessibilityElements
+                let count = object.accessibilityElementCount()
+                var local = Set<ObjectIdentifier>()
+                func append(_ value: Any, _ source: String) {
+                    guard let child = value as? NSObject, local.insert(ObjectIdentifier(child)).inserted else { return }
+                    children.append((child, source))
+                }
+                if plane == "automation", let automation = object.automationElements {
+                    for (i, child) in automation.enumerated() { append(child, "automation[\(i)]") }
+                } else {
+                    for (i, child) in (elements ?? []).enumerated() { append(child, "elements[\(i)]") }
+                    if count > 0 && count != NSNotFound && count < 3000 {
+                        for i in 0..<count { if let child = object.accessibilityElement(at: i) { append(child, "count[\(i)]") } }
+                    }
+                }
+                // UIKit's ordinary view hierarchy supplies the route to a hosting/container view.
+                // Do not treat its descendants as AX children when an explicit AX container exists.
+                if children.isEmpty, !object.isAccessibilityElement, let view = object as? UIView {
+                    for (i, child) in view.subviews.enumerated() where !child.isHidden && child.alpha > 0 {
+                        append(child, "subview[\(i)]")
+                    }
+                }
+                let row: [String: Any] = ["checkpoint": checkpoint, "plane": plane, "path": path, "depth": depth,
+                    "edge": edge, "class": String(reflecting: type(of: object)), "identifier": identifier,
+                    "label": object.accessibilityLabel ?? "", "value": object.accessibilityValue ?? "",
+                    "frame": NSCoder.string(for: frame), "traits": object.accessibilityTraits.rawValue,
+                    "isElement": object.isAccessibilityElement, "hidden": object.accessibilityElementsHidden,
+                    "elementCount": count == NSNotFound ? -1 : count, "arrayCount": elements?.count ?? -1,
+                    "children": children.count]
+                if let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]), let json = String(data: data, encoding: .utf8) {
+                    let receipt = "AX_NODE " + json
+                    receipts.append(receipt)
+                    record(receipt)
+                }
+                for (i, child) in children.enumerated() { walk(child.0, path: "\(path)/\(i)", depth: depth + 1, edge: child.1) }
+            }
+            walk(key, path: "window", depth: 0, edge: "key-window")
+            let result = "AX_SUMMARY checkpoint=\(checkpoint) plane=\(plane) nodes=\(seen.count) albums=\(albums) realAlbums=\(realAlbums) artists=\(artists) realArtists=\(realArtists) limited=\(limited)"
+            record(result); receipts.append(result)
+        }
+        // Marker updates happen only AFTER both walks and the unchanged original wait verdict.
+        // Reading this overlay cannot affect the original observation being compared.
+        for receipt in receipts { DulcetUIProofMarkers.record(receipt) }
+        DulcetUIProofMarkers.record("AX_DONE|checkpoint=\(checkpoint)")
+        record("phase=dump-complete checkpoint=\(checkpoint)")
+    }
+}
+
+private struct DulcetLiveStatusSlot: ViewModifier {
+    func body(content: Content) -> some View {
+        if DulcetLiveAXDiagnostic.variant == "stable-status" {
+            content.frame(height: 120, alignment: .topLeading)
+        } else { content }
+    }
+}
+#endif
+
 struct DulcetReaderCollectionRoot: View {
     @Environment(DulcetPresentationStore.self) private var store
     let destination: DulcetSidebarDestination
@@ -204,6 +327,29 @@ struct DulcetMyLibraryView: View {
             .dulcetForeground(.primaryTextOnWindow)
             .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
             .accessibilityIdentifier("dulcet.myLibrary")
+#if DEBUG && os(iOS)
+            .onAppear {
+                DulcetLiveAXDiagnostic.install()
+                if let library = store.librarySession?.myLibrary {
+                    DulcetLiveAXDiagnostic.contentChanged(library, destination: store.selectedDestination.rawValue, reason: "root-appear")
+                }
+            }
+            .onChange(of: store.librarySession?.myLibrary.albums.map(\.id)) { _, _ in
+                if let library = store.librarySession?.myLibrary {
+                    DulcetLiveAXDiagnostic.contentChanged(library, destination: store.selectedDestination.rawValue, reason: "album-ids-changed")
+                }
+            }
+            .onChange(of: store.selectedDestination) { _, destination in
+                DulcetLiveAXDiagnostic.record("phase=destination dest=\(destination.rawValue)")
+            }
+            .transaction { transaction in
+                DulcetLiveAXDiagnostic.record("phase=root-transaction animation=\(String(describing: transaction.animation)) disables=\(transaction.disablesAnimations)")
+                if DulcetLiveAXDiagnostic.variant == "no-animation" {
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
+                }
+            }
+#endif
 #if os(iOS)
             // Refresh belongs to the bar: a label button under the title truncated at the
             // accessibility text sizes, and a plain-text one read as body copy.
@@ -274,6 +420,16 @@ struct DulcetMyLibraryView: View {
                     if let library = store.librarySession?.myLibrary {
                         DulcetMyLibraryShuffle(songs: library.songs)
                         DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
+#if DEBUG && os(iOS)
+                            .modifier(DulcetLiveStatusSlot())
+                            .background(GeometryReader { proxy in
+                                Color.clear.onAppear {
+                                    DulcetLiveAXDiagnostic.record("phase=status-appear sync=\(library.syncState) error=\(library.error?.rawValue ?? "nil") frame=\(proxy.frame(in: .global))")
+                                }.onChange(of: proxy.frame(in: .global)) { _, frame in
+                                    DulcetLiveAXDiagnostic.record("phase=status-frame sync=\(library.syncState) error=\(library.error?.rawValue ?? "nil") frame=\(frame)")
+                                }
+                            })
+#endif
                         VStack(spacing: 0) {
                             ForEach(DulcetMyLibrarySection.allCases) { choice in
                                 DulcetReaderHomeLink(

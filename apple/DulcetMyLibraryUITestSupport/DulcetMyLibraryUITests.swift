@@ -10,6 +10,60 @@ import UIKit
 @MainActor
 final class DulcetMyLibraryUITests: XCTestCase {
     private var app = XCUIApplication()
+    private var liveAXVariant = "baseline"
+    private var liveAXCheckpoint = 0
+#if os(iOS)
+    func testLiveLayoutChangedBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "layout-changed"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testLiveLayoutChangedNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "layout-changed"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
+    func testLiveLayoutChangedLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "layout-changed"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
+    func testLiveLayoutChangedLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "layout-changed"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
+    func testLiveLayoutChangedLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "layout-changed"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
+    func testLiveLayoutChangedAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "layout-changed"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
+    func testLiveLayoutChangedIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "layout-changed"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
+    func testLiveNoAnimationBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "no-animation"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testLiveNoAnimationNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "no-animation"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
+    func testLiveNoAnimationLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "no-animation"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
+    func testLiveNoAnimationLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "no-animation"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
+    func testLiveNoAnimationLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "no-animation"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
+    func testLiveNoAnimationAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "no-animation"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
+    func testLiveNoAnimationIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "no-animation"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
+    func testLiveStableStatusBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "stable-status"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testLiveStableStatusNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "stable-status"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
+    func testLiveStableStatusLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "stable-status"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
+    func testLiveStableStatusLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "stable-status"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
+    func testLiveStableStatusLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "stable-status"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
+    func testLiveStableStatusAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "stable-status"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
+    func testLiveStableStatusIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "stable-status"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
+
+#endif
+
+    private func observedAlbum(_ title: String) -> Bool {
+        liveAXCheckpoint += 1
+        let tile = albumTile(title)
+        let found = tile.waitForExistence(timeout: 20)
+        let artist = app.buttons.matching(identifier: "dulcet.library.artist").firstMatch
+        print("LIVE_AX_RESULT variant=\(liveAXVariant) checkpoint=\(liveAXCheckpoint) original20s=\(found) albumFrame=\(found ? String(describing: tile.frame) : "absent") artist=\(artist.exists) artistFrame=\(artist.exists ? String(describing: artist.frame) : "absent")")
+#if os(iOS)
+        let before = XCTAttachment(string: app.debugDescription)
+        before.name = "live-\(liveAXVariant)-\(liveAXCheckpoint)-before-walk"; before.lifetime = .keepAlways; add(before)
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = "live-\(liveAXVariant)-\(liveAXCheckpoint)-before-walk-screen"; screen.lifetime = .keepAlways; add(screen)
+        let notification = "com.legitimateapps.dulcet.live-ax-diagnostic.dump.\(liveAXCheckpoint)"
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFNotificationName(notification as CFString), nil, nil, true)
+        let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        let done = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "AX_DONE|checkpoint=\(liveAXCheckpoint)"), object: markers)
+        XCTAssertEqual(XCTWaiter.wait(for: [done], timeout: 15), .completed, "The in-process AX walk must complete")
+        let inProcess = XCTAttachment(string: markers.label)
+        inProcess.name = "live-\(liveAXVariant)-\(liveAXCheckpoint)-in-process-tree"; inProcess.lifetime = .keepAlways; add(inProcess)
+        print("LIVE_AX_AFTER_WALK variant=\(liveAXVariant) checkpoint=\(liveAXCheckpoint) album=\(tile.exists) frame=\(tile.exists ? String(describing: tile.frame) : "absent")")
+#endif
+        if found && liveAXVariant != "baseline" {
+            XCTAssertGreaterThan(tile.frame.width, 0); XCTAssertGreaterThan(tile.frame.height, 0)
+            XCTAssertTrue(artist.exists, "A candidate must retain the artist control")
+            if artist.exists { XCTAssertGreaterThan(artist.frame.width, 0); XCTAssertGreaterThan(artist.frame.height, 0) }
+        }
+        return found
+    }
     // Keep each disposable proof's account separate on every shell. Relaunches inside
     // one proof retain this namespace; a later server must not inherit a prior account.
     private let accountFixtureNamespace = UUID().uuidString
@@ -87,7 +141,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(tvOS)
         try addFromFullGridMore(album)
         try select("library")
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
         app.terminate(); try launch()
@@ -129,13 +183,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // The compact root's destination rows precede its lazy Recently Added grid.
         // Relaunch resets its scroll position; reveal the actual tile before observing it.
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         try awaitServerMembership(album.id, added: true)
         app.terminate()
         try launch(connect: false)
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
+        XCTAssertTrue(observedAlbum(album.title), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
         let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 20))
@@ -152,7 +206,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         awaitLabel(offlineAdd, "Remove from Library")
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         // A direct read bypasses the offline proxy: it proves the write has not reached the server.
         let pendingBeforeRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingBeforeRelaunch)
@@ -172,7 +226,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             print("MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=\(scrolls)")
         }
 #endif
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline relaunch paints the durable pending add before reconnect")
+        XCTAssertTrue(observedAlbum(album.title), "Offline relaunch paints the durable pending add before reconnect")
         let pendingAfterRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingAfterRelaunch)
         app.terminate()
@@ -180,7 +234,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch()
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
     }
@@ -477,6 +531,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 "-dulcet-debug-account-username", username ?? user, "-dulcet-debug-account-password", password ?? self.password]
         }
         launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
+        launchArguments += ["-dulcet-debug-live-ax", liveAXVariant]
+        print("LIVE_AX_LAUNCH variant=\(liveAXVariant) connect=\(connect) appearance=\(variant)")
         app.launchArguments = launchArguments
 #if os(macOS)
         if !installedFixtureNetworkMonitor {
