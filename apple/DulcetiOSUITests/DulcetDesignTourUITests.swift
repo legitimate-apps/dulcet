@@ -40,7 +40,8 @@ final class DulcetDesignTourUITests: XCTestCase {
         if let expected = environment["DULCET_OFFLINE_IDIOM"] {
             XCTAssertEqual(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone", expected)
         }
-        let compact = app.windows.firstMatch.frame.width < 700
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
         XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
         XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
         let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
@@ -96,7 +97,8 @@ final class DulcetDesignTourUITests: XCTestCase {
         if let expected = environment["DULCET_HOME_IDIOM"] {
             XCTAssertEqual(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone", expected)
         }
-        let compact = app.windows.firstMatch.frame.width < 700
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
         // Saved Home can appear before reconnect completes. Wait for the real connection
         // before choosing a tile, so a freshly published shelf cannot move it under the tap.
         XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
@@ -258,8 +260,9 @@ final class DulcetDesignTourUITests: XCTestCase {
         launchInInteractionScope(app)
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 15), "The app window must exist")
-        let compact = window.frame.width < 700
-        print("DULCET DESIGN TOUR start compact=\(compact) window=\(window.frame)")
+        guard let width = settledWindowWidth(window) else { return }
+        let compact = width < 700
+        print("DULCET DESIGN TOUR start compact=\(compact) width=\(width)")
         guard awaitConnection(in: app, compact: compact) else {
             shoot("connection-UNREACHED", app)
             XCTFail("The disposable account must connect before the tour: " + app.debugDescription)
