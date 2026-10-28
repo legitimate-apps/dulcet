@@ -260,7 +260,7 @@ struct DulcetAccountConnectionView: View {
                     }
                     LabeledContent(DulcetStrings.serverAddress, value: account.serverName)
                     Label(DulcetStrings.online, systemImage: "checkmark.circle")
-                        .foregroundStyle(.secondary)
+                        .dulcetForeground(.secondaryTextOnWindow)
                         .accessibilityLabel(DulcetStrings.connectedTo(account.serverName))
                         .accessibilityIdentifier("dulcet.account.connected")
                 }
@@ -346,7 +346,7 @@ struct DulcetAccountConnectionView: View {
                     .focused($focusedControl, equals: .serverAddress)
             }
             if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidServerURL {
-                Text(failure.title).font(.footnote).foregroundStyle(.red).accessibilityHint(failure.message)
+                Text(failure.title).font(.footnote).dulcetForeground(.primaryTextOnControl).accessibilityHint(failure.message)
             }
             credentialRow(DulcetStrings.username) {
                 TextField(DulcetStrings.username, text: $store.accountUsername)
@@ -365,7 +365,7 @@ struct DulcetAccountConnectionView: View {
                     .focused($focusedControl, equals: .password)
             }
             if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidCredentials {
-                Text(failure.title).font(.footnote).foregroundStyle(.red).accessibilityHint(failure.message)
+                Text(failure.title).font(.footnote).dulcetForeground(.primaryTextOnControl).accessibilityHint(failure.message)
             }
             if showsLocalHTTPConsent {
                 Toggle(DulcetStrings.allowLocalHTTP, isOn: $store.accountAllowLocalHTTP)

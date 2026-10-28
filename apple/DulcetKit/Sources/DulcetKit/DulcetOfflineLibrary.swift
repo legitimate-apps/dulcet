@@ -94,7 +94,7 @@ struct DulcetOfflineLibrarySection: View {
             get: { storage.automaticDownloadsEnabled },
             set: { store.setAutomaticDownloadsEnabled($0) }
         )).accessibilityIdentifier("dulcet.offline.automaticDownloads")
-        if !inForm { Text(DulcetStrings.offlineAutomaticHint).font(.footnote).foregroundStyle(.secondary) }
+        if !inForm { Text(DulcetStrings.offlineAutomaticHint).font(.footnote).dulcetForeground(.secondaryTextOnWindow) }
         if storage.automaticDownloadsEnabled {
             Text(DulcetStrings.offlineDownloadProgress(completed: storage.completedAutomaticCount, remaining: storage.queuedAutomaticCount))
                 .font(.caption).accessibilityIdentifier("dulcet.offline.progress")
