@@ -269,6 +269,41 @@ result; a visible keyboard still requires bounded dismissal; an unavailable
 snapshot stays unknown and cannot allow activation. A Search or Hide key must
 also be hittable before it is tapped. The three-attempt limit and five-second
 post-gesture budget remain, measured with a monotonic clock. The changed iPhone
-UI test target type-checks under SDK 27.0; hosted behavior remains to be verified.
+UI test target type-checks under SDK 27.0. The exact lyrics case passed on iPad
+in [diagnostic job 122598984724](https://github.com/legitimate-apps/dulcet/actions/runs/40622303960/job/122598984724),
+with one executed test, one pass and no failures or skips in its result bundle.
 Eight sampled failed main iPad jobs had no matching keyboard failure, so none is
 claimed as an exemption for this job.
+
+## Largest-text tvOS focus trace
+
+The corrected [tvOS diagnostic job 122611375419](https://github.com/legitimate-apps/dulcet/actions/runs/40626131393/job/122611375419)
+executed the original tour with a trace before and after every remote press.
+All 40 moves alternated Down and Left while focus stayed on the same
+`More, Several Album Artists` button at `(1533.5, 663, 183, 99)`. The target album
+was published at `(116, 782, 220, 659.5)`. The other first-row More buttons were
+at y=378 or y=443, rather than overlapping the focused button vertically.
+The geometric steering rule kept choosing two directions that made no progress;
+it never tried Up. This trace establishes a helper loop, but does not establish
+that the app's native focus graph can reach the target by another route.
+
+The next [diagnostic job 122619016697](https://github.com/legitimate-apps/dulcet/actions/runs/40628476961/job/122619016697)
+tried Up after Down and Left stalled. The target then left the lazy accessibility
+snapshot and diagnostic logging failed by querying its frame. That run does not
+prove target activation. The next helper candidate records focus identity and
+frame progress, explores unused directions, and retains the last target geometry
+while the target is unpublished. It retains the 40-move bound and requires the
+actual target to hold focus before activation.
+
+## iPad edition timeout observation
+
+The earlier [Discover iPad job 122569887585](https://github.com/legitimate-apps/dulcet/actions/runs/40595126706/job/122569887585)
+timed out waiting for the selected edition's value after the largest-text menu
+choice. Its attachment held the query chain rather than the application state,
+so it cannot establish whether the menu remained open or the selected value was
+published differently. The exact sidebar, detail and resize case passed in
+[diagnostic job 122598984724](https://github.com/legitimate-apps/dulcet/actions/runs/40622303960/job/122598984724)
+with the original value assertion and 30-second wait. That is a non-reproduction,
+not a diagnosed edition fix. The test now attaches the full hierarchy, screenshot
+and recursive snapshot if this assertion times out again. Its success path and
+application behavior are unchanged.
