@@ -764,6 +764,11 @@ final class DulcetDesignTourUITests: XCTestCase {
                 && automatic.waitForExistence(timeout: 10) && self.settle(app)
         }
         if nativeAccount {
+            step("settings-storage-rows", app) {
+                let form = app.descendants(matching: .any)["dulcet.settings.downloadsStorage"].firstMatch
+                return self.scrollIntoView(app.buttons["dulcet.offline.clearCache"].firstMatch, in: app, scrollContainer: form)
+                    && app.staticTexts["Streaming Cache"].firstMatch.exists
+            }
             let close = app.buttons["dulcet.account.close"].firstMatch
             if close.exists {
                 close.tap()
@@ -1148,15 +1153,15 @@ final class DulcetDesignTourUITests: XCTestCase {
         self.launchInInteractionScope(app)
         step("listen-now-offline", app) {
             self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
-                && app.buttons["dulcet.reader.reconnect"].firstMatch.waitForExistence(timeout: 25) && self.settle(app)
+                && app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 25) && self.settle(app)
         }
         step("device-only-library", app) {
             self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact)
-                && app.buttons["dulcet.reader.reconnect"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+                && app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
         step("browse-offline", app) {
             self.openDestination("Browse", sidebar: "dulcet.sidebar.browse", in: app, compact: compact)
-                && app.buttons["dulcet.reader.reconnect"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+                && app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
         step("downloads-offline", app) {
             self.openAlbum("Threshold Boundary", in: app, compact: compact)
