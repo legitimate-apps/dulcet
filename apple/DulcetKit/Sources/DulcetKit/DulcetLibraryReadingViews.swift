@@ -657,7 +657,7 @@ struct DulcetReaderTile: View {
 #endif
     }
 
-    private var nativeAction: some View {
+    @ViewBuilder private var nativeAction: some View {
 #if os(tvOS)
         if showsTVActionsMenu {
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {

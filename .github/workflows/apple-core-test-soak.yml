@@ -1,6 +1,16 @@
 name: Native UI diagnostics on Xcode 27
 'on':
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      device:
+        description: Diagnostic subset
+        type: choice
+        default: all
+        options:
+        - all
+        - iphone
+        - tvos
+        - ipad
 permissions:
   contents: read
 concurrency:
@@ -195,6 +205,7 @@ jobs:
         if-no-files-found: warn
         compression-level: 0
         retention-days: 14
+    if: ${{ inputs.device == 'all' || inputs.device == 'iphone' }}
   diagnostic-tvos:
     name: TV focus transitions
     runs-on: xcode-27
@@ -383,6 +394,7 @@ jobs:
         if-no-files-found: warn
         compression-level: 0
         retention-days: 14
+    if: ${{ inputs.device == 'all' || inputs.device == 'tvos' }}
   diagnostic-ipad:
     name: iPad lyrics and edition state
     runs-on: xcode-27
@@ -622,3 +634,4 @@ jobs:
         if-no-files-found: warn
         compression-level: 0
         retention-days: 14
+    if: ${{ inputs.device == 'all' || inputs.device == 'ipad' }}
