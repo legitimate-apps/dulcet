@@ -301,10 +301,18 @@ that the app's native focus graph can reach the target by another route.
 The next [diagnostic job 122619016697](https://github.com/legitimate-apps/dulcet/actions/runs/40628476961/job/122619016697)
 tried Up after Down and Left stalled. The target then left the lazy accessibility
 snapshot and diagnostic logging failed by querying its frame. That run does not
-prove target activation. The next helper candidate records focus identity and
+prove target activation. The corrected helper records focus identity and
 frame progress, explores unused directions, and retains the last target geometry
 while the target is unpublished. It retains the 40-move bound and requires the
 actual target to hold focus before activation.
+
+[tvOS job 122627786439](https://github.com/legitimate-apps/dulcet/actions/runs/40631216324/job/122627786439)
+then passed the exact light, dark and largest-text tour with the same app layout.
+Its result bundle records one executed test, one pass, no failures and no skips
+on Apple TV 4K (3rd generation), tvOS 27.0 (24J360). This establishes that the
+native focus graph can reach and activate the target; the original two-direction
+helper loop was the failure. The helper change adds no application focus section
+or layout change. A final full run is still required for the production head.
 
 ## iPad edition timeout observation
 
