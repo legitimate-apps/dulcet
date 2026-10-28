@@ -274,6 +274,52 @@ final class DulcetDesignTourUITests: XCTestCase {
             return
         }
 
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+        // Now Playing, playing: Threshold Boundary's first track carries synced lyrics.
+        step("now-playing", app) {
+            guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
+            let play = app.buttons["dulcet.album.play"].firstMatch
+            guard play.waitForExistence(timeout: 10) else { return false }
+            play.tap()
+            let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+            guard bar.waitForExistence(timeout: 20), self.waitFor(timeout: 20, { bar.label.contains("Twenty Nine Seconds") }) else {
+                return false
+            }
+            self.shoot("mini-player", app)
+            bar.tap()
+            let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+            return title.waitForExistence(timeout: 10) && self.settle(app, seconds: 2)
+        }
+        step("lyrics", app) {
+            let toggle = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+            guard toggle.waitForExistence(timeout: 10) else { return false }
+            toggle.tap()
+            let lit = app.staticTexts["dulcet.lyrics.line.current"].firstMatch
+            return app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch.waitForExistence(timeout: 10)
+                && lit.waitForExistence(timeout: 25) && self.settle(app)
+        }
+        step("up-next", app) {
+            let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+            if app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch.exists, lyrics.exists { lyrics.tap() }
+            let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+            if !app.descendants(matching: .any)["dulcet.upNext"].firstMatch.exists,
+               toggle.waitForExistence(timeout: 3) { toggle.tap() }
+            return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
+                && self.settle(app)
+        }
+            let queue = app.buttons["dulcet.now-playing.up-next"].firstMatch
+            if queue.exists, queue.label == "Hide Up Next" { queue.tap() }
+            let pause = app.buttons.matching(NSPredicate(format: "label == %@", "Pause"))
+                .allElementsBoundByIndex.first(where: { $0.isHittable })
+            if let pause { pause.tap() }
+            step("player-paused", app) {
+                app.buttons.matching(NSPredicate(format: "label == %@", "Play"))
+                    .allElementsBoundByIndex.contains(where: { $0.isHittable })
+            }
+            closePlayer(in: app)
+            return
+        }
+
         step("listen-now", app) {
             self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
                 && app.descendants(matching: .any)["dulcet.listenNow"].firstMatch.waitForExistence(timeout: 20)

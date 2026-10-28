@@ -131,7 +131,7 @@ private func account(_ providerInstanceID: String) -> DulcetLibraryReaderAccount
 // MARK: - The footer
 
 @Test @MainActor
-func thePlayerKeepsModeSwitchesIndependentOfTrackActions() {
+func theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform() {
     typealias Player = DulcetNowPlayingView
     let offered = Player.footerControls(offersFavourite: true, showsQueueToggle: true)
     let withheld = Player.footerControls(offersFavourite: false, showsQueueToggle: true)

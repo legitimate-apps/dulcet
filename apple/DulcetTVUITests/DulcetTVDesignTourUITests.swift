@@ -158,6 +158,16 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && self.settle(1)
         }
 
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            step("player-paused", app) {
+                let queue = app.buttons["dulcet.now-playing.up-next"].firstMatch
+                guard self.focusPlayerControl(queue, in: app) else { return false }
+                if queue.label == "Hide Up Next" { remote.press(.select) }
+                return app.buttons["play.fill"].firstMatch.waitForExistence(timeout: 5) && self.settle(1)
+            }
+            return
+        }
+
         // Search with results, by remote: the section bar, the field, the query typed, Done.
         step("search-landing", app) {
             self.selectSection(app, "search") && app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 15)
