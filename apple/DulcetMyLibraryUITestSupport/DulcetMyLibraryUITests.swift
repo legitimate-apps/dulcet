@@ -822,8 +822,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     @MainActor private func activateDestination(_ element: XCUIElement) {
 #if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .pad, element.identifier.hasPrefix("dulcet.tab.") {
-            // The native top tab can report an invalid synthesized hit point (-1, -1)
+        if element.identifier.hasPrefix("dulcet.tab.") {
+            // A native tab can report an invalid synthesized hit point (-1, -1)
             // despite publishing its visible frame. Tap that frame, then require selection.
             let frame = element.frame
             guard frame.width > 0, frame.height > 0, app.frame.contains(frame) else {
