@@ -27,6 +27,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 # Give slow discovery most of the budget; restarting a killed query discards its progress.
 XCODE_QUERY_TIMEOUT = 180
@@ -72,8 +73,10 @@ def load_destinations(path: str | None, project: str, scheme: str,
                "-scheme", scheme, "-configuration", "Debug"]
     started = time.monotonic()
     try:
-        result = subprocess.run(command, capture_output=True, text=True,
-                                timeout=timeout, check=False)
+        with TemporaryDirectory(prefix="dulcet-destinations-") as derived:
+            command += ["-derivedDataPath", derived]
+            result = subprocess.run(command, capture_output=True, text=True,
+                                    timeout=timeout, check=False)
     except subprocess.TimeoutExpired as error:
         def decoded(value):
             return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
@@ -97,13 +100,17 @@ def load_destinations(path: str | None, project: str, scheme: str,
 
 def accepted_ids(transcript: str, scheme: str) -> set[str]:
     """Only concrete available iOS Simulator rows count, never ineligible rows/placeholders."""
-    header = f'Available destinations for the "{scheme}" scheme:'
+    # Xcode 27 renamed both sections to compatible/incompatible (run 40544160667).
+    headers = {
+        f'Available destinations for the "{scheme}" scheme:',
+        f'Destinations compatible with the "{scheme}" scheme:',
+    }
     active = False
     seen_header = False
     identifiers = set()
     for line in transcript.splitlines():
         line = line.strip()
-        if line == header:
+        if line in headers:
             active = seen_header = True
             continue
         if not line:
@@ -122,7 +129,7 @@ def accepted_ids(transcript: str, scheme: str) -> set[str]:
                 and "placeholder" not in identifier.lower() and "error" not in fields):
             identifiers.add(identifier.upper())
     if not seen_header:
-        raise ValueError(f"missing {header!r}; accepted set UNKNOWN")
+        raise ValueError(f"missing compatible destinations section for {scheme!r}; accepted set UNKNOWN")
     return identifiers
 
 RUNTIME_IOS = re.compile(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)(?:-(\d+))?(?:-(\d+))?$")
