@@ -659,7 +659,22 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case .next:
             startOrStop(queueClient.nextForSession(playbackSessionId: sessionID))
         case .previous:
-            startOrStop(queueClient.previousForSession(playbackSessionId: sessionID))
+            guard queueClient.acceptsCommand(playbackSessionId: sessionID, requiresSeekable: false) else { return }
+            let hasPrevious = snapshot.currentIndex > 0 || snapshot.repeatMode == DulcetRepeatMode.all.rawValue
+            if session.seekability.presentationSeekability == .seekable,
+               session.positionMilliseconds > 3_000 || !hasPrevious {
+                // Seeking restarts this listen without reaching an entry, replacing identities,
+                // or beginning a pass. Use the same guarded seek as the scrubber.
+                send(.seek(.zero))
+            } else if hasPrevious {
+                startOrStop(queueClient.previousForSession(playbackSessionId: sessionID))
+            } else {
+                // Like Android: an unseekable first entry reopens from zero, not its saved
+                // position. The existing core replay preserves QueueEntryID and creates the
+                // new session/attempt; reporting the press resets the failed-pass guard.
+                _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
+                startOrStop(queueClient.replayCurrent())
+            }
         case let .seek(position):
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
@@ -1774,7 +1789,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 canGoNext: index >= 0 && (
                     index + 1 < snapshot.entries.count || repeatMode == .all
                 ),
-                canGoPrevious: index > 0 || repeatMode == .all,
+                canGoPrevious: true,
                 queueEntries: queueEntries,
                 currentEntryIndex: currentEntryIndex,
                 autoplayActive: snapshot.autoplayActive,

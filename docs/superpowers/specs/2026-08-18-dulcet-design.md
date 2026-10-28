@@ -2367,10 +2367,13 @@ It now keeps the whole contract, as the Apple shell does:
   server (no Android surface offers one). The controller lives as long as its account's playback
   service, and closing it withdraws the notice. A skip while the TV's browse screens are in front is
   silent there: TV draws the notice only in its player, and the browse screens have no playback
-  surface. **A divergence:** Android's Previous on a seekable track restarts it by seeking, as a
-  music player's back button does, rather than moving, when it is past three seconds or when it is
-  the first entry with nothing before it; it begins no pass, because it reaches no entry and starts
-  no session. Apple's Previous always moves.
+  surface. **Previous on Apple and Android:** on a seekable track, Previous restarts it by seeking,
+  as a music player's back button does, when it is past three seconds or when it is the first entry
+  with nothing before it. This begins no pass, reaches no entry and creates no session or attempt.
+  Otherwise Previous moves to the prior entry, including wrapping under repeat-all. An unseekable
+  first entry uses the core's `replayCurrent`, reporting the press first: the selected QueueEntryID
+  stays, a new session/attempt starts at zero, the saved position clears, and a new pass begins.
+  Apple offers Previous whenever a track is loaded; its remote command capability matches the button.
 - **Not changed:** the first song of a pick is read with `getSong` before any queue exists, so a
   failure there is presented and skips nothing; and Android's failure line keeps its own copy.
 
@@ -7960,6 +7963,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-28 - Apple Previous restarts or moves with Android semantics**
+
+Apple Previous is enabled whenever a track is loaded, including the first entry; the system remote
+command capability publishes the same availability. On a seekable track, a position strictly past
+three seconds or no prior entry restarts through the existing seek-to-zero path. QueueEntryID,
+PlaybackSessionID and AttemptID remain unchanged and this seek begins no pass. Before or at three
+seconds, a prior entry is reached through the core's previous operation (including repeat-all).
+An unseekable first entry reports the press and uses the existing core replayCurrent operation to
+start from zero, preserving the queue entry while creating a new session/attempt and beginning a
+pass. This is a replay, not restartCurrent's saved-position resume. The Apple controller adds no new
+core restart path. Five controller integration tests cover first-entry availability, seek restart
+and identities, movement below the threshold, unseekable replay, and system remote capability/routing.
+
 
 **2026-10-27 - Native Apple navigation and personal collection ownership**
 
