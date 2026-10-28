@@ -656,11 +656,27 @@ final class DulcetDesignTourUITests: XCTestCase {
         guard transparency.waitForExistence(timeout: 10), revealSetting(transparency) else {
             XCTFail("Display & Text Size must expose Reduce Transparency"); return false
         }
-        if transparency.value as? String != "1" { transparency.tap() }
+        print("DULCET ACCESSIBILITY before switch=\(transparency.value as? String ?? "unknown") runner=\(UIAccessibility.isReduceTransparencyEnabled)")
+        if transparency.value as? String != "1" {
+            // Settings can expose a row-sized Switch wrapper, just like our native Form.
+            // Prefer its actual thumb; otherwise target the switch end of the measured row.
+            let thumb = transparency.switches.firstMatch
+            withoutIdleWaits(settings) {
+                if thumb.exists {
+                    _ = self.tapVisibleFrame(thumb, in: settings)
+                } else if let frame = try? transparency.snapshot().frame, !frame.isEmpty {
+                    settings.coordinate(withNormalizedOffset: .zero)
+                        .withOffset(CGVector(dx: frame.maxX - min(40, frame.width / 2) - settings.frame.minX,
+                                             dy: frame.midY - settings.frame.minY)).tap()
+                }
+            }
+        }
         let enabled = waitFor(timeout: 5) {
             transparency.value as? String == "1" && UIAccessibility.isReduceTransparencyEnabled
         }
-        XCTAssertTrue(enabled, "The real system setting must be enabled before a labelled capture")
+        print("DULCET ACCESSIBILITY after switch=\(transparency.value as? String ?? "unknown") runner=\(UIAccessibility.isReduceTransparencyEnabled)")
+        shoot(enabled ? "reduce-transparency-enabled" : "reduce-transparency-setting-UNREACHED", settings)
+        XCTAssertTrue(enabled, "The real system setting must be enabled before a labelled capture: " + settings.debugDescription)
         print("DULCET ACCESSIBILITY reduceTransparency=\(enabled) evidence=Settings-switch")
         settings.terminate()
         return enabled
