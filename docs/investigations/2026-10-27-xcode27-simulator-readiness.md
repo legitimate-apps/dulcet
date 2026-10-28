@@ -228,6 +228,17 @@ tile modifiers. The original-miss snapshot contains two zero-frame `Other`
 leaves under the scroll content, each with an empty identifier and label, no value
 and no children. Their individual identities are not established by the snapshot.
 
+The next [iPhone matrix job 122627786082](https://github.com/legitimate-apps/dulcet/actions/runs/40631216324/job/122627786082)
+kept the original album-first order and tested explicit accessibility containment,
+a plain layout wrapper, and both together. All three failed the unchanged
+20-second album assertion while the artist stayed published. Containment alone
+failed at the saved-account checkpoint; the other two failed at offline pending
+addition, as did the baseline. These are negative controls, not production fixes.
+The native lazy grids and tile behavior remain unchanged. A bounded search of
+Apple documentation and forums did not establish a matching reported defect or
+known repair, so this remains an unresolved accessibility failure rather than a
+confirmed external image defect.
+
 
 The following [PR platform check 122465865449](https://github.com/legitimate-apps/dulcet/actions/runs/40582613223/job/122465865449)
 stopped in its executable cleanup control before compilation. The fake `xcrun`
