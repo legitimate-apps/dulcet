@@ -155,7 +155,7 @@ enum DulcetStrings {
     static let nowPlayingFailedTitle = text("player.failed.title", "This track could not be played")
     static let nowPlayingFailedBody = text("player.failed.body", "Return to your library and choose another track.")
     static let nowPlayingUnavailableTitle = text("player.unavailable.title", "Nothing is playing")
-    static let nowPlayingUnavailableBody = text("player.unavailable.body", "Choose a track, album, or library playback action to begin.")
+    static let nowPlayingUnavailableBody = text("player.unavailable.body", "Choose a song from your library.")
     static let searchTitle = text("search.title", "Search")
     static let searchPrompt = text("search.prompt", "Artists, albums, and tracks")
     static let searchSummary = text("search.summary", "Results come from the connected server. Search begins after two characters.")

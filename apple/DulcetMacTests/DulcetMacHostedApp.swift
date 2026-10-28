@@ -170,8 +170,8 @@ final class HostedApp {
     }
 
     /// The Settings scene's content in a window of its own, as Dulcet > Settings… shows it.
-    func openSettingsWindow() -> NSWindow {
-        let hosting = NSHostingView(rootView: DulcetSettingsView(store: store))
+    func openSettingsWindow(pane: DulcetSettingsPane = .account) -> NSWindow {
+        let hosting = NSHostingView(rootView: DulcetSettingsView(store: store, selectedPane: pane))
         hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 560)
         let settings = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         settings.isReleasedWhenClosed = false
@@ -195,7 +195,7 @@ final class HostedApp {
         let root = try XCTUnwrap(settings.contentView)
         if identifier.hasPrefix("dulcet.streaming-quality."),
            !descendants(of: root).contains(where: { self.identifier($0) == identifier }),
-           let playback = descendants(of: root).first(where: { self.identifier($0) == "dulcet.account.playback" }) {
+           let playback = descendants(of: root).first(where: { self.label($0) == DulcetStrings.playbackSettings }) {
             try press(playback, named: "Playback")
         }
         let picker = try await element(timeout: .seconds(10), described: identifier, in: root) {
@@ -311,8 +311,16 @@ final class HostedApp {
     /// Selects the identified sidebar row the way a click does: the row the window's table draws
     /// at that element's centre.
     func selectSidebarRow(identifiedBy identifier: String) async throws {
-        let row = try await element(identifiedBy: identifier, timeout: .seconds(10))
-        _ = try selectTableRow(row)
+        if identifier.hasPrefix("dulcet.sidebar.myLibrary.") || identifier.hasPrefix("dulcet.sidebar.section.") {
+            let personal = identifier.hasPrefix("dulcet.sidebar.myLibrary.")
+            try await selectSidebarRow(identifiedBy: personal ? "dulcet.sidebar.library" : "dulcet.sidebar.browse")
+            let section = identifier.split(separator: ".").last.map(String.init) ?? ""
+            let link = try await element(identifiedBy: personal ? "dulcet.myLibrary.section.\(section)" : "dulcet.reader.section.\(section)", timeout: .seconds(10))
+            try press(link, named: section)
+        } else {
+            let row = try await element(identifiedBy: identifier, timeout: .seconds(10))
+            _ = try selectTableRow(row)
+        }
     }
 
     /// A secondary click at the element's centre, sent to the window as a mouse's, so the context

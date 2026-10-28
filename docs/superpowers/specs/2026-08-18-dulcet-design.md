@@ -7961,6 +7961,16 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-28 - Personal playlist and history destinations, native account placement**
+
+Playlists belong only to Library, and Recently Played belongs only to Listen Now. Browse lists
+Albums, Artists, Genres and Songs, followed by catalog shelves. Mac and iPad keep a Browse root
+rather than duplicating its categories in the sidebar. iPad Account is a toolbar button; Mac
+Account is a Settings pane, with an entry from the no-server state. Mac Settings panes are true
+tabs. Android mirrors this destination ownership in Material 3. The
+[Apple presentation specification](2026-10-27-apple-native-restyle.md#round-2-decisions-2026-10-28)
+records the ordinary-server rows, source evidence and platform differences.
+
 **2026-10-27 - Native Apple navigation and personal collection ownership**
 
 Apple phone navigation is Listen Now, Library, Browse and Search on every server type. Account moves

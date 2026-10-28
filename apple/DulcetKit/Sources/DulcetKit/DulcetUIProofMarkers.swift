@@ -67,7 +67,7 @@ extension View {
     /// build or without the launch argument.
     func dulcetUIProofMarkers() -> some View {
 #if DEBUG
-        overlay(alignment: .bottomLeading) {
+        modifier(DulcetAccessibilityCaptureEvidence()).overlay(alignment: .bottomLeading) {
             if DulcetUIProofMarkers.isEnabled {
                 Text(DulcetUIProofMarkers.log.text)
                     .font(.system(size: 6).monospaced())
@@ -83,3 +83,19 @@ extension View {
 #endif
     }
 }
+
+#if DEBUG
+private struct DulcetAccessibilityCaptureEvidence: ViewModifier {
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    func body(content: Content) -> some View {
+        content
+            .onAppear(perform: record)
+            .onChange(of: contrast) { _, _ in record() }
+            .onChange(of: reduceTransparency) { _, _ in record() }
+    }
+    private func record() {
+        DulcetUIProofMarkers.record("accessibility:contrast=\(contrast == .increased ? "increased" : "standard"):reduceTransparency=\(reduceTransparency)")
+    }
+}
+#endif

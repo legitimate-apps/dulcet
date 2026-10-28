@@ -23,19 +23,21 @@ public enum DulcetListenNowShelf: String, CaseIterable, Sendable, Hashable, Iden
 
 struct DulcetListenNowView: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @State private var recentItems: [DulcetProviderItemID] = []
     var body: some View {
         DulcetReaderPage(title: DulcetStrings.listenNow) { width in
             ForEach(DulcetListenNowShelf.allCases) { shelf in
-                DulcetListenNowShelfView(shelf: shelf, width: width)
+                DulcetListenNowShelfView(shelf: shelf, width: width, recentItems: recentItems)
             }
         }
+        .onPreferenceChange(DulcetRecentlyPlayedItems.self) { recentItems = $0 }
 #if !os(tvOS)
         .refreshable { store.librarySession?.reconnect() }
 #endif
 #if os(macOS) || os(tvOS)
         .toolbar { ToolbarItem(placement: .primaryAction) { DulcetListenNowRefresh() } }
 #endif
-        .overlay(alignment: .top) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
+        .overlay(alignment: .top) { DulcetReaderAccountBanner() }
         .accessibilityIdentifier("dulcet.listenNow")
     }
 }
@@ -71,11 +73,20 @@ private struct DulcetListenNowRefresh: View {
 #endif
 }
 
+private struct DulcetRecentlyPlayedItems: PreferenceKey {
+    static let defaultValue: [DulcetProviderItemID] = []
+    static func reduce(value: inout [DulcetProviderItemID], nextValue: () -> [DulcetProviderItemID]) {
+        let next = nextValue()
+        if !next.isEmpty { value = next }
+    }
+}
+
 private struct DulcetListenNowShelfView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.dynamicTypeSize) private var textSize
     let shelf: DulcetListenNowShelf
     let width: CGFloat
+    let recentItems: [DulcetProviderItemID]
     var body: some View {
         DulcetReaderScreen(query: .listenNow(shelf)) { model in
             // Keep a concrete view alive before the first publication. An EmptyView does not
@@ -84,7 +95,7 @@ private struct DulcetListenNowShelfView: View {
             if let window = model.window {
                 // Unsupported and empty personalized shelves disappear on a plain server. Newest
                 // and Explore remain useful for an account without history.
-                if window.hasContent {
+                if window.hasContent && !(shelf == .frequent && window.items.map(\.id) == recentItems) {
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         DulcetShelfHeader(title: shelf.title, identifier: "dulcet.listenNow.\(shelf.rawValue).all") {
                             store.pushReaderPage(.listenNowShelf(shelf))
@@ -132,6 +143,8 @@ private struct DulcetListenNowShelfView: View {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 100)
             }
             }
+            .preference(key: DulcetRecentlyPlayedItems.self,
+                value: shelf == .recent ? model.window?.items.map(\.id) ?? [] : [])
         }
     }
     private var tileWidth: CGFloat {

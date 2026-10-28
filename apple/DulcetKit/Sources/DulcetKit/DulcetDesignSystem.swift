@@ -401,6 +401,7 @@ struct DulcetArtworkView: View {
     let artwork: DulcetArtwork
     let size: CGFloat
     var muted = false
+    var showsBorder = false
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.displayScale) private var displayScale
     @State private var decodedImage: CGImage?
@@ -418,8 +419,10 @@ struct DulcetArtworkView: View {
         DulcetArtworkSurface(artwork: artwork, size: size, image: loadedImage)
         .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)
-                .stroke(.white.opacity(0.16), lineWidth: 1)
+            if showsBorder {
+                RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)
+                    .stroke(.white.opacity(0.16), lineWidth: 1)
+            }
         }
         .saturation(muted ? 0.28 : 1)
         .accessibilityHidden(true)
@@ -494,11 +497,7 @@ struct DulcetArtworkView: View {
     }
 }
 
-/// What an artwork view draws: the server's cover once it has loaded, the generated placeholder
-/// until then. A loaded cover is drawn on a plain neutral backing, never over the placeholder: a
-/// cover with transparent parts -- a record with no sleeve, a PNG with clear corners -- otherwise
-/// showed the placeholder's coloured gradient and shapes through them, and read as a broken
-/// load (observed on the queue's rows).
+/// Draw the server's cover directly, using a generated placeholder only while it loads.
 struct DulcetArtworkSurface: View {
     let artwork: DulcetArtwork
     let size: CGFloat
@@ -507,7 +506,6 @@ struct DulcetArtworkSurface: View {
     var body: some View {
         ZStack {
             if let image {
-                Rectangle().fill(Color.dulcetControl)
                 image
                     .resizable()
                     .interpolation(.high)

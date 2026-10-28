@@ -73,11 +73,17 @@ struct DulcetMyLibraryStatusLines: View {
         if let error = library.error {
             DulcetDestinationStatus(title: DulcetStrings.myLibraryRefreshFailed(DulcetStrings.readerErrorPhrase(error)),
                 symbol: "exclamationmark.circle", retry: onRetry)
+                .padding(.horizontal, 16)
+                .background(.background, ignoresSafeAreaEdges: [])
         } else if library.syncState == "syncing" {
             ProgressView()
+                .padding(.horizontal, 16)
+                .background(.background, ignoresSafeAreaEdges: [])
         } else if library.syncState == "cached", let date = library.lastReadAt, Date().timeIntervalSince(date) > 86_400 {
             if let detail = DulcetReaderCopy.visibleFreshnessLine(.cached(.stale, asOf: date)) {
                 DulcetDestinationStatus(title: detail)
+                    .padding(.horizontal, 16)
+                    .background(.background, ignoresSafeAreaEdges: [])
             }
         }
     }
@@ -167,6 +173,7 @@ struct DulcetMyLibrarySectionPage: View {
                         .padding(DulcetSpacing.md)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .modifier(DulcetSystemScrollChrome())
 #if !os(tvOS)
                     .refreshable { refresh() }
 #endif
@@ -175,7 +182,7 @@ struct DulcetMyLibrarySectionPage: View {
         }
         .overlay(alignment: .top) {
             if let library = store.librarySession?.myLibrary {
-                DulcetMyLibraryStatusLines(library: library, onRetry: refresh).padding(.horizontal, 16).background(.background)
+                DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
             }
         }
         .dulcetForeground(.primaryTextOnWindow)
@@ -228,9 +235,9 @@ struct DulcetMyLibraryView: View {
             .overlay(alignment: .top) {
                 if let library = store.librarySession?.myLibrary {
                     if store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
-                        DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background)
+                        DulcetReaderAccountBanner()
                     } else {
-                        DulcetMyLibraryStatusLines(library: library, onRetry: refresh).padding(.horizontal, 16).background(.background)
+                        DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                     }
                 }
             }
@@ -305,6 +312,10 @@ struct DulcetMyLibraryView: View {
                 }
             }
             .listStyle(.plain)
+            .modifier(DulcetSystemScrollChrome())
+#if os(macOS)
+            .environment(\.defaultMinListRowHeight, 36)
+#endif
 #if !os(tvOS)
             .refreshable { refresh() }
 #endif
@@ -425,10 +436,27 @@ struct DulcetPersonalLibraryRoot: View {
             if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
                 DulcetPinnedLibraryItems().dulcetHideListRowSeparator()
             }
+#if os(macOS)
+            DulcetReaderScreen(query: .favourites) { model in
+                if let window = model.window, window.hasContent {
+                    Section {
+                        ForEach(window.items.filter { $0.kind == .album || $0.kind == .artist }.prefix(8)) { item in
+                            DulcetReaderListRow(item: item)
+                        }
+                    } header: { Text(DulcetStrings.readerFavorites) }
+                } else if model.window == nil {
+                    ProgressView().frame(maxWidth: .infinity, minHeight: 40)
+                }
+            }
+#endif
         }
         .listStyle(.plain)
+        .modifier(DulcetSystemScrollChrome())
+#if os(macOS)
+        .environment(\.defaultMinListRowHeight, 36)
+#endif
         .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
-        .overlay(alignment: .top) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
+        .overlay(alignment: .top) { DulcetReaderAccountBanner() }
     }
 }
 

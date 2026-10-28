@@ -4695,7 +4695,7 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     let previous = NSApp.accessibilityAttributeValue(enhanced) ?? false
     NSApp.accessibilitySetValue(true, forAttribute: enhanced)
     defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
-    let host = NSHostingView(rootView: DulcetRootView(store: store))
+    let host = NSHostingView(rootView: DulcetSettingsView(store: store))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 900),
         styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
@@ -4703,7 +4703,7 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     window.makeKeyAndOrderFront(nil)
     defer { window.close() }
     let root: NSObject = host
-    let accountID = "dulcet.sidebar.settings"
+    let accountID = "Settings Account pane"
 #else
     let controller = UIHostingController(rootView: DulcetRootView(store: store))
 #if os(tvOS)
@@ -4720,7 +4720,7 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     defer { window.isHidden = true }
     let root: NSObject = controller.view
 #if os(iOS)
-    let accountID = UIDevice.current.userInterfaceIdiom == .pad ? "dulcet.sidebar.settings" : "dulcet.tab.settings"
+    let accountID = "dulcet.account.open"
 #else
     let accountID = "dulcet.tab.settings"
 #endif
@@ -4735,8 +4735,10 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
         } while ContinuousClock.now < end
         return nil
     }
+#if !os(macOS)
     let account = try #require(await element(accountID), "Root offers Account directly")
     savedServerAccessibilityActivate(account)
+#endif
     let entry = try #require(await element("dulcet.account.server.server-b"), "Account shows the second saved server")
     let add = try #require(await element("dulcet.account.add-server"), "Account offers Add Server beside saved servers")
     #expect(savedServerAccessibilityValue("accessibilityLabel", add) != nil)
@@ -4905,4 +4907,11 @@ func learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt()
         #expect(credentials.serverIdentity.isEmpty)
         #expect(accepted.isEmpty)
     }
+}
+
+@Test func accountAddressNamesTheActualHostPortAndBasePathWithoutCredentials() {
+    #expect(DulcetServerAddressDisplay.text("https://user:canary@music.example.invalid:443/music/?u=canary&t=canary#token") == "music.example.invalid/music")
+    #expect(DulcetServerAddressDisplay.text("http://127.0.0.1:49309") == "127.0.0.1:49309")
+    #expect(DulcetServerAddressDisplay.text("http://[::1]:4533/") == "[::1]:4533")
+    #expect(DulcetServerAddressDisplay.text("malformed user:canary@music.invalid?token=canary#secret") == "music.invalid")
 }

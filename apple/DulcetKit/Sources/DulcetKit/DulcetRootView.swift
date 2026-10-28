@@ -290,8 +290,12 @@ private struct DulcetTVSectionNavigation: View {
         TabView(selection: Binding(get: { store.selectedDestination }, set: { store.navigate(to: $0) })) {
             ForEach(DulcetSidebarDestination.allCases) { destination in
                 NavigationStack(path: Binding(
-                    get: { store.selectedDestination == destination ? store.readerPath : [] },
-                    set: { if store.selectedDestination == destination { store.popReader(to: $0) } }
+                    get: { store.readerPath(for: destination) },
+                    set: { path in
+                        if store.selectedDestination == destination, [.listenNow, .library, .browse].contains(destination) {
+                            store.popReader(to: path)
+                        }
+                    }
                 )) {
                     Group {
                         if store.selectedDestination == destination { DulcetStateSurface(store: store) }
@@ -498,22 +502,23 @@ private struct DulcetCompactShell: View {
     @Bindable var store: DulcetPresentationStore
     @Binding var lastTab: DulcetSidebarDestination
     let onOpenPlayer: () -> Void
-    @Environment(\.dulcetOpenAccount) private var openAccount
+    @State private var allowsTabMinimization = false
 
     var body: some View {
         if #available(iOS 26.1, *) {
             modernTabs
                 .tabViewStyle(.sidebarAdaptable)
-                .tabViewSidebarFooter { accountButton.padding() }
                 .tabViewBottomAccessory(isEnabled: store.showsNowPlayingBar) {
                     DulcetNowPlayingBar(store: store, onOpen: onOpenPlayer)
                         .dulcetQueueDropTarget(store: store, cornerRadius: 12)
                 }
-                .tabBarMinimizeBehavior(.onScrollDown)
+                .tabBarMinimizeBehavior(allowsTabMinimization ? .onScrollDown : .never)
+                .environment(\.dulcetUserScrollAwayFromTop, { allowsTabMinimization = $0 })
+                .onChange(of: store.readerPath) { _, _ in allowsTabMinimization = false }
+                .onChange(of: store.selectedDestination) { _, _ in allowsTabMinimization = false }
         } else if #available(iOS 18.0, *) {
             modernTabs
                 .tabViewStyle(.sidebarAdaptable)
-                .tabViewSidebarFooter { accountButton.padding() }
         } else {
             TabView(selection: tabSelection) {
                 ForEach(DulcetIOSShell.places) { destination in
@@ -528,11 +533,14 @@ private struct DulcetCompactShell: View {
     @available(iOS 18.0, *)
     private var modernTabs: some View {
         TabView(selection: tabSelection) {
-            ForEach(DulcetIOSShell.places) { destination in
-                Tab(value: destination, role: destination == .search ? .search : nil) {
+            ForEach(DulcetIOSShell.places.filter { $0 != .search }) { destination in
+                Tab(value: destination) {
                     tabPage(destination, systemAccessory: hasSystemAccessory)
                 } label: { tabLabel(destination) }
             }
+            Tab(value: DulcetSidebarDestination.search, role: .search) {
+                tabPage(.search, systemAccessory: hasSystemAccessory)
+            } label: { tabLabel(.search) }
         }
     }
 
@@ -546,15 +554,6 @@ private struct DulcetCompactShell: View {
     private func tabLabel(_ destination: DulcetSidebarDestination) -> some View {
         Label(destination.windowTitle, systemImage: destination.symbolName)
             .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
-    }
-
-    private var accountButton: some View {
-        Button(action: openAccount) {
-            Image(systemName: "person.crop.circle")
-                .dulcetForeground(.accentIconOnWindow)
-        }
-            .accessibilityLabel(DulcetStrings.accountSection)
-            .accessibilityIdentifier("dulcet.account.open")
     }
 
     private var tabSelection: Binding<DulcetSidebarDestination> {
@@ -964,44 +963,6 @@ private struct DulcetSidebar: View {
                     }
                 }
 
-                if store.myLibraryAvailable, destinations.contains(.library) {
-                    Section {
-                        ForEach(DulcetMyLibrarySection.allCases) { section in
-                            sidebarChoice(.myLibrarySection(section)) { Label(section.title, systemImage: section.symbolName) }
-                                .accessibilityIdentifier("dulcet.sidebar.myLibrary.\(section.rawValue)")
-                        }
-                    } header: {
-                        Text(DulcetStrings.library)
-                    }
-                }
-                if store.readerOwnsLibrary, destinations.contains(.library) {
-                    // The library's own places, as a music app's sidebar lists them.
-                    Section {
-                        ForEach(DulcetLibrarySection.allCases.filter { $0 != .home && $0 != .favourites }) { section in
-                            sidebarChoice(.section(section)) { Label(section.title, systemImage: section.symbolName) }
-                                .accessibilityLabel(section.title)
-                                .accessibilityIdentifier("dulcet.sidebar.section.\(section.rawValue)")
-                        }
-                    } header: {
-                        Text(DulcetStrings.libraryServerCatalog)
-                    }
-                }
-
-                if destinations.contains(.settings) {
-                    Section {
-#if os(macOS)
-                        Button(action: { openSettings() }) {
-                            Label(DulcetStrings.accountSection, systemImage: "person.crop.circle")
-                        }
-                        .accessibilityIdentifier("dulcet.sidebar.settings")
-#else
-                        sidebarRow(DulcetStrings.accountSection, symbol: "person.crop.circle", destination: .settings)
-#endif
-                    } header: {
-                        Text(DulcetStrings.accountSection)
-                            .textCase(.uppercase)
-                    }
-                }
             }
             .listStyle(.sidebar)
 
@@ -1144,6 +1105,9 @@ private struct DulcetSidebar: View {
 
 private struct DulcetStateSurface: View {
     @Bindable var store: DulcetPresentationStore
+#if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+#endif
     var allowsProgrammaticFocus = true
     /// Inside a navigation stack, album and artist pages are pushed on top of the grid rather
     /// than replacing it, so the grid stays the stack's root in those states.
@@ -1187,23 +1151,7 @@ private struct DulcetStateSurface: View {
                     onControl: store.sendPlaybackControl,
                     onEdit: store.editQueue
                 )
-#if os(macOS)
-                // The heart for what is playing, in the window's toolbar (§16.20). The other Apple
-                // platforms draw the same heart in the player's own controls.
-                .toolbar {
-                    if store.nowPlayingFavourite(for: player.current) != nil {
-                        ToolbarItem(placement: .primaryAction) {
-                            DulcetNowPlayingFavouriteButton(track: player.current)
-                        }
-                        ToolbarItem(placement: .primaryAction) {
-                            Menu {
-                                DulcetRatingMenu(target: .init(kind: .track, id: player.current.id), published: nil)
-                            } label: { Label(DulcetStrings.more, systemImage: "ellipsis.circle") }
-                            .accessibilityIdentifier("dulcet.now-playing.toolbar.more")
-                        }
-                    }
-                }
-#endif
+
             } else if snapshot.state == .nowPlayingPreparing {
                 DulcetPlaybackPreparingView()
             } else if snapshot.state == .nowPlayingFailed {
@@ -1213,14 +1161,25 @@ private struct DulcetStateSurface: View {
                 )
                 .dulcetNavigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             } else {
-                DulcetUnavailableDestinationView(
-                    symbol: "waveform",
-                    title: DulcetStrings.nowPlayingUnavailableTitle,
-                    message: DulcetStrings.nowPlayingUnavailableBody
-                )
+                ContentUnavailableView {
+                    Label(DulcetStrings.nowPlayingUnavailableTitle, systemImage: "music.note")
+                } description: {
+                    Text(DulcetStrings.nowPlayingUnavailableBody)
+                } actions: {
+                    Button(DulcetStrings.library) { store.navigate(to: .library) }
+                        .accessibilityIdentifier("dulcet.now-playing.empty.library")
+                }
                 .dulcetNavigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             }
         }
+    }
+
+    private func openAccount() {
+#if os(macOS)
+        openSettings()
+#else
+        store.selectDestination(.settings)
+#endif
     }
 
     @ViewBuilder
@@ -1233,11 +1192,11 @@ private struct DulcetStateSurface: View {
                 }
                 .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
             } else {
-                DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
+                DulcetEmptyLibraryView(onConnect: openAccount)
                     .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
             }
         case .emptyLibraryNoAccount:
-            DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
+            DulcetEmptyLibraryView(onConnect: openAccount)
                 .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
         case .emptyLibraryConnected:
             DulcetEmptyLibraryView(connected: true)

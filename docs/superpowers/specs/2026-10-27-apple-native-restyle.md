@@ -1,6 +1,6 @@
 # Apple native presentation refresh
 
-Status: foundation implementation after independent baseline critique, 2026-10-27. No page has visual sign-off yet.
+Status: round 2 corrections after independent round 1 review, 2026-10-28. Variant-specific approvals and remaining gaps are recorded in the review manifest.
 Deployment floors and product capabilities stay as defined in the main design specification.
 The iPhone account toolbar button replacing the Connection tab and later Android Material 3
 information-architecture parity are confirmed direction. The foundation implements the Apple navigation contract below.
@@ -77,8 +77,8 @@ platform. They are acceptance criteria, not claims about screenshots already pro
 | Platform | Navigation/account | Persistent playback | Detail presentation |
 | --- | --- | --- | --- |
 | iPhone | Listen Now, Library, Browse, Search with search role; account toolbar button opens Account sheet | System TabView bottom accessory, minimizes with the tab bar; no empty accessory | Native player sheet with supported matched transition, native Back and dismissal |
-| iPad | Adaptive tabs/sidebar, same four places; Account/Connection in sidebar footer | System accessory when tabs are shown; one shared persistent player in sidebar layout | NavigationSplitView, native sheet or inspector for auxiliary content |
-| Mac | Native sidebar; Account and server controls in Settings window, with sidebar account shortcut | One window-level player/transport area, keyboard and pointer controls | Content/detail navigation; queue and lyrics in native inspector or player view |
+| iPad | Adaptive tabs/sidebar, same four places; Account in the trailing toolbar only | System accessory when tabs are shown; one shared persistent player in sidebar layout | NavigationSplitView, native sheet or inspector for auxiliary content |
+| Mac | Native sidebar; Account and server controls in Settings window, without a duplicate sidebar account row | One window-level player/transport area, keyboard and pointer controls | Content/detail navigation; queue and lyrics in native inspector or player view |
 | Apple TV | Native TabView section navigation including Account; verify programmatic selection and focus restoration on 27 | Now Playing section and compact playback context where native layout supports it | Remote-driven stacks; Menu returns one level or restores tab focus |
 
 On older iOS, four legacy tabs and one safe-area player are acceptable fallbacks. The fallback
@@ -215,3 +215,51 @@ and context menus through `additionalMenuActions`.
 ### 2026-10-28 status reflow correction
 
 OBSERVED in iOS 27 capture diagnostics: a top safe-area inset still changes a lazy grid's screen position and can leave its accessibility node stale after status changes. Destination status now uses an overlay outside the scrolling content, without changing its insets. This supersedes the earlier safe-area-inset placement note. Loading and account changes must not insert status above an existing lazy grid. The existing offline pending-add UI proof remains the behavioral gate.
+
+## Round 2 decisions, 2026-10-28
+
+- iPhone and iPad keep Listen Now, Library, Browse and the static search-role Search tab on every
+  server type. Search uses the system search affordance. Account is a trailing toolbar button;
+  iPad has no sidebar footer duplicate. Mac Account is in Settings, reachable with the system
+  Settings command and the no-server action, with no second selected-looking sidebar row.
+- Mac and iPad retain a Browse root. The sidebar lists root destinations, without repeating the
+  catalog categories. Browse lists Albums, Artists, Genres and Songs, followed by Recently Added
+  and Most Played shelves. Playlists are personal and appear only in Library. Recently Played
+  appears only in Listen Now. The same Browse composition applies on every Apple platform.
+- Ordinary OpenSubsonic Library has Playlists, Downloaded when supported, and Favorites; a server
+  with personal membership also has Artists, Albums, Songs and its personal Recently Added shelf.
+  Pinned items and an advertised Wishlist remain available. On Mac, ordinary-server Favorites
+  can preview album and artist rows in the Library root. Rows have native minimum heights.
+- Heavy Rotation is omitted when its ordered item identities exactly repeat Recently Played.
+  Fixed-width, leading-aligned shelves remain appropriate with a single item; a singleton is
+  useful when it does not repeat another shelf. Empty shelves remain hidden.
+- Loaded artwork has no neutral backing card or default white border. Captures use original,
+  opaque square fixture covers so transparency does not disguise the geometry.
+- Native bottom scroll edges use the soft system scroll-edge effect. A destination push or tab
+  change resets native tab minimization; only direct scrolling away from the top enables the
+  system on-scroll-down policy. Programmatic offsets do not minimize a newly pushed page.
+- Empty status overlays draw no background. A visible status stays outside lazy scrolling
+  content and its background does not extend into navigation safe areas. This addresses the
+  source-level occluder found above clipped titles; runtime photographs must verify the result.
+- Mac Settings uses three real tabs, Account, Playback and Downloads & Storage, without pushed
+  sibling pages. Sign In and Reconnect are bottom default buttons. The saved account explicitly
+  says Not Connected. Address rows show the normalized host, nondefault port and base path,
+  without user information, query or fragment. Sign Out remains confirmed and destructive.
+- Storage has Offline Music, Storage and Streaming Cache sections, with relevant section footers.
+  Clear Streaming Cache names the cache being cleared. Remove All Downloads awaits a controller
+  operation that defines removal of active, automatic and pinned downloads; account-data removal
+  is not an equivalent operation.
+- Mac retains streaming quality for limited networks. The production path monitor treats either
+  `NWPath.isExpensive` or `isConstrained` as limited on Mac too, so labels describe those actual
+  conditions rather than a cellular radio. This is a supported platform difference from Music.
+- Android mirrors destination ownership, playlist/history placement, singleton deduplication,
+  Favorite vocabulary, clear-cache scope and account states in native Material 3. Apple bar,
+  sheet, toolbar and Settings-window presentation remains platform-specific.
+
+Implementation references checked against the Xcode 27 SDK and Apple documentation on 2026-10-28:
+[Search tab role](https://developer.apple.com/documentation/swiftui/tabrole/search),
+[tab bar minimization](https://developer.apple.com/documentation/swiftui/tabbarminimizebehavior),
+[system scroll-edge style](https://developer.apple.com/documentation/swiftui/view/scrolledgeeffectstyle(_:for:)),
+and [HIG search fields](https://developer.apple.com/design/human-interface-guidelines/search-fields).
+The installed SwiftUI interface declares the scroll-edge and minimization APIs at iOS 26;
+availability-gated native fallbacks retain the deployment floors.

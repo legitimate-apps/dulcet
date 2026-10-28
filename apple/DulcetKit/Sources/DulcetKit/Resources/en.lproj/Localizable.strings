@@ -88,7 +88,7 @@
 "player.failed.title" = "This track could not be played";
 "player.failed.body" = "Return to your library and choose another track.";
 "player.unavailable.title" = "Nothing is playing";
-"player.unavailable.body" = "Choose a track, album, or library playback action to begin.";
+"player.unavailable.body" = "Choose a song from your library.";
 "search.title" = "Search";
 "search.prompt" = "Artists, albums, and tracks";
 "search.summary" = "Results come from the connected server. Search begins after two characters.";

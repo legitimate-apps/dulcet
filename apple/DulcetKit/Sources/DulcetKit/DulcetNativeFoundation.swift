@@ -39,12 +39,54 @@ struct DulcetAccountToolbar: ViewModifier {
     func body(content: Content) -> some View {
 #if os(iOS)
         content.toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button(action: open) { Image(systemName: "person.crop.circle") }
                     .accessibilityLabel(DulcetStrings.accountSection)
                     .accessibilityIdentifier("dulcet.account.open")
             }
         }
+#else
+        content
+#endif
+    }
+}
+
+
+private struct DulcetUserScrollAwayFromTopKey: EnvironmentKey {
+    static let defaultValue: @MainActor (Bool) -> Void = { _ in }
+}
+
+extension EnvironmentValues {
+    var dulcetUserScrollAwayFromTop: @MainActor (Bool) -> Void {
+        get { self[DulcetUserScrollAwayFromTopKey.self] }
+        set { self[DulcetUserScrollAwayFromTopKey.self] = newValue }
+    }
+}
+
+/// Native scroll edges veil content under system chrome. Only a person's scrolling may
+/// minimize the tab bar; a push or a restored offset must arrive with all destinations visible.
+struct DulcetSystemScrollChrome: ViewModifier {
+    @Environment(\.dulcetUserScrollAwayFromTop) private var userScrolled
+    @State private var interacting = false
+    @State private var atTop = true
+
+    func body(content: Content) -> some View {
+#if os(iOS)
+        if #available(iOS 26.0, *) {
+            content
+                .scrollEdgeEffectStyle(.soft, for: .bottom)
+                .onScrollPhaseChange { _, phase in
+                    interacting = phase == .interacting
+                    if interacting && !atTop { userScrolled(true) }
+                }
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y + geometry.contentInsets.top <= 1
+                } action: { _, top in
+                    atTop = top
+                    if top { userScrolled(false) }
+                    else if interacting { userScrolled(true) }
+                }
+        } else { content }
 #else
         content
 #endif
@@ -126,9 +168,9 @@ struct DulcetShelfHeader: View {
         Button(action: onSeeAll) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title).font(.title2.bold()).dulcetForeground(.primaryTextOnWindow)
-                Spacer(minLength: 8)
                 Image(systemName: "chevron.forward").font(.subheadline.weight(.semibold))
                     .dulcetForeground(.secondaryTextOnWindow)
+                Spacer(minLength: 8)
             }
             .contentShape(Rectangle())
         }

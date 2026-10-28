@@ -770,7 +770,7 @@ public final class DulcetPresentationStore {
         let previousWriter = navigationWriter
         navigationWriter = "selectLibrarySection"
         defer { navigationWriter = previousWriter }
-        let destination: DulcetSidebarDestination = section == .favourites ? .library : .browse
+        let destination: DulcetSidebarDestination = (section == .favourites || section == .playlists) ? .library : .browse
         if selectedDestination != destination {
             selectDestination(destination)
         }

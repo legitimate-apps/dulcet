@@ -39,8 +39,6 @@ struct DulcetReaderScreen<Content: View>: View {
             .overlay(alignment: .top) {
                 if showsDestinationStatus {
                     DulcetReaderStatusView(window: model.window, localCollection: model.query == .downloaded)
-                        .padding(.horizontal, 16)
-                        .background(.background)
                 }
             }
             .onAppear(perform: open)
@@ -102,6 +100,8 @@ struct DulcetReaderStatusView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain)
             .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .background(.background, ignoresSafeAreaEdges: [])
             .accessibilityIdentifier("dulcet.reader.status")
         }
     }
@@ -191,11 +191,15 @@ struct DulcetReaderAccountBanner: View {
     var body: some View {
         if store.librarySession?.mode == .deviceOnly {
             DulcetDestinationStatus(title: DulcetStrings.offline) { store.submitAccountConnection() }
+                .padding(.horizontal, 16)
+                .background(.background, ignoresSafeAreaEdges: [])
                 .accessibilityIdentifier("dulcet.reader.deviceOnly")
         } else if store.librarySession?.connectionFailure != nil {
             DulcetDestinationStatus(title: DulcetStrings.connectionFailed, symbol: "exclamationmark.circle") {
                 dulcetReaderRetry(store)
             }
+            .padding(.horizontal, 16)
+            .background(.background, ignoresSafeAreaEdges: [])
         }
     }
 
@@ -1100,6 +1104,7 @@ struct DulcetReaderPage<Content: View>: View {
                 .padding(.vertical, DulcetSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .modifier(DulcetSystemScrollChrome())
             .coordinateSpace(name: "dulcet.detail.scroll")
             .onPreferenceChange(DulcetDetailTitleBottom.self) { bottom in
                 titleAboveViewport = bottom < 0
@@ -1232,21 +1237,25 @@ struct DulcetReaderHomeView: View {
         GeometryReader { geometry in
             List {
                 Section {
-                    ForEach(DulcetLibrarySection.allCases.filter { $0 != .home && $0 != .favourites }) { section in
+                    ForEach(DulcetLibrarySection.allCases.filter { $0 != .home && $0 != .favourites && $0 != .playlists }) { section in
                         DulcetReaderNavigationLink(title: section.title, symbol: section.symbolName,
                             route: .section(section), identifier: "dulcet.reader.section.\(section.rawValue)")
                     }
                     DulcetReaderNavigationLink(title: DulcetStrings.librarySongs, symbol: "music.note",
                         route: .songs, identifier: "dulcet.library.songs")
                 }
-                ForEach([DulcetHomeRow.recentlyAdded, .recentlyPlayed, .mostPlayed]) { row in
+                ForEach([DulcetHomeRow.recentlyAdded, .mostPlayed]) { row in
                     DulcetReaderShelf(row: row, width: geometry.size.width)
                         .dulcetHideListRowSeparator()
                 }
             }
             .listStyle(.plain)
+            .modifier(DulcetSystemScrollChrome())
+#if os(macOS)
+            .environment(\.defaultMinListRowHeight, 36)
+#endif
         }
-        .overlay(alignment: .top) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
+        .overlay(alignment: .top) { DulcetReaderAccountBanner() }
         .dulcetNavigationTitle(DulcetStrings.browseSection, keepsTVNavigationBar: true)
         .environment(\.dulcetAccountMessageShown, store.librarySession?.ownsConnectionMessage == true)
 #if !os(tvOS)
