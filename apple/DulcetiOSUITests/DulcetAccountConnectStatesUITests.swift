@@ -112,7 +112,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             }
             guard scrollIntoView(primary, matching: .identifier("dulcet.account-connect.primary-action"), in: app) else { return }
         } else if screen == "connection-connected" || screen == "connection-error-persistence" || screen == "connection-error-input" {
-            let label = screen == "connection-connected" ? "Sign Out" : "Try Again"
+            let label = screen == "connection-connected" ? "Sign Out" : "Sign In"
             let action = app.buttons[label].firstMatch
             for _ in 0..<6 {
                 if action.exists { break }
@@ -388,7 +388,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             XCTFail("A launch with no saved account must show the account form: " + app.debugDescription)
             return
         }
-        XCTAssertTrue(primary.label.contains("Connect") && !primary.label.contains("Reconnect"),
+        XCTAssertTrue(primary.label == "Sign In",
                       "Idle offers Connect; label=\(primary.label)")
         XCTAssertFalse(primary.isEnabled, "Idle with an empty form cannot submit")
         XCTAssertFalse(element(labelPrefix: "Reconnect to", in: app).exists, "Idle names no saved server")
@@ -405,7 +405,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         guard fill(app, serverURL: "ftp://127.0.0.1:\(refused.port)", username: server.username, password: server.password),
               tap(primary, in: app, name: "Connect") else { return }
         let invalidAddress = app.staticTexts["Check the server address"].firstMatch
-        let tryAgain = app.buttons["Try Again"].firstMatch
+        let tryAgain = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         guard waitForAccountError("Check the server address", in: app) else {
             XCTFail("An ftp:// address must show the input error: " + app.debugDescription)
             return
@@ -507,7 +507,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         add(cancelShot)
         primary.tap()
         guard connecting.waitForNonExistence(timeout: 10),
-              waitForLabel(containing: "Connect", of: primary, timeout: 5) else {
+              waitForLabel(containing: "Sign In", of: primary, timeout: 5) else {
             XCTFail("Cancel must end the connection and offer Connect again: " + app.debugDescription)
             return
         }
@@ -541,7 +541,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         largestTextShot.lifetime = .keepAlways
         add(largestTextShot)
         primary.tap()
-        guard waitForLabel(containing: "Connect", of: primary, timeout: 5), !tryAgain.exists else {
+        guard waitForLabel(containing: "Sign In", of: primary, timeout: 5), !tryAgain.exists else {
             XCTFail("Cancel at the largest text size must end the request without a failure: " + app.debugDescription)
             return
         }
@@ -758,26 +758,15 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func openConnection(in app: XCUIApplication, compact: Bool) -> Bool {
-        if compact {
-            let tab = app.tabBars.buttons["Connection"].firstMatch
-            guard tab.waitForExistence(timeout: 10) else {
-                XCTFail("A compact window must present the Connection tab: " + app.debugDescription)
-                return false
-            }
-            // Reselecting the active native tab scrolls its Form to the top. A restored
-            // status already opened Connection; keep that arrival position when locating it.
-            if !tab.isSelected { tab.tap() }
-            return true
-        }
-        let row = app.descendants(matching: .any)["dulcet.sidebar.settings"].firstMatch
-        guard row.waitForExistence(timeout: 10), row.isHittable else {
-            XCTFail("The Connection row must be visible in the sidebar: " + app.debugDescription)
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        if close.exists { return true }
+        let account = app.buttons["dulcet.account.open"].firstMatch
+        guard account.waitForExistence(timeout: 10), account.isHittable else {
+            XCTFail("The account toolbar button must open the account sheet: " + app.debugDescription)
             return false
         }
-        // As with the compact tab, preserve the form when Connection is already selected.
-        // Reselecting the sidebar republishes the source snapshot over unsubmitted edits.
-        if !row.isSelected { row.tap() }
-        return true
+        account.tap()
+        return close.waitForExistence(timeout: 10)
     }
 
     /// Waits for the connected account's Sign Out on Connection, opening Connection when the
@@ -830,7 +819,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             }
             if primary.waitForExistence(timeout: 1) { break }
         } while confirm.exists && Date() < confirmationDeadline
-        guard primary.waitForExistence(timeout: 45), waitForLabel(containing: "Connect", of: primary, timeout: 10),
+        guard primary.waitForExistence(timeout: 45), waitForLabel(containing: "Sign In", of: primary, timeout: 10),
               !primary.label.contains("Reconnect") else {
             XCTFail("Signing out must return Connection to its empty form: " + app.debugDescription)
             return false
@@ -970,7 +959,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         repeat {
             if let snapshot = try? window.snapshot(),
                hitTarget(.staticText(title), in: snapshot) != nil,
-               hitTarget(.button("Try Again"), in: snapshot) != nil { return true }
+               hitTarget(.identifier("dulcet.account-connect.primary-action"), in: snapshot) != nil { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while ProcessInfo.processInfo.systemUptime < deadline
         return false

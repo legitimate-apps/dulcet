@@ -117,6 +117,18 @@ import UIKit
 #endif
     }
     @discardableResult func select(_ section: String) -> XCUIElement {
+#if os(iOS)
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        if section == "settings" {
+            if close.exists { return close }
+            let account = app.buttons["dulcet.account.open"].firstMatch
+            XCTAssertTrue(account.waitForExistence(timeout: 30) && account.isHittable)
+            activate(account)
+            XCTAssertTrue(close.waitForExistence(timeout: 10))
+            return account
+        }
+        if close.exists { activate(close); XCTAssertTrue(close.waitForNonExistence(timeout: 10)) }
+#endif
 #if os(macOS)
         let row = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #else

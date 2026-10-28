@@ -121,7 +121,7 @@ final class DulcetTVUITests: XCTestCase {
         print("PLAYLIST CONTEXT PROOF idiom=tvos rawPlaylist=\(playlist.id) serverHistory=true homeTile=true offlineRelaunch=\(offlineRelaunch) source=actual-playlist-play")
     }
 
-    private static let sections = ["listenNow", "library", "search", "nowPlaying", "settings"]
+    private static let sections = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"]
 
     /// Server cleanup a test registers once it has made something on the disposable server; run
     /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
@@ -498,7 +498,7 @@ final class DulcetTVUITests: XCTestCase {
         app.launchArguments = liveAccountLaunchArguments(serverURL: serverURL, username: username, password: password)
         app.launch()
         let launch = try awaitLaunchAndLiveConnection(app)
-        if launch.section != "Connection" {
+        if launch.section != "Account" {
             // Reaching Connection through the bar leaves focus on the bar; the press under test
             // needs it inside the surface, where a launch on Connection would have put it.
             for _ in 0..<4 where focusedSection(app) != nil {
@@ -806,23 +806,19 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(albumTitle.waitForExistence(timeout: 15) && albumTitle.label == album,
             "Pressing the result must open \(album): " + app.debugDescription)
 
-        // 1. The album's own heart, in its header.
-        let albumHeart = app.buttons["dulcet.album.favorite"].firstMatch
-        XCTAssertTrue(albumHeart.waitForExistence(timeout: 10), "The album page must offer its heart: " + app.debugDescription)
-        try pressHeartAndProve(albumHeart, named: "\(album)'s heart", in: app) {
+        // Album and track Favorite actions live in their native More menus.
+        let albumMore = app.buttons["dulcet.album.more"].firstMatch
+        try pressMenuFavoriteAndProve(albumMore, named: album, in: app) {
             self.readServerStarred("album", named: album, server: server)
         }
-
-        // 2. The heart beside the track's row: the one whose frame sits in the row's.
         let row = app.buttons.matching(identifier: "dulcet.reader.track")
             .matching(NSPredicate(format: "label BEGINSWITH %@", track + ", ")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 15), "\(album) must list \(track): " + app.debugDescription)
-        XCTAssertTrue(focusByRemote(row, in: app), "\(track)'s row must take remote focus: " + app.debugDescription)
-        let rowHearts = app.buttons.matching(identifier: "dulcet.reader.favorite").allElementsBoundByIndex
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        XCTAssertTrue(focusByRemote(row, in: app))
+        let menus = app.buttons.matching(identifier: "dulcet.track.more").allElementsBoundByIndex
             .filter { $0.frame.midY > row.frame.minY && $0.frame.midY < row.frame.maxY }
-        XCTAssertEqual(rowHearts.count, 1, "Exactly one heart must sit beside \(track)'s row: " + app.debugDescription)
-        let rowHeart = try XCTUnwrap(rowHearts.first)
-        try pressHeartAndProve(rowHeart, named: "\(track)'s row heart", in: app) {
+        XCTAssertEqual(menus.count, 1, "Exactly one More button must sit beside the row")
+        try pressMenuFavoriteAndProve(XCTUnwrap(menus.first), named: track, in: app) {
             self.readServerSongStarred(track, album: album, server: server)
         }
 
@@ -876,6 +872,27 @@ final class DulcetTVUITests: XCTestCase {
     /// Moves remote focus onto `target` one press at a time, re-read after every press, the way a
     /// viewer steers: along the axis with the larger gap first, the other axis when a press leaves
     /// focus where it was or returns it somewhere already visited. False when the bound passes first.
+    @MainActor
+    private func pressMenuFavoriteAndProve(
+        _ more: XCUIElement, named name: String, in app: XCUIApplication, read: () -> Bool?
+    ) throws {
+        let initial = try XCTUnwrap(read(), "The disposable server must answer before changing Favorite")
+        for expected in [!initial, initial] {
+            XCTAssertTrue(more.waitForExistence(timeout: 10) && focusByRemote(more, in: app))
+            XCUIRemote.shared.press(.select)
+            let action = app.buttons[expected ? "Favorite" : "Remove Favorite"].firstMatch
+            XCTAssertTrue(action.waitForExistence(timeout: 5) && focusByRemote(action, in: app))
+            XCUIRemote.shared.press(.select)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+            var observed = read()
+            while observed != expected, ContinuousClock.now < deadline {
+                Thread.sleep(forTimeInterval: 0.25)
+                observed = read()
+            }
+            XCTAssertEqual(observed, expected, "\(name): Favorite must reach the server")
+        }
+    }
+
     @MainActor
     private func focusByRemote(_ target: XCUIElement, in app: XCUIApplication, bound: Int = 16) -> Bool {
         func name(_ button: XCUIRemote.Button) -> String {
@@ -1132,6 +1149,7 @@ final class DulcetTVUITests: XCTestCase {
         // up-navigation bound reaches (OBSERVED: four Up presses did not); leaving a deep surface
         // is the exit command's job, as it is for a person.
         XCUIRemote.shared.press(.menu)
+        XCUIRemote.shared.press(.menu) // Account root to the native tab bar.
         let toBar = ContinuousClock.now.advanced(by: .seconds(3))
         while focusedSection(app) == nil, ContinuousClock.now < toBar { Thread.sleep(forTimeInterval: 0.1) }
         XCTAssertEqual(focusedSection(app), "settings",
@@ -2639,33 +2657,22 @@ final class DulcetTVUITests: XCTestCase {
     /// presses it, and requires that button to read as chosen. Returns the presses it took.
     @MainActor
     private func chooseStreamingQualityByRemote(_ app: XCUIApplication, row: String, quality: String) throws -> String {
-        let prefix = "dulcet.streaming-quality.\(row)."
-        let target = app.buttons[prefix + quality].firstMatch
-        XCTAssertTrue(target.waitForExistence(timeout: 10), "Connection must offer \(prefix + quality): " + app.debugDescription)
-        var presses: [String] = []
-        func focused() -> String? { focusedControlIdentifier(app) }
-        // Down, then Up if Down passed the row, until focus is in it.
-        while !(focused()?.hasPrefix(prefix) ?? false), presses.count < 16 {
-            let below = focused().map { current in
-                current.hasPrefix("dulcet.streaming-quality.metered.") && row == "unmetered"
-            } ?? false
-            XCUIRemote.shared.press(below ? .up : .down)
-            presses.append(below ? "up" : "down")
+        let playback = app.buttons["dulcet.account.playback"].firstMatch
+        if playback.exists {
+            XCTAssertTrue(focusByRemote(playback, in: app))
+            XCUIRemote.shared.press(.select)
         }
-        let order = ["original", "320", "256", "192", "128", "96"]
-        let wanted = try XCTUnwrap(order.firstIndex(of: quality))
-        while let current = focused(), current.hasPrefix(prefix), current != prefix + quality, presses.count < 32 {
-            let index = order.firstIndex(of: String(current.dropFirst(prefix.count))) ?? wanted
-            let direction: XCUIRemote.Button = index < wanted ? .right : .left
-            XCUIRemote.shared.press(direction)
-            presses.append(direction == .right ? "right" : "left")
-        }
-        XCTAssertEqual(focused(), prefix + quality, "The remote must reach \(prefix + quality): " + app.debugDescription)
+        let rowLink = app.buttons["dulcet.streaming-quality.\(row)"].firstMatch
+        XCTAssertTrue(rowLink.waitForExistence(timeout: 10) && focusByRemote(rowLink, in: app))
         XCUIRemote.shared.press(.select)
-        let chosen = ContinuousClock.now.advanced(by: .seconds(5))
-        while !target.isSelected, ContinuousClock.now < chosen { Thread.sleep(forTimeInterval: 0.1) }
-        XCTAssertTrue(target.isSelected, "\(prefix + quality) must read as chosen once pressed: " + app.debugDescription)
-        return presses.joined(separator: ",")
+        let target = app.buttons["dulcet.streaming-quality.\(row).\(quality)"].firstMatch
+        XCTAssertTrue(target.waitForExistence(timeout: 10) && focusByRemote(target, in: app))
+        XCUIRemote.shared.press(.select)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !target.isSelected, ContinuousClock.now < deadline { Thread.sleep(forTimeInterval: 0.1) }
+        XCTAssertTrue(target.isSelected, "The selected quality must expose its selected trait")
+        XCUIRemote.shared.press(.menu) // Back to Playback, retaining the chosen value.
+        return "Account,Playback,\(row),\(quality)"
     }
 
     private struct LyricsLayer {
@@ -2903,7 +2910,7 @@ final class DulcetTVUITests: XCTestCase {
     private func awaitLaunchAndLiveConnection(
         _ app: XCUIApplication
     ) throws -> (section: String, focus: String) {
-        let launchSections = ["Connection", "Listen Now"]
+        let launchSections = ["Account", "Listen Now"]
         let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         var section = ""
         var observedFocus: String?
@@ -2915,7 +2922,7 @@ final class DulcetTVUITests: XCTestCase {
                 let elements = hierarchyElements(snapshot)
                 section = elements.first { $0.elementType == .navigationBar }?.identifier ?? ""
                 observedFocus = launchSections.contains(section) ? focusedControlIdentifier(in: elements) : nil
-                if let focus = observedFocus, section != "Connection" || focus.hasPrefix("dulcet.account-connect.") { break }
+                if let focus = observedFocus, section != "Account" || focus.hasPrefix("dulcet.account-connect.") { break }
             }
             Thread.sleep(forTimeInterval: 0.25)
         } while ContinuousClock.now < deadline
@@ -2929,7 +2936,7 @@ final class DulcetTVUITests: XCTestCase {
             observedFocus,
             "Launch must place remote focus on a named control: " + app.debugDescription
         )
-        if section == "Connection" {
+        if section == "Account" {
             // Which control is the section's business -- an idle form focuses its first field --
             // so this pins the section, not the row.
             XCTAssertTrue(

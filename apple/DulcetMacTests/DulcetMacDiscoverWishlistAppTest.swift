@@ -404,8 +404,9 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         XCTAssertNil(app.firstElement { app.label($0) == "Fixture Song 01" })
     }
     private func savedServer(_ username: String, in app: HostedApp, replacement: Bool = false) async throws {
-        try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.settings")
-        let button = try await app.element(timeout: .seconds(15), described: "saved \(username)") { (app.identifier($0) ?? "").hasPrefix("dulcet.account.server.") && (app.label($0) ?? "").contains(username) }
+        let settings = app.openSettingsWindow()
+        defer { settings.close(); app.window.makeKeyAndOrderFront(nil) }
+        let button = try await app.element(timeout: .seconds(15), described: "saved \(username)", in: settings.contentView) { (app.identifier($0) ?? "").hasPrefix("dulcet.account.server.") && (app.label($0) ?? "").contains(username) }
         try app.press(button, named: "saved server")
         if !replacement { try await waitUntil(timeout: .seconds(30), "saved server commits") { app.session.account?.username == username && app.session.mode == .connected } }
     }

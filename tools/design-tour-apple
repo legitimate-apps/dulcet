@@ -75,7 +75,7 @@ DEVICE=all
 VARIANT="${DULCET_DESIGN_TOUR_VARIANT:-}"
 SKIP_VARIANTS="${DULCET_DESIGN_TOUR_SKIP_VARIANTS:-}"
 PHASE="${DULCET_DESIGN_TOUR_PHASE:-all}"
-case "$PHASE" in all|account|connected) ;; *) echo "DULCET_DESIGN_TOUR_PHASE must be all, account or connected" >&2; exit 2 ;; esac
+case "$PHASE" in all|account|connected|foundation) ;; *) echo "DULCET_DESIGN_TOUR_PHASE must be all, account, connected or foundation" >&2; exit 2 ;; esac
 KEEP_SERVER=0
 KEEP_SIMULATOR=0
 while [[ $# -gt 0 ]]; do
@@ -179,8 +179,8 @@ tour_xctestrun() { # pattern label
   local built copy="$WORK/$2.xctestrun"
   built=$(ls "$DD"/Build/Products/$1 2>/dev/null | head -1)
   [[ -n "$built" ]] || { echo "no built .xctestrun matching $1 in $DD" >&2; exit 1; }
-  python3 - "$built" "$copy" <<'PY'
-import plistlib, sys
+  python3 - "$built" "$copy" "$2" <<'PY'
+import plistlib, sys, uuid
 plan = plistlib.load(open(sys.argv[1], "rb"))
 targets = [value for key, value in plan.items()
            if key != "__xctestrun_metadata__" and isinstance(value, dict)]
@@ -189,6 +189,10 @@ for configuration in plan.get("TestConfigurations", []):
 for target in targets:
     target["PreferredScreenCaptureFormat"] = "screenshots"
     target["SystemAttachmentLifetime"] = "keepNever"
+    if sys.argv[3] == "mac":
+        namespace = str(uuid.uuid4())
+        target["CommandLineArguments"] = target.get("CommandLineArguments", []) + [
+            "-dulcet-debug-account-fixture", namespace, "-dulcet-debug-download-handoff", namespace]
 plistlib.dump(plan, open(sys.argv[2], "wb"))
 PY
   # xcodebuild resolves the products relative to the .xctestrun's own directory.
@@ -354,9 +358,18 @@ run_ios_variant() { # label destination appearance text-size orientation
   [[ -z "$VARIANT" || "$VARIANT" == "$label" ]] || return 0
   [[ " $SKIP_VARIANTS " != *" $label "* ]] || { note "$label: preserved (requested skip)"; return 0; }
   prepare_simulator "$udid" "$appearance"
+  if [[ "$label" == *increase-contrast ]]; then
+    xcrun simctl ui "$udid" increase_contrast enabled
+    note "accessibility $label increase_contrast=$(xcrun simctl ui "$udid" increase_contrast)"
+  else
+    xcrun simctl ui "$udid" increase_contrast disabled
+  fi
+  local reduce=0
+  [[ "$label" != *reduce-transparency ]] || reduce=1
+  export TEST_RUNNER_DULCET_DESIGN_TOUR_REDUCE_TRANSPARENCY="$reduce" DULCET_DESIGN_TOUR_REDUCE_TRANSPARENCY="$reduce"
   export TEST_RUNNER_DULCET_DESIGN_TOUR_TEXT_SIZE="$size" DULCET_DESIGN_TOUR_TEXT_SIZE="$size"
   export TEST_RUNNER_DULCET_DESIGN_TOUR_ORIENTATION="$orientation" DULCET_DESIGN_TOUR_ORIENTATION="$orientation"
-  if [[ "$PHASE" != connected ]]; then run_tour "$label-account" "$RUN" "$ACCOUNT_ONLY" -destination "id=$udid"; fi
+  if [[ "$PHASE" != connected && "$PHASE" != foundation ]]; then run_tour "$label-account" "$RUN" "$ACCOUNT_ONLY" -destination "id=$udid"; fi
   if [[ "$PHASE" != account ]]; then run_tour "$label" "$RUN" "$IOS_ONLY" -destination "id=$udid"; fi
 }
 if want iphone; then
@@ -373,6 +386,8 @@ if want iphone; then
       run_ios_variant "iphone-$appearance-$size" "$IPHONE" "$appearance" "$category" portrait
     done
   done
+  run_ios_variant iphone-light-reduce-transparency "$IPHONE" light UICTContentSizeCategoryL portrait
+  run_ios_variant iphone-light-increase-contrast "$IPHONE" light UICTContentSizeCategoryL portrait
   [[ $KEEP_SIMULATOR -eq 1 ]] || xcrun simctl shutdown "$IPHONE"
 fi
 if want ipad; then

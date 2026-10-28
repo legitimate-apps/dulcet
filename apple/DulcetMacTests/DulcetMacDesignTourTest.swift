@@ -86,6 +86,92 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hostingView = hosting
         self.window = window
 
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation" {
+            store.listeningSetting = DulcetCoreListeningSettings(defaults: try XCTUnwrap(UserDefaults(suiteName: defaultsSuite)))
+            store.accountServerURL = serverURL
+            store.accountUsername = username
+            store.accountPassword = password
+            store.accountAllowLocalHTTP = true
+            store.submitAccountConnection()
+            guard await waitFor(seconds: 45, { store.snapshot.accountConnected && session.mode == .connected }) else {
+                XCTFail("The finite foundation tour must connect to its disposable server")
+                return
+            }
+            print("DULCET FOUNDATION fixture=navidrome platform=mac appearance=\(environment["DULCET_DESIGN_TOUR_APPEARANCE"] ?? "light")")
+            store.selectDestination(.settings)
+            await settle()
+            let nativeAccount = await find("dulcet.account.playback", seconds: 3) != nil
+            var settingsWindow: NSWindow?
+            func showSettings() {
+                let settings = NSHostingView(rootView: DulcetSettingsView(store: store))
+                settings.appearance = appearance
+                settings.frame = NSRect(x: 0, y: 0, width: 600, height: 560)
+                let target = settingsWindow ?? NSWindow(contentRect: settings.frame,
+                    styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+                target.isReleasedWhenClosed = false
+                target.appearance = appearance
+                settings.sceneBridgingOptions = [.toolbars]
+                target.contentView = settings
+                target.makeKeyAndOrderFront(nil)
+                settingsWindow = target
+                self.window = target
+                hostingView = settings
+            }
+            defer { settingsWindow?.close() }
+            if nativeAccount { showSettings() }
+            await step("connection-connected") { await self.findLabel("Sign Out") != nil }
+            if !nativeAccount { showSettings() }
+            await step("settings-quality") {
+                if nativeAccount, !(await self.press("dulcet.account.playback")) { return false }
+                return await self.find("dulcet.streaming-quality.unmetered") != nil
+            }
+            if nativeAccount { showSettings() }
+            else {
+                self.window = window
+                hostingView = hosting
+                window.makeKeyAndOrderFront(nil)
+            }
+            await step("settings-storage") {
+                if nativeAccount, !(await self.press("dulcet.account.downloadsStorage")) { return false }
+                guard let control = await self.find("dulcet.offline.automaticDownloads") else { return false }
+                if let target = control as? NSObject {
+                    let scroll = NSSelectorFromString("accessibilityPerformScrollToVisible")
+                    if target.responds(to: scroll) { _ = target.perform(scroll) }
+                }
+                return true
+            }
+            settingsWindow?.orderOut(nil)
+            self.window = window
+            hostingView = hosting
+            window.makeKeyAndOrderFront(nil)
+            await step("listen-now") {
+                store.navigate(to: .listenNow)
+                return await self.find("dulcet.library.album") != nil
+            }
+            await step("library") {
+                store.navigate(to: .library)
+                return await self.find(nativeAccount ? "dulcet.reader.section.favourites" : "dulcet.reader.home.recentlyAdded.all") != nil
+            }
+            if nativeAccount {
+                await step("browse") {
+                    store.navigate(to: .browse)
+                    return await self.find("dulcet.reader.section.albums") != nil
+                        && store.selectedDestination == .browse && store.readerPath.isEmpty
+                }
+            } else { print("DULCET FOUNDATION absent=browse reason=ordinary-server-had-no-browse-destination") }
+            await step("albums") {
+                store.selectLibrarySection(.albums)
+                return await self.find("dulcet.library.album", label: "Threshold Boundary", seconds: 30) != nil
+            }
+            await step("album") {
+                guard await self.press("dulcet.library.album", label: "Threshold Boundary") else { return false }
+                let title = await self.find("dulcet.album.title", label: "Threshold Boundary") != nil
+                let play = await self.find("dulcet.album.play") != nil
+                return title && play
+            }
+            return
+        }
+
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "home" {
             store.accountServerURL = serverURL
             store.accountUsername = username
