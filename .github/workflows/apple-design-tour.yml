@@ -43,7 +43,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Select capture variants
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      capture_matrix: ${{ steps.selection.outputs.capture_matrix }}
+    steps:
+      - id: selection
+        env:
+          REQUESTED_DEVICE: ${{ inputs.device }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          variants = [
+              dict(device="iphone", variant="iphone-light-default"),
+              dict(device="iphone", variant="iphone-dark-default"),
+              dict(device="iphone", variant="iphone-light-accessibility-xxxl"),
+              dict(device="ipad", variant="ipad-light-landscape"),
+              dict(device="mac", variant="mac"),
+              dict(device="tvos", variant="tvos"),
+          ]
+          requested = os.environ["REQUESTED_DEVICE"]
+          families = {"all": {"iphone", "ipad", "mac", "tvos"},
+                      "mobile": {"iphone", "ipad"}, "mobile-tv": {"iphone", "ipad", "tvos"},
+                      "iphone": {"iphone"}, "ipad": {"ipad"}, "mac": {"mac"}, "tvos": {"tvos"}}
+          selected = [v for v in variants if v["device"] in families[requested]]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print("capture_matrix=" + json.dumps({"include": selected}), file=output)
+          PYTHON
   capture:
+    needs: plan
     name: capture-${{ matrix.variant }}
     runs-on: xcode-27
     timeout-minutes: 150
@@ -52,14 +82,7 @@ jobs:
       # Affected-platform repair batches can admit three jobs together. Keep full inventory
       # runs bounded at two so they leave room for other Apple checks.
       max-parallel: ${{ (inputs.device == 'iphone' || inputs.device == 'mobile' || inputs.device == 'mobile-tv') && inputs.supplement_only && 3 || 2 }}
-      matrix:
-        include:
-          - {device: iphone, variant: iphone-light-default}
-          - {device: iphone, variant: iphone-dark-default}
-          - {device: iphone, variant: iphone-light-accessibility-xxxl}
-          - {device: ipad, variant: ipad-light-landscape}
-          - {device: mac, variant: mac}
-          - {device: tvos, variant: tvos}
+      matrix: ${{ fromJSON(needs.plan.outputs.capture_matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Select capture family
