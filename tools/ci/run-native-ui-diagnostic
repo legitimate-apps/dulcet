@@ -1,0 +1,41 @@
+#!/bin/bash
+# Diagnostic branch only: exact production cases with one-factor grid identity variants.
+set -euo pipefail
+: "${RUNNER_TEMP:?}"
+python3 tools/ci/isolate-simulator --phase diagnostic-grid-identity --keep-name "iPhone 18 Pro" --settle --require-settle --settle-pressure --require-isolation \
+  --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
+grid_udid="$(xcrun simctl list -j devices | python3 -c 'import json,sys; d=[x["udid"] for group in json.load(sys.stdin)["devices"].values() for x in group if x.get("state")=="Booted" and x.get("name")=="iPhone 18 Pro"]; assert len(d)==1,d; print(d[0])')"
+xcrun simctl spawn "$grid_udid" log stream --style compact --level debug --predicate 'subsystem == "com.legitimateapps.dulcet.grid-diagnostic"' > "$RUNNER_TEMP/grid-identity-lifecycle.log" 2>&1 &
+grid_log_pid=$!
+finish_grid_log() {
+  kill "$grid_log_pid" 2>/dev/null || true
+  wait "$grid_log_pid" 2>/dev/null || true
+  python3 - "$grid_udid" "$RUNNER_TEMP/grid-identity-history.log" <<'PYTHON'
+import subprocess,sys
+with open(sys.argv[2], 'w') as output:
+ try:
+  subprocess.run(['xcrun','simctl','spawn',sys.argv[1],'log','show','--style','compact','--last','3h','--predicate','subsystem == "com.legitimateapps.dulcet.grid-diagnostic"'],stdout=output,stderr=subprocess.STDOUT,timeout=30,check=False)
+ except subprocess.TimeoutExpired: output.write('\nGRID HISTORY deadline expired; see live lifecycle log\n')
+PYTHON
+}
+trap finish_grid_log EXIT
+xcodebuild test-without-building -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+  -destination "platform=iOS Simulator,id=$grid_udid" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+  -resultBundlePath "$RUNNER_TEMP/grid-identity.xcresult" -parallel-testing-enabled NO \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridOmitEmptyBrowseAddRemoveRelaunchAndOfflineReplay \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridOmitEmptyNonDulcetServerKeepsTheOriginalLibraryNavigation \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridOmitEmptyLibraryBrowseAndAlbumInLightDarkAndLargestText \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridOmitEmptyLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridOmitEmptyLibrarySearchGroupsAndRecentQuerySurviveRelaunch \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridOmitEmptyAlbumAddRemainsVisibleAtLargestTextOnIPhone \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridOmitEmptyIPhoneLibrarySortShuffleAndArtistDepth \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridResetEmptyBrowseAddRemoveRelaunchAndOfflineReplay \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridResetEmptyNonDulcetServerKeepsTheOriginalLibraryNavigation \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridResetEmptyLibraryBrowseAndAlbumInLightDarkAndLargestText \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridResetEmptyLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridResetEmptyLibrarySearchGroupsAndRecentQuerySurviveRelaunch \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridResetEmptyAlbumAddRemainsVisibleAtLargestTextOnIPhone \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testGridResetEmptyIPhoneLibrarySortShuffleAndArtistDepth \
+  2>&1 | tee "$RUNNER_TEMP/grid-identity-tests.log"

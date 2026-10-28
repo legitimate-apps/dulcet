@@ -1,5 +1,25 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
+#if DEBUG && os(iOS)
+import OSLog
+
+@MainActor
+enum DulcetGridIdentityDiagnostic {
+    static let variant: String = {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-dulcet-debug-grid-variant"), args.indices.contains(i + 1) else { return "disabled" }
+        return args[i + 1]
+    }()
+    private static let logger = Logger(subsystem: "com.legitimateapps.dulcet.grid-diagnostic", category: "lifecycle")
+    private static var sequence = 0
+    static func record(_ phase: String, scope: String, detail: String) {
+        guard variant != "disabled" else { return }
+        sequence += 1
+        let message = "GRID_LIFECYCLE sequence=\(sequence) variant=\(variant) phase=\(phase) scope=\(scope) \(detail)"
+        logger.notice("\(message, privacy: .public)")
+    }
+}
+#endif
 
 struct DulcetReaderCollectionRoot: View {
     @Environment(DulcetPresentationStore.self) private var store
@@ -111,21 +131,35 @@ struct DulcetMyLibraryCollection: View {
     var body: some View {
         switch section {
         case .recent:
-            tiles(library.albums)
-            tiles(library.artists)
+            tiles(library.albums, kind: "albums")
+            tiles(library.artists, kind: "artists")
             tracks(library.songs)
-        case .albums: tiles(library.albums)
-        case .artists: tiles(library.artists)
+        case .albums: tiles(library.albums, kind: "albums")
+        case .artists: tiles(library.artists, kind: "artists")
         case .songs: tracks(library.songs)
         case .playlists: EmptyView()
         }
     }
 
-    private func tiles(_ items: [DulcetReaderItem]) -> some View {
+    @ViewBuilder private func tiles(_ items: [DulcetReaderItem], kind: String) -> some View {
         let tileWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : (width < 500 ? 150 : 180)
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
+        let grid = LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
             ForEach(items) { item in DulcetReaderTile(item: item, width: tileWidth) }
         }
+#if DEBUG && os(iOS)
+        let scope = "\(section.rawValue)/\(kind)"
+        let _ = DulcetGridIdentityDiagnostic.record("evaluate", scope: scope, detail: "count=\(items.count) albums=\(library.albums.count) artists=\(library.artists.count) songs=\(library.songs.count)")
+        let tracked = grid
+            .onAppear { DulcetGridIdentityDiagnostic.record("appear", scope: scope, detail: "count=\(items.count)") }
+            .onDisappear { DulcetGridIdentityDiagnostic.record("disappear", scope: scope, detail: "count=\(items.count)") }
+        if DulcetGridIdentityDiagnostic.variant == "omit-empty" {
+            if !items.isEmpty { tracked }
+        } else if DulcetGridIdentityDiagnostic.variant == "reset-empty" {
+            tracked.id(items.isEmpty)
+        } else { tracked }
+#else
+        grid
+#endif
     }
 
     private func tracks(_ items: [DulcetReaderItem]) -> some View {

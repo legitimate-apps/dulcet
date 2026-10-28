@@ -10,6 +10,49 @@ import UIKit
 @MainActor
 final class DulcetMyLibraryUITests: XCTestCase {
     private var app = XCUIApplication()
+    private var gridDiagnosticVariant = "baseline"
+    private var gridDiagnosticCheckpoint = 0
+#if os(iOS)
+    func testGridOmitEmptyBrowseAddRemoveRelaunchAndOfflineReplay() throws { gridDiagnosticVariant = "omit-empty"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testGridOmitEmptyNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { gridDiagnosticVariant = "omit-empty"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
+    func testGridOmitEmptyLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { gridDiagnosticVariant = "omit-empty"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
+    func testGridOmitEmptyLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { gridDiagnosticVariant = "omit-empty"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
+    func testGridOmitEmptyLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { gridDiagnosticVariant = "omit-empty"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
+    func testGridOmitEmptyAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { gridDiagnosticVariant = "omit-empty"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
+    func testGridOmitEmptyIPhoneLibrarySortShuffleAndArtistDepth() throws { gridDiagnosticVariant = "omit-empty"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
+    func testGridResetEmptyBrowseAddRemoveRelaunchAndOfflineReplay() throws { gridDiagnosticVariant = "reset-empty"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testGridResetEmptyNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { gridDiagnosticVariant = "reset-empty"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
+    func testGridResetEmptyLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { gridDiagnosticVariant = "reset-empty"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
+    func testGridResetEmptyLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { gridDiagnosticVariant = "reset-empty"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
+    func testGridResetEmptyLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { gridDiagnosticVariant = "reset-empty"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
+    func testGridResetEmptyAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { gridDiagnosticVariant = "reset-empty"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
+    func testGridResetEmptyIPhoneLibrarySortShuffleAndArtistDepth() throws { gridDiagnosticVariant = "reset-empty"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
+#endif
+
+    private func gridDiagnosticState(_ name: String) {
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = name + "-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = name + "-screen"; screen.lifetime = .keepAlways; add(screen)
+    }
+
+    private func observedAlbum(_ title: String) -> Bool {
+        gridDiagnosticCheckpoint += 1
+        let tile = albumTile(title)
+        let found = tile.waitForExistence(timeout: 20)
+        let artist = app.buttons.matching(identifier: "dulcet.library.artist").firstMatch
+        print("GRID RESULT variant=\(gridDiagnosticVariant) checkpoint=\(gridDiagnosticCheckpoint) original20s=\(found) albumFrame=\(found ? String(describing: tile.frame) : "absent") artist=\(artist.exists) artistFrame=\(artist.exists ? String(describing: artist.frame) : "absent")")
+        if found && gridDiagnosticVariant != "baseline" {
+            XCTAssertGreaterThan(tile.frame.width, 0); XCTAssertGreaterThan(tile.frame.height, 0)
+            XCTAssertTrue(artist.exists, "The identity fix must retain the artist control")
+            if artist.exists { XCTAssertGreaterThan(artist.frame.width, 0); XCTAssertGreaterThan(artist.frame.height, 0) }
+        }
+        if !found || gridDiagnosticCheckpoint == 3 || gridDiagnosticCheckpoint == 4 {
+            gridDiagnosticState("grid-\(gridDiagnosticVariant)-\(gridDiagnosticCheckpoint)-\(found ? "published" : "miss")")
+        }
+        return found
+    }
+
     // Keep each disposable proof's account separate on every shell. Relaunches inside
     // one proof retain this namespace; a later server must not inherit a prior account.
     private let accountFixtureNamespace = UUID().uuidString
@@ -87,7 +130,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(tvOS)
         try addFromFullGridMore(album)
         try select("library")
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
         app.terminate(); try launch()
@@ -129,13 +172,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // The compact root's destination rows precede its lazy Recently Added grid.
         // Relaunch resets its scroll position; reveal the actual tile before observing it.
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         try awaitServerMembership(album.id, added: true)
         app.terminate()
         try launch(connect: false)
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
+        XCTAssertTrue(observedAlbum(album.title), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
         let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 20))
@@ -152,7 +195,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         awaitLabel(offlineAdd, "Remove from Library")
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         // A direct read bypasses the offline proxy: it proves the write has not reached the server.
         let pendingBeforeRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingBeforeRelaunch)
@@ -172,7 +215,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             print("MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=\(scrolls)")
         }
 #endif
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline relaunch paints the durable pending add before reconnect")
+        XCTAssertTrue(observedAlbum(album.title), "Offline relaunch paints the durable pending add before reconnect")
         let pendingAfterRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingAfterRelaunch)
         app.terminate()
@@ -180,7 +223,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch()
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
     }
@@ -477,6 +520,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 "-dulcet-debug-account-username", username ?? user, "-dulcet-debug-account-password", password ?? self.password]
         }
         launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
+        launchArguments += ["-dulcet-debug-grid-variant", gridDiagnosticVariant]
+        print("GRID LAUNCH variant=\(gridDiagnosticVariant) connect=\(connect) appearance=\(variant)")
         app.launchArguments = launchArguments
 #if os(macOS)
         if !installedFixtureNetworkMonitor {

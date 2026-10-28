@@ -417,6 +417,9 @@ public final class DulcetLibrarySession {
             myLibrarySubscription = library.subscribeMyLibrary { [weak self] publication in
                 guard let self, self.readerGeneration == generation else { return }
                 self.myLibrary = publication
+#if DEBUG && os(iOS)
+                DulcetGridIdentityDiagnostic.record("publish", scope: "session", detail: "albums=\(publication.albums.count) artists=\(publication.artists.count) songs=\(publication.songs.count) sync=\(publication.syncState)")
+#endif
             }
         }
         setupCheck = made.setupFailed { [weak self] failed in
