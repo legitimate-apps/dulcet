@@ -644,7 +644,7 @@ struct DulcetReaderTile: View {
 #if os(tvOS)
         if showsTVActionsMenu {
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                accessibleAction(styledAction).dulcetReaderItemContextMenu(item)
+                styledAction.dulcetReaderItemContextMenu(item)
                 // Full-grid holds are unreliable on tvOS. Keep a normal focusable
                 // launcher while Select on the artwork continues to open its detail.
                 Button { presentsTVActions = true } label: {
@@ -658,10 +658,12 @@ struct DulcetReaderTile: View {
             }
             .frame(width: width, alignment: .leading)
         } else {
-            accessibleAction(styledAction).dulcetReaderItemContextMenu(item)
+            styledAction.dulcetReaderItemContextMenu(item)
         }
 #else
-        accessibleAction(styledAction.dulcetReaderItemContextMenu(item))
+        styledAction
+            .dulcetReaderItemContextMenu(item)
+            .dulcetReaderQueueDragSource(item)
 #endif
     }
 
@@ -669,12 +671,7 @@ struct DulcetReaderTile: View {
         tileButton
             .dulcetMediaButtonStyle(hover: .lift)
             .dulcetTakesFocusOnReturn(to: item.route)
-    }
-
-    private func accessibleAction<Content: View>(_ content: Content) -> some View {
-        content
             .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
     }
@@ -682,13 +679,7 @@ struct DulcetReaderTile: View {
     private var tileButton: some View {
         Button {
             if let route = item.route { store.pushReaderPage(route) }
-        } label: {
-            // Keep the native Button outside the drag interaction. A draggable wrapper
-            // around the whole button can leave a visible album absent from iOS 27 AX,
-            // while the otherwise identical non-draggable artist remains accessible.
-            // The label still supplies the complete artwork/title drag surface.
-            tileContent.dulcetReaderQueueDragSource(item)
-        }
+        } label: { tileContent }
     }
 
     private var tileContent: some View {
