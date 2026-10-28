@@ -11,6 +11,16 @@ struct DulcetMacApp: App {
 #endif
 
     init() {
+#if DEBUG
+        // Apply capture appearance to every native window, including the Settings scene.
+        // A root view's preferredColorScheme does not reach a separate Settings window.
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-dulcet-debug-dark-mode") {
+            NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+        } else if arguments.contains("-dulcet-debug-light-mode") {
+            NSApplication.shared.appearance = NSAppearance(named: .aqua)
+        }
+#endif
         let composition = DulcetMacProduction.makeComposition()
         _presentation = State(initialValue: composition.store)
         downloadController = composition.downloads
