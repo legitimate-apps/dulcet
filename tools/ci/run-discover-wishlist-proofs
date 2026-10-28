@@ -243,8 +243,9 @@ def apple_proof(mode):
         capture_url='http://127.0.0.1:'+str(capture_server.server_address[1])
         baseline=os.environ.get('DULCET_NATIVE_BASELINE_VARIANT')
         if baseline:
-            from urllib.parse import urlencode
-            capture_url+='?'+urlencode(dict(baseline=baseline,screens=os.environ.get('DULCET_NATIVE_BASELINE_SCREENS','')))
+            from urllib.parse import urlencode, quote
+            # URLComponents decodes percent escapes but treats form-encoded plus signs literally.
+            capture_url+='?'+urlencode(dict(baseline=baseline,screens=os.environ.get('DULCET_NATIVE_BASELINE_SCREENS','')),quote_via=quote)
         env['TEST_RUNNER_DULCET_DISCOVER_CAPTURE_UPLOAD_URL']=capture_url
         env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
         selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
