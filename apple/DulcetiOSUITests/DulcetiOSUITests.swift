@@ -6315,23 +6315,43 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func dismissKeyboardBeforeActivation(in app: XCUIApplication) -> Bool {
         let keyboard = app.keyboards.firstMatch
-        // The search field carries the platform's search submit key, which resigns the field on
-        // both iPhone and iPad. The iPad-only hide key and a results drag remain fallbacks.
-        // CI has synthesized Search while the keyboard stayed up. A remaining keyboard is the
-        // precondition for another dismissal gesture; result activation still requires it gone.
-        for attempt in 1...3 {
-            guard keyboard.exists else { return true }
-            let submit = keyboard.buttons["Search"].firstMatch
-            let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
-            if submit.waitForExistence(timeout: 2) {
-                submit.tap()
-            } else if hideKeyboard.waitForExistence(timeout: 2) {
-                hideKeyboard.tap()
-            } else {
-                app.swipeDown()
+        // As in the account-state proof, a dismissed iPad keyboard can retain offscreen AX
+        // keys below a zero-height container. Read presence and geometry from one snapshot;
+        // an unavailable snapshot is unknown and cannot establish that activation is safe.
+        func isShown() -> Bool? {
+            guard let root = try? app.snapshot(),
+                  let window = root.children.first(where: { $0.elementType == .window && !$0.frame.isEmpty })
+            else { return nil }
+            var pending: [XCUIElementSnapshot] = [root]
+            while let node = pending.popLast() {
+                if node.elementType == .keyboard && !node.frame.isEmpty
+                    && !node.frame.intersection(window.frame).isEmpty { return true }
+                pending.append(contentsOf: node.children)
             }
-            if keyboard.waitForNonExistence(timeout: 5) { return true }
-            print("DULCET SEARCH keyboard-still-shown attempt=\(attempt)")
+            return false
+        }
+        // Search resigns the field on both platforms. Retain the bounded fallbacks when a
+        // presented keyboard remains, and require it to stop covering the window before use.
+        for attempt in 1...3 {
+            let shown = isShown()
+            if shown == false { return true }
+            if shown == true {
+                let submit = keyboard.buttons["Search"].firstMatch
+                let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
+                if submit.waitForExistence(timeout: 2), submit.isHittable {
+                    submit.tap()
+                } else if hideKeyboard.waitForExistence(timeout: 2), hideKeyboard.isHittable {
+                    hideKeyboard.tap()
+                } else {
+                    app.swipeDown()
+                }
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            repeat {
+                if isShown() == false { return true }
+                Thread.sleep(forTimeInterval: 0.1)
+            } while ContinuousClock.now < deadline
+            print("DULCET SEARCH keyboard-still-shown-or-unknown attempt=\(attempt)")
         }
         XCTFail("The software keyboard must dismiss before a result is activated: " + app.debugDescription)
         return false

@@ -196,14 +196,18 @@ x=16, y=587, width=150, height=172. This repeats the earlier run's visible-but-a
 album symptom at a different stage; moving accessibility modifiers outside the
 whole interaction did not resolve it.
 
-Albums and artists use the same tile, but only albums receive the deferred queue
-drag wrapper. The tile now attaches that interaction to its complete label,
-keeping the native Button outside it. The context menu still uses the system
-preview for draggable items, and the deferred resolver still runs on drop. The
-drag wrapper interfering with button accessibility is the working mechanism,
-not an isolated framework reproduction. Hosted relaunch, activation, native-menu
-and real queue-drop checks must validate this change together; none of those
-assertions are relaxed.
+Albums and artists share the tile implementation, with differences in drag,
+context-menu preview, subtitle and position in separate lazy grids. Moving the
+album drag interaction to its label also failed in
+[iPhone job 122509050785](https://github.com/legitimate-apps/dulcet/actions/runs/40595126706/job/122509050785),
+this time after the saved-account relaunch at line 138. The first online relaunch
+passed. The album is again visible in the recording but absent from the AX tree;
+the artist is published. This does not isolate the drag interaction as the cause.
+Further production modifier changes are paused. A separate test-only
+[diagnostic run 40602486910](https://github.com/legitimate-apps/dulcet/actions/runs/40602486910)
+retains the original assertion result while observing a snapshot, a short wait
+and a small reversible scroll after an original miss. These observations cannot
+turn that miss into a pass.
 
 
 The following [PR platform check 122465865449](https://github.com/legitimate-apps/dulcet/actions/runs/40582613223/job/122465865449)
@@ -214,3 +218,38 @@ control now supplies iPhone 18 Pro / iOS 27.0 inventory and the SDK response,
 clears inherited device/runtime overrides, and asserts the actual runtime/type
 used to create its owned device. Its TERM, admission, parent-loss and child-reaping
 assertions remain in force.
+
+
+## Corrected admission and an offscreen iPad keyboard
+
+On the corrected head, the
+[iPhone conformance job 122509050785](https://github.com/legitimate-apps/dulcet/actions/runs/40595126706/job/122509050785)
+records boot completion in 73.2 seconds, a successful 540.0-second pre-service
+pressure admission, stable service counts of 184 three times in 24.4 seconds,
+and warm-up plus fresh pressure admission in 113.7 seconds. Total isolation is
+816.9 seconds. The
+[iPad conformance job 122509050706](https://github.com/legitimate-apps/dulcet/actions/runs/40595126706/job/122509050706)
+records boot completion in 55.6 seconds, service settling in 25.8 seconds with
+177 services three times, and total isolation of 1113.8 seconds. Both passed
+startup; iPad also passed My Library and progressed through playback, search,
+reader, rating, account and download proofs before failing in the lyrics test.
+These observations validate the admission order on these two jobs, not a general
+upper bound for hosted startup latency.
+
+The iPad lyrics failure occurred while `dismissKeyboardBeforeActivation` tapped
+the keyboard's Search key. Its failure attachment reports a 1032 by 1376-point
+window and a keyboard at y=1376 with zero height. Stale Search and Hide keys remain
+below the window, including Search at y=1501.5 with height 68. The recording shows
+Search results and no presented software keyboard. XCUITest computes the Search
+key's hit point as (-1, -1) and fails its scroll-to-visible action three times.
+
+The account-state proof already handles this geometry by reading keyboard
+presence and window intersection from one application snapshot. Search activation
+now uses the same evidence: an offscreen, zero-height keyboard does not cover the
+result; a visible keyboard still requires bounded dismissal; an unavailable
+snapshot stays unknown and cannot allow activation. A Search or Hide key must
+also be hittable before it is tapped. The three-attempt limit and five-second
+post-gesture budget remain, measured with a monotonic clock. The changed iPhone
+UI test target type-checks under SDK 27.0; hosted behavior remains to be verified.
+Eight sampled failed main iPad jobs had no matching keyboard failure, so none is
+claimed as an exemption for this job.
