@@ -24,7 +24,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                     } else {
                         HStack {
                             DulcetArtworkView(artwork: track.artwork, size: 36)
-                            Text(track.duration.dulcetDuration).font(.caption).foregroundStyle(.secondary)
+                            Text(track.duration.dulcetDuration).font(.caption).dulcetForeground(.secondaryTextOnWindow)
                             Spacer(minLength: 0)
                             more
                         }
@@ -35,7 +35,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                     DulcetArtworkView(artwork: track.artwork, size: 48)
                     activation
                     if !isEditing {
-                        Text(track.duration.dulcetDuration).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        Text(track.duration.dulcetDuration).font(.caption.monospacedDigit()).dulcetForeground(.secondaryTextOnWindow)
                         more
                     }
                 }
@@ -58,12 +58,12 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text(DulcetStrings.artistNames(track.artistNames))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(accessibilityLayout ? nil : 1)
                 if let album = track.albumTitle {
                     Text(album)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .dulcetForeground(.secondaryTextOnWindow)
                         .lineLimit(accessibilityLayout ? nil : 1)
                 }
             }
@@ -79,7 +79,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
             Image(systemName: "ellipsis")
                 .font(.body.weight(.semibold))
 #if os(macOS)
-                .foregroundStyle(hovered || menuFocused ? Color.primary : .clear)
+                .opacity(hovered || menuFocused ? 1 : 0)
 #endif
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
