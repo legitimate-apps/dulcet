@@ -76,6 +76,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
                 && self.focusedSection(app) == nil && self.settle(3)
         }
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] != "1" {
         step("library", app) {
             app.launch()
             guard let section = self.launchSection(app) else { return false }
@@ -87,6 +88,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             // Artwork arrives after the tiles. Three seconds is a pause, not a wait for covers:
             // a relaunch has been seen to still show the placeholder covers here.
             return tile.waitForExistence(timeout: 30) && self.focusedSection(app) == nil && self.settle(3)
+        }
         }
 
         // An album: Down from the launch focus to the album shelf on Home, Right along it to
@@ -124,6 +126,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
 
         let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            remote.press(.playPause)
+            step("player-paused", app) {
+                app.buttons["Play"].firstMatch.waitForExistence(timeout: 10) && self.settle(1)
+            }
+        } else {
         step("now-playing-heart", app) {
             self.focusPlayerControl(heart, in: app) && self.settle(1)
         }
@@ -140,6 +148,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             remote.press(.menu)
             return reached
         }
+        }
         step("lyrics", app) {
             guard self.focusPlayerControl(lyrics, in: app) else { return false }
             remote.press(.select)
@@ -148,8 +157,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && app.descendants(matching: .any)["dulcet.lyrics.line.current"].firstMatch.waitForExistence(timeout: 25)
                 && self.settle(1.5)
         }
-        if lyrics.exists, lyrics.hasFocus, lyrics.label == "Hide Lyrics" { remote.press(.select) }
-        remote.press(.playPause)
+        if lyrics.exists, lyrics.label == "Hide Lyrics", self.focusPlayerControl(lyrics, in: app) { remote.press(.select) }
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] != "1" { remote.press(.playPause) }
         step("up-next", app) {
             let queue = app.buttons["dulcet.now-playing.up-next"].firstMatch
             guard self.focusPlayerControl(queue, in: app) else { return false }
@@ -158,15 +167,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && self.settle(1)
         }
 
-        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
-            step("player-paused", app) {
-                let queue = app.buttons["dulcet.now-playing.up-next"].firstMatch
-                guard self.focusPlayerControl(queue, in: app) else { return false }
-                if queue.label == "Hide Up Next" { remote.press(.select) }
-                return app.buttons["play.fill"].firstMatch.waitForExistence(timeout: 5) && self.settle(1)
-            }
-            return
-        }
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" { return }
 
         // Search with results, by remote: the section bar, the field, the query typed, Done.
         step("search-landing", app) {
