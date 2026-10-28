@@ -105,6 +105,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.selectDestination(.nowPlaying)
                 return await self.find("dulcet.now-playing.title") != nil
             }
+            store.sendPlaybackControl(.pause)
+            await step("player-paused") {
+                await self.waitFor(seconds: 5) { store.snapshot.nowPlaying?.phase == .paused }
+            }
             await step("lyrics") {
                 guard await self.press("dulcet.now-playing.lyrics") else { return false }
                 return await self.find("dulcet.lyrics.line.current", seconds: 25) != nil
@@ -112,10 +116,6 @@ final class DulcetMacDesignTourTest: XCTestCase {
             await step("up-next") {
                 _ = await self.press("dulcet.now-playing.lyrics")
                 return await self.find("dulcet.upNext") != nil
-            }
-            store.sendPlaybackControl(.pause)
-            await step("player-paused") {
-                await self.waitFor(seconds: 5) { store.snapshot.nowPlaying?.phase == .paused }
             }
             if let player = store.snapshot.nowPlaying {
                 await capturePlayerPresentationVariants(player: player, store: store)
@@ -575,6 +575,12 @@ final class DulcetMacDesignTourTest: XCTestCase {
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
+        // The local capture runner grants foreground activation to this exact test host.
+        // macOS can decline an activation request initiated by a hosted test itself.
+        if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
+            let request = URL(fileURLWithPath: directory).appendingPathComponent("player-host.activate")
+            try? String(ProcessInfo.processInfo.processIdentifier).write(to: request, atomically: true, encoding: .utf8)
+        }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         // Scene toolbar bridging installs the toolbar after the window mounts. Match the
