@@ -1781,6 +1781,44 @@ private func mp3FramesWithUndecodablePayloads() -> Data {
 
 @Suite(.serialized)
 struct AVPlayerEngineTests {
+    @Test
+    func failedSeeksKeepTheLastObservedPositionIncludingAfterSupersession() async throws {
+        let player = HeldSeekResultPlayer()
+        let clock = ManualAVPlayerEngineClock()
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        engine.reportCurrentItemReadyForTesting(duration: 120, seekability: .seekable)
+        _ = await execute(engine, .play(commandID: .init("play")))
+        clock.tick(isPlaying: true, mediaPosition: 10, monotonicUptimeNanoseconds: 10_000_000_000)
+        _ = await execute(engine, .pause(commandID: .init("pause")))
+        for index in 0..<2 {
+            let seek = Task { await execute(engine, .seek(commandID: .init("failed-\(index)"), position: 0)) }
+            try await waitUntil("seek completion was not held", engine: engine) { player.pendingCount == 1 }
+            player.finishFirst(success: false)
+            #expect(await seek.value == .rejected(commandID: .init("failed-\(index)"), reason: .failed(.engine)))
+        }
+        let failures = events.snapshot.compactMap { event -> Double? in
+            if case let .seekFailed(_, from, _) = event { return from }; return nil
+        }
+        #expect(failures == [10, 10], "Neither rejected seek reached zero")
+        let stale = Task { await execute(engine, .seek(commandID: .init("stale"), position: 0)) }
+        try await waitUntil("stale seek was not held", engine: engine) { player.pendingCount == 1 }
+        let winner = Task { await execute(engine, .seek(commandID: .init("winner"), position: 5)) }
+        try await waitUntil("winner seek was not held", engine: engine) { player.pendingCount == 2 }
+        player.finishFirst(success: false)
+        #expect(await stale.value == .rejected(commandID: .init("stale"), reason: .invalidState))
+        player.finishFirst(success: true)
+        #expect(await winner.value == .completed(commandID: .init("winner"), result: .withoutData))
+        let last = Task { await execute(engine, .seek(commandID: .init("last"), position: 0)) }
+        try await waitUntil("last seek was not held", engine: engine) { player.pendingCount == 1 }
+        player.finishFirst(success: false)
+        _ = await last.value
+        #expect(events.snapshot.contains { if case let .seekFailed(_, from, _) = $0 { return from == 5 }; return false })
+    }
+
     @Test @MainActor
     func aMainThreadRemoteCommandCallsTheCoreRouterOutsideTheEngineQueue() async {
         let controls = RecordingSystemMediaControls()
@@ -4556,4 +4594,19 @@ private func makePCMWave(duration: TimeInterval) -> Data {
     littleEndian(UInt32(payloadLength))
     bytes.append(contentsOf: repeatElement(0, count: payloadLength))
     return Data(bytes)
+}
+
+/// Controls native seek completion only; the engine still owns generations and sampled position.
+private final class HeldSeekResultPlayer: AVQueuePlayer, @unchecked Sendable {
+    private nonisolated let resultLock = NSLock()
+    private nonisolated(unsafe) var pending: [@Sendable (Bool) -> Void] = []
+    nonisolated var pendingCount: Int { resultLock.withLock { pending.count } }
+    nonisolated override func seek(to time: CMTime, toleranceBefore: CMTime, toleranceAfter: CMTime,
+                                   completionHandler: @escaping @Sendable (Bool) -> Void) {
+        resultLock.withLock { pending.append(completionHandler) }
+    }
+    nonisolated func finishFirst(success: Bool) {
+        let callback = resultLock.withLock { pending.removeFirst() }
+        callback(success)
+    }
 }

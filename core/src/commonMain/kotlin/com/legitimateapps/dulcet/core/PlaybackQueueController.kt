@@ -2,6 +2,10 @@ package com.legitimateapps.dulcet.core
 
 import kotlin.random.Random
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+
+/** The core decision for a Previous addressed to the current session. */
+internal enum class PlaybackPreviousAction { None, Seek, Move, Replay }
 
 internal fun interface PlaybackIdentitySource {
     fun next(prefix: String): String
@@ -788,13 +792,42 @@ internal class PlaybackQueueController(
         )
     }
 
+    /**
+     * Terminal attempts retain media facts but have no engine target. Like Android after it
+     * drops its active plan, Previous can still move back, but cannot restart the first entry.
+     * A natural end held for preload is terminal too: never seek its outgoing item. A pending
+     * restart affects this decision only; the observed position waits for SeekCompleted.
+     */
+    fun previousAction(playbackSessionId: PlaybackSessionId, restartPending: Boolean = false): PlaybackPreviousAction {
+        if (!acceptsCommand(playbackSessionId)) return PlaybackPreviousAction.None
+        val session = playback.currentSession ?: return PlaybackPreviousAction.None
+        val state = snapshot()
+        val hasPrevious = (state.currentIndex ?: -1) > 0 || state.repeatMode == QueueRepeatMode.All
+        if (!hasLiveAttempt()) return if (hasPrevious) PlaybackPreviousAction.Move else PlaybackPreviousAction.None
+        val attempt = session.currentAttempt
+        val position = if (restartPending) Duration.ZERO else attempt.position ?: Duration.ZERO
+        return when {
+            attempt.seekability == PlaybackSeekability.Seekable &&
+                (position > 3_000.milliseconds || !hasPrevious) -> PlaybackPreviousAction.Seek
+            hasPrevious -> PlaybackPreviousAction.Move
+            else -> PlaybackPreviousAction.Replay
+        }
+    }
+
+    private fun hasLiveAttempt(): Boolean = !endHeldForPreload &&
+        when (playback.currentSession?.currentAttempt?.phase) {
+            PlaybackAttemptPhase.Created, PlaybackAttemptPhase.Preparing, PlaybackAttemptPhase.Ready,
+            PlaybackAttemptPhase.Progressing, PlaybackAttemptPhase.Buffering, PlaybackAttemptPhase.Paused -> true
+            PlaybackAttemptPhase.Failed, PlaybackAttemptPhase.Stopped, PlaybackAttemptPhase.TornDown, null -> false
+        }
+
     fun acceptsCommand(
         playbackSessionId: PlaybackSessionId,
         requiresSeekable: Boolean = false,
     ): Boolean {
         val session = playback.currentSession ?: return false
         return session.playbackSessionId == playbackSessionId &&
-            (!requiresSeekable || session.currentAttempt.seekability == PlaybackSeekability.Seekable)
+            (!requiresSeekable || (hasLiveAttempt() && session.currentAttempt.seekability == PlaybackSeekability.Seekable))
     }
 
     fun setShuffle(enabled: Boolean): PlaybackQueueTransition {

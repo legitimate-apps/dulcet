@@ -660,26 +660,30 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             startOrStop(queueClient.nextForSession(playbackSessionId: sessionID))
         case .previous:
             guard queueClient.acceptsCommand(playbackSessionId: sessionID, requiresSeekable: false) else { return }
-            let hasPrevious = snapshot.currentIndex > 0 || snapshot.repeatMode == DulcetRepeatMode.all.rawValue
-            if session.seekability.presentationSeekability == .seekable,
-               session.positionMilliseconds > 3_000 || !hasPrevious {
-                // Seeking restarts this listen without reaching an entry, replacing identities,
-                // or beginning a pass. Use the same guarded seek as the scrubber.
-                send(.seek(.zero))
-            } else if hasPrevious {
+            switch previousAction(for: session) {
+            case "seek":
+                let command = commandID("previous-restart")
+                pendingPreviousRestart = (session.attemptId, command)
+                execute(.seek(commandID: command, position: 0)) { [weak self] outcome in
+                    guard let self, pendingPreviousRestart?.commandID == command else { return }
+                    if case .rejected = outcome { pendingPreviousRestart = nil }
+                }
+            case "move":
+                pendingPreviousRestart = nil
                 startOrStop(queueClient.previousForSession(playbackSessionId: sessionID))
-            } else {
-                // Like Android: an unseekable first entry reopens from zero, not its saved
-                // position. The existing core replay preserves QueueEntryID and creates the
-                // new session/attempt; reporting the press resets the failed-pass guard.
+            case "replay":
+                pendingPreviousRestart = nil
                 _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
                 startOrStop(queueClient.replayCurrent())
+            default:
+                return
             }
         case let .seek(position):
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
                 requiresSeekable: true
             ) else { return }
+            pendingPreviousRestart = nil
             execute(.seek(
                 commandID: commandID("seek"),
                 position: position.playbackTimeInterval
@@ -1008,6 +1012,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private func receiveEngineEvent(_ event: DulcetPlaybackEvent) {
+        if pendingPreviousRestart?.attemptID == event.attemptID.rawValue {
+            switch event {
+            case .seekCompleted, .seekFailed, .failedBeforeStart, .failedAfterPartial,
+                 .skipped, .endedNaturally, .engineTornDown, .attemptReplaced:
+                pendingPreviousRestart = nil
+            default: break
+            }
+        }
         if let preload, event.attemptID.rawValue == preload.attemptID,
            handlePreloadedAttemptEvent(event, preload: preload) {
             return
@@ -1060,6 +1072,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         }
         if !(holdingForPreload && transition.startDirective == nil) {
             publish(transition)
+        } else if let snapshot = transition.snapshot, let session = snapshot.currentSession {
+            // Keep the gapless presentation while withdrawing actions on the ended attempt.
+            currentPresentation = .init(status: currentPresentation.status,
+                nowPlaying: currentPresentation.nowPlaying?.withPreviousAvailability(previousAction(for: session) != "none"))
+            emitPresentation()
+            updateRemoteCapabilities(snapshot)
         }
         if case let .ready(attemptID, _, seekability) = event {
             completePendingStart(attemptID: attemptID, seekability: seekability)
@@ -1703,7 +1721,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             // The queue carried the timer out (§12.13): it stopped, so the timer is spent.
             sleepChoice = nil
         }
-        defer { afterPublishing(snapshot) }
+        defer {
+            afterPublishing(snapshot)
+            updateRemoteCapabilities(snapshot)
+        }
         guard let session = snapshot.currentSession else {
             publishWithoutSession(snapshot)
             return
@@ -1789,7 +1810,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 canGoNext: index >= 0 && (
                     index + 1 < snapshot.entries.count || repeatMode == .all
                 ),
-                canGoPrevious: true,
+                canGoPrevious: previousAction(for: session) != "none",
                 queueEntries: queueEntries,
                 currentEntryIndex: currentEntryIndex,
                 autoplayActive: snapshot.autoplayActive,
@@ -1797,13 +1818,6 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             )
         )
         emitPresentation()
-        engine.updateRemoteCommandCapabilities(
-            DulcetRemoteCommandCapabilities(
-                allowsNext: currentPresentation.nowPlaying?.canGoNext == true,
-                allowsPrevious: currentPresentation.nowPlaying?.canGoPrevious == true
-            ),
-            for: DulcetPlaybackSessionID(session.playbackSessionId)
-        )
     }
 
     /// Entry identities aligned with the tracks the catalog can speak for. An entry the catalog
@@ -1893,7 +1907,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 repeatMode: repeatMode,
                 shuffleEnabled: snapshot.shuffleEnabled,
                 canGoNext: Self.hasEntryAfterCurrent(snapshot),
-                canGoPrevious: true,
+                canGoPrevious: snapshot.currentSession.map { previousAction(for: $0) != "none" } ?? true,
                 queueEntries: queueEntries,
                 currentEntryIndex: currentEntryIndex,
                 autoplayActive: snapshot.autoplayActive,
@@ -1995,6 +2009,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case .next:
             send(.next)
         case .previous:
+            guard let session = queueClient.snapshot().snapshot?.currentSession,
+                  previousAction(for: session) != "none" else { return false }
             send(.previous)
         case let .seek(_, position):
             send(.seek(.milliseconds(position.playbackMilliseconds)))
@@ -2002,6 +2018,23 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             return false
         }
         return true
+    }
+
+    // An outstanding restart changes the next Previous decision, not the observed position.
+    // Only its engine event completes the seek; a rejection makes a later press try again.
+    private var pendingPreviousRestart: (attemptID: String, commandID: DulcetPlaybackCommandID)?
+
+    private func previousAction(for session: ApplePlaybackCoreSessionDto) -> String {
+        queueClient.previousAction(playbackSessionId: session.playbackSessionId,
+            restartPending: pendingPreviousRestart?.attemptID == session.attemptId)
+    }
+
+    private func updateRemoteCapabilities(_ snapshot: ApplePlaybackQueueSnapshotDto) {
+        guard let session = snapshot.currentSession else { return }
+        engine.updateRemoteCommandCapabilities(.init(
+            allowsNext: Self.hasEntryAfterCurrent(snapshot),
+            allowsPrevious: previousAction(for: session) != "none"
+        ), for: .init(session.playbackSessionId))
     }
 
     private func commandID(_ purpose: String) -> DulcetPlaybackCommandID {
@@ -2197,5 +2230,17 @@ private extension DulcetPlaybackObservationStatus {
         case .stopped: "stopped"
         case .failed: "failed"
         }
+    }
+}
+
+private extension DulcetNowPlaying {
+    func withPreviousAvailability(_ available: Bool) -> Self {
+        .init(sessionID: sessionID, current: current, queue: queue, currentIndex: currentIndex,
+              sourceDisplayName: sourceDisplayName, elapsed: elapsed, isPlaying: isPlaying,
+              outputName: outputName, volume: volume, audioFormat: audioFormat, phase: phase,
+              seekability: seekability, progressBegan: progressBegan, repeatMode: repeatMode,
+              shuffleEnabled: shuffleEnabled, canGoNext: canGoNext, canGoPrevious: available,
+              queueEntries: queueEntries, currentEntryIndex: currentEntryIndex,
+              autoplayActive: autoplayActive, sleepTimer: sleepTimer)
     }
 }

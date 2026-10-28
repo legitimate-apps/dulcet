@@ -2367,13 +2367,21 @@ It now keeps the whole contract, as the Apple shell does:
   server (no Android surface offers one). The controller lives as long as its account's playback
   service, and closing it withdraws the notice. A skip while the TV's browse screens are in front is
   silent there: TV draws the notice only in its player, and the browse screens have no playback
-  surface. **Previous on Apple and Android:** on a seekable track, Previous restarts it by seeking,
-  as a music player's back button does, when it is past three seconds or when it is the first entry
-  with nothing before it. This begins no pass, reaches no entry and creates no session or attempt.
-  Otherwise Previous moves to the prior entry, including wrapping under repeat-all. An unseekable
-  first entry uses the core's `replayCurrent`, reporting the press first: the selected QueueEntryID
-  stays, a new session/attempt starts at zero, the saved position clears, and a new pass begins.
-  Apple offers Previous whenever a track is loaded; its remote command capability matches the button.
+  surface. **Previous on Apple and Android:** only a live, seekable attempt restarts by seeking
+  when its media position is strictly past 3,000 ms or it has no prior entry. This begins no pass,
+  reaches no entry and preserves all three playback identities. At exactly 3,000 ms a prior entry
+  is reached through the core, including repeat-all wrapping. A live first entry with NotSeekable
+  or Unknown seekability reports the press and uses `replayCurrent`: a new session/attempt from
+  zero, the same QueueEntryID, a cleared persistent resume position and a new pass. A terminal
+  attempt (Failed, Stopped or TornDown), including an outgoing natural end held for preload, is
+  never a seek or replay target: Previous moves to a prior entry, or does nothing if there is none,
+  as Android does after clearing its active plan. Apple publishes that core decision to both the
+  button and the retained system Now Playing capabilities; a remote Previous with no action is
+  refused. With no session, Previous still replays the selected entry from zero. While an Apple
+  restart seek is pending, a second press uses the intended zero position to move back, without
+  changing the observed core position until SeekCompleted. Rejection or SeekFailed clears the
+  intent; a failed native seek retains the last observed position. A seek restart keeps the
+  session's accumulated listening and once-per-session submission (§15.2).
 - **Not changed:** the first song of a pick is read with `getSong` before any queue exists, so a
   failure there is presented and skips nothing; and Android's failure line keeps its own copy.
 
@@ -7966,17 +7974,21 @@ argue against the recorded rationale — not as filling in a blank.
 
 **2026-10-28 - Apple Previous restarts or moves with Android semantics**
 
-Apple Previous is enabled whenever a track is loaded, including the first entry; the system remote
-command capability publishes the same availability. On a seekable track, a position strictly past
-three seconds or no prior entry restarts through the existing seek-to-zero path. QueueEntryID,
-PlaybackSessionID and AttemptID remain unchanged and this seek begins no pass. Before or at three
-seconds, a prior entry is reached through the core's previous operation (including repeat-all).
-An unseekable first entry reports the press and uses the existing core replayCurrent operation to
-start from zero, preserving the queue entry while creating a new session/attempt and beginning a
-pass. This is a replay, not restartCurrent's saved-position resume. The Apple controller adds no new
-core restart path. Five controller integration tests cover first-entry availability, seek restart
-and identities, movement below the threshold, unseekable replay, and system remote capability/routing.
-
+Apple Previous uses the core's lifecycle-aware transport decision. A live seekable attempt seeks
+back to zero strictly past 3,000 ms or with no prior entry; at exactly 3,000 ms it moves to a prior
+entry, including repeat-all wrapping. The seek preserves QueueEntryID, PlaybackSessionID, AttemptID,
+the pass and the accumulator's once-per-session submission (§15.2). A live unseekable/Unknown first
+entry reports the press and uses replayCurrent to clear the saved position and start from zero
+with new session/attempt identities. Failed, Stopped and TornDown attempts, including natural ends
+held for preload, move to a prior entry regardless of retained position/seekability; with no prior
+entry they do nothing, matching Android's cleared active plan. With no session the selected entry
+can still replay. The core decision also controls system Previous availability and remote refusal.
+An outstanding restart seek makes a second Previous move without prematurely changing the core
+position. SeekFailed or command rejection clears the pending intent, and unsuccessful native seeks
+retain their prior observed position. Controller regressions cover terminal navigation, held ends,
+remote availability/refusal, rapid presses, failed seeks, exact threshold boundaries, persistent
+resume clearing and completed-seek accounting; a native-engine test covers false and superseded
+seek completions.
 
 **2026-10-27 - Native Apple navigation and personal collection ownership**
 
