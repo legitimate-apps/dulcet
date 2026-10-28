@@ -443,7 +443,7 @@ struct DulcetNowPlayingView: View {
                     // Not the player's title: tests read `dulcet.now-playing.title` as "the player
                     // column is on screen", and in one column the lyrics take its place.
                     .accessibilityIdentifier("dulcet.lyrics.header.title")
-                DulcetArtistLink(
+                DulcetPlayerArtistLink(
                     credits: player.current.credits.filter { $0.role == .artist },
                     font: .subheadline,
                     onNavigate: onNavigate
@@ -514,7 +514,7 @@ struct DulcetNowPlayingView: View {
     }
 
     private var favouriteButton: some View {
-        DulcetNowPlayingFavouriteButton(track: player.current, size: .title3, minimumSide: Self.footerControlSide)
+        DulcetPlayerNowPlayingFavouriteButton(track: player.current, size: .title3, minimumSide: Self.footerControlSide)
 #if os(tvOS)
             .focused($focusedFooterControl, equals: .favourite)
 #endif
@@ -722,7 +722,7 @@ struct DulcetNowPlayingView: View {
                 .font(.title2.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("dulcet.now-playing.title")
-            DulcetArtistLink(
+            DulcetPlayerArtistLink(
                 credits: player.current.credits.filter { $0.role == .artist },
                 font: .title3,
                 onNavigate: onNavigate
@@ -807,7 +807,8 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(.setShuffle(!player.shuffleEnabled))
             }
-            .dulcetForeground(player.shuffleEnabled ? .accentIconOnWindow : .primaryTextOnWindow)
+            .dulcetForeground(.primaryTextOnWindow)
+            .background(player.shuffleEnabled ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
             .frame(width: Self.televisionTransportEdgeSlot, height: Self.televisionTransportSlotHeight)
             controlButton(
                 symbol: "backward.fill",
@@ -846,7 +847,8 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(.cycleRepeat)
             }
-            .dulcetForeground(player.repeatMode != .off ? .accentIconOnWindow : .primaryTextOnWindow)
+            .dulcetForeground(.primaryTextOnWindow)
+            .background(player.repeatMode != .off ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
             .frame(width: Self.televisionTransportEdgeSlot, height: Self.televisionTransportSlotHeight)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -860,7 +862,8 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(.setShuffle(!player.shuffleEnabled))
             }
-            .dulcetForeground(player.shuffleEnabled ? .accentIconOnWindow : .primaryTextOnWindow)
+            .dulcetForeground(.primaryTextOnWindow)
+            .background(player.shuffleEnabled ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
             Spacer(minLength: DulcetSpacing.xs)
             controlButton(
                 symbol: "backward.fill",
@@ -898,7 +901,8 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(.cycleRepeat)
             }
-            .dulcetForeground(player.repeatMode != .off ? .accentIconOnWindow : .primaryTextOnWindow)
+            .dulcetForeground(.primaryTextOnWindow)
+            .background(player.repeatMode != .off ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
         }
         .frame(maxWidth: 420)
         .frame(maxWidth: .infinity)
