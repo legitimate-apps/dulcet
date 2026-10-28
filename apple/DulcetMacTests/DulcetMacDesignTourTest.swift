@@ -87,6 +87,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
         self.window = window
 
         if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            let listening = DulcetCoreListeningSettings(defaults: try XCTUnwrap(UserDefaults(suiteName: defaultsSuite)))
+            playback.listeningSettings = listening
+            store.listeningSetting = listening
             store.selectDestination(.nowPlaying)
             await shoot("now-playing-empty")
             store.accountServerURL = serverURL

@@ -270,6 +270,14 @@ final class DulcetDesignTourUITests: XCTestCase {
             "-dulcet-debug-account-username", server.username,
             "-dulcet-debug-account-password", server.password,
         ]
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            // Keep disposable account storage, without enabling the unrelated download probe
+            // and its diagnostic overlay over the navigation bar.
+            if let index = app.launchArguments.firstIndex(of: "-dulcet-debug-download-handoff") {
+                app.launchArguments.removeSubrange(index...index + 1)
+            }
+            app.launchArguments += ["-dulcet-debug-download-handoff-clear"]
+        }
         launchInInteractionScope(app)
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 15), "The app window must exist")
@@ -293,6 +301,10 @@ final class DulcetDesignTourUITests: XCTestCase {
         }
 
         if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+        step("mini-player-no-track", app) {
+            guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
+            return !app.buttons["dulcet.mini-player.open"].firstMatch.exists && self.settle(app)
+        }
         // Now Playing, playing: Threshold Boundary's first track carries synced lyrics.
         step("now-playing", app) {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
@@ -356,6 +368,12 @@ final class DulcetDesignTourUITests: XCTestCase {
                     let edit = app.buttons["dulcet.upNext.edit"].firstMatch
                     guard edit.waitForExistence(timeout: 5) else { return false }
                     edit.tap()
+                    if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
+                        let remove = app.buttons["dulcet.upNext.remove.0"].firstMatch
+                        let move = app.buttons["dulcet.upNext.move-down.0"].firstMatch
+                        guard remove.waitForExistence(timeout: 5), remove.isHittable, move.isHittable else { return false }
+                        print("DULCET PLAYER AX edit remove=visible move-down=visible full-width-row=true")
+                    }
                     return self.settle(app)
                 }
                 let done = app.buttons["dulcet.upNext.edit"].firstMatch
@@ -372,6 +390,26 @@ final class DulcetDesignTourUITests: XCTestCase {
                 return app.staticTexts["dulcet.now-playing.title"].firstMatch.waitForExistence(timeout: 10) && self.settle(app, seconds: 2)
             }
             closePlayer(in: app)
+            if compact {
+                app.terminate()
+                app.launchArguments += ["-dulcet-capture-mini-buffering"]
+                launchInInteractionScope(app)
+                step("mini-player-buffering", app) {
+                    guard self.awaitConnection(in: app, compact: compact),
+                          self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
+                    let play = app.buttons["dulcet.album.play"].firstMatch
+                    guard play.waitForExistence(timeout: 10) else { return false }
+                    play.tap()
+                    let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+                    guard bar.waitForExistence(timeout: 20), self.waitFor(timeout: 10, { bar.label.contains("Buffering") }) else { return false }
+                    if app.scrollViews.firstMatch.exists {
+                        app.scrollViews.firstMatch.swipeDown()
+                        app.scrollViews.firstMatch.swipeDown()
+                    }
+                    print("DULCET PLAYER MINI buffering evidence=presentation-projection engine=unchanged")
+                    return self.settle(app)
+                }
+            }
             return
         }
 

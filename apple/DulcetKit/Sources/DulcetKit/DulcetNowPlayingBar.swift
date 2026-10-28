@@ -46,6 +46,15 @@ struct DulcetNowPlayingBar: View {
 #endif
     }
 
+    private var isBuffering: Bool {
+#if DEBUG
+        // An explicit screenshot instrument exercises the spinner and copy without changing
+        // the engine, the queue or playback identity. It is not a buffering recovery proof.
+        if ProcessInfo.processInfo.arguments.contains("-dulcet-capture-mini-buffering") { return true }
+#endif
+        return store.snapshot.nowPlaying?.phase == .buffering
+    }
+
     private func bar(inline: Bool) -> some View {
         HStack(spacing: style == .expanded ? DulcetSpacing.md : DulcetSpacing.sm) {
             openButton(inline: inline)
@@ -111,7 +120,7 @@ struct DulcetNowPlayingBar: View {
             DulcetArtworkView(artwork: player.current.artwork, size: size)
                 .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
                 .overlay {
-                    if player.phase == .buffering {
+                    if isBuffering {
                         ProgressView()
                             .controlSize(.small)
                             .padding(5)
@@ -265,7 +274,7 @@ struct DulcetNowPlayingBar: View {
         if store.snapshot.playbackFailed {
             return failedTrack == nil ? nil : store.snapshot.playbackFailure.map(Self.failureLine(for:))
         }
-        if store.snapshot.nowPlaying?.phase == .buffering { return DulcetStrings.buffering }
+        if isBuffering { return DulcetStrings.buffering }
         return artists(of: store.snapshot.nowPlaying?.current)
     }
 

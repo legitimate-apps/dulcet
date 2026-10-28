@@ -44,6 +44,9 @@ public struct DulcetUpNextSection: View {
     @State private var confirmingClear = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let autoplay: DulcetAutoplayToggle?
+#if os(iOS)
+    @Environment(\.editMode) private var editMode
+#endif
 
     public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void, autoplay: DulcetAutoplayToggle? = nil) {
         self.autoplay = autoplay
@@ -54,9 +57,11 @@ public struct DulcetUpNextSection: View {
     public var body: some View {
         Section {
             if model.upcoming.isEmpty {
-                Text(DulcetQueueStrings.nothingUpNext)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .accessibilityIdentifier("dulcet.upNext.empty")
+                ContentUnavailableView {
+                    Label(DulcetQueueStrings.nothingUpNext, systemImage: "list.bullet")
+                        .accessibilityIdentifier("dulcet.upNext.empty")
+                }
+                .listRowBackground(Color.clear)
             } else {
                 rows
             }
@@ -121,12 +126,12 @@ public struct DulcetUpNextSection: View {
                 }
 #endif
                 .accessibilityLabel(DulcetStrings.autoplay)
+                .accessibilityHint(autoplay.isActive ? DulcetStrings.autoplayFootnote : DulcetStrings.autoplayPaused)
                 .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
             }
         }
         .font(.subheadline)
         .buttonStyle(.borderless)
-        .tint(.accentColor)
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
@@ -148,17 +153,45 @@ public struct DulcetUpNextSection: View {
         .onDelete { offsets in
             model.removeIntents(atOffsets: offsets).forEach(onEdit)
         }
+        .deleteDisabled(dynamicTypeSize.isAccessibilitySize)
+        .moveDisabled(dynamicTypeSize.isAccessibilitySize)
         #endif
     }
 
     private func row(_ entry: DulcetQueueEntry, offset: Int) -> some View {
-        DulcetTrackRow(
-            track: entry.track, showAlbum: true, index: offset,
-            showsIndex: false,
-            onActivate: { onEdit(model.jumpIntent(to: entry)) }
-        ) { EmptyView() }
-        .queueEntry(activationIdentifier: "dulcet.upNext.row.\(offset)", moreIdentifier: "dulcet.upNext.more.\(offset)")
-        .additionalMenuActions { rowActions(entry, offset: offset) }
+        DulcetPlayerQueueRow(
+            track: entry.track,
+            accessibilityLayout: dynamicTypeSize.isAccessibilitySize,
+            isEditing: isEditing,
+            activationIdentifier: "dulcet.upNext.row.\(offset)",
+            moreIdentifier: "dulcet.upNext.more.\(offset)",
+            onActivate: { onEdit(model.jumpIntent(to: entry)) },
+            menuActions: { rowActions(entry, offset: offset) },
+            editingActions: {
+                HStack(spacing: DulcetSpacing.sm) {
+                    Button(role: .destructive) { onEdit(.remove(entry.id)) } label: {
+                        Label(DulcetQueueStrings.remove, systemImage: "minus.circle.fill")
+                    }
+                    .accessibilityIdentifier("dulcet.upNext.remove.\(offset)")
+                    Spacer(minLength: 0)
+                    Button {
+                        move(entry, offset: offset, upward: true)
+                    } label: { Image(systemName: "arrow.up") }
+                    .accessibilityLabel(DulcetQueueStrings.moveUp)
+                    .disabled(offset == 0)
+                    .accessibilityIdentifier("dulcet.upNext.move-up.\(offset)")
+                    Button {
+                        move(entry, offset: offset, upward: false)
+                    } label: { Image(systemName: "arrow.down") }
+                    .accessibilityLabel(DulcetQueueStrings.moveDown)
+                    .disabled(offset + 1 == model.upcoming.count)
+                    .accessibilityIdentifier("dulcet.upNext.move-down.\(offset)")
+                }
+                .font(.subheadline)
+                .buttonStyle(.borderless)
+                .frame(minHeight: 44)
+            }
+        )
         // Reordering is a drag, which VoiceOver and Switch Control cannot perform on a row, so
         // Move Up and Move Down are named actions. Removal needs one only where the platform does
         // not already offer it: on iOS the row's swipe comes with a Delete action derived from
@@ -185,6 +218,21 @@ public struct DulcetUpNextSection: View {
             #endif
         }
         .contextMenu { rowActions(entry, offset: offset) }
+    }
+
+    private var isEditing: Bool {
+#if os(iOS)
+        editMode?.wrappedValue.isEditing == true
+#else
+        false
+#endif
+    }
+
+    private func move(_ entry: DulcetQueueEntry, offset: Int, upward: Bool) {
+        if let intent = model.moveIntent(fromOffsets: IndexSet(integer: offset),
+            toOffset: upward ? offset - 1 : offset + 2) {
+            onEdit(intent)
+        }
     }
 
     @ViewBuilder
@@ -242,7 +290,7 @@ struct DulcetAutoplaySection: View {
             }
         } header: {
             VStack(alignment: .leading, spacing: 2) {
-                Text(toggle.isOn && !toggle.isActive ? DulcetStrings.autoplayPaused : DulcetStrings.autoplayFootnote)
+                Text(toggle.isOn && !toggle.isActive ? DulcetStrings.autoplayPaused : DulcetStrings.autoplay)
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(nil)

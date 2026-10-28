@@ -16,10 +16,10 @@ struct DulcetPlayerRoutePicker: NSViewRepresentable {
     func updateNSView(_ view: AVRoutePickerView, context: Context) { apply(to: view) }
 
     private func apply(to view: AVRoutePickerView) {
-        view.setRoutePickerButtonColor(.labelColor, for: .normal)
-        view.setRoutePickerButtonColor(.labelColor, for: .normalHighlighted)
-        view.setRoutePickerButtonColor(.controlAccentColor, for: .active)
-        view.setRoutePickerButtonColor(.controlAccentColor, for: .activeHighlighted)
+        view.setRoutePickerButtonColor(.white, for: .normal)
+        view.setRoutePickerButtonColor(.white, for: .normalHighlighted)
+        view.setRoutePickerButtonColor(.white, for: .active)
+        view.setRoutePickerButtonColor(.white, for: .activeHighlighted)
         view.setAccessibilityLabel(DulcetQueueStrings.airPlay)
         view.setAccessibilityIdentifier("dulcet.player.airPlay")
     }

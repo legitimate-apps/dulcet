@@ -35,6 +35,7 @@ struct DulcetNowPlayingView: View {
     @State private var hidingSideColumn = false
     /// The lyrics panel in place of the queue beside the player, or of the cover in one column.
     @State private var showingLyrics = false
+    @State private var lyricsAreKnownAbsent = false
 #if os(tvOS)
     /// Remote focus on the footer's controls. Showing or hiding lyrics swaps the layout under the
     /// control that did it, so focus is put back on that control rather than wherever the focus
@@ -102,7 +103,7 @@ struct DulcetNowPlayingView: View {
                     .frame(maxWidth: 520)
                     if showingLyrics || !hidingSideColumn {
                         sideColumn
-                        .frame(maxWidth: showingLyrics ? 520 : 390)
+                        .frame(maxWidth: 520)
                         .frame(height: Self.sideBySideQueueHeight(
                             windowHeight: geometry.size.height,
                             playerHeight: sideBySidePlayerHeight
@@ -236,6 +237,10 @@ struct DulcetNowPlayingView: View {
         .onAppear { if lyricsPresentation != nil { showingLyrics = true } }
         .background { DulcetPlayerBackdrop(artwork: player.current.artwork).ignoresSafeArea() }
         .dulcetForeground(.primaryTextOnWindow)
+        .tint(.white)
+        .accentColor(.white)
+        .environment(\.colorScheme, .dark)
+        .onChange(of: player.current.id) { _, _ in lyricsAreKnownAbsent = false }
         .dulcetNavigationTitle(presentation == .destination ? DulcetStrings.nowPlaying : "")
         .onGeometryChange(for: Bool.self) { sideBySide(width: $0.size.width) } action: {
             regularLayout = $0
@@ -462,7 +467,8 @@ struct DulcetNowPlayingView: View {
             isPlaying: player.isPlaying,
             canSeek: player.seekability == .seekable,
             presentationState: lyricsPresentation,
-            onSeek: { onControl(.seek($0)) }
+            onSeek: { onControl(.seek($0)) },
+            onAvailabilityChanged: { lyricsAreKnownAbsent = $0 }
         )
 #if os(iOS)
             .dulcetPlayerGestureRegion()
@@ -497,6 +503,7 @@ struct DulcetNowPlayingView: View {
                 .background(showingLyrics ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
                 .contentShape(Rectangle())
         }
+        .disabled(lyricsAreKnownAbsent)
         .accessibilityAddTraits(showingLyrics ? .isSelected : [])
         .dulcetMediaButtonStyle()
 #if os(tvOS)
@@ -574,12 +581,14 @@ struct DulcetNowPlayingView: View {
                 }
             }
         } label: {
-            Image(systemName: queueIsVisible ? "list.bullet.circle.fill" : "list.bullet")
+            Image(systemName: "list.bullet")
                 .font(.title3)
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
+                .background(queueIsVisible ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
                 .contentShape(Rectangle())
         }
         .dulcetMediaButtonStyle()
+        .accessibilityAddTraits(queueIsVisible ? .isSelected : [])
         .accessibilityLabel(queueIsVisible ? DulcetStrings.hideUpNext : DulcetStrings.showUpNext)
         .accessibilityIdentifier("dulcet.now-playing.up-next")
     }
@@ -865,7 +874,7 @@ struct DulcetNowPlayingView: View {
             // The glyph itself, as the system player draws it: no disc behind play/pause.
             controlButton(
                 symbol: player.isPlaying ? "pause.fill" : "play.fill",
-                font: .system(size: 34, weight: .medium),
+                font: .system(size: regularLayout ? 44 : 34, weight: .medium),
                 label: player.isPlaying ? DulcetStrings.pause : DulcetStrings.play
             ) {
                 onControl(player.isPlaying ? .pause : .play)
@@ -1332,6 +1341,9 @@ struct DulcetNowPlayingSheet: View {
         .dulcetPlaybackFeedback(store: store, drawsNotices: true)
         .dulcetUIProofMarkers()
         .background(Color.dulcetWindow.ignoresSafeArea())
+        .tint(.white)
+        .accentColor(.white)
+        .environment(\.colorScheme, .dark)
     }
 }
 #endif
