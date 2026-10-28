@@ -65,6 +65,7 @@ public final class DulcetCachingPlaybackResource: DulcetPlaybackResourceLoading,
 struct DulcetOfflineLibrarySection: View {
     @Bindable var store: DulcetPresentationStore
     var inForm = false
+    @State private var confirmsClearCache = false
     private var storage: DulcetOfflineLibraryStorage { store.offlineLibraryStorage ?? .init() }
     var body: some View {
         if store.offlineLibraryStorage != nil {
@@ -75,7 +76,7 @@ struct DulcetOfflineLibrarySection: View {
                     controls
                 } header: {
                     Text(DulcetStrings.offlineMusic)
-                }
+                } footer: { Text(DulcetStrings.offlineAutomaticHint) }
                 .accessibilityElement(children: .contain)
             } else {
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
@@ -93,8 +94,7 @@ struct DulcetOfflineLibrarySection: View {
             get: { storage.automaticDownloadsEnabled },
             set: { store.setAutomaticDownloadsEnabled($0) }
         )).accessibilityIdentifier("dulcet.offline.automaticDownloads")
-        Text(DulcetStrings.offlineAutomaticHint)
-            .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
+        if !inForm { Text(DulcetStrings.offlineAutomaticHint).font(.footnote).foregroundStyle(.secondary) }
         if storage.automaticDownloadsEnabled {
             Text(DulcetStrings.offlineDownloadProgress(completed: storage.completedAutomaticCount, remaining: storage.queuedAutomaticCount))
                 .font(.caption).accessibilityIdentifier("dulcet.offline.progress")
@@ -112,12 +112,16 @@ struct DulcetOfflineLibrarySection: View {
         }.pickerStyle(.menu).accessibilityIdentifier("dulcet.offline.cacheSize")
         Text(DulcetStrings.offlineCacheHint)
             .font(.caption).dulcetForeground(inForm ? .secondaryTextOnControl : .secondaryTextOnWindow)
-        Button { store.clearStreamingCache() } label: {
+        Button(role: .destructive) { confirmsClearCache = true } label: {
             Text(DulcetStrings.offlineClearCache)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         }
             .accessibilityIdentifier("dulcet.offline.clearCache")
+            .confirmationDialog(DulcetStrings.clearCacheTitle, isPresented: $confirmsClearCache, titleVisibility: .visible) {
+                Button(DulcetStrings.offlineClearCache, role: .destructive) { store.clearStreamingCache() }
+                Button(DulcetStrings.cancel, role: .cancel) {}.dulcetDefaultActionShortcut()
+            } message: { Text(DulcetStrings.clearCacheBody) }
     }
     private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
 }

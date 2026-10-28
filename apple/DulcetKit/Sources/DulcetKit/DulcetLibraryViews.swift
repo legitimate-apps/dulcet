@@ -22,49 +22,17 @@ struct DulcetEmptyLibraryView: View {
 
     private var content: some View {
         ContentUnavailableView {
-            VStack(spacing: 20) {
-                Image(systemName: "music.note")
-                    .font(.system(size: introSymbolSize, weight: .regular))
-                    .dulcetForeground(.accentIconOnWindow)
-                    .accessibilityHidden(true)
-                Text(connected ? DulcetStrings.connectedEmptyTitle : DulcetStrings.firstRunTitle)
-                    .font(.largeTitle.weight(.bold))
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: introTextWidth)
-            }
+            Label(connected ? DulcetStrings.connectedEmptyTitle : DulcetStrings.noServerTitle,
+                systemImage: "music.note")
         } description: {
-            Text(connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.firstRunBody)
-                .font(.title3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: introBodyWidth)
+            Text(connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.noServerBody)
         } actions: {
-            VStack(spacing: 24) {
-                if !connected {
-                    Button(action: onConnect) {
-                        Text(DulcetStrings.connectServer)
-                            .font(.headline)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            if !connected {
+                Button(DulcetStrings.connectServer, action: onConnect)
                     .buttonStyle(.borderedProminent)
-#if os(iOS)
-                    .dulcetForeground(.labelOnAccentFill)
-#endif
-                    .controlSize(.large)
-                    .dulcetDefaultActionShortcut()
-                    .accessibilityLabel(DulcetStrings.connectServer)
-                }
-                Text(connected ? DulcetStrings.connectedEmptyFootnote : DulcetStrings.firstRunFootnote)
-                    .font(.footnote)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: introTextWidth)
+                    .accessibilityIdentifier("dulcet.account.connectServer")
             }
         }
-        .padding(.vertical, 24)
     }
 
     private var introTextWidth: CGFloat {
@@ -808,13 +776,14 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
+            .dulcetForeground(.accentIconOnWindow)
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
             .accessibilityIdentifier("dulcet.track.more")
         }
 #if os(iOS)
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: nil)
+            DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
                 .tint(.accentColor)
         }
 #endif
@@ -905,7 +874,7 @@ struct DulcetTrackRow<Trailing: View>: View {
 
                 durationOrOffline
 
-                if !unavailableOffline, track.downloadState != .notDownloaded {
+                if !unavailableOffline, !isCurrent, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
         }
@@ -924,7 +893,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                 leadingGroup
                 Spacer(minLength: DulcetSpacing.xs)
                 durationOrOffline
-                if !unavailableOffline, track.downloadState != .notDownloaded {
+                if !unavailableOffline, !isCurrent, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
             }
@@ -1330,34 +1299,12 @@ struct DulcetAlbumHeader: View {
     let onShuffle: () -> Void
 
     var body: some View {
-        switch layout {
-        case .sideBySide:
-            HStack(alignment: .bottom, spacing: DulcetSpacing.lg) {
-                artwork
-                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                    identity(alignment: .leading)
-                    DulcetEqualWidthActions {
-                        playButton
-                    } secondary: {
-                        shuffleButton
-                    }
-                    .frame(maxWidth: 360)
-                }
-                // Identity takes what the artwork leaves; it wraps, it never collapses.
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
-            }
-        case .stacked:
-            VStack(spacing: DulcetSpacing.md) {
-                artwork
-                identity(alignment: .center)
-                DulcetEqualWidthActions {
-                    playButton
-                } secondary: {
-                    shuffleButton
-                }
-            }
-            .frame(maxWidth: .infinity)
+        DulcetAlbumHeaderLayout(compact: layout == .stacked) {
+            artwork
+        } identity: {
+            identity(alignment: layout == .stacked ? .center : .leading)
+        } actions: {
+            DulcetEqualWidthActions { playButton } secondary: { shuffleButton }
         }
     }
 
@@ -1636,7 +1583,7 @@ struct DulcetTrackMenuItems: View {
             }
         }
         Divider()
-        DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: nil)
+        DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
         DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
             Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
@@ -1672,7 +1619,7 @@ struct DulcetTrackMenuItems: View {
         DulcetMyLibraryButton(target: DulcetFavouriteTarget(kind: .track, id: track.id), menu: true)
         DulcetAddTrackToPlaylistMenuItem(track: track)
         Divider()
-        DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: nil)
+        DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
         DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
             Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {

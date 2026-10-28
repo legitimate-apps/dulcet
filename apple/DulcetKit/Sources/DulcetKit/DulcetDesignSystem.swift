@@ -288,11 +288,11 @@ extension View {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
                 .toolbarVisibility(keepsTVNavigationBar ? .automatic : .hidden, for: .navigationBar)
-                .dulcetTVNavigationBarBand(kept: keepsTVNavigationBar)
+
         } else {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
-                .dulcetTVNavigationBarBand(kept: true)
+
         }
 #else
         navigationTitle(title)

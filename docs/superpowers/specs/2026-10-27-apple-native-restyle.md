@@ -1,9 +1,9 @@
 # Apple native presentation refresh
 
-Status: proposed target for baseline review, 2026-10-27. No page has visual sign-off yet.
+Status: foundation implementation after independent baseline critique, 2026-10-27. No page has visual sign-off yet.
 Deployment floors and product capabilities stay as defined in the main design specification.
 The iPhone account toolbar button replacing the Connection tab and later Android Material 3
-information-architecture parity are confirmed direction; this baseline change implements neither.
+information-architecture parity are confirmed direction. The foundation implements the Apple navigation contract below.
 
 ## Evidence and sources
 
@@ -94,15 +94,15 @@ missing platform implementation from a missing screenshot. Neither is visual app
 | Listen Now | One title, artwork-led shelves, Continue Listening only as a useful artwork card distinct from current transport; fresh, saved, offline, no history and resume states |
 | Library root | Personal collection categories and artwork-led recent items, with a clear Browse invitation when empty; preserve ordinary-server fallback |
 | Browse root | Server collection categories and useful discovery shelves; make Library ownership distinct without explanatory marketing copy |
-| Recently Added | Native artwork grid with sort menu and single title; empty/loading/paged/error states |
+| Recently Added | Native artwork grid, no sort menu (date order defines the page), single title; empty/loading/paged/error states |
 | Recently Played | Same grid/rows, honest history scope, no duplicated current-player text |
-| Most Played | Same grid; retain ranking and server availability semantics |
+| Most Played | Ordered grid/rows with visible rank, no sort menu; unavailable server ranking hides the shelf, never invents a ranking |
 | Albums | Adaptive artwork grid and native sort menu; scannable metadata, loading and pagination |
 | Artists | Portrait/grid or native list appropriate to width, reliable placeholder and context menu |
 | Genres | Native list or artwork collection with clear drill-in and counts where available |
 | Genre detail | Single title with associated album/track content and Play/Shuffle where supported |
 | Songs | Native track list with readable actions at largest text; no separate destination invented when shown within another collection |
-| Favourites | Album/artist/song grouping retains membership and empty invitation; consistent selected heart/star states |
+| Favourites | Album/artist/song grouping retains membership and empty invitation; heart means Favorite everywhere; numeric star ratings belong in More menus |
 | Album detail | Artwork, one album title, tappable artist, year/count metadata, paired Play and Shuffle, native More, full track list |
 | Artist detail | Artwork and one artist title, primary actions, albums and related content shelves; no filler biography block when absent |
 | Playlists | Native list/grid with artwork, title and count; New Playlist in toolbar; distinguish writable and read-only lists |
@@ -124,7 +124,7 @@ missing platform implementation from a missing screenshot. Neither is visual app
 | Lyrics | Clear current line, readable unsynced text, native dismissal/toggle; loading, absent, failure and largest-text states |
 | Downloads | Native track status and progress; downloading, queued, failed/retry, completed and unavailable-offline rows; preserve existing presentation locations |
 | Storage/device-only | Grouped Form sections for device data and automatic downloads; precise destructive actions, offline collection stays playable |
-| Connection/account | Native Form grouped into server, identity, security and preferences; account summary, reconnect and sign-out; keyboard-safe fields |
+| Connection/account | Sign-in-only Form before connection; then account summary and links to separate Playback and Downloads & Storage pages; toolbar Sign In, cause-local errors and confirmed red Sign Out row |
 | Connection errors | Inline actionable input/auth/network/protocol/server errors; native TLS warning and persistence-recovery sheet, no duplicate full-page warning |
 | Streaming quality | Native pickers/menus in settings, concise network-specific labels and visible current selection |
 | Context menus | Native menus for album, artist, track and playlist; consistent symbols and destructive grouping |
@@ -149,7 +149,7 @@ once at the final tree. `tools/apple-restyle-review` produces JPEGs no larger th
 quality 55, labeled sheets and `review/manifest.json`. Its coverage report is not a review verdict.
 
 Review batches contain at most eight page sheets. Record independent PASS/FAIL by page and round;
-only the owning review process grants sign-off. No product changes before baseline/spec critique.
+only the owning review process grants sign-off. Baseline/spec critique is complete; implementation rounds require separate visual sign-off.
 
 ## Cross-platform information architecture
 
@@ -167,3 +167,20 @@ Apple glass, font sizes, toolbar geometry and TV focus implementation do not tra
 
 Record the navigation contract in main specification section 28 when implemented, including
 account access and fallback behavior. Do not change FEATURES.yml until platform evidence changes.
+
+## Foundation decisions after baseline critique, 2026-10-27
+
+- The ordinary OpenSubsonic server and Dulcet Server have the same four phone tabs: Listen Now, Library, Browse, Search. Search has the system search role. Account is a toolbar sheet on iPhone, accessible in the adaptive sidebar on iPad, a sidebar shortcut plus Settings window on Mac, and a native Connection tab on TV.
+- On Dulcet Server, Library categories are Playlists, Artists, Albums, Songs, Downloaded (where supported), Favorites and Wishlist (where supported), followed by personal Recently Added artwork. There are no Server Songs or Shuffle Server Songs controls in Library. On an ordinary server without the personal-collection extension, Library offers Favorites, Playlists and Downloaded, plus Wishlist only when advertised. It does not label the complete server catalog as personal content. Favorite albums, artists and songs remain grouped in Favorites.
+- Browse on either server offers server Recently Added and other supported discovery shelves, then Albums, Artists, Genres, Playlists and Songs. Shuffle Server Songs acts on that server catalog. Browse has no Downloaded or Favorites row. Device pins remain available through More; pinning does not change personal membership.
+- One title then content. No hero, subtitle or explanatory paragraph under a root title. New, Edit, More, sort and filter belong in toolbars. Touch refresh is pull to refresh; Mac refresh is a toolbar item and Command-R. Recently Added and Most Played have no sort menu; Most Played shows rank.
+- Track rows use 48-point square artwork (artists use circular art), title and secondary metadata, at most one status glyph and one trailing More menu. Accessibility text reflows metadata below the title. Favorite and pin actions move into More/context menus and swipe actions. Numeric ratings remain in a Rating submenu. The same vocabulary applies to Up Next.
+- Artwork fills its frame with no inset backing card. Compact grids use two columns; accessibility text uses readable rows. Regular grids adapt to width; TV uses large focusable lockups and context actions instead of a More pill under each tile. Shelves reveal the next item and section headers lead to See All. Empty shelves disappear. A one-item shelf may remain when it carries a distinct useful category; hiding the only available new album would remove useful content. Avoid duplication between personalized shelves where the underlying reader permits it.
+- Library, Discover and Wishlist album details share one header system: artwork, one title, tappable artist, one metadata line, paired Play/Shuffle or intent buttons, toolbar More and a labelled edition picker when needed. Partly held releases distinguish playable tracks from missing tracks. Pending intent is a compact status, not a list of plain-text actions.
+- One compact offline/error status per destination, never per shelf. Recent background revalidation is silent visually; cached timestamp and complete freshness remain accessible. Offline, failed refresh, scanning/changing coverage and materially stale content remain visible without raw hosts. This changes presentation, not core freshness or paging policy.
+- Account is sign-in only until connected. System fields have one label, Sign In is a validation-disabled toolbar action, field errors follow their cause, and account summary links to Playback (quality/crossfade) and Downloads & Storage. One short footer per section. Sign Out is a red row with confirmation. Mac uses a grouped Settings form; TV uses full-screen pages.
+- iPhone modal pages use inline titles, close buttons and appropriate detents. Alerts name their object; invalid playlist creation is disabled. Cancel is the default in Mac destructive alerts. The TV entry/picker fallback is full screen because the current TV alert text-field route is unreliable.
+- Visual approval targets OS 27 on every Apple platform. Availability fallbacks retain floors iOS/tvOS 17 and macOS 14. If an older hosted iOS runtime is available, record Listen Now and Account fallback smoke photos. Phone glass pages also require Reduce Transparency and Increase Contrast variants.
+
+Baseline critique identified route mismatches and incomplete data states. A screenshot is comparable only when its manifest records the server type, fixture state, tab set and verified destination. Repaired baseline states accompany the next round: populated Songs; Favorites with albums/artists; matching Mac light/dark data; visible phone storage rows; per-destination errors; downloading/queued/failed downloads; and saved/offline/no-history/resume Listen Now. Existing TV focus capture blockers wait for the shared toolchain fix rather than a parallel repair.
+
