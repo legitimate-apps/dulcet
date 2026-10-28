@@ -31,9 +31,10 @@ run_live_tests() {
 set +e
 run_live_tests live-ax \
   -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
-  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveLayoutChangedBrowseAddRemoveRelaunchAndOfflineReplay \
-  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveNoAnimationBrowseAddRemoveRelaunchAndOfflineReplay \
-  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveStableStatusBrowseAddRemoveRelaunchAndOfflineReplay
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveAfterStatusBrowseAddRemoveRelaunchAndOfflineReplay \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveFixedStatusBrowseAddRemoveRelaunchAndOfflineReplay \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveStatusIdentityBrowseAddRemoveRelaunchAndOfflineReplay \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLiveStatusInsetBrowseAddRemoveRelaunchAndOfflineReplay
 matrix_exit=$?
 set -e
 xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/live-ax.xcresult" > "$RUNNER_TEMP/live-ax-results.json"
@@ -47,12 +48,12 @@ def visit(node):
  for child in node.get('children',[]): visit(child)
 for node in json.loads((p/'live-ax-results.json').read_text())['testNodes']: visit(node)
 base='testBrowseAddRemoveRelaunchAndOfflineReplay'
-expected=[base]+['testLive'+prefix+'BrowseAddRemoveRelaunchAndOfflineReplay' for prefix in ['LayoutChanged','NoAnimation','StableStatus']]
+expected=[base]+['testLive'+prefix+'BrowseAddRemoveRelaunchAndOfflineReplay' for prefix in ['AfterStatus','FixedStatus','StatusIdentity','StatusInset']]
 assert set(results)==set(expected),results
 assert all(r in ['Passed','Failed'] for r in results.values()),results
 print('LIVE AX MATRIX',json.dumps(results,sort_keys=True))
 # Only a reproduced baseline miss plus a passing candidate warrants the other exact cases.
-winner=next((prefix for prefix in ['LayoutChanged','NoAnimation','StableStatus'] if results[base]=='Failed' and results['testLive'+prefix+'BrowseAddRemoveRelaunchAndOfflineReplay']=='Passed'),'')
+winner=next((prefix for prefix in ['StatusInset','AfterStatus'] if results[base]=='Failed' and results['testLive'+prefix+'BrowseAddRemoveRelaunchAndOfflineReplay']=='Passed'),'')
 (p/'live-ax-winner.txt').write_text(winner)
 print('LIVE AX CANDIDATE',winner or 'none')
 PYTHON

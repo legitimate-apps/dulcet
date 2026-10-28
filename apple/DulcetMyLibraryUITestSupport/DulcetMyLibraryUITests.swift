@@ -13,27 +13,34 @@ final class DulcetMyLibraryUITests: XCTestCase {
     private var liveAXVariant = "baseline"
     private var liveAXCheckpoint = 0
 #if os(iOS)
-    func testLiveLayoutChangedBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "layout-changed"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
-    func testLiveLayoutChangedNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "layout-changed"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
-    func testLiveLayoutChangedLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "layout-changed"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
-    func testLiveLayoutChangedLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "layout-changed"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
-    func testLiveLayoutChangedLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "layout-changed"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
-    func testLiveLayoutChangedAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "layout-changed"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
-    func testLiveLayoutChangedIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "layout-changed"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
-    func testLiveNoAnimationBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "no-animation"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
-    func testLiveNoAnimationNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "no-animation"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
-    func testLiveNoAnimationLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "no-animation"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
-    func testLiveNoAnimationLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "no-animation"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
-    func testLiveNoAnimationLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "no-animation"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
-    func testLiveNoAnimationAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "no-animation"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
-    func testLiveNoAnimationIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "no-animation"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
-    func testLiveStableStatusBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "stable-status"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
-    func testLiveStableStatusNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "stable-status"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
-    func testLiveStableStatusLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "stable-status"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
-    func testLiveStableStatusLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "stable-status"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
-    func testLiveStableStatusLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "stable-status"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
-    func testLiveStableStatusAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "stable-status"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
-    func testLiveStableStatusIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "stable-status"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
+    func testLiveFixedStatusBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "fixed-status"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testLiveFixedStatusNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "fixed-status"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
+    func testLiveFixedStatusLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "fixed-status"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
+    func testLiveFixedStatusLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "fixed-status"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
+    func testLiveFixedStatusLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "fixed-status"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
+    func testLiveFixedStatusAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "fixed-status"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
+    func testLiveFixedStatusIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "fixed-status"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
+    func testLiveAfterStatusBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "after-status"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testLiveAfterStatusNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "after-status"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
+    func testLiveAfterStatusLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "after-status"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
+    func testLiveAfterStatusLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "after-status"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
+    func testLiveAfterStatusLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "after-status"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
+    func testLiveAfterStatusAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "after-status"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
+    func testLiveAfterStatusIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "after-status"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
+    func testLiveStatusInsetBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "status-inset"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testLiveStatusInsetNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "status-inset"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
+    func testLiveStatusInsetLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "status-inset"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
+    func testLiveStatusInsetLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "status-inset"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
+    func testLiveStatusInsetLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "status-inset"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
+    func testLiveStatusInsetAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "status-inset"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
+    func testLiveStatusInsetIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "status-inset"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
+    func testLiveStatusIdentityBrowseAddRemoveRelaunchAndOfflineReplay() throws { liveAXVariant = "status-identity"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testLiveStatusIdentityNonDulcetServerKeepsTheOriginalLibraryNavigation() throws { liveAXVariant = "status-identity"; try testNonDulcetServerKeepsTheOriginalLibraryNavigation() }
+    func testLiveStatusIdentityLibraryBrowseAndAlbumInLightDarkAndLargestText() throws { liveAXVariant = "status-identity"; try testLibraryBrowseAndAlbumInLightDarkAndLargestText() }
+    func testLiveStatusIdentityLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() throws { liveAXVariant = "status-identity"; try testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable() }
+    func testLiveStatusIdentityLibrarySearchGroupsAndRecentQuerySurviveRelaunch() throws { liveAXVariant = "status-identity"; try testLibrarySearchGroupsAndRecentQuerySurviveRelaunch() }
+    func testLiveStatusIdentityAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws { liveAXVariant = "status-identity"; try testAlbumAddRemainsVisibleAtLargestTextOnIPhone() }
+    func testLiveStatusIdentityIPhoneLibrarySortShuffleAndArtistDepth() throws { liveAXVariant = "status-identity"; try testIPhoneLibrarySortShuffleAndArtistDepth() }
 
 #endif
 

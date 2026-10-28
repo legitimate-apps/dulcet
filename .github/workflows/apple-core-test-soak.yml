@@ -1,4 +1,4 @@
-name: My Library in-process accessibility diagnostic
+name: My Library status reflow diagnostic
 'on':
   workflow_dispatch: {}
 permissions:
@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   diagnostic-iphone:
-    name: Live-change accessibility boundary controls
+    name: Status reflow controls and tvOS preload repeats
     runs-on: xcode-27
     timeout-minutes: 180
     strategy:
@@ -25,9 +25,11 @@ jobs:
       id: pins
       run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
     - name: Start host-pressure sampling
-      run: "echo \"DULCET_HOST_PRESSURE_LOG=$RUNNER_TEMP/dulcet-host-pressure.log\" >> \"$GITHUB_ENV\"\nnohup python3\
-        \ tools/ci/host-pressure sample \\\n  --output \"$RUNNER_TEMP/dulcet-host-pressure.log\" --interval 5 >/dev/null\
-        \ 2>&1 &\npython3 tools/ci/host-pressure mark \"$RUNNER_TEMP/dulcet-host-pressure.log\" job-start\n"
+      run: |
+        echo "DULCET_HOST_PRESSURE_LOG=$RUNNER_TEMP/dulcet-host-pressure.log" >> "$GITHUB_ENV"
+        nohup python3 tools/ci/host-pressure sample \
+          --output "$RUNNER_TEMP/dulcet-host-pressure.log" --interval 5 >/dev/null 2>&1 &
+        python3 tools/ci/host-pressure mark "$RUNNER_TEMP/dulcet-host-pressure.log" job-start
     - name: Select compatible Xcode
       run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
     - name: Stop Spotlight indexing on the runner
@@ -38,11 +40,9 @@ jobs:
         >> "$GITHUB_OUTPUT"
     - name: Compute the pinned Darwin ffmpeg cache key
       id: ffmpeg_key
-      run: 'echo "key=$(tools/conformance-env/install-darwin-ffmpeg cache-key)" >> "$GITHUB_OUTPUT"
-
+      run: |
+        echo "key=$(tools/conformance-env/install-darwin-ffmpeg cache-key)" >> "$GITHUB_OUTPUT"
         echo "prefix=$(tools/conformance-env/read-pin ffmpeg.darwin.prefix)" >> "$GITHUB_OUTPUT"
-
-        '
     - name: Restore the pinned Darwin ffmpeg build
       id: ffmpeg_cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -53,11 +53,9 @@ jobs:
       timeout-minutes: 30
       env:
         ROOT: ${{ steps.conformance_root.outputs.path }}
-      run: 'tools/conformance-env/prepare-darwin --output "$ROOT/bin"
-
+      run: |
+        tools/conformance-env/prepare-darwin --output "$ROOT/bin"
         tools/conformance-env/install-darwin-ffmpeg
-
-        '
     - name: Save the pinned Darwin ffmpeg build
       if: ${{ steps.ffmpeg_cache.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -80,15 +78,11 @@ jobs:
       if: ${{ matrix.device == 'ipad' }}
       id: ipados_conformance_destination
       timeout-minutes: 6
-      run: 'set -o pipefail
-
+      run: |
+        set -o pipefail
         IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
-
         echo "iPadOS conformance destination: udid=$IPAD_UDID"
-
         echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
-
-        '
     - name: Build the iOS shell for the iPhone conformance legs
       if: ${{ matrix.device == 'iphone' }}
       timeout-minutes: 10
@@ -101,6 +95,15 @@ jobs:
         IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
       run: xcodebuild build-for-testing -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug -destination
         "platform=iOS Simulator,id=$IPAD_UDID" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData"
+    - name: Build the tvOS Kotlin framework
+      timeout-minutes: 10
+      run: tools/run-gradle-exclusive --no-daemon :core:linkDebugFrameworkTvosSimulatorArm64
+    - name: Build the native tvOS preload test
+      timeout-minutes: 10
+      run: |-
+        xcodebuild build-for-testing -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
+          -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+          -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" -parallel-testing-enabled NO
     - name: Generate deterministic Darwin corpus
       env:
         ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -115,7 +118,12 @@ jobs:
     - name: Stop the idle build daemons before the timed proofs
       timeout-minutes: 3
       run: python3 tools/ci/stop-build-daemons
-    - name: Run controlled iphone diagnostic
+    - name: Repeat the exact tvOS preload case three times
+      id: tv_preload
+      timeout-minutes: 45
+      continue-on-error: true
+      run: tools/ci/run-tv-preload-diagnostic
+    - name: Run five status variants and exact iPhone candidate cases
       timeout-minutes: 130
       id: darwin_conformance
       env:
@@ -124,27 +132,48 @@ jobs:
         DULCET_CONFORMANCE_DISPOSABLE: 'true'
         DULCET_DEVICE: ${{ matrix.device }}
         IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
-      run: "set -o pipefail\ncase \"$DULCET_DEVICE\" in\n  ipad|iphone|tvos) ;;\n  *) echo \"unknown conformance\
-        \ leg device: '$DULCET_DEVICE'\" >&2; exit 1 ;;\nesac\n# This job's own disposable server and the one fixture\
-        \ its phases use: the fault proxy,\n# which forwards every request to this server unchanged except a lyrics\
-        \ read a proof arms it\n# to fail (tools/ci/run-lyrics-quality-proofs) and every request during an outage\
-        \ a playlist\n# proof switches on (tools/ci/run-ratings-playlists-proofs). The redirect, TLS and\n# forward-proxy\
-        \ fixtures serve only the core-conformance suites, which run in\n# apple-conformance-core. Navidrome logs\
-        \ where the failure upload below finds it; the proxy\n# writes no log file.\n\"$ROOT/bin/navidrome\" --configfile\
-        \ \"$ROOT/config/navidrome.toml\" > \"$ROOT/logs/navidrome.log\" 2>&1 &\nnavidrome_pid=$!\npython3 tools/conformance-env/lyrics-fault-proxy\
-        \ --port 4544 --upstream http://127.0.0.1:4533 &\nlyrics_proxy_pid=$!\ncleanup() {\n  kill \"$lyrics_proxy_pid\"\
-        \ >/dev/null 2>&1 || true\n  wait \"$lyrics_proxy_pid\" 2>/dev/null || true\n  kill \"$navidrome_pid\" >/dev/null\
-        \ 2>&1 || true\n  wait \"$navidrome_pid\" 2>/dev/null || true\n  tail -200 \"$ROOT/logs/navidrome.log\"\
-        \ || true\n}\ntrap cleanup EXIT\nfor _ in {1..20}; do\n  if curl --fail --silent http://127.0.0.1:4544/__dulcet/health\
-        \ >/dev/null; then break; fi\n  sleep 0.1\ndone\ncurl --fail --silent http://127.0.0.1:4544/__dulcet/health\
-        \ >/dev/null\ntools/conformance-env/health-check \\\n  --base-url http://127.0.0.1:4533 \\\n  --runtime\
-        \ darwin/arm64 \\\n  --expected-server-version \"$(tools/conformance-env/read-pin navidrome.version)\" \\\
-        \n  --expected-ffmpeg-version \"$(tools/conformance-env/read-pin ffmpeg.darwin.version)\" \\\n  --ffmpeg-command-json\
-        \ \"[\\\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\\\"]\" \\\n  --corpus-manifest \"$ROOT/music/corpus-manifest.json\"\
-        \nset -euo pipefail\ntools/ci/with-my-library-fixture --root \"$ROOT/my-library-iphone\" --music \"$ROOT/music\"\
-        \ \\\n  --ffmpeg \"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\" \\\n  --ffprobe \"$(dirname \"\
-        $(tools/conformance-env/read-pin ffmpeg.darwin.path)\")/ffprobe\" \\\n  -- tools/ci/run-native-ui-diagnostic\
-        \ iphone\n"
+      run: |
+        set -o pipefail
+        case "$DULCET_DEVICE" in
+          ipad|iphone|tvos) ;;
+          *) echo "unknown conformance leg device: '$DULCET_DEVICE'" >&2; exit 1 ;;
+        esac
+        # This job's own disposable server and the one fixture its phases use: the fault proxy,
+        # which forwards every request to this server unchanged except a lyrics read a proof arms it
+        # to fail (tools/ci/run-lyrics-quality-proofs) and every request during an outage a playlist
+        # proof switches on (tools/ci/run-ratings-playlists-proofs). The redirect, TLS and
+        # forward-proxy fixtures serve only the core-conformance suites, which run in
+        # apple-conformance-core. Navidrome logs where the failure upload below finds it; the proxy
+        # writes no log file.
+        "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
+        navidrome_pid=$!
+        python3 tools/conformance-env/lyrics-fault-proxy --port 4544 --upstream http://127.0.0.1:4533 &
+        lyrics_proxy_pid=$!
+        cleanup() {
+          kill "$lyrics_proxy_pid" >/dev/null 2>&1 || true
+          wait "$lyrics_proxy_pid" 2>/dev/null || true
+          kill "$navidrome_pid" >/dev/null 2>&1 || true
+          wait "$navidrome_pid" 2>/dev/null || true
+          tail -200 "$ROOT/logs/navidrome.log" || true
+        }
+        trap cleanup EXIT
+        for _ in {1..20}; do
+          if curl --fail --silent http://127.0.0.1:4544/__dulcet/health >/dev/null; then break; fi
+          sleep 0.1
+        done
+        curl --fail --silent http://127.0.0.1:4544/__dulcet/health >/dev/null
+        tools/conformance-env/health-check \
+          --base-url http://127.0.0.1:4533 \
+          --runtime darwin/arm64 \
+          --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+          --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+          --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+          --corpus-manifest "$ROOT/music/corpus-manifest.json"
+        set -euo pipefail
+        tools/ci/with-my-library-fixture --root "$ROOT/my-library-iphone" --music "$ROOT/music" \
+          --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+          --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
+          -- tools/ci/run-native-ui-diagnostic iphone
     - name: Stop host-pressure sampling and bound unfinished stack captures
       if: ${{ always() }}
       timeout-minutes: 1
@@ -165,31 +194,36 @@ jobs:
     - name: Inventory the Apple failure diagnostics
       if: ${{ always() }}
       shell: bash
-      run: "set -o pipefail\n# Sizes, not just names: a killed `tee` leaves a partial .log and a killed xcodebuild\
-        \ an\n# unfinalized .xcresult, and a name-only listing renders both exactly like healthy ones.\n# Globs\
-        \ are collected into one array rather than passed to a single `ls`: `ls a/*.x b/*.y`\n# exits non-zero when\
-        \ EITHER pattern fails to expand, which printed the files it found and\n# then reported \"NONE\" underneath\
-        \ them.\nshopt -s nullglob\nfound=(\"$RUNNER_TEMP\"/*.xcresult \"$RUNNER_TEMP\"/*.log \"$RUNNER_TEMP\"/dulcet-*-junit\
-        \ \"$RUNNER_TEMP\"/*/logs/*.log \"$RUNNER_TEMP\"/*/my-library-*/*.log)\necho \"APPLE FAILURE DIAGNOSTICS\
-        \ count=${#found[@]}\"\nif [ \"${#found[@]}\" -eq 0 ]; then\n  echo \"  NONE - nothing was written before\
-        \ the job stopped\"\nelse\n  du -sk \"${found[@]}\" | sed 's/^/  /'\nfi\n"
+      run: |
+        set -o pipefail
+        # Sizes, not just names: a killed `tee` leaves a partial .log and a killed xcodebuild an
+        # unfinalized .xcresult, and a name-only listing renders both exactly like healthy ones.
+        # Globs are collected into one array rather than passed to a single `ls`: `ls a/*.x b/*.y`
+        # exits non-zero when EITHER pattern fails to expand, which printed the files it found and
+        # then reported "NONE" underneath them.
+        shopt -s nullglob
+        found=("$RUNNER_TEMP"/*.xcresult "$RUNNER_TEMP"/*.log "$RUNNER_TEMP"/dulcet-*-junit "$RUNNER_TEMP"/*/logs/*.log "$RUNNER_TEMP"/*/my-library-*/*.log)
+        echo "APPLE FAILURE DIAGNOSTICS count=${#found[@]}"
+        if [ "${#found[@]}" -eq 0 ]; then
+          echo "  NONE - nothing was written before the job stopped"
+        else
+          du -sk "${found[@]}" | sed 's/^/  /'
+        fi
     - name: Upload Apple failure diagnostics
       if: ${{ always() }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: dulcet-apple-failure-diagnostics-${{ github.job }}-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt
           }}
-        path: '${{ runner.temp }}/*.xcresult
-
+        path: |
+          ${{ runner.temp }}/*.xcresult
           ${{ runner.temp }}/*.log
-
           ${{ runner.temp }}/dulcet-*-junit
-
           ${{ runner.temp }}/*/logs/*.log
-
           ${{ runner.temp }}/*/my-library-*/*.log
 
-          '
+          ${{ runner.temp }}/*.json
+          ${{ runner.temp }}/live-ax-winner.txt
         if-no-files-found: warn
         compression-level: 0
         retention-days: 14

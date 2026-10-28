@@ -422,14 +422,8 @@ public final class DulcetLibrarySession {
 #if DEBUG && os(iOS)
                 DulcetLiveAXDiagnostic.install()
                 DulcetLiveAXDiagnostic.record("phase=publish albums=\(publication.albums.count) artists=\(publication.artists.count) sync=\(publication.syncState) error=\(publication.error?.rawValue ?? "nil") notice=\(self.notice?.id ?? -1)")
-                if DulcetLiveAXDiagnostic.variant == "no-animation" {
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) { self.myLibrary = publication }
-                } else { self.myLibrary = publication }
-#else
-                self.myLibrary = publication
 #endif
+                self.myLibrary = publication
             }
         }
         setupCheck = made.setupFailed { [weak self] failed in

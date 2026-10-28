@@ -1,0 +1,41 @@
+#!/bin/bash
+# Diagnostic branch only: repeat the exact native preload case, with independent results.
+set -euo pipefail
+: "${RUNNER_TEMP:?}"
+python3 tools/ci/isolate-simulator --phase diagnostic-tv-preload --keep-name "Apple TV 4K (3rd generation)" --settle --require-settle --settle-pressure --require-isolation \
+  --warmup-app "$RUNNER_TEMP/DulcetTVDerivedData/Build/Products/Debug-appletvsimulator/Dulcet DEV.app"
+tv_udid="$(xcrun simctl list -j devices | python3 -c 'import json,sys; d=[x["udid"] for group in json.load(sys.stdin)["devices"].values() for x in group if x.get("state")=="Booted" and x.get("name")=="Apple TV 4K (3rd generation)"]; assert len(d)==1,d; print(d[0])')"
+selection='-only-testing:DulcetKitTVOSTests/AVPlayerEngineTests/aPreloadedAdvanceInheritsThePlayRequestAndReportsItsOwnProgress()'
+common=(test-without-building -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug
+  -destination "platform=tvOS Simulator,id=$tv_udid" -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData"
+  -parallel-testing-enabled NO "$selection")
+xcodebuild "${common[@]}" -enumerate-tests -test-enumeration-style flat -test-enumeration-format json \
+  -test-enumeration-output-path "$RUNNER_TEMP/tv-preload-enumeration.json" > "$RUNNER_TEMP/tv-preload-enumeration.log" 2>&1
+python3 - "$RUNNER_TEMP/tv-preload-enumeration.json" <<'PYTHON'
+import json,sys
+s=json.load(open(sys.argv[1]))
+assert 'aPreloadedAdvanceInheritsThePlayRequestAndReportsItsOwnProgress' in json.dumps(s),s
+print('TV PRELOAD exact case found in native enumeration')
+PYTHON
+failed=0
+for repeat in 1 2 3; do
+  set +e
+  xcodebuild "${common[@]}" -resultBundlePath "$RUNNER_TEMP/tv-preload-$repeat.xcresult" \
+    2>&1 | tee "$RUNNER_TEMP/tv-preload-$repeat.log"
+  test_exit=$?
+  set -e
+  if ! xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/tv-preload-$repeat.xcresult" > "$RUNNER_TEMP/tv-preload-$repeat-summary.json"; then
+    failed=$((failed + 1))
+    echo "TV PRELOAD repeat=$repeat missing native result test_exit=$test_exit"
+    continue
+  fi
+  if ! python3 - "$RUNNER_TEMP/tv-preload-$repeat-summary.json" "$repeat" "$test_exit" <<'PYTHON'
+import json,sys
+s=json.load(open(sys.argv[1]))
+print(f"TV PRELOAD repeat={sys.argv[2]} total={s['totalTestCount']} passed={s['passedTests']} failed={s['failedTests']} skipped={s['skippedTests']} exit={sys.argv[3]}")
+assert s['totalTestCount']==1 and s['passedTests']==1 and s['failedTests']==0 and s['skippedTests']==0 and sys.argv[3]=='0',s
+PYTHON
+  then failed=$((failed + 1)); fi
+done
+echo "TV PRELOAD REPEATS attempts=3 passed=$((3 - failed)) failed=$failed"
+[ "$failed" -eq 0 ]

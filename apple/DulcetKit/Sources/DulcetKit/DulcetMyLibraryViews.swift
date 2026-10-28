@@ -38,10 +38,15 @@ enum DulcetLiveAXDiagnostic {
     }
     static func contentChanged(_ library: DulcetMyLibrarySnapshot, destination: String, reason: String) {
         record("phase=content reason=\(reason) dest=\(destination) albums=\(library.albums.count) artists=\(library.artists.count) sync=\(library.syncState) error=\(library.error?.rawValue ?? "nil")")
-        guard variant == "layout-changed", !library.albums.isEmpty else { return }
-        // Yield the current update so the notification follows the rendered content change.
+    }
+    private static var lastStatus: String?
+    static func statusGeometry(_ signature: String, frame: CGRect, event: String, aggregate: Bool) {
+        record("phase=status-geometry state=\(signature) event=\(event) aggregate=\(aggregate) frame=\(frame)")
+        guard variant == "after-status", signature != lastStatus else { return }
+        lastStatus = signature
+        // Geometry belongs to the new status view. Post on the following main-queue turn.
         DispatchQueue.main.async {
-            record("phase=post-layoutChanged reason=\(reason) dest=\(destination)")
+            record("phase=post-status-layoutChanged state=\(signature) committedFrame=\(frame)")
             UIAccessibility.post(notification: .layoutChanged, argument: nil)
         }
     }
@@ -115,13 +120,36 @@ enum DulcetLiveAXDiagnostic {
     }
 }
 
-private struct DulcetLiveStatusSlot: ViewModifier {
+private struct DulcetStatusGeometry: ViewModifier {
+    let signature: String
+    var aggregate = false
     func body(content: Content) -> some View {
-        if DulcetLiveAXDiagnostic.variant == "stable-status" {
-            content.frame(height: 120, alignment: .topLeading)
-        } else { content }
+        content.background(GeometryReader { proxy in
+            Color.clear
+                .onAppear { report(proxy, event: "appear") }
+                .onChange(of: signature) { _, _ in report(proxy, event: "state") }
+                .onChange(of: proxy.frame(in: .global)) { _, _ in report(proxy, event: "frame") }
+        })
+    }
+    private func report(_ proxy: GeometryProxy, event: String) {
+        DulcetLiveAXDiagnostic.statusGeometry(signature, frame: proxy.frame(in: .global), event: event, aggregate: aggregate)
     }
 }
+private struct DulcetGridGeometry: ViewModifier {
+    let kind: String
+    let count: Int
+    func body(content: Content) -> some View {
+        content.background(GeometryReader { proxy in
+            Color.clear
+                .onAppear { report(proxy, event: "appear") }
+                .onChange(of: proxy.frame(in: .global)) { _, _ in report(proxy, event: "frame") }
+        })
+    }
+    private func report(_ proxy: GeometryProxy, event: String) {
+        DulcetLiveAXDiagnostic.record("phase=grid-geometry kind=\(kind) count=\(count) event=\(event) global=\(proxy.frame(in: .global)) content=\(proxy.frame(in: .named("my-library-content")))")
+    }
+}
+
 #endif
 
 struct DulcetReaderCollectionRoot: View {
@@ -249,6 +277,9 @@ struct DulcetMyLibraryCollection: View {
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
             ForEach(items) { item in DulcetReaderTile(item: item, width: tileWidth) }
         }
+#if DEBUG && os(iOS)
+        .modifier(DulcetGridGeometry(kind: items.first?.kind.rawValue ?? "empty", count: items.count))
+#endif
     }
 
     private func tracks(_ items: [DulcetReaderItem]) -> some View {
@@ -344,10 +375,6 @@ struct DulcetMyLibraryView: View {
             }
             .transaction { transaction in
                 DulcetLiveAXDiagnostic.record("phase=root-transaction animation=\(String(describing: transaction.animation)) disables=\(transaction.disablesAnimations)")
-                if DulcetLiveAXDiagnostic.variant == "no-animation" {
-                    transaction.animation = nil
-                    transaction.disablesAnimations = true
-                }
             }
 #endif
 #if os(iOS)
@@ -419,16 +446,21 @@ struct DulcetMyLibraryView: View {
                     DulcetLibraryDepthHome(width: geometry.size.width)
                     if let library = store.librarySession?.myLibrary {
                         DulcetMyLibraryShuffle(songs: library.songs)
+#if DEBUG
+                        if DulcetLiveAXDiagnostic.variant == "fixed-status" {
+                            // A concrete container receives the fixed frame once for the whole block.
+                            VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                                DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: 120, alignment: .topLeading)
+                            .modifier(DulcetStatusGeometry(signature: statusSignature(library), aggregate: true))
+                        } else if DulcetLiveAXDiagnostic.variant != "status-inset" {
+                            DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
+                                .modifier(DulcetStatusGeometry(signature: statusSignature(library)))
+                        }
+#else
                         DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
-#if DEBUG && os(iOS)
-                            .modifier(DulcetLiveStatusSlot())
-                            .background(GeometryReader { proxy in
-                                Color.clear.onAppear {
-                                    DulcetLiveAXDiagnostic.record("phase=status-appear sync=\(library.syncState) error=\(library.error?.rawValue ?? "nil") frame=\(proxy.frame(in: .global))")
-                                }.onChange(of: proxy.frame(in: .global)) { _, frame in
-                                    DulcetLiveAXDiagnostic.record("phase=status-frame sync=\(library.syncState) error=\(library.error?.rawValue ?? "nil") frame=\(frame)")
-                                }
-                            })
 #endif
                         VStack(spacing: 0) {
                             ForEach(DulcetMyLibrarySection.allCases) { choice in
@@ -447,16 +479,49 @@ struct DulcetMyLibraryView: View {
                             Text(DulcetStrings.recentlyAdded)
                                 .font(.title2.weight(.semibold))
                                 .accessibilityAddTraits(.isHeader)
+#if DEBUG
+                            if DulcetLiveAXDiagnostic.variant == "status-identity" {
+                                DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width)
+                                    .id(statusSignature(library))
+                            } else {
+                                DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width)
+                            }
+#else
                             DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width)
+#endif
                         }
                     }
                 }
+#if DEBUG
+                .coordinateSpace(name: "my-library-content")
+#endif
                 .padding(DulcetSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .refreshable { refresh() }
+#if DEBUG
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if DulcetLiveAXDiagnostic.variant == "status-inset", let library = store.librarySession?.myLibrary {
+                    if library.error != nil || library.syncState == "syncing" || library.syncState == "cached" {
+                        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                            DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
+                        }
+                        .padding(DulcetSpacing.sm)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.bar)
+                        .modifier(DulcetStatusGeometry(signature: statusSignature(library), aggregate: true))
+                    }
+                }
+            }
+#endif
         }
     }
+#if DEBUG
+    private func statusSignature(_ library: DulcetMyLibrarySnapshot) -> String {
+        library.syncState + "/" + (library.error?.rawValue ?? "nil")
+    }
+#endif
+
 #endif
 
     /// The whole Library for one section, chosen by the sidebar or the television's section row.
