@@ -81,6 +81,21 @@ struct DulcetMyLibraryStatusLines: View {
     }
 }
 
+#if os(iOS)
+/// Status layouts occupy different heights above the compact Library collection.
+enum DulcetMyLibraryStatusLayout: Hashable {
+    case unchanged, hidden, progress, cached, failure
+
+    init(_ library: DulcetMyLibrarySnapshot) {
+        guard #available(iOS 27, *) else { self = .unchanged; return }
+        if library.error != nil { self = .failure }
+        else if library.syncState == "syncing" { self = .progress }
+        else if library.syncState == "cached", library.lastReadAt != nil { self = .cached }
+        else { self = .hidden }
+    }
+}
+#endif
+
 /// The empty library's invitation; the Browse action reads and acts as a button.
 struct DulcetMyLibraryEmptyState: View {
     @Environment(DulcetPresentationStore.self) private var store
@@ -292,6 +307,9 @@ struct DulcetMyLibraryView: View {
                                 .font(.title2.weight(.semibold))
                                 .accessibilityAddTraits(.isHeader)
                             DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width)
+                                // On iOS 27, a layout move can leave a lazy AX node childless with a null frame.
+                                // Recreate it for status height changes; remove when status no longer moves lazy content.
+                                .id(DulcetMyLibraryStatusLayout(library))
                         }
                     }
                 }
