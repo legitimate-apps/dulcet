@@ -1,0 +1,38 @@
+#!/bin/bash
+# Diagnostic branch only: exact assertions with publication and transition records.
+set -euo pipefail
+: "${RUNNER_TEMP:?}"
+case "$1" in
+iphone)
+ python3 tools/ci/isolate-simulator --phase diagnostic-album --keep-name "iPhone 18 Pro" --settle --require-settle --settle-pressure --require-isolation \
+  --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
+ xcodebuild test-without-building -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+  -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+  -resultBundlePath "$RUNNER_TEMP/album-matrix.xcresult" -parallel-testing-enabled NO \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoDrag -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoMenu -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticCustomPreview -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoCombine -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoLabel -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoIdentifier -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoSubtitle -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticSwapGrid 2>&1 | tee "$RUNNER_TEMP/album-matrix.log"
+ ;;
+tvos)
+ python3 tools/ci/isolate-simulator --phase diagnostic-tv-focus --keep-name "Apple TV 4K (3rd generation)" --settle --require-settle --settle-pressure --require-isolation \
+  --warmup-app "$RUNNER_TEMP/DulcetTVDerivedData/Build/Products/Debug-appletvsimulator/Dulcet DEV.app"
+ xcodebuild test-without-building -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+  -resultBundlePath "$RUNNER_TEMP/tv-focus.xcresult" -parallel-testing-enabled NO \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
+  -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText 2>&1 | tee "$RUNNER_TEMP/tv-focus.log"
+ ;;
+ipad)
+ TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+ TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+ TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+ TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL=http://127.0.0.1:4544 \
+ TEST_RUNNER_DULCET_UI_TEST_SERVER_LOG="$ROOT/logs/navidrome.log" \
+ xcodebuild test-without-building -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+  -destination "$2" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+  -resultBundlePath "$RUNNER_TEMP/ipad-lyrics.xcresult" -parallel-testing-enabled NO \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900 \
+  -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheLyricsPanelShowsEveryStateOnIPadOS 2>&1 | tee "$RUNNER_TEMP/ipad-lyrics.log"
+ python3 tools/verify-xcode-test-execution "$RUNNER_TEMP/ipad-lyrics.xcresult" DulcetiOSUITests.DulcetiOSUITests testTheLyricsPanelShowsEveryStateOnIPadOS
+ ;;
+*) exit 2 ;;
+esac

@@ -111,8 +111,18 @@ struct DulcetMyLibraryCollection: View {
     var body: some View {
         switch section {
         case .recent:
+#if DEBUG && os(iOS)
+            if ProcessInfo.processInfo.arguments.contains("swap-grid") {
+                tiles(library.artists)
+                tiles(library.albums)
+            } else {
+                tiles(library.albums)
+                tiles(library.artists)
+            }
+#else
             tiles(library.albums)
             tiles(library.artists)
+#endif
             tracks(library.songs)
         case .albums: tiles(library.albums)
         case .artists: tiles(library.artists)

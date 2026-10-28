@@ -10,6 +10,64 @@ import UIKit
 @MainActor
 final class DulcetMyLibraryUITests: XCTestCase {
     private var app = XCUIApplication()
+    private var tileDiagnosticVariant = "baseline"
+    private var tileDiagnosticCheckpoint = 0
+    private var diagnosticLaunchCount = 0
+#if os(iOS)
+    func testTileDiagnosticNoDrag() throws { tileDiagnosticVariant = "no-drag"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testTileDiagnosticNoMenu() throws { tileDiagnosticVariant = "no-menu"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testTileDiagnosticCustomPreview() throws { tileDiagnosticVariant = "custom-preview"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testTileDiagnosticNoCombine() throws { tileDiagnosticVariant = "no-combine"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testTileDiagnosticNoLabel() throws { tileDiagnosticVariant = "no-label"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testTileDiagnosticNoIdentifier() throws { tileDiagnosticVariant = "no-identifier"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testTileDiagnosticNoSubtitle() throws { tileDiagnosticVariant = "no-subtitle"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testTileDiagnosticSwapGrid() throws { tileDiagnosticVariant = "swap-grid"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+#endif
+
+    private func diagnosticState(_ name: String) {
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = name + "-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name + "-screen"; screenshot.lifetime = .keepAlways; add(screenshot)
+        do {
+            let snapshot = try app.snapshot()
+            func describe(_ node: XCUIElementSnapshot) -> String {
+                "type=\(node.elementType.rawValue) identifier=\(node.identifier.debugDescription) label=\(node.label.debugDescription) value=\(String(describing: node.value)) frame=\(node.frame) children=\(node.children.count)"
+            }
+            var lines: [String] = []
+            func subtree(_ node: XCUIElementSnapshot, _ path: String) {
+                lines.append(path + " " + describe(node))
+                for (i, child) in node.children.enumerated() { subtree(child, path + "/\(i)") }
+            }
+            func visit(_ node: XCUIElementSnapshot, _ path: String, _ ancestors: [String]) {
+                if node.elementType == .other && node.frame == .zero {
+                    lines.append("ZERO-NODE path=\(path) ancestors=" + ancestors.joined(separator: " -> "))
+                    subtree(node, path)
+                }
+                for (i, child) in node.children.enumerated() {
+                    visit(child, path + "/\(i)", ancestors + [path + " " + describe(node)])
+                }
+            }
+            visit(snapshot, "root", [])
+            let attachment = XCTAttachment(string: lines.joined(separator: "\n"))
+            attachment.name = name + "-zero-node-snapshots"; attachment.lifetime = .keepAlways; add(attachment)
+            print("TILE ZERO SNAPSHOT " + lines.joined(separator: "\n"))
+        } catch { print("SNAPSHOT ERROR \(name) \(error)") }
+    }
+
+    private func observedAlbum(_ title: String) -> Bool {
+        tileDiagnosticCheckpoint += 1
+        let tile = albumTile(title)
+        let found = tile.waitForExistence(timeout: 20)
+        let artist = app.buttons.matching(identifier: "dulcet.library.artist").firstMatch
+        let prefix = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.library.album")).allElementsBoundByIndex
+        let titled = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", title)).allElementsBoundByIndex
+        let nodes = (prefix + titled).map { "type=\($0.elementType.rawValue) id=\($0.identifier) label=\($0.label) value=\(String(describing: $0.value)) frame=\($0.frame)" }
+        print("TILE RESULT variant=\(tileDiagnosticVariant) checkpoint=\(tileDiagnosticCheckpoint) original20s=\(found) artist=\(artist.exists) artistFrame=\(artist.exists ? String(describing: artist.frame) : "absent") nodes=\(nodes)")
+        diagnosticState("tile-\(tileDiagnosticVariant)-\(tileDiagnosticCheckpoint)-\(found ? "published" : "miss")")
+        return found
+    }
+
     // Keep each disposable proof's account separate on every shell. Relaunches inside
     // one proof retain this namespace; a later server must not inherit a prior account.
     private let accountFixtureNamespace = UUID().uuidString
@@ -87,7 +145,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(tvOS)
         try addFromFullGridMore(album)
         try select("library")
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
         app.terminate(); try launch()
@@ -129,13 +187,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // The compact root's destination rows precede its lazy Recently Added grid.
         // Relaunch resets its scroll position; reveal the actual tile before observing it.
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         try awaitServerMembership(album.id, added: true)
         app.terminate()
         try launch(connect: false)
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
+        XCTAssertTrue(observedAlbum(album.title), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
         let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 20))
@@ -152,7 +210,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         awaitLabel(offlineAdd, "Remove from Library")
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         // A direct read bypasses the offline proxy: it proves the write has not reached the server.
         let pendingBeforeRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingBeforeRelaunch)
@@ -172,7 +230,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             print("MY LIBRARY OFFLINE RELAUNCH lazy-grid-revealed scrolls=\(scrolls)")
         }
 #endif
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline relaunch paints the durable pending add before reconnect")
+        XCTAssertTrue(observedAlbum(album.title), "Offline relaunch paints the durable pending add before reconnect")
         let pendingAfterRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingAfterRelaunch)
         app.terminate()
@@ -180,7 +238,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch()
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
-        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
+        XCTAssertTrue(observedAlbum(album.title))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
     }
@@ -477,6 +535,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 "-dulcet-debug-account-username", username ?? user, "-dulcet-debug-account-password", password ?? self.password]
         }
         launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
+        diagnosticLaunchCount += 1
+        let appliedVariant = diagnosticLaunchCount == 1 ? "baseline" : tileDiagnosticVariant
+        launchArguments += ["-dulcet-debug-tile-variant", appliedVariant]
+        print("TILE LAUNCH variant=\(tileDiagnosticVariant) connect=\(connect)")
         app.launchArguments = launchArguments
 #if os(macOS)
         if !installedFixtureNetworkMonitor {
@@ -520,7 +582,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // content, as the ordinary-server path does, before choosing another destination.
             // A measured cold negotiation remained Connecting beyond 30 seconds under CI
             // host contention, then published the actual album tiles; allow that cold path.
-            let connected = app.buttons["dulcet.library.album"].firstMatch
+            let connected = tileDiagnosticVariant == "no-identifier"
+                ? app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Threshold Boundary")).firstMatch
+                : app.buttons["dulcet.library.album"].firstMatch
             if !connected.waitForExistence(timeout: 90) {
                 let welcome = app.buttons["Connect a Server"]
                 if welcome.exists { welcome.tap() }
@@ -698,6 +762,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) -> Int {
 #if os(iOS)
         guard UIDevice.current.userInterfaceIdiom == .phone else { return 0 }
+        // Removing the identifier is itself a diagnostic variant. Reveal by its unchanged
+        // title in that variant, then retain the original identifier assertion below.
+        let tile = tileDiagnosticVariant == "no-identifier"
+            ? app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Threshold Boundary")).firstMatch : tile
         // Library's destination rows and Browse's largest-text introduction precede a lazy
         // album grid. Reach that grid with touch scrolling before asserting its publication.
         for scrolls in 0..<8 {
@@ -835,34 +903,44 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private func focus(_ target: XCUIElement) {
         var previousFrame: CGRect?
-        for _ in 0..<40 {
+        for move in 0..<40 {
+            func press(_ direction: XCUIRemote.Button, reason: String) {
+                func state() -> String {
+                    let nodes = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).allElementsBoundByIndex
+                    return nodes.map { "type=\($0.elementType.rawValue) id=\($0.identifier.debugDescription) label=\($0.label.debugDescription) frame=\($0.frame)" }.joined(separator: " | ")
+                }
+                print("FOCUS MOVE \(move) direction=\(direction) reason=\(reason) targetID=\(target.identifier) targetLabel=\(target.label) targetFrame=\(target.frame) before=[\(state())]")
+                XCUIRemote.shared.press(direction)
+                print("FOCUS AFTER \(move) targetFrame=\(target.frame) after=[\(state())]")
+            }
             if isFocused(target) { return }
             let focusedCell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
             let current = focusedCell.exists ? focusedCell : app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-            guard current.exists else { XCUIRemote.shared.press(.down); continue }
+            guard current.exists else { press(.down, reason: "no-current"); continue }
             let a = current.frame, b = target.frame
             // Album Add is centred beside the vertical Play/Shuffle stack. Its centre is
             // below Play and above Shuffle, so centre-only steering oscillates Up/Down.
             // Overlapping vertical spans identify the reachable horizontal neighbour.
             if min(a.maxY, b.maxY) > max(a.minY, b.minY),
                b.minX >= a.maxX || b.maxX <= a.minX {
-                XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)
+                press(b.midX > a.midX ? .right : .left, reason: "overlap")
                 previousFrame = a
                 continue
             }
             if previousFrame == a && abs(a.midX - b.midX) > 20 {
                 // A narrow first-column tile can have no Down neighbor from a wider section bar.
-                XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)
+                press(b.midX > a.midX ? .right : .left, reason: "stalled-frame")
                 previousFrame = nil
                 continue
             }
             previousFrame = a
             if abs(a.midY - b.midY) > max(20, min(a.height, b.height) / 2) {
-                XCUIRemote.shared.press(b.midY > a.midY ? .down : .up)
+                press(b.midY > a.midY ? .down : .up, reason: "vertical-distance")
             } else {
-                XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)
+                press(b.midX > a.midX ? .right : .left, reason: "horizontal-distance")
             }
         }
+        diagnosticState("tv-focus-timeout")
         XCTFail("Remote could not focus " + target.debugDescription)
     }
 #endif

@@ -640,7 +640,24 @@ struct DulcetReaderTile: View {
     @State private var presentsTVActions = false
 #endif
 
+#if DEBUG
+    private var diagnosticVariant: String {
+        guard item.kind == .album,
+              let i = ProcessInfo.processInfo.arguments.firstIndex(of: "-dulcet-debug-tile-variant"),
+              ProcessInfo.processInfo.arguments.indices.contains(i + 1) else { return "baseline" }
+        return ProcessInfo.processInfo.arguments[i + 1]
+    }
+#endif
+
     var body: some View {
+#if DEBUG && os(iOS)
+        diagnosticAction
+#else
+        nativeAction
+#endif
+    }
+
+    private var nativeAction: some View {
 #if os(tvOS)
         if showsTVActionsMenu {
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
@@ -666,6 +683,33 @@ struct DulcetReaderTile: View {
             .dulcetReaderQueueDragSource(item)
 #endif
     }
+
+#if DEBUG && os(iOS)
+    @ViewBuilder private var diagnosticAction: some View {
+        switch diagnosticVariant {
+        case "no-drag": styledAction.dulcetReaderItemContextMenu(item)
+        case "no-menu": styledAction.dulcetReaderQueueDragSource(item)
+        case "custom-preview":
+            styledAction.contextMenu { DulcetReaderItemMenuItems(item: item) } preview: {
+                DulcetContextMenuPreview(store: store, artwork: item.artwork,
+                                        title: item.displayTitle, subtitle: item.artistName ?? "")
+            }.dulcetReaderQueueDragSource(item)
+        case "no-combine":
+            tileButton.dulcetMediaButtonStyle(hover: .lift).dulcetTakesFocusOnReturn(to: item.route)
+                .accessibilityLabel(accessibilityLabel).accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
+                .dulcetReaderItemContextMenu(item).dulcetReaderQueueDragSource(item)
+        case "no-label":
+            tileButton.dulcetMediaButtonStyle(hover: .lift).dulcetTakesFocusOnReturn(to: item.route)
+                .accessibilityElement(children: .combine).accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
+                .dulcetReaderItemContextMenu(item).dulcetReaderQueueDragSource(item)
+        case "no-identifier":
+            tileButton.dulcetMediaButtonStyle(hover: .lift).dulcetTakesFocusOnReturn(to: item.route)
+                .accessibilityElement(children: .combine).accessibilityLabel(accessibilityLabel)
+                .dulcetReaderItemContextMenu(item).dulcetReaderQueueDragSource(item)
+        default: nativeAction
+        }
+    }
+#endif
 
     private var styledAction: some View {
         tileButton
@@ -709,7 +753,11 @@ struct DulcetReaderTile: View {
     }
 
     private var resolvedSubtitle: String {
+#if DEBUG && os(iOS)
+        diagnosticVariant == "no-subtitle" ? "" : (subtitle ?? defaultSubtitle)
+#else
         subtitle ?? defaultSubtitle
+#endif
     }
 
     private var defaultSubtitle: String {
