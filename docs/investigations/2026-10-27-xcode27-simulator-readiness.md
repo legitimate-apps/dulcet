@@ -203,11 +203,30 @@ album drag interaction to its label also failed in
 this time after the saved-account relaunch at line 138. The first online relaunch
 passed. The album is again visible in the recording but absent from the AX tree;
 the artist is published. This does not isolate the drag interaction as the cause.
-Further production modifier changes are paused. A separate test-only
-[diagnostic run 40602486910](https://github.com/legitimate-apps/dulcet/actions/runs/40602486910)
-retains the original assertion result while observing a snapshot, a short wait
-and a small reversible scroll after an original miss. These observations cannot
-turn that miss into a pass.
+The speculative tile modifier changes have been reverted. The first diagnostic
+run, 40602486910, failed during fixture startup and supplies no accessibility
+evidence. The corrected test-only
+[diagnostic run 40608050935](https://github.com/legitimate-apps/dulcet/actions/runs/40608050935)
+retained the original assertion result while observing a snapshot, a short wait
+and a small reversible scroll after an original miss. Neither waiting nor moving
+the scroll position restored the album; the artist control stayed published.
+These observations cannot turn the original miss into a pass.
+
+The controlled matrix in
+[iPhone job 122598984681](https://github.com/legitimate-apps/dulcet/actions/runs/40622303960/job/122598984681)
+then reproduced the offline-pending miss with the original tile modifiers. Removing
+the drag, combined accessibility children, explicit label or subtitle separately
+did not restore publication. The identifier-removal variant failed its connection
+precondition before reaching Library, so it supplies no tile evidence.
+
+Swapping only the album and artist grid order published the album at
+`(16, 500, 150, 190.333)` while the artist disappeared. The original album case
+passed, but that variant transfers the accessibility failure and is not a fix.
+Both tiles are visibly drawn and unobscured in the original and swapped captures.
+The missing element follows the first lazy grid, rather than album kind or its
+tile modifiers. The original-miss snapshot contains two zero-frame `Other`
+leaves under the scroll content, each with an empty identifier and label, no value
+and no children. Their individual identities are not established by the snapshot.
 
 
 The following [PR platform check 122465865449](https://github.com/legitimate-apps/dulcet/actions/runs/40582613223/job/122465865449)
