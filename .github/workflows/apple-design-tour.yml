@@ -12,6 +12,11 @@ on:
         description: Optional space-separated capture names for an affected-page reshoot
         type: string
         default: ''
+      screens_device:
+        description: Apply the supplemental screen filter to this family; other selected families capture all states
+        type: choice
+        default: all
+        options: [all, iphone, ipad, mac, tvos]
       supplement_only:
         description: Reshoot the finite Library and Discover tour without the general tour
         type: boolean
@@ -132,7 +137,7 @@ jobs:
         env:
           CAPTURE_DEVICE: ${{ matrix.device }}
           DULCET_NATIVE_BASELINE_VARIANT: ${{ matrix.variant }}
-          DULCET_NATIVE_BASELINE_SCREENS: ${{ inputs.screens }}
+          DULCET_NATIVE_BASELINE_SCREENS: ${{ (!inputs.screens_device || inputs.screens_device == 'all' || inputs.screens_device == matrix.device) && inputs.screens || '' }}
         run: |
           ./gradlew --no-daemon --max-workers=2 :server:installDist
           if [[ "$CAPTURE_DEVICE" == tvos ]]; then
