@@ -735,11 +735,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) -> Int {
 #if os(iOS)
         guard UIDevice.current.userInterfaceIdiom == .phone else { return 0 }
-        // Library's destination rows and Browse's largest-text introduction precede a lazy
-        // album grid. Reach that grid with touch scrolling before asserting its publication.
+        // Native List exposes a CollectionView; artwork pages expose a ScrollView.
+        // Scroll the actual destination container before asserting a lazy tile's publication.
         for scrolls in 0..<8 {
             if tile.exists && tile.isHittable { return scrolls }
-            app.scrollViews.firstMatch.swipeUp()
+            let list = app.collectionViews.firstMatch
+            if list.exists { list.swipeUp() }
+            else { app.scrollViews.firstMatch.swipeUp() }
         }
         return 8
 #else
