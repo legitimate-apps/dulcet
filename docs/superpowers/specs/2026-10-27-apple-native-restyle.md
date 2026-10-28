@@ -201,3 +201,13 @@ UI proofs retain their test and action identifiers when an action moves into a n
 Server read-back still proves Favorite and membership writes. A menu action is not an inline
 heart, so the UI proof no longer claims that an inline heart fills before the server answers.
 The shared state tests continue to verify optimistic publication semantics.
+
+### Status placement after baseline capture
+
+Destination status lives in a safe-area banner outside its scrolling content. A status reflow
+must not insert or resize a sibling above the first lazy artwork grid. This also keeps offline
+and error feedback visible when the person scrolls a long collection. Account open and close
+actions attach to the current navigation content, including Playback and Downloads & Storage.
+The Mac current-track toolbar exposes numeric Rating through a native More submenu; Favorite
+remains a direct action. Queue entries can inject Move and Remove into the shared row's More
+and context menus through `additionalMenuActions`.

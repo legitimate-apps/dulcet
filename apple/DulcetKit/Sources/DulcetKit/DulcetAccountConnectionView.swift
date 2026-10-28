@@ -76,6 +76,7 @@ struct DulcetAccountConnectionView: View {
 
     var body: some View {
         accountSurface
+        .modifier(DulcetAccountSheetClose())
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         // Connection is a launch surface: its navigation bar's identifier is how tests read the

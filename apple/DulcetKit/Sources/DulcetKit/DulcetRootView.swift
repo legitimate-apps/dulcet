@@ -86,13 +86,7 @@ public struct DulcetRootView: View {
             NavigationStack {
                 DulcetAccountConnectionView(store: store)
             }
-            .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button(DulcetStrings.close, systemImage: "xmark") { accountPresented = false }
-                                .labelStyle(.iconOnly)
-                                .accessibilityIdentifier("dulcet.account.close")
-                        }
-                    }
+            .environment(\.dulcetCloseAccount, { accountPresented = false })
             .environment(store)
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -547,9 +541,6 @@ private struct DulcetCompactShell: View {
     private func tabPage(_ destination: DulcetSidebarDestination, systemAccessory: Bool) -> some View {
         DulcetDestinationStack(store: store, tab: destination,
             barPlacement: systemAccessory ? nil : .floating, onOpenPlayer: onOpenPlayer)
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) { accountButton }
-            }
     }
 
     private func tabLabel(_ destination: DulcetSidebarDestination) -> some View {
@@ -645,9 +636,12 @@ struct DulcetDestinationStack: View {
                     Color.dulcetWindow.ignoresSafeArea()
                 }
             }
+            .modifier(DulcetAccountToolbar())
             .allowsHitTesting(showing)
             .modifier(bar(drawsNotices: showing && (usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty)))
-            .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
+            .navigationDestination(for: StackRoute.self) { path in
+                stackPage(path).modifier(DulcetAccountToolbar())
+            }
         }
         // Concrete NavigationLink destinations need the same page chrome as store routes.
         .environment(\.dulcetPageNowPlayingBar, bar(drawsNotices: showing))
@@ -1220,7 +1214,10 @@ private struct DulcetStateSurface: View {
                             DulcetNowPlayingFavouriteButton(track: player.current)
                         }
                         ToolbarItem(placement: .primaryAction) {
-                            DulcetNowPlayingRatingControl(track: player.current)
+                            Menu {
+                                DulcetRatingMenu(target: .init(kind: .track, id: player.current.id), published: nil)
+                            } label: { Label(DulcetStrings.more, systemImage: "ellipsis.circle") }
+                            .accessibilityIdentifier("dulcet.now-playing.toolbar.more")
                         }
                     }
                 }

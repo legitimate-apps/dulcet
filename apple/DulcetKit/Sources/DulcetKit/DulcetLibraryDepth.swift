@@ -243,7 +243,7 @@ struct DulcetLibrarySongsPage: View {
     private var title: String { downloaded ? DulcetStrings.libraryDownloaded : store.myLibraryAvailable ? DulcetStrings.libraryServerSongs : DulcetStrings.librarySongs }
 
     var body: some View {
-        DulcetReaderScreen(query: downloaded ? .downloaded : .songs) { model in
+        DulcetReaderScreen(query: downloaded ? .downloaded : .songs, showsDestinationStatus: true) { model in
             DulcetReaderPage(title: title) { _ in
                 Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
@@ -276,7 +276,7 @@ struct DulcetArtistTopSongs: View {
     let id: DulcetProviderItemID
 
     var body: some View {
-        DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID)) { model in
+        DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { model in
             VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                 Text(DulcetStrings.libraryTopSongs).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                 Text(DulcetStrings.libraryTopSongsHint)

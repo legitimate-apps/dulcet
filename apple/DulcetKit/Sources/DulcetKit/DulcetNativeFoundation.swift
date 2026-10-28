@@ -30,7 +30,51 @@ private struct DulcetOpenAccountKey: EnvironmentKey {
     static let defaultValue: @MainActor () -> Void = {}
 }
 
+private struct DulcetCloseAccountKey: EnvironmentKey {
+    static let defaultValue: (@MainActor () -> Void)? = nil
+}
+
+struct DulcetAccountToolbar: ViewModifier {
+    @Environment(\.dulcetOpenAccount) private var open
+    func body(content: Content) -> some View {
+#if os(iOS)
+        content.toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: open) { Image(systemName: "person.crop.circle") }
+                    .accessibilityLabel(DulcetStrings.accountSection)
+                    .accessibilityIdentifier("dulcet.account.open")
+            }
+        }
+#else
+        content
+#endif
+    }
+}
+
+struct DulcetAccountSheetClose: ViewModifier {
+    @Environment(\.dulcetCloseAccount) private var close
+    func body(content: Content) -> some View {
+        content.toolbar {
+            if let close {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(DulcetStrings.close, systemImage: "xmark", action: close)
+                        .labelStyle(.iconOnly)
+                        .accessibilityIdentifier("dulcet.account.close")
+                }
+            }
+        }
+#if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+#endif
+    }
+}
+
 extension EnvironmentValues {
+    var dulcetCloseAccount: (@MainActor () -> Void)? {
+        get { self[DulcetCloseAccountKey.self] }
+        set { self[DulcetCloseAccountKey.self] = newValue }
+    }
+
     var dulcetOpenAccount: @MainActor () -> Void {
         get { self[DulcetOpenAccountKey.self] }
         set { self[DulcetOpenAccountKey.self] = newValue }
@@ -107,6 +151,7 @@ struct DulcetPlaybackSettingsPage: View {
 #endif
         .navigationTitle(DulcetStrings.playbackSettings)
         .accessibilityIdentifier("dulcet.settings.playback")
+        .modifier(DulcetAccountSheetClose())
     }
 }
 
@@ -119,6 +164,7 @@ struct DulcetDownloadsStoragePage: View {
 #endif
             .navigationTitle(DulcetStrings.downloadsStorage)
             .accessibilityIdentifier("dulcet.settings.downloadsStorage")
+            .modifier(DulcetAccountSheetClose())
     }
 }
 /// Shared collection geometry. Accessibility sizes use rows so titles retain their width.
