@@ -124,9 +124,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealAlbumActions()
         let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
-        XCTAssertEqual(add.label, "Add to Library")
+        XCTAssertEqual(actionText(add), "Add to Library")
         activate(add)
-        awaitLabel(add, "Remove from Library")
+        awaitLabel(add, "Remove from Library", albumMenu: true)
 #if !os(tvOS)
         // The production reader expands the newly added album, and the existing executor
         // downloads it without an explicit Download action. Cut only this account's HTTP
@@ -179,7 +179,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealAlbumActions()
         let offlineAdd = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         activate(offlineAdd)
-        awaitLabel(offlineAdd, "Remove from Library")
+        awaitLabel(offlineAdd, "Remove from Library", albumMenu: true)
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
@@ -227,8 +227,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealAlbumActions()
         let pin = app.descendants(matching: .any)["dulcet.pin.album.\(album.id)"].firstMatch
         XCTAssertTrue(pin.waitForExistence(timeout: 20))
-        if !pin.label.hasPrefix("Unpin") { activate(pin) }
-        awaitLabel(pin, "Unpin \(album.title)")
+        if !actionText(pin).hasPrefix("Unpin") { activate(pin) }
+        awaitLabel(pin, "Unpin \(album.title)", albumMenu: true)
         app.terminate()
         try setOffline(true)
         try launch(connect: false)
@@ -276,8 +276,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealAlbumActions()
         let unpin = app.descendants(matching: .any)["dulcet.pin.album.\(album.id)"].firstMatch
         XCTAssertTrue(unpin.waitForExistence(timeout: 20))
-        if unpin.label.hasPrefix("Unpin") { activate(unpin) }
-        awaitLabel(unpin, "Pin \(album.title)")
+        if actionText(unpin).hasPrefix("Unpin") { activate(unpin) }
+        awaitLabel(unpin, "Pin \(album.title)", albumMenu: true)
     }
 
 #if !os(tvOS)
@@ -456,7 +456,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             revealAlbumActions()
             let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
             XCTAssertTrue(add.waitForExistence(timeout: 30))
-            XCTAssertEqual(add.label, "Add to Library")
+            XCTAssertEqual(actionText(add), "Add to Library")
             try captureAlbumAdd("Album-Add-\(variant)", button: add)
         }
     }
@@ -486,7 +486,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealAlbumActions()
         let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
-        XCTAssertEqual(add.label, "Add to Library")
+        XCTAssertEqual(actionText(add), "Add to Library")
         try captureAlbumAdd("Album-Add-largest-text", button: add)
 #else
         throw XCTSkip("Compact iPhone capture correction")
@@ -624,6 +624,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
     }
     @MainActor private func selectDestination(_ section: String) {
+#if os(iOS)
+        // A saved/debug connection can leave Account presented above the landing page.
+        // Its underlying tab frames remain queryable but cannot receive the tap.
+        let accountClose = app.buttons["dulcet.account.close"].firstMatch
+        if accountClose.exists {
+            activate(accountClose)
+            let dismissed = accountClose.waitForNonExistence(timeout: 10)
+            XCTAssertTrue(dismissed, "Dismiss Account before selecting a native destination")
+            print("MY LIBRARY IOS account-dismissed=\(dismissed) target=\(section)")
+            guard dismissed else { return }
+        }
+#endif
         let membership = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
         if membership.exists {
 #if os(macOS)
@@ -917,16 +929,35 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
     @MainActor private func revealAlbumActions() {
         let action = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
+#if os(macOS)
+        // AppKit can retain a closed menu item's node. Existence alone is not visibility.
+        if action.exists && action.isHittable { return }
+#else
         if action.exists { return }
+#endif
         let more = app.descendants(matching: .any)["dulcet.album.more"].firstMatch
         XCTAssertTrue(more.waitForExistence(timeout: 15), "The album must offer More")
         activate(more)
         XCTAssertTrue(action.waitForExistence(timeout: 10), "The native menu must offer the membership action")
     }
 
-    @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String) {
-        if element.identifier.hasPrefix("dulcet.membership.album.") || element.identifier.hasPrefix("dulcet.pin.album.") { revealAlbumActions() }
+    @MainActor private func actionText(_ element: XCUIElement) -> String {
+#if os(macOS)
+        // Native AppKit menu items publish their visible text as title, with an empty label.
+        return element.label.isEmpty ? element.title : element.label
+#else
+        return element.label
+#endif
+    }
+    @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String, albumMenu: Bool = false) {
+        // Reopen before resolving a menu item's identifier: selecting an item closes its menu.
+        if albumMenu { revealAlbumActions() }
+#if os(macOS)
+        let menuTitle = label.hasPrefix("Unpin ") ? "Unpin" : label.hasPrefix("Pin ") ? "Pin" : label
+        let expected = NSPredicate(format: "label == %@ OR title == %@", label, menuTitle)
+#else
         let expected = NSPredicate(format: "label == %@", label)
+#endif
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)], timeout: 20), .completed)
     }
     @MainActor private func capture(_ name: String) throws {
