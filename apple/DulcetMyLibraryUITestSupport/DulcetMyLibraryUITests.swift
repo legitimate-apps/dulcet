@@ -335,7 +335,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         app.scrollViews.firstMatch.swipeUp()
         XCTAssertTrue(artistAlbum.isHittable, "The discography can be brought fully into the compact viewport")
         try capture("Library-Depth-Artist-Discography")
-        try select("library")
+        // This proof shuffles the complete server catalog. Its destination is Browse;
+        // Library's Songs category contains only personal membership.
+        try select("browse")
         let songs = app.buttons["dulcet.library.songs"].firstMatch
         try reveal(songs); activate(songs)
         let shuffle = app.buttons["dulcet.songs.shuffleAll"].firstMatch
@@ -353,7 +355,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func reveal(_ element: XCUIElement) throws {
         for _ in 0..<12 {
             if element.exists && element.isHittable { return }
-            app.scrollViews.firstMatch.swipeUp()
+            let list = app.collectionViews.firstMatch
+            if list.exists { list.swipeUp() }
+            else { app.scrollViews.firstMatch.swipeUp() }
         }
         XCTAssertTrue(element.waitForExistence(timeout: 10))
         XCTAssertTrue(element.isHittable)
