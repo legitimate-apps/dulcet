@@ -694,18 +694,28 @@ final class DulcetDesignTourUITests: XCTestCase {
         step("settings-quality", app) {
             if nativeAccount {
                 let link = app.buttons["dulcet.account.playback"].firstMatch
-                guard link.waitForExistence(timeout: 10), self.scrollIntoView(link, in: app) else { return false }
-                link.tap()
+                let accountForm = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+                guard link.waitForExistence(timeout: 10),
+                      self.scrollIntoView(link, in: app, scrollContainer: accountForm),
+                      self.tapVisibleFrame(link, in: app) else { return false }
+            }
+            if nativeAccount, !app.navigationBars["Playback"].firstMatch.waitForExistence(timeout: 5) {
+                print("DULCET FOUNDATION playback-link-unacknowledged " + app.debugDescription)
+                return false
             }
             let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
-            return self.scrollIntoView(quality, in: app) && quality.waitForExistence(timeout: 10) && self.settle(app)
+            let form = app.descendants(matching: .any)[nativeAccount ? "dulcet.settings.playback" : "dulcet.account.settingsForm"].firstMatch
+            return self.scrollIntoView(quality, in: app, scrollContainer: form)
+                && quality.waitForExistence(timeout: 10) && self.settle(app)
         }
         step("settings-storage", app) {
             if nativeAccount {
                 guard destination("Connection", "dulcet.sidebar.settings") else { return false }
                 let link = app.buttons["dulcet.account.downloadsStorage"].firstMatch
-                guard link.waitForExistence(timeout: 10), self.scrollIntoView(link, in: app) else { return false }
-                link.tap()
+                let accountForm = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+                guard link.waitForExistence(timeout: 10),
+                      self.scrollIntoView(link, in: app, scrollContainer: accountForm),
+                      self.tapVisibleFrame(link, in: app) else { return false }
             }
             let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
             let form = app.descendants(matching: .any)[nativeAccount ? "dulcet.settings.downloadsStorage" : "dulcet.account.settingsForm"].firstMatch
@@ -760,9 +770,9 @@ final class DulcetDesignTourUITests: XCTestCase {
                 .matching(NSPredicate(format: "label BEGINSWITH %@", "Threshold Boundary")).firstMatch
             let title = app.staticTexts["dulcet.album.title"].firstMatch
             for _ in 0..<3 {
-                guard tile.waitForExistence(timeout: 10), self.scrollIntoView(tile, in: app) else { return false }
+                guard self.scrollIntoView(tile, in: app, scrollContainer: app.scrollViews.firstMatch) else { return false }
                 _ = self.settle(app, seconds: 0.5)
-                tile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+                guard self.tapVisibleFrame(tile, in: app) else { return false }
                 if title.waitForExistence(timeout: 5), title.label == "Threshold Boundary",
                    app.buttons["dulcet.album.play"].firstMatch.waitForExistence(timeout: 5) { return true }
             }
@@ -985,6 +995,19 @@ final class DulcetDesignTourUITests: XCTestCase {
             if searchingDown { form.swipeUp() } else { form.swipeDown() }
         }
         return false
+    }
+
+    /// Use the published viewport geometry when native AX hit-point synthesis is stale.
+    /// The caller still observes the destination produced by this ordinary input event.
+    @MainActor
+    private func tapVisibleFrame(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard let snapshot = try? element.snapshot(), element.isHittable else { return false }
+        let visible = snapshot.frame.intersection(app.frame)
+        guard !visible.isNull, visible.width > 0, visible.height > 0 else { return false }
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: visible.midX - app.frame.minX,
+                                 dy: visible.midY - app.frame.minY)).tap()
+        return true
     }
 
     @MainActor
