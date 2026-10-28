@@ -23,7 +23,7 @@ struct DulcetPlayerVolumeControl: View {
             ), in: 0...1)
                 .disabled(!output.writable)
                 .accessibilityLabel(DulcetQueueStrings.volume)
-                .accessibilityValue(output.value.map { "\(Int(($0 * 100).rounded()))%" } ?? "")
+                .accessibilityValue(DulcetStrings.volumeValue(output.value ?? 0))
                 .accessibilityIdentifier("dulcet.player.volume")
             Image(systemName: "speaker.wave.3.fill").accessibilityHidden(true)
         }

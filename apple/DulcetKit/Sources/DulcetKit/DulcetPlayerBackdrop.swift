@@ -6,6 +6,7 @@ import CoreGraphics
 /// The window-colour scrim keeps semantic labels on a predictable light or dark surface.
 struct DulcetPlayerBackdrop: View {
     let artwork: DulcetArtwork
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dulcetReduceTransparencyOverride) private var reduceTransparencyOverride
@@ -22,7 +23,7 @@ struct DulcetPlayerBackdrop: View {
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-                Color.dulcetWindow.opacity(0.84)
+                Color.dulcetWindow.opacity(colorScheme == .dark ? 0.64 : 0.55)
             }
         }
         .allowsHitTesting(false)
@@ -59,20 +60,25 @@ struct DulcetPlayerBackdrop: View {
     }
 
     private static func sample(_ image: CGImage) -> [Color] {
-        var pixels = [UInt8](repeating: 0, count: 16)
+        var pixels = [UInt8](repeating: 0, count: 256)
         let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
             guard let context = CGContext(
-                data: buffer.baseAddress, width: 2, height: 2,
-                bitsPerComponent: 8, bytesPerRow: 8,
+                data: buffer.baseAddress, width: 8, height: 8,
+                bitsPerComponent: 8, bytesPerRow: 32,
                 space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             ) else { return false }
             context.interpolationQuality = .high
-            context.draw(image, in: CGRect(x: 0, y: 0, width: 2, height: 2))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: 8, height: 8))
             return true
         }
         guard drawn else { return [] }
-        return stride(from: 0, to: 16, by: 4).map { offset in
+        let offsets = stride(from: 0, to: 256, by: 4).sorted { lhs, rhs in
+            let l = [pixels[lhs], pixels[lhs + 1], pixels[lhs + 2]]
+            let r = [pixels[rhs], pixels[rhs + 1], pixels[rhs + 2]]
+            return Int(l.max()!) - Int(l.min()!) > Int(r.max()!) - Int(r.min()!)
+        }
+        return offsets.prefix(12).enumerated().filter { $0.offset % 3 == 0 }.map { _, offset in
             let alpha = Double(pixels[offset + 3])
             guard alpha > 0 else { return Color.dulcetWindow }
             return Color(

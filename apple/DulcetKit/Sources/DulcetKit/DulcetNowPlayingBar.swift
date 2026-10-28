@@ -16,6 +16,17 @@ struct DulcetNowPlayingBar: View {
         case expanded
     }
 
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+#endif
+    private var wideCompact: Bool {
+#if os(iOS)
+        horizontalSizeClass == .regular
+#else
+        false
+#endif
+    }
+
     @Bindable var store: DulcetPresentationStore
     var style: Style = .compact
     let onOpen: () -> Void
@@ -41,7 +52,7 @@ struct DulcetNowPlayingBar: View {
             if style == .expanded {
                 Spacer(minLength: DulcetSpacing.sm)
                 if let player = store.snapshot.nowPlaying {
-                    DulcetNowPlayingBarProgress(player: player)
+                    DulcetNowPlayingBarProgress(player: player, onSeek: { store.sendPlaybackControl(.seek($0)) })
                         .frame(maxWidth: 420)
                 }
                 Spacer(minLength: DulcetSpacing.sm)
@@ -49,7 +60,15 @@ struct DulcetNowPlayingBar: View {
             if store.snapshot.playbackFailed {
                 failureActions
             } else {
-                transport
+                transport(inline: inline)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if wideCompact, style == .compact, !inline, let player = store.snapshot.nowPlaying {
+                ProgressView(value: player.elapsed.dulcetSeconds, total: max(1, player.current.duration.dulcetSeconds))
+                    .tint(.primary.opacity(0.7))
+                    .padding(.horizontal, DulcetSpacing.sm)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.leading, DulcetSpacing.sm)
@@ -137,10 +156,10 @@ struct DulcetNowPlayingBar: View {
         }
     }
 
-    private var transport: some View {
+    private func transport(inline: Bool) -> some View {
         HStack(spacing: style == .expanded ? DulcetSpacing.sm : DulcetSpacing.xxs) {
             let player = store.snapshot.nowPlaying
-            if style == .expanded {
+            if style == .expanded || (wideCompact && !inline) {
                 transportButton(
                     symbol: "backward.fill",
                     label: DulcetStrings.previous,
@@ -157,12 +176,14 @@ struct DulcetNowPlayingBar: View {
             ) {
                 store.sendPlaybackControl(player?.isPlaying == true ? .pause : .play)
             }
+            if !inline {
             transportButton(
                 symbol: "forward.fill",
                 label: DulcetStrings.next,
                 identifier: "next",
                 enabled: player?.canGoNext == true
             ) { store.sendPlaybackControl(.next) }
+            }
         }
         .dulcetForeground(.primaryTextOnRegularMaterial)
     }
@@ -293,12 +314,19 @@ private struct DulcetMiniPlayerAccessoryLayout<Content: View>: View {
 /// The expanded bar's elapsed/remaining line. Read-only: seeking lives in the full player.
 private struct DulcetNowPlayingBarProgress: View {
     let player: DulcetNowPlaying
+    let onSeek: (Duration) -> Void
+    @State private var position: Double?
 
     var body: some View {
         VStack(spacing: 2) {
-            ProgressView(value: fraction)
-                .progressViewStyle(.linear)
-                .tint(.secondary)
+            Slider(value: Binding(get: { position ?? player.elapsed.dulcetSeconds }, set: { position = $0 }), in: 0...max(1, player.current.duration.dulcetSeconds)) { editing in
+                guard !editing, let position else { return }
+                onSeek(.milliseconds(Int64((position * 1_000).rounded())))
+                self.position = nil
+            }
+            .disabled(player.seekability != .seekable)
+            .controlSize(.small)
+            .accessibilityLabel(DulcetStrings.nowPlaying)
             HStack {
                 Text(player.elapsed.dulcetDuration)
                 Spacer()
@@ -307,8 +335,7 @@ private struct DulcetNowPlayingBarProgress: View {
             .font(.caption2.monospacedDigit())
             .dulcetForeground(.secondaryTextOnRegularMaterial)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(DulcetStrings.nowPlaying)
+        .accessibilityElement(children: .contain)
         .accessibilityValue(DulcetStrings.playbackProgress(
             elapsed: player.elapsed.dulcetDuration,
             duration: player.current.duration.dulcetDuration

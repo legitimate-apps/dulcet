@@ -120,6 +120,17 @@ final class DulcetMacDesignTourTest: XCTestCase {
             if let player = store.snapshot.nowPlaying {
                 await capturePlayerPresentationVariants(player: player, store: store)
             }
+            await step("player-second-artwork") {
+                store.selectDestination(.library)
+                store.selectLibrarySection(.albums)
+                guard await self.press("dulcet.library.album", label: "Player Color Study"),
+                      await self.find("dulcet.album.title") != nil,
+                      await self.press("dulcet.album.play"),
+                      await self.waitFor(seconds: 15, { store.snapshot.nowPlaying?.current.title == "Amber Evening" }) else { return false }
+                store.sendPlaybackControl(.pause)
+                store.selectDestination(.nowPlaying)
+                return await self.find("dulcet.now-playing.title") != nil
+            }
             return
         }
 
@@ -584,7 +595,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         guard let window, let original = window.contentView else { return }
         defer { window.contentView = original; hostingView = original }
         let track = player.current
-        for name in ["player-buffering", "player-long-title", "player-no-artwork"] {
+        for name in ["player-buffering", "player-long-title", "player-no-artwork", "up-next-empty", "up-next-long", "lyrics-loading", "lyrics-absent", "lyrics-failure", "lyrics-unsynced"] {
             let projectedTrack = DulcetTrack(
                 id: track.id,
                 title: name == "player-long-title"
@@ -597,6 +608,11 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 availability: track.availability, isFavorite: track.isFavorite,
                 downloadState: track.downloadState, albumID: track.albumID
             )
+            let entries: [DulcetQueueEntry] = name == "up-next-empty"
+                ? Array(player.queueEntries.prefix(1))
+                : name == "up-next-long"
+                    ? (0..<30).map { DulcetQueueEntry(id: DulcetQueueEntryID("capture-entry-\($0)"), track: player.queue[$0 % player.queue.count]) }
+                    : player.queueEntries
             let projected = DulcetNowPlaying(
                 sessionID: player.sessionID, current: projectedTrack, queue: player.queue,
                 currentIndex: player.currentIndex, sourceDisplayName: player.sourceDisplayName,
@@ -606,10 +622,21 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 seekability: player.seekability, progressBegan: player.progressBegan,
                 repeatMode: player.repeatMode, shuffleEnabled: player.shuffleEnabled,
                 canGoNext: player.canGoNext, canGoPrevious: player.canGoPrevious,
-                queueEntries: player.queueEntries, currentEntryIndex: player.currentEntryIndex,
+                queueEntries: entries, currentEntryIndex: player.currentEntryIndex,
                 autoplayActive: player.autoplayActive, sleepTimer: player.sleepTimer
             )
-            let host = NSHostingView(rootView: DulcetNowPlayingView(player: projected).environment(store))
+            let lyricsState: DulcetLyricsPanelState? = switch name {
+            case "lyrics-loading": .loading
+            case "lyrics-absent": DulcetLyricsPanelState.none
+            case "lyrics-failure": .unavailable(message: "Couldn't load lyrics. Check your connection and try again.", offersRetry: true)
+            case "lyrics-unsynced": .plain(DulcetLyricsDocument(
+                synced: false,
+                lines: ["Across the evening sky", "The colors turn to gold", "We follow every quiet road", "Until the morning comes"].map { DulcetLyricsLine(text: $0, startMilliseconds: nil) },
+                language: "en", trimmed: false, cursor: { _ in .none }
+            ))
+            default: nil
+            }
+            let host = NSHostingView(rootView: DulcetNowPlayingView(player: projected, lyricsPresentation: lyricsState).environment(store))
             host.frame = original.frame
             host.appearance = appearance
             window.contentView = host

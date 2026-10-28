@@ -303,6 +303,14 @@ final class DulcetDesignTourUITests: XCTestCase {
             guard bar.waitForExistence(timeout: 20), self.waitFor(timeout: 20, { bar.label.contains("Twenty Nine Seconds") }) else {
                 return false
             }
+            print("DULCET MINI before-scroll " + app.debugDescription)
+            self.shoot("mini-player-inline", app)
+            if compact, app.scrollViews.firstMatch.exists {
+                app.scrollViews.firstMatch.swipeDown()
+                app.scrollViews.firstMatch.swipeDown()
+                _ = self.settle(app)
+            }
+            print("DULCET MINI after-scroll " + app.debugDescription)
             self.shoot("mini-player", app)
             bar.tap()
             let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
@@ -331,6 +339,26 @@ final class DulcetDesignTourUITests: XCTestCase {
             return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
                 && self.settle(app)
         }
+            if compact {
+                step("up-next-edit", app) {
+                    let edit = app.buttons["dulcet.upNext.edit"].firstMatch
+                    guard edit.waitForExistence(timeout: 5) else { return false }
+                    edit.tap()
+                    return self.settle(app)
+                }
+                let done = app.buttons["dulcet.upNext.edit"].firstMatch
+                if done.exists { done.tap() }
+            }
+            closePlayer(in: app)
+            step("player-second-artwork", app) {
+                guard self.openAlbum("Player Color Study", in: app, compact: compact),
+                      app.buttons["dulcet.album.play"].firstMatch.waitForExistence(timeout: 10) else { return false }
+                app.buttons["dulcet.album.play"].firstMatch.tap()
+                let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+                guard self.waitFor(timeout: 15, { bar.label.contains("Amber Evening") }) else { return false }
+                bar.tap()
+                return app.staticTexts["dulcet.now-playing.title"].firstMatch.waitForExistence(timeout: 10) && self.settle(app, seconds: 2)
+            }
             closePlayer(in: app)
             return
         }

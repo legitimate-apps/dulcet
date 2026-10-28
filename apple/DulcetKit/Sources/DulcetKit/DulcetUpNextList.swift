@@ -42,8 +42,11 @@ public struct DulcetUpNextSection: View {
     private let model: DulcetUpNextModel
     private let onEdit: (DulcetQueueEditIntent) -> Void
     @State private var confirmingClear = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private let autoplay: DulcetAutoplayToggle?
 
-    public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void) {
+    public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void, autoplay: DulcetAutoplayToggle? = nil) {
+        self.autoplay = autoplay
         model = DulcetUpNextModel(nowPlaying: nowPlaying)
         self.onEdit = onEdit
     }
@@ -58,32 +61,64 @@ public struct DulcetUpNextSection: View {
                 rows
             }
         } header: {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(DulcetQueueStrings.upNext).font(.headline)
-                    if let source = model.sourceDisplayName {
-                        Text(DulcetQueueStrings.playingFrom(source))
-                            .font(.caption)
-                            .dulcetForeground(.secondaryTextOnWindow)
+            VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                if dynamicTypeSize.isAccessibilitySize {
+                    headerTitle
+                    headerActions
+                } else {
+                    HStack(alignment: .center) {
+                        headerTitle
+                        Spacer(minLength: DulcetSpacing.sm)
+                        headerActions
                     }
                 }
-                Spacer()
-                if !model.upcoming.isEmpty {
-                    Button(DulcetQueueStrings.clear) { confirmingClear = true }
-                        .buttonStyle(.borderless)
-                        .tint(.accentColor)
-                        .accessibilityIdentifier("dulcet.upNext.clear")
-                        .confirmationDialog(DulcetQueueStrings.clear, isPresented: $confirmingClear) {
-                            Button(DulcetQueueStrings.clear, role: .destructive) { onEdit(.clearUpcoming) }
-                        }
-#if os(iOS)
-                    EditButton()
-                        .buttonStyle(.borderless)
-                        .accessibilityIdentifier("dulcet.upNext.edit")
-#endif
-                }
+            }
+            .textCase(nil)
+            .padding(.vertical, DulcetSpacing.xs)
+        }
+    }
+
+    private var headerTitle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(DulcetQueueStrings.upNext).font(.headline)
+            if let source = model.sourceDisplayName {
+                Text(DulcetQueueStrings.playingFrom(source))
+                    .font(.caption)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(2)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: DulcetSpacing.md) {
+            if !model.upcoming.isEmpty {
+                Button(DulcetQueueStrings.clear) { confirmingClear = true }
+                    .accessibilityIdentifier("dulcet.upNext.clear")
+                    .confirmationDialog(DulcetQueueStrings.clear, isPresented: $confirmingClear) {
+                        Button(DulcetQueueStrings.clear, role: .destructive) { onEdit(.clearUpcoming) }
+                    }
+#if os(iOS)
+                EditButton().accessibilityIdentifier("dulcet.upNext.edit")
+#endif
+            }
+            if let autoplay {
+                Toggle(isOn: Binding(get: { autoplay.isOn }, set: autoplay.set)) {
+                    Image(systemName: "infinity")
+                }
+#if !os(tvOS)
+                .toggleStyle(.button)
+#endif
+                .accessibilityLabel(DulcetStrings.autoplay)
+                .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
+            }
+        }
+        .font(.subheadline)
+        .buttonStyle(.borderless)
+        .tint(.accentColor)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
     @ViewBuilder
@@ -108,40 +143,13 @@ public struct DulcetUpNextSection: View {
     }
 
     private func row(_ entry: DulcetQueueEntry, offset: Int) -> some View {
-        HStack(spacing: DulcetSpacing.sm) {
-            Button {
-                onEdit(model.jumpIntent(to: entry))
-            } label: {
-                HStack(spacing: DulcetSpacing.sm) {
-                    DulcetArtworkView(artwork: entry.track.artwork, size: 48)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(entry.track.title)
-                            .font(.body.weight(.medium))
-                            .lineLimit(2)
-                        Text(DulcetStrings.artistNames(entry.track.artistNames))
-                            .font(.subheadline)
-                            .dulcetForeground(.secondaryTextOnWindow)
-                            .lineLimit(2)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .dulcetHoverEffect()
-            .accessibilityIdentifier("dulcet.upNext.row.\(offset)")
-            Menu {
-                rowActions(entry, offset: offset)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .accessibilityLabel(DulcetStrings.more)
-            .accessibilityIdentifier("dulcet.upNext.more.\(offset)")
-        }
+        DulcetTrackRow(
+            track: entry.track, showAlbum: true, index: offset,
+            showsIndex: false,
+            onActivate: { onEdit(model.jumpIntent(to: entry)) }
+        ) { EmptyView() }
+        .queueEntry(activationIdentifier: "dulcet.upNext.row.\(offset)", moreIdentifier: "dulcet.upNext.more.\(offset)")
+        .additionalMenuActions { rowActions(entry, offset: offset) }
         // Reordering is a drag, which VoiceOver and Switch Control cannot perform on a row, so
         // Move Up and Move Down are named actions. Removal needs one only where the platform does
         // not already offer it: on iOS the row's swipe comes with a Delete action derived from
@@ -225,10 +233,6 @@ struct DulcetAutoplaySection: View {
             }
         } header: {
             VStack(alignment: .leading, spacing: 2) {
-                Toggle(isOn: Binding(get: { toggle.isOn }, set: toggle.set)) {
-                    Text(DulcetStrings.autoplay).font(.headline)
-                }
-                .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
                 Text(toggle.isOn && !toggle.isActive ? DulcetStrings.autoplayPaused : DulcetStrings.autoplayFootnote)
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
@@ -325,7 +329,7 @@ public struct DulcetUpNextList: View {
                                 .lineLimit(2)
                         }
                         Spacer(minLength: 0)
-                        Image(systemName: current.isPlaying ? "waveform" : "pause.fill")
+                        Image(systemName: current.isPlaying ? "waveform" : "play.fill")
                             .accessibilityHidden(true)
                     }
                     .accessibilityElement(children: .combine)
@@ -334,9 +338,9 @@ public struct DulcetUpNextList: View {
                     .listRowBackground(Color.clear)
                 }
             }
-            DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit)
+            DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit, autoplay: autoplay)
                 .listRowBackground(Color.clear)
-            if let autoplay {
+            if let autoplay, autoplay.isOn {
                 DulcetAutoplaySection(nowPlaying: nowPlaying, toggle: autoplay, onEdit: onEdit)
                     .listRowBackground(Color.clear)
             }

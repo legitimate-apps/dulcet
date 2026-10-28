@@ -21,6 +21,8 @@ struct DulcetLyricsPanel: View {
     let isPlaying: Bool
     /// Whether the playing track can be sought; a line tap seeks only then.
     var canSeek: Bool = false
+    /// Explicit state for previews and presentation-only capture instruments.
+    var presentationState: DulcetLyricsPanelState? = nil
     /// A tapped line's seek request; the caller routes it into the player's control path.
     var onSeek: (Duration) -> Void = { _ in }
 
@@ -56,7 +58,7 @@ struct DulcetLyricsPanel: View {
 
     @ViewBuilder
     private var content: some View {
-        switch model.state {
+        switch presentationState ?? model.state {
         case .loading:
             ProgressView()
                 .accessibilityLabel(DulcetStrings.lyricsLoading)
@@ -282,9 +284,13 @@ private struct DulcetSyncedLyrics: View {
     /// The synced lines, set as the system player sets them: the lines are the screen. One size
     /// for lit and unlit lines alike, so the follow of the lit line never jumps the layout; the
     /// lit line reads by its full-strength colour, and Dynamic Type still scales the style.
-    private static var lineFont: Font {
-#if os(tvOS)
-        .largeTitle.weight(.bold)
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @ScaledMetric(relativeTo: .largeTitle) private var wideLineSize: CGFloat = 44
+#endif
+    private var lineFont: Font {
+#if os(iOS)
+        horizontalSizeClass == .regular ? .system(size: wideLineSize, weight: .bold) : .largeTitle.weight(.bold)
 #else
         .largeTitle.weight(.bold)
 #endif
@@ -408,7 +414,7 @@ private struct DulcetSyncedLyrics: View {
         let focused = false
 #endif
         let text = Text(line.text.isEmpty ? DulcetStrings.lyricsSyncedBlankLine : line.text)
-            .font(Self.lineFont)
+            .font(lineFont)
             .multilineTextAlignment(.leading)
             .dulcetForeground(lit ? .primaryTextOnWindow : .secondaryTextOnWindow)
             .opacity(Self.lineOpacity(distance: distance, following: following, focused: focused))

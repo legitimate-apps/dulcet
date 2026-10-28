@@ -51,6 +51,8 @@ struct DulcetNowPlayingView: View {
     /// takes what the height leaves after it, so no control is ever below the screen's edge.
     @State private var playerChromeHeight: CGFloat?
     let player: DulcetNowPlaying
+    // Preview/capture input only; live lyrics continue to come from the account reader.
+    var lyricsPresentation: DulcetLyricsPanelState? = nil
     var presentation: Presentation = .destination
     var onControl: (DulcetPlaybackControlIntent) -> Void = { _ in }
     /// Queue edits from Up Next: jump, reorder, remove, clear.
@@ -100,7 +102,7 @@ struct DulcetNowPlayingView: View {
                     .frame(maxWidth: 520)
                     if showingLyrics || !hidingSideColumn {
                         sideColumn
-                        .frame(maxWidth: 390)
+                        .frame(maxWidth: showingLyrics ? 520 : 390)
                         .frame(height: Self.sideBySideQueueHeight(
                             windowHeight: geometry.size.height,
                             playerHeight: sideBySidePlayerHeight
@@ -231,6 +233,7 @@ struct DulcetNowPlayingView: View {
 #endif
             }
         }
+        .onAppear { if lyricsPresentation != nil { showingLyrics = true } }
         .background { DulcetPlayerBackdrop(artwork: player.current.artwork).ignoresSafeArea() }
         .dulcetForeground(.primaryTextOnWindow)
         .dulcetNavigationTitle(presentation == .destination ? DulcetStrings.nowPlaying : "")
@@ -458,6 +461,7 @@ struct DulcetNowPlayingView: View {
             elapsed: player.elapsed,
             isPlaying: player.isPlaying,
             canSeek: player.seekability == .seekable,
+            presentationState: lyricsPresentation,
             onSeek: { onControl(.seek($0)) }
         )
 #if os(iOS)
@@ -490,8 +494,10 @@ struct DulcetNowPlayingView: View {
             Image(systemName: showingLyrics ? "quote.bubble.fill" : "quote.bubble")
                 .font(.title3)
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
+                .background(showingLyrics ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
                 .contentShape(Rectangle())
         }
+        .accessibilityAddTraits(showingLyrics ? .isSelected : [])
         .dulcetMediaButtonStyle()
 #if os(tvOS)
         .focused($focusedFooterControl, equals: .lyrics)
@@ -620,7 +626,7 @@ struct DulcetNowPlayingView: View {
                             set: { store.setAutoplay($0) }
                         )
                     },
-                    showsCurrentTrack: regularLayout || !showingQueue
+                    showsCurrentTrack: false
                 )
 #if !os(tvOS)
                     .scrollContentBackground(.hidden)
@@ -689,25 +695,38 @@ struct DulcetNowPlayingView: View {
     }
 
     private func trackIdentity(alignment: HorizontalAlignment) -> some View {
-        HStack(alignment: .center, spacing: DulcetSpacing.sm) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(player.current.title)
-                    .font(.title2.weight(.bold))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("dulcet.now-playing.title")
-                DulcetArtistLink(
-                    credits: player.current.credits.filter { $0.role == .artist },
-                    font: .title3,
-                    onNavigate: onNavigate
-                )
+        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+            HStack(spacing: DulcetSpacing.sm) {
+                identityText
+                if !dynamicTypeSize.isAccessibilitySize { identityActions }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            if dynamicTypeSize.isAccessibilitySize { identityActions }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var identityText: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(player.current.title)
+                .font(.title2.weight(.bold))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("dulcet.now-playing.title")
+            DulcetArtistLink(
+                credits: player.current.credits.filter { $0.role == .artist },
+                font: .title3,
+                onNavigate: onNavigate
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var identityActions: some View {
+        HStack(spacing: DulcetSpacing.sm) {
 #if !os(macOS)
             favouriteButton
 #endif
             moreMenu
         }
-        .frame(maxWidth: .infinity)
     }
 
     private var moreMenu: some View {
@@ -997,6 +1016,14 @@ struct DulcetNowPlayingView: View {
         ProgressView(value: displayedSeconds, total: durationSeconds)
 #else
         if player.seekability == .seekable {
+#if os(macOS)
+            Slider(value: Binding(get: { displayedSeconds }, set: { scrubPosition = $0 }), in: 0...durationSeconds) { editing in
+                guard !editing, let seconds = scrubPosition else { return }
+                scrubPosition = nil
+                onControl(.seek(.milliseconds(Int64((seconds * 1_000).rounded()))))
+            }
+            .accessibilityLabel(DulcetStrings.nowPlaying)
+#else
             DulcetScrubber(
                 value: Binding(
                     get: { displayedSeconds },
@@ -1009,8 +1036,10 @@ struct DulcetNowPlayingView: View {
                     onControl(.seek(.milliseconds(Int64((seconds * 1_000).rounded()))))
                 }
             )
+            .opacity(0.65)
 #if os(iOS)
             .dulcetPlayerGestureRegion()
+#endif
 #endif
         } else {
             ProgressView(value: displayedSeconds, total: durationSeconds)
@@ -1185,7 +1214,7 @@ struct DulcetPlayerCover: View {
     var body: some View {
         DulcetArtworkView(artwork: artwork, size: size)
             .shadow(color: .black.opacity(isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
-            .background { DulcetArtworkGlow(artwork: artwork, size: size) }
+
             .scaleEffect(scale)
             .animation(reduceMotion ? nil : .spring(duration: 0.4), value: isPlaying)
     }
