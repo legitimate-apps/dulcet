@@ -449,8 +449,15 @@ struct DulcetPersonalLibraryRoot: View {
 #if os(macOS)
             if let favorites, favorites.hasContent {
                 Section {
-                    ForEach(favorites.items.filter { $0.kind == .album || $0.kind == .artist }.prefix(8)) { item in
-                        DulcetReaderListRow(item: item)
+                    ForEach(favorites.items.prefix(8)) { item in
+                        if item.kind == .track {
+                            DulcetReaderTrackRow(item: item, index: 1, showsIndex: false) { track in
+                                store.playReaderTracks(favorites.items.compactMap(\.playableTrack), startingAt: track,
+                                    sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.readerFavorites)
+                            }
+                        } else {
+                            DulcetReaderListRow(item: item)
+                        }
                     }
                 } header: { Text(DulcetStrings.readerFavorites) }
             }
