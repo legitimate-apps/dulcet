@@ -1067,8 +1067,8 @@ private struct DulcetSidebar: View {
                 if store.selectedDestination == .library,
                    case let .myLibrarySection(section)? = store.readerPath.first { return .myLibrarySection(section) }
                 if store.readerOwnsLibrary, store.selectedDestination == .browse,
-                   store.librarySection != .home {
-                    return .section(store.librarySection)
+                   case let .section(section)? = store.readerPath.first {
+                    return .section(section)
                 }
                 return .destination(store.selectedDestination)
             },
@@ -1079,22 +1079,14 @@ private struct DulcetSidebar: View {
                 case nil:
                     return
                 case let .destination(destination):
-                    // Library, chosen from elsewhere, comes back as it was left. Chosen while
-                    // showing a page, it returns to that section's root; chosen at a section's
-                    // root, it goes Home.
-                    if destination == .browse, store.readerOwnsLibrary, store.selectedDestination == destination,
-                       store.readerPath.isEmpty, store.librarySection != .home {
-                        store.selectLibrarySection(.home)
-                    } else {
-                        store.navigate(to: destination)
-                    }
+                    store.navigate(to: destination)
                 case let .section(section):
                     store.selectLibrarySection(section)
                 case .wishlist:
                     DulcetUIProofMarkers.record("discover-wishlist-sidebar")
                     store.showReaderPage(.wishlist)
                 case let .myLibrarySection(section):
-                    store.showReaderPage(.myLibrarySection(section))
+                    store.selectMyLibrarySection(section)
                 }
             }
         )

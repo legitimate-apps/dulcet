@@ -304,6 +304,7 @@ struct DulcetFavouriteMenuItem: View {
             Button(on ? DulcetStrings.unfavorite : DulcetStrings.favorite, systemImage: on ? "heart.slash" : "heart") {
                 session.setFavourite(target, favourite: !on)
             }
+            .accessibilityIdentifier("dulcet.\(target.kind.rawValue).favorite")
         }
     }
 }
@@ -1232,7 +1233,7 @@ struct DulcetReaderHomeView: View {
                 }
                 ForEach([DulcetHomeRow.recentlyAdded, .recentlyPlayed, .mostPlayed]) { row in
                     DulcetReaderShelf(row: row, width: geometry.size.width)
-                        .listRowSeparator(.hidden)
+                        .dulcetHideListRowSeparator()
                 }
             }
             .listStyle(.plain)
@@ -1413,6 +1414,7 @@ struct DulcetReaderAlbumGridView: View {
                     ToolbarItem(placement: .primaryAction) {
                         Menu { DulcetLibraryCategoryControls(category: category, albumSort: true) }
                         label: { Label(DulcetStrings.readerSortBy, systemImage: "arrow.up.arrow.down") }
+                        .accessibilityIdentifier("dulcet.library.\(category).options")
                     }
                 } else if let sort {
                     ToolbarItem(placement: .primaryAction) { sortPicker(sort) }
@@ -1912,8 +1914,7 @@ struct DulcetReaderLibraryRoot: View {
 #endif
 
     var body: some View {
-        DulcetReaderSectionView(section: store.librarySection)
-            .id(store.librarySection)
+        DulcetReaderHomeView()
     }
 
 }
