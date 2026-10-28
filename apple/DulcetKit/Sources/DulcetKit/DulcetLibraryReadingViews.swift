@@ -855,10 +855,7 @@ struct DulcetReaderTrackRow: View {
                         if let target = item.favouriteTarget { DulcetMyLibraryButton(target: target, menu: true) }
                     }
             }
-            DulcetLibraryPinControl(item: item)
-            if showsTrailingHeart, let target = item.favouriteTarget {
-                DulcetFavouriteButton(target: target, published: item.isFavourite, title: item.displayTitle)
-            }
+
         }
     }
 
@@ -938,9 +935,7 @@ struct DulcetReaderTrackRow: View {
             queueAddition: queueAddition,
             onActivate: item.isUnavailableOffline ? nil : { onPlay(track) },
             onDownload: downloadAction(track)
-        ) {
-            rowHeart
-        }
+        )
     }
 
     /// The track as its download stands now: the reader's rows carry none of their own.

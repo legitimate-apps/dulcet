@@ -788,20 +788,36 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     var body: some View {
-        #if os(macOS)
-        // The Download control sits beside the row, not inside it: the row's label and identifier
-        // would otherwise be read for the control too, and VoiceOver would hear the track's name
-        // where the button is.
-        HStack(spacing: 0) {
+        HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: DulcetSpacing.xxs) {
             labelledRow
-            if !offline, let onDownload {
-                downloadControl(action: onDownload)
-                    .padding(.trailing, DulcetSpacing.xs)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Menu {
+                DulcetTrackMenuItems(
+                    track: track,
+                    onPlay: unavailableOffline ? nil : onActivate,
+                    queueAddition: queueAddition,
+                    offersAlbum: showAlbum,
+                    publishedRating: nil,
+                    onDownload: offline ? nil : onDownload,
+                    onNavigate: {}
+                )
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.body.weight(.semibold))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
+            .accessibilityIdentifier("dulcet.track.more")
         }
-        #else
-        labelledRow
-        #endif
+#if os(iOS)
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: nil)
+                .tint(.accentColor)
+        }
+#endif
     }
 
     @ViewBuilder
@@ -870,7 +886,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.xs : DulcetMetrics.denseRowVerticalPadding)
 #if os(iOS)
         // A touch listing gets full-height rows; the dense form is a pointer layout.
-        .frame(minHeight: !dynamicTypeSize.isAccessibilitySize && showsArtwork ? nil : 44)
+        .frame(minHeight: showsArtwork ? 56 : 44)
 #endif
         .contentShape(Rectangle())
     }
@@ -889,15 +905,9 @@ struct DulcetTrackRow<Trailing: View>: View {
 
                 durationOrOffline
 
-                #if !os(macOS)
-                // On a touch listing the row itself plays, so Download lives in the row's menu;
-                // the row shows only where a download stands once there is one.
-                if !offline, onDownload != nil, track.downloadState != .notDownloaded {
+                if !unavailableOffline, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
-                #endif
-
-                trailing
         }
     }
 
@@ -914,12 +924,9 @@ struct DulcetTrackRow<Trailing: View>: View {
                 leadingGroup
                 Spacer(minLength: DulcetSpacing.xs)
                 durationOrOffline
-                #if !os(macOS)
-                if !offline, onDownload != nil, track.downloadState != .notDownloaded {
+                if !unavailableOffline, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
-                #endif
-                trailing
             }
         }
     }
@@ -948,20 +955,17 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var artwork: some View {
         DulcetArtworkView(
             artwork: track.artwork,
-            size: DulcetMetrics.denseRowArtworkSize,
+            size: rowArtworkSize,
             muted: unavailableOffline
         )
-        .overlay {
-            if !showsIndex, unavailableOffline || isCurrent {
-                Image(systemName: unavailableOffline ? "icloud.slash" : "speaker.wave.2.fill")
-                    .font(.caption)
-                    .dulcetForeground(.primaryTextOnRegularMaterial)
-                    .padding(4)
-                    .background(.regularMaterial, in: Circle())
-                    .accessibilityHidden(true)
-                    .allowsHitTesting(false)
-            }
-        }
+    }
+
+    private var rowArtworkSize: CGFloat {
+#if os(tvOS)
+        72
+#else
+        48
+#endif
     }
 
     private var titleStack: some View {
@@ -1057,7 +1061,6 @@ struct DulcetTrackRow<Trailing: View>: View {
         }
     }
 
-    #if !os(macOS)
     @ViewBuilder
     private var downloadStateGlyph: some View {
         Group {
@@ -1081,7 +1084,6 @@ struct DulcetTrackRow<Trailing: View>: View {
         .font(.caption)
         .accessibilityHidden(true)
     }
-    #endif
 
     #if os(macOS)
     @ViewBuilder
@@ -1137,6 +1139,7 @@ extension DulcetTrackRow where Trailing == EmptyView {
         showsIndex: Bool = true,
         prominentTVFocus: Bool = false,
         albumArtists: [String] = [],
+        queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil
     ) {
@@ -1151,6 +1154,7 @@ extension DulcetTrackRow where Trailing == EmptyView {
             showsIndex: showsIndex,
             prominentTVFocus: prominentTVFocus,
             albumArtists: albumArtists,
+            queueAddition: queueAddition,
             onActivate: onActivate,
             onDownload: onDownload,
             trailing: { EmptyView() }
@@ -1573,19 +1577,28 @@ private struct DulcetTrackContextMenu: ViewModifier {
     let onNavigate: () -> Void
 
     func body(content: Content) -> some View {
-#if os(tvOS)
-        content.contextMenu { menuItems }
-#else
-        // The system preview, not DulcetContextMenuPreview: on iOS every track row is also a
-        // drag source onto the queue, and only with the row itself as the preview does a drag
-        // that carries on out of the open menu lift the track. Under a custom preview the menu
-        // kept the touch and the drag never began (§3.1).
-        content.contextMenu { menuItems }
-#endif
+        content.contextMenu {
+            DulcetTrackMenuItems(track: track, onPlay: onPlay, queueAddition: queueAddition,
+                offersAlbum: offersAlbum, publishedRating: publishedRating,
+                onDownload: onDownload, onNavigate: onNavigate)
+        }
     }
+}
+
+/// One action vocabulary for the row's More button and its context menu.
+struct DulcetTrackMenuItems: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(DulcetPresentationStore.self) private var store
+    let track: DulcetTrack
+    let onPlay: (() -> Void)?
+    let queueAddition: DulcetQueueAddition?
+    let offersAlbum: Bool
+    let publishedRating: Int?
+    let onDownload: (() -> Void)?
+    let onNavigate: () -> Void
 
     @ViewBuilder
-    private var menuItems: some View {
+    var body: some View {
 #if os(iOS)
         if dynamicTypeSize.isAccessibilitySize {
             if let onPlay, track.availability == .playable {
@@ -1613,14 +1626,17 @@ private struct DulcetTrackContextMenu: ViewModifier {
             switch track.downloadState {
             case .notDownloaded, .cached:
                 Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: onDownload)
+                    .accessibilityIdentifier("dulcet.track.download")
             case .interrupted, .failed:
                 Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
             case .downloaded, .stale:
-                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle.fill", action: onDownload)
+                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle", action: onDownload)
             case .queued, .downloading:
                 EmptyView()
             }
         }
+        Divider()
+        DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: nil)
         DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
             Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
@@ -1644,16 +1660,19 @@ private struct DulcetTrackContextMenu: ViewModifier {
             switch track.downloadState {
             case .notDownloaded, .cached:
                 Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: onDownload)
+                    .accessibilityIdentifier("dulcet.track.download")
             case .interrupted, .failed:
                 Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
             case .downloaded, .stale:
-                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle.fill", action: onDownload)
+                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle", action: onDownload)
             case .queued, .downloading:
                 EmptyView()
             }
         }
         DulcetMyLibraryButton(target: DulcetFavouriteTarget(kind: .track, id: track.id), menu: true)
         DulcetAddTrackToPlaylistMenuItem(track: track)
+        Divider()
+        DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: nil)
         DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
             Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
