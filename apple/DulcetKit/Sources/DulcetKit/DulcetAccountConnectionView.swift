@@ -41,6 +41,11 @@ struct DulcetAccountConnectionView: View {
         self.focusDidChange = focusDidChange
     }
 
+    private var primaryFocus: DulcetAccountConnectionFocus {
+        if case .failed = store.snapshot.accountConnection { return .tryAgain }
+        return .primaryAction
+    }
+
     private var isConnecting: Bool {
         if case .connecting = store.snapshot.accountConnection { return true }
         return false
@@ -75,7 +80,25 @@ struct DulcetAccountConnectionView: View {
         .dulcetForeground(.primaryTextOnWindow)
         // Connection is a launch surface: its navigation bar's identifier is how tests read the
         // launch section, so the bar stays (and the content begins below it).
-        .dulcetNavigationTitle(DulcetStrings.settings, keepsTVNavigationBar: true)
+        .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: true)
+#if !os(tvOS)
+        .toolbar {
+            if !store.snapshot.accountConnection.isConnected {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isConnecting ? DulcetStrings.cancel : (savedServerName == nil ? DulcetStrings.signIn : DulcetStrings.reconnect)) {
+                        performAccountPrimaryAction()
+                    }
+                    .disabled(!isConnecting && !canSubmit)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("dulcet.account-connect.primary-action")
+                    .focused($focusedControl, equals: primaryFocus)
+                }
+            }
+        }
+#endif
+#if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+#endif
 #if os(iOS)
         // Dragging the form puts the keyboard away, uncovering the tab bar.
         .scrollDismissesKeyboard(.interactively)
@@ -131,7 +154,7 @@ struct DulcetAccountConnectionView: View {
             Button(DulcetStrings.signOut, role: .destructive) {
                 store.removeAccount()
             }
-            Button(DulcetStrings.cancel, role: .cancel) {}
+            Button(DulcetStrings.cancel, role: .cancel) {}.dulcetDefaultActionShortcut()
         } message: {
             Text(DulcetStrings.signOutConfirmationBody)
         }
@@ -177,22 +200,30 @@ struct DulcetAccountConnectionView: View {
                 if store.snapshot.accountRemoval == .removing {
                     accountRemovalProgress
                 } else {
-                    savedServers
-                    HStack(alignment: .top, spacing: 48) {
-                        tvConnectionForm
-                            .frame(maxWidth: .infinity)
-                        VStack(alignment: .leading, spacing: 24) {
-                            Text(DulcetStrings.accountConnectBody)
-                                .font(.title3)
-                                .dulcetForeground(.secondaryTextOnWindow)
-                            statusPanel
+                    if case let .connected(account) = store.snapshot.accountConnection {
+                        Form {
+                            Section {
+                                Label(account.serverName, systemImage: "person.crop.circle")
+                                if let user = account.canonicalUsername { LabeledContent(DulcetStrings.username, value: user) }
+                            }
+                            Section {
+                                NavigationLink { DulcetPlaybackSettingsPage(store: store) }
+                                label: { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
+                                    .accessibilityIdentifier("dulcet.account.playback")
+                                NavigationLink { DulcetDownloadsStoragePage(store: store) }
+                                label: { Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle") }
+                                    .accessibilityIdentifier("dulcet.account.downloadsStorage")
+                            }
+                            Section { savedServers }
+                            Section {
+                                Button(DulcetStrings.signOut, role: .destructive) { showingSignOutConfirmation = true }
+                            }
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .focusSection()
+                    } else {
+                        savedServers
+                        tvConnectionForm
+                        statusPanel
                     }
-                    DulcetStreamingQualitySection(store: store)
-                    DulcetCrossfadeSection(store: store)
-                    DulcetOfflineLibrarySection(store: store)
                 }
             }
             .padding(40)
@@ -200,82 +231,87 @@ struct DulcetAccountConnectionView: View {
             .frame(maxWidth: .infinity)
             .focusScope(accountFocusScope)
         }
-#elseif os(macOS)
-        GeometryReader { geometry in
-            Form {
-                if store.snapshot.accountRemoval == .removing {
-                    Section { accountRemovalProgress }
-                } else {
-                    Section { savedServers }
-                    Section {
-                        connectionForm
-                    } footer: {
-                        Text(DulcetStrings.accountConnectBody)
-                    }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel(DulcetStrings.accountDetails)
-                    .accessibilityIdentifier("dulcet.account-connect.title")
-                    Section { statusPanel }
-                    DulcetStreamingQualitySection(store: store, inForm: true)
-                    DulcetCrossfadeSection(store: store, inForm: true)
-                    DulcetOfflineLibrarySection(store: store, inForm: true)
-                }
-            }
-            .formStyle(.grouped)
-            .contentMargins(.horizontal, max(20, (geometry.size.width - 720) / 2), for: .scrollContent)
-            .padding(.top, 24)
-        }
-
 #else
-        ScrollViewReader { proxy in
-            Form {
-                if store.snapshot.accountRemoval == .removing {
-                    Section { accountRemovalProgress }
-                } else {
-                    Section { savedServers }
-                    accountCredentialsSection
-                    accountStatusSection
-                    DulcetStreamingQualitySection(store: store, inForm: true)
-                    DulcetCrossfadeSection(store: store, inForm: true)
-                    DulcetOfflineLibrarySection(store: store, inForm: true)
-                }
-            }
-            .formStyle(.grouped)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("dulcet.account.settingsForm")
-            .scrollContentBackground(.hidden)
-            .safeAreaPadding(.bottom, DulcetSpacing.lg)
-            .frame(maxWidth: 640)
-            .frame(maxWidth: .infinity)
-            .background(Color(uiColor: .systemGroupedBackground))
-            .task(id: store.snapshot.accountConnection) {
-                guard dynamicTypeSize.isAccessibilitySize,
-                      store.snapshot.accountConnection != .idle else { return }
-                // A native Form realizes its scroll targets after mounting. Wait for that
-                // layout before revealing a restored status; changing state cancels this task.
-                do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
-                proxy.scrollTo("account-status", anchor: .top)
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if store.snapshot.accountRemoval == .idle {
-                switch store.snapshot.accountConnection {
-                case .idle, .saved, .connecting:
-                    // Keep the same action and focus identity outside the scrolling Form.
-                    // The inset reserves space above the tab bar and keyboard at every text size.
-                    accountPrimaryAction
-                        .padding(.horizontal, DulcetSpacing.lg)
-                        .padding(.vertical, DulcetSpacing.sm)
-                        .frame(maxWidth: 640)
-                        .frame(maxWidth: .infinity)
-                        .background(.bar)
-                case .connected, .failed:
-                    EmptyView()
-                }
-            }
-        }
+        nativeAccountForm
+
 #endif
     }
+
+#if !os(tvOS)
+    private var canSubmit: Bool {
+        !store.accountServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !store.accountUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !store.accountPassword.isEmpty
+    }
+
+    private var nativeAccountForm: some View {
+        Form {
+            if store.snapshot.accountRemoval == .removing {
+                Section { accountRemovalProgress }
+            } else if store.snapshot.accountRemoval == .failed {
+                Section { accountRemovalFailure }
+            } else if case let .connected(account) = store.snapshot.accountConnection {
+                Section {
+                    Label(account.serverName, systemImage: "person.crop.circle")
+                        .font(.headline)
+                    if let user = account.canonicalUsername, !user.isEmpty {
+                        LabeledContent(DulcetStrings.username, value: user)
+                    }
+                    LabeledContent(DulcetStrings.serverAddress, value: account.serverName)
+                    Label(DulcetStrings.online, systemImage: "checkmark.circle")
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(DulcetStrings.connectedTo(account.serverName))
+                        .accessibilityIdentifier("dulcet.account.connected")
+                }
+                .accessibilityIdentifier("dulcet.account-connect.title")
+                .accessibilityHint(store.librarySession?.serverReportsNoEpoch == true ? DulcetStrings.readerNoEpoch : "")
+                Section {
+                    NavigationLink { DulcetPlaybackSettingsPage(store: store) } label: {
+                        Label(DulcetStrings.playbackSettings, systemImage: "play.circle")
+                    }.accessibilityIdentifier("dulcet.account.playback")
+                    if store.offlineLibraryStorage != nil {
+                        NavigationLink { DulcetDownloadsStoragePage(store: store) } label: {
+                            Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle")
+                        }.accessibilityIdentifier("dulcet.account.downloadsStorage")
+                    }
+                }
+                Section { savedServers }
+                Section {
+                    Button(DulcetStrings.signOut, role: .destructive) { showingSignOutConfirmation = true }
+                        .accessibilityIdentifier("dulcet.account.signOut")
+                }
+            } else {
+                if !store.savedServers.isEmpty { Section { savedServers } }
+                Section {
+                    connectionForm
+                } footer: {
+                    Text(DulcetStrings.accountShortFooter)
+                }
+                .accessibilityIdentifier("dulcet.account-connect.title")
+                if case let .failed(failure) = store.snapshot.accountConnection,
+                   failure.kind != .invalidServerURL && failure.kind != .invalidCredentials {
+                    Section {
+                        Label(failure.title, systemImage: "exclamationmark.triangle")
+                        if failure.kind == .tlsUntrusted {
+                            Link(DulcetStrings.openCertificateHelp, destination: DulcetLinks.certificateInstallationGuide)
+                        }
+                        if failure.kind == .localNetworkAccessDenied,
+                           let settings = DulcetLinks.localNetworkSettings {
+                            Link(DulcetStrings.openLocalNetworkSettings, destination: settings)
+                                .accessibilityIdentifier("dulcet.account-connect.local-network-settings")
+                        }
+                    } footer: { Text(failure.recovery) }
+                }
+                if isConnecting { ProgressView(DulcetStrings.connecting) }
+            }
+        }
+        .formStyle(.grouped)
+        .accessibilityIdentifier("dulcet.account.settingsForm")
+#if os(macOS)
+        .frame(minWidth: 480, minHeight: 480)
+#endif
+    }
+#endif
 
 #if os(iOS)
     private var accountCredentialsSection: some View {
@@ -308,6 +344,9 @@ struct DulcetAccountConnectionView: View {
                     .accessibilityIdentifier("dulcet.account-connect.server-address")
                     .focused($focusedControl, equals: .serverAddress)
             }
+            if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidServerURL {
+                Text(failure.title).font(.footnote).foregroundStyle(.red).accessibilityHint(failure.message)
+            }
             credentialRow(DulcetStrings.username) {
                 TextField(DulcetStrings.username, text: $store.accountUsername)
                     .labelsHidden()
@@ -324,6 +363,9 @@ struct DulcetAccountConnectionView: View {
                     .accessibilityIdentifier("dulcet.account-connect.password")
                     .focused($focusedControl, equals: .password)
             }
+            if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidCredentials {
+                Text(failure.title).font(.footnote).foregroundStyle(.red).accessibilityHint(failure.message)
+            }
             if showsLocalHTTPConsent {
                 Toggle(DulcetStrings.allowLocalHTTP, isOn: $store.accountAllowLocalHTTP)
                     .fixedSize(horizontal: false, vertical: true)
@@ -336,6 +378,7 @@ struct DulcetAccountConnectionView: View {
             }
         }
         .disabled(isConnecting)
+        .onSubmit { if canSubmit && !isConnecting { performAccountPrimaryAction() } }
     }
 
     private func credentialRow<Control: View>(
@@ -350,17 +393,11 @@ struct DulcetAccountConnectionView: View {
                 .frame(maxWidth: 400)
         }
 #else
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline)
-                .dulcetForeground(.secondaryTextOnControl)
-                .fixedSize(horizontal: false, vertical: true)
-            control()
-                .textFieldStyle(.plain)
-                .font(.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.vertical, 6)
+        control()
+            .textFieldStyle(.plain)
+            .font(.body)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
 #endif
     }
 #endif

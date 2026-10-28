@@ -110,31 +110,21 @@ struct DulcetStreamingQualitySection: View {
         choose: @escaping (DulcetStreamingQuality) -> Void
     ) -> some View {
 #if os(tvOS)
-        // A row of buttons a remote moves along; the chosen one carries a check. The labels never
-        // wrap: squeezed past its ideal width a capsule broke "Original" a letter per line
-        // (observed), so each label holds its one line and the row's gaps give instead.
-        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            Text(title).font(.headline)
-            HStack(spacing: DulcetSpacing.xs) {
-                ForEach(DulcetStreamingQuality.allCases) { quality in
-                    Button {
-                        choose(quality)
-                    } label: {
-                        Group {
-                            if quality == selection {
-                                Label(quality.label, systemImage: "checkmark")
-                            } else {
-                                Text(quality.label)
-                            }
-                        }
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+        NavigationLink {
+            List(DulcetStreamingQuality.allCases) { quality in
+                Button { choose(quality) } label: {
+                    HStack {
+                        Text(quality.label)
+                        Spacer()
+                        if quality == selection { Image(systemName: "checkmark") }
                     }
-                    .accessibilityIdentifier("\(identifier).\(quality.rawValue)")
-                    .accessibilityAddTraits(quality == selection ? .isSelected : [])
                 }
+                .accessibilityIdentifier("\(identifier).\(quality.rawValue)")
+                .accessibilityAddTraits(quality == selection ? .isSelected : [])
             }
-        }
+            .navigationTitle(title)
+        } label: { LabeledContent(title, value: selection.label) }
+        .accessibilityIdentifier(identifier)
 #else
         LabeledContent(title) {
             Picker(title, selection: Binding(get: { selection }, set: choose)) {
@@ -217,13 +207,16 @@ public struct DulcetSettingsView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
-            DulcetStreamingQualitySection(store: store)
-            DulcetCrossfadeSection(store: store)
-            DulcetOfflineLibrarySection(store: store)
+        TabView {
+            NavigationStack { DulcetAccountConnectionView(store: store) }
+                .tabItem { Label(DulcetStrings.accountSection, systemImage: "person.crop.circle") }
+            DulcetPlaybackSettingsPage(store: store)
+                .tabItem { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
+            DulcetDownloadsStoragePage(store: store)
+                .tabItem { Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle") }
         }
-            .padding(DulcetSpacing.xl)
-            .frame(width: 480)
+        .environment(store)
+        .frame(width: 600, height: 560)
     }
 }
 #endif

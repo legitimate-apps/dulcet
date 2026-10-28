@@ -1405,13 +1405,13 @@ func choosingACatalogSidebarSectionLeavesHomeAndKeepsItsOwnNavigationHistory() {
     store.navigate(to: .listenNow)
     store.pushReaderPage(album)
     store.selectLibrarySection(.playlists)
-    #expect(store.selectedDestination == .library, "A catalog sidebar choice must leave Listen Now")
+    #expect(store.selectedDestination == .browse, "A catalog sidebar choice must leave Listen Now")
     #expect(store.librarySection == .playlists)
     #expect(store.readerPath.isEmpty, "The sidebar opens the chosen section's root")
     store.navigate(to: .listenNow)
     #expect(store.readerPath == [album], "Catalog navigation must preserve Home's own detail stack")
     store.selectLibrarySection(.albums)
-    #expect(store.selectedDestination == .library)
+    #expect(store.selectedDestination == .browse)
     #expect(store.librarySection == .albums)
     #expect(store.readerPath.isEmpty)
 }
@@ -2155,15 +2155,15 @@ func editingASavedAccountPausesAutomaticRetriesAndRejectsLateCompletion() {
 }
 
 @Test @MainActor
-func myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack() throws {
+func browseIsStableAcrossServerCapabilitiesAndKeepsEachNavigationStack() throws {
     let factory = RecordingReaderFactory()
     let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
     let (store, session, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
     let reader = try #require(factory.made.first)
     let baseline: [DulcetSidebarDestination] = [.library, .search, .settings]
-    #expect(store.destinations(baseline) == baseline)
+    #expect(store.destinations(baseline) == [.library, .browse, .search, .settings])
     reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .unavailable))
-    #expect(store.destinations(baseline) == baseline)
+    #expect(store.destinations(baseline) == [.library, .browse, .search, .settings])
     #expect(!session.toggleMyLibrary(DulcetFavouriteTarget(kind: .album, id: DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album"))))
     #expect(reader.libraryChanges.isEmpty)
     reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))

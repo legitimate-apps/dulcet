@@ -22,6 +22,17 @@ enum DulcetReaderCopy {
         return includesReason ? DulcetStrings.readerSeenWithReason(seen, reasonPhrase(reason)) : seen
     }
 
+    /// Routine refresh does not move content. Full freshness remains available to accessibility.
+    static func visibleFreshnessLine(_ freshness: DulcetReaderFreshness, now: Date = Date()) -> String? {
+        guard case let .cached(reason, asOf) = freshness else { return nil }
+        switch reason {
+        case .revalidating, .owed:
+            guard let asOf, now.timeIntervalSince(asOf) > 86_400 else { return nil }
+        default: break
+        }
+        return freshnessLine(freshness, now: now)
+    }
+
     /// The statement shown instead of content when there is none -- never a spinner.
     static func unavailableLine(_ reason: DulcetReaderUnavailableReason, subject: Subject) -> String {
         switch reason {

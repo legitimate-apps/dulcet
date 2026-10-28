@@ -127,6 +127,7 @@ public enum DulcetReaderRoute: Hashable, Sendable {
     case genre(String)
     /// One album list in one order: a home row's "See All".
     case albumList(DulcetAlbumListType)
+    case listenNowShelf(DulcetListenNowShelf)
     case songs
     case downloaded
     /// A My Library section, pushed by the compact Library root's rows.
@@ -200,7 +201,7 @@ public final class DulcetPresentationStore {
         navigationWriter = "selectMyLibrarySection"
         defer { navigationWriter = previousWriter }
         navigate(to: .library)
-        readerPath = []
+        readerPath = [.myLibrarySection(section)]
         readerReturn = nil
         readerArrival = nil
         myLibrarySection = section
@@ -227,7 +228,12 @@ public final class DulcetPresentationStore {
     public var myLibraryAvailable: Bool { librarySession?.myLibrary.availability == .available }
     public var isReaderDestination: Bool { selectedDestination == .listenNow || selectedDestination == .library || selectedDestination == .browse }
     public func destinations(_ base: [DulcetSidebarDestination]) -> [DulcetSidebarDestination] {
-        base.flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
+        var result: [DulcetSidebarDestination] = []
+        for destination in base {
+            if !result.contains(destination) { result.append(destination) }
+            if destination == .library, !base.contains(.browse) { result.append(.browse) }
+        }
+        return result
     }
     public private(set) var readerPath: [DulcetReaderRoute] = [] {
         didSet { navigationWrite(oldPath: String(describing: oldValue)) }
@@ -385,7 +391,6 @@ public final class DulcetPresentationStore {
                 newPath: String(describing: readerPath), outcome: "drop:applyingSourceSnapshot requested=\(destination)")
             return
         }
-        let destination = destination == .browse && !myLibraryAvailable ? .library : destination
         if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
         if destination == .listenNow || destination == .library || destination == .browse {
             readerPath = savedReaderPaths[destination] ?? []
@@ -765,7 +770,7 @@ public final class DulcetPresentationStore {
         let previousWriter = navigationWriter
         navigationWriter = "selectLibrarySection"
         defer { navigationWriter = previousWriter }
-        let destination: DulcetSidebarDestination = myLibraryAvailable ? .browse : .library
+        let destination: DulcetSidebarDestination = section == .favourites ? .library : .browse
         if selectedDestination != destination {
             selectDestination(destination)
         }
@@ -855,7 +860,7 @@ public final class DulcetPresentationStore {
         followLibraryPage(in: snapshot, arrivingFrom: self.snapshot.selectedDestination)
         if !snapshot.playbackFailed { dismissedPlaybackFailure = nil }
         self.snapshot = snapshot
-        let destination = requestedBrowse && myLibraryAvailable && snapshot.selectedDestination == .library
+        let destination = requestedBrowse && snapshot.selectedDestination == .library
             ? .browse : snapshot.selectedDestination
         if destination != selectedDestination {
             // A destination change the source makes on its own -- playback moving the app to Now
