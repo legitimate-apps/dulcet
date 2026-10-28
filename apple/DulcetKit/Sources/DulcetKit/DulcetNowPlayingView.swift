@@ -796,6 +796,7 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(player.isPlaying ? .pause : .play)
             }
+            .accessibilityIdentifier("dulcet.now-playing.play-pause")
             .focused($playPauseFocused)
             .frame(width: Self.televisionTransportPlayPauseSlot, height: Self.televisionTransportSlotHeight)
             controlButton(
@@ -848,6 +849,7 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(player.isPlaying ? .pause : .play)
             }
+            .accessibilityIdentifier("dulcet.now-playing.play-pause")
             Spacer(minLength: DulcetSpacing.xs)
             controlButton(
                 symbol: "forward.fill",

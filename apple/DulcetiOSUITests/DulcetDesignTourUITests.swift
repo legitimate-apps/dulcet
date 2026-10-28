@@ -305,12 +305,11 @@ final class DulcetDesignTourUITests: XCTestCase {
             let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
             return title.waitForExistence(timeout: 10) && self.settle(app, seconds: 2)
         }
-            let pause = app.buttons.matching(NSPredicate(format: "label == %@", "Pause"))
-                .allElementsBoundByIndex.first(where: { $0.isHittable })
-            if let pause { pause.tap() }
+            let transport = app.buttons["dulcet.now-playing.play-pause"].firstMatch
             step("player-paused", app) {
-                app.buttons.matching(NSPredicate(format: "label == %@", "Play"))
-                    .allElementsBoundByIndex.contains(where: { $0.isHittable })
+                guard transport.waitForExistence(timeout: 10) else { return false }
+                if transport.label == "Pause" { transport.tap() }
+                return self.waitFor(timeout: 10) { transport.label == "Play" }
             }
         step("lyrics", app) {
             let toggle = app.buttons["dulcet.now-playing.lyrics"].firstMatch
