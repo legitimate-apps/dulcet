@@ -124,7 +124,24 @@ jobs:
         DULCET_CONFORMANCE_DISPOSABLE: 'true'
         DULCET_DEVICE: ${{ matrix.device }}
         IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
-      run: "set -euo pipefail\ntools/ci/with-my-library-fixture --root \"$ROOT/my-library-iphone\" --music \"$ROOT/music\"\
+      run: "set -o pipefail\ncase \"$DULCET_DEVICE\" in\n  ipad|iphone) ;;\n  *) echo \"unknown conformance leg\
+        \ device: '$DULCET_DEVICE'\" >&2; exit 1 ;;\nesac\n# This job's own disposable server and the one fixture\
+        \ its phases use: the fault proxy,\n# which forwards every request to this server unchanged except a lyrics\
+        \ read a proof arms it\n# to fail (tools/ci/run-lyrics-quality-proofs) and every request during an outage\
+        \ a playlist\n# proof switches on (tools/ci/run-ratings-playlists-proofs). The redirect, TLS and\n# forward-proxy\
+        \ fixtures serve only the core-conformance suites, which run in\n# apple-conformance-core. Navidrome logs\
+        \ where the failure upload below finds it; the proxy\n# writes no log file.\n\"$ROOT/bin/navidrome\" --configfile\
+        \ \"$ROOT/config/navidrome.toml\" > \"$ROOT/logs/navidrome.log\" 2>&1 &\nnavidrome_pid=$!\npython3 tools/conformance-env/lyrics-fault-proxy\
+        \ --port 4544 --upstream http://127.0.0.1:4533 &\nlyrics_proxy_pid=$!\ncleanup() {\n  kill \"$lyrics_proxy_pid\"\
+        \ >/dev/null 2>&1 || true\n  wait \"$lyrics_proxy_pid\" 2>/dev/null || true\n  kill \"$navidrome_pid\" >/dev/null\
+        \ 2>&1 || true\n  wait \"$navidrome_pid\" 2>/dev/null || true\n  tail -200 \"$ROOT/logs/navidrome.log\"\
+        \ || true\n}\ntrap cleanup EXIT\nfor _ in {1..20}; do\n  if curl --fail --silent http://127.0.0.1:4544/__dulcet/health\
+        \ >/dev/null; then break; fi\n  sleep 0.1\ndone\ncurl --fail --silent http://127.0.0.1:4544/__dulcet/health\
+        \ >/dev/null\ntools/conformance-env/health-check \\\n  --base-url http://127.0.0.1:4533 \\\n  --runtime\
+        \ darwin/arm64 \\\n  --expected-server-version \"$(tools/conformance-env/read-pin navidrome.version)\" \\\
+        \n  --expected-ffmpeg-version \"$(tools/conformance-env/read-pin ffmpeg.darwin.version)\" \\\n  --ffmpeg-command-json\
+        \ \"[\\\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\\\"]\" \\\n  --corpus-manifest \"$ROOT/music/corpus-manifest.json\"\
+        \nset -euo pipefail\ntools/ci/with-my-library-fixture --root \"$ROOT/my-library-iphone\" --music \"$ROOT/music\"\
         \ \\\n  --ffmpeg \"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\" \\\n  --ffprobe \"$(dirname \"\
         $(tools/conformance-env/read-pin ffmpeg.darwin.path)\")/ffprobe\" \\\n  -- tools/ci/run-my-library-ax-diagnostic\n"
     - name: Stop host-pressure sampling and bound unfinished stack captures
