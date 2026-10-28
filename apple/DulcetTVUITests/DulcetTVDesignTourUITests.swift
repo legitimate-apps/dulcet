@@ -122,40 +122,40 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return self.waitFor(10) { self.progressAdvanced(app) } && self.settle(1.5)
         }
 
-        // The heart's row: Down from the transport reaches it (Left if Down landed beside it).
-        // The star shot is taken first, on the third star, so the focused-star lift is visible;
-        // then back to the heart for its own shot. Nothing is pressed.
         let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
-        let stars = (1...5).map { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch }
-        let reachedHeart = heart.waitForExistence(timeout: 10) && press(bound: 12, until: { heart.hasFocus }) {
-            let besideHeart = (lyrics.exists && lyrics.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
-            return besideHeart ? .left : .down
+        step("now-playing-heart", app) {
+            self.focusPlayerControl(heart, in: app) && self.settle(1)
         }
         step("now-playing-star", app) {
-            guard reachedHeart else { return false }
-            for _ in 0..<3 { remote.press(.right) }
-            return stars[2].hasFocus && self.settle(1)
+            let more = app.buttons["dulcet.now-playing.more"].firstMatch
+            guard self.focusPlayerControl(more, in: app) else { return false }
+            remote.press(.select)
+            let rating = app.buttons["dulcet.now-playing.rating"].firstMatch
+            guard self.focusPlayerControl(rating, in: app) else { return false }
+            remote.press(.select)
+            let star = app.buttons["dulcet.now-playing.rating.star.3"].firstMatch
+            let reached = self.focusPlayerControl(star, in: app) && self.settle(1)
+            remote.press(.menu)
+            remote.press(.menu)
+            return reached
         }
-        step("now-playing-heart", app) {
-            guard reachedHeart, self.press(.left, until: { heart.hasFocus }, bound: 6) else { return false }
-            return self.settle(1)
-        }
-
-        // Lyrics, while playing: Right past the fifth star, Select, and a line lit by media time.
         step("lyrics", app) {
-            guard lyrics.exists, self.press(.right, until: { lyrics.hasFocus }, bound: 8) else { return false }
+            guard self.focusPlayerControl(lyrics, in: app) else { return false }
             remote.press(.select)
             let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
             return panel.waitForExistence(timeout: 10)
                 && app.descendants(matching: .any)["dulcet.lyrics.line.current"].firstMatch.waitForExistence(timeout: 25)
                 && self.settle(1.5)
         }
-        // Lyrics off, and paused for the rest of the tour: the simulator's audio is the host's.
         if lyrics.exists, lyrics.hasFocus, lyrics.label == "Hide Lyrics" { remote.press(.select) }
         remote.press(.playPause)
         step("up-next", app) {
-            app.staticTexts["Queue"].firstMatch.waitForExistence(timeout: 10) && self.settle(1)
+            let queue = app.buttons["dulcet.now-playing.up-next"].firstMatch
+            guard self.focusPlayerControl(queue, in: app) else { return false }
+            remote.press(.select)
+            return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
+                && self.settle(1)
         }
 
         // Search with results, by remote: the section bar, the field, the query typed, Done.
@@ -249,6 +249,29 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     // MARK: - Steps and shots
 
     /// Runs one screen: reach it, then photograph it whether or not it was reached.
+    @MainActor
+    private func focusPlayerControl(_ target: XCUIElement, in app: XCUIApplication, bound: Int = 18) -> Bool {
+        guard target.waitForExistence(timeout: 5) else { return false }
+        for _ in 0..<bound {
+            if target.hasFocus { return true }
+            let focused = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            guard focused.exists else { XCUIRemote.shared.press(.down); continue }
+            let current = focused.frame
+            let destination = target.frame
+            let dx = destination.midX - current.midX
+            let dy = destination.midY - current.midY
+            let direction: XCUIRemote.Button
+            if abs(dy) > max(24, destination.height / 2) {
+                direction = dy > 0 ? .down : .up
+            } else {
+                direction = dx > 0 ? .right : .left
+            }
+            XCUIRemote.shared.press(direction)
+        }
+        return target.hasFocus
+    }
+
     @MainActor
     private func step(_ screen: String, _ app: XCUIApplication, _ reach: () -> Bool) {
         var reached = reach()

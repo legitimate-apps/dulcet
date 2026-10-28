@@ -31,6 +31,8 @@ struct DulcetNowPlayingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var scrubPosition: Double?
     @State private var showingQueue = false
+    @State private var regularLayout = false
+    @State private var hidingSideColumn = false
     /// The lyrics panel in place of the queue beside the player, or of the cover in one column.
     @State private var showingLyrics = false
 #if os(tvOS)
@@ -79,7 +81,7 @@ struct DulcetNowPlayingView: View {
                         playerPanel(
                             artworkSize: artworkSize,
                             alignment: .center,
-                            showsQueueToggle: false
+                            showsQueueToggle: true
                         )
                         // Measured, not estimated: the queue column beside it takes this height.
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
@@ -96,20 +98,15 @@ struct DulcetNowPlayingView: View {
                     // The artwork's shadow reaches past the column; clipping it drew a band.
                     .scrollClipDisabled()
                     .frame(maxWidth: 520)
-                    sideColumn
+                    if showingLyrics || !hidingSideColumn {
+                        sideColumn
                         .frame(maxWidth: 390)
                         .frame(height: Self.sideBySideQueueHeight(
                             windowHeight: geometry.size.height,
                             playerHeight: sideBySidePlayerHeight
                         ))
-                        // Lyrics beside the player sit over the cover's colours, as the system
-                        // player draws its lyrics pane; the queue stays on the plain window.
-                        .background {
-                            if showingLyrics {
-                                DulcetLyricsBackdrop(artwork: player.current.artwork)
-                                    .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
-                            }
-                        }
+                    }
+
                 }
                 .padding(.horizontal, padding)
                 .frame(maxWidth: .infinity)
@@ -123,6 +120,7 @@ struct DulcetNowPlayingView: View {
                     VStack(alignment: .leading, spacing: Self.coverToTitleSpacing) {
                         playerCover(size: Self.televisionLyricsArtworkSize)
                         trackIdentity(alignment: .leading)
+                        playbackProgress
                         transportControls
                         footer(alignment: .leading, showsQueueToggle: true)
                     }
@@ -132,14 +130,15 @@ struct DulcetNowPlayingView: View {
                 }
                 .padding(.horizontal, padding)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: geometry.size.height, alignment: .center)
-                .background { DulcetLyricsBackdrop(artwork: player.current.artwork).ignoresSafeArea() }
+                .frame(maxHeight: .infinity, alignment: .center)
+                .padding(.vertical, DulcetSpacing.lg)
+
 #else
                 // As the system player's lyrics: the track named small at the top, the lines
                 // taking the screen over the cover's colours, and the scrubber and transport kept
                 // at the bottom, so pausing or skipping never means leaving the lyrics.
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                    lyricsHeader
+                    compactIdentity
                     lyricsPanel
                     playbackProgress
                     transportControls
@@ -150,19 +149,41 @@ struct DulcetNowPlayingView: View {
                 .padding(.bottom, DulcetSpacing.md)
                 .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
-                .background { DulcetLyricsBackdrop(artwork: player.current.artwork).ignoresSafeArea() }
+
 #endif
             } else if showingQueue {
-                // The queue replaces the artwork; the footer stays, so the control that opened it
-                // closes it. (That the system player lays it out this way is ASSUMED, not compared.)
-                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+#if os(tvOS)
+                HStack(alignment: .center, spacing: DulcetSpacing.xxl) {
+                    VStack(alignment: .leading, spacing: Self.coverToTitleSpacing) {
+                        playerCover(size: Self.televisionLyricsArtworkSize)
+                        trackIdentity(alignment: .leading)
+                        playbackProgress
+                        transportControls
+                        footer(alignment: .leading, showsQueueToggle: true)
+                    }
+                    .frame(width: Self.televisionLyricsColumnWidth)
                     queueColumn
-                    footer(alignment: .leading, showsQueueToggle: true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .focusSection()
+                }
+                .padding(.horizontal, padding)
+                .padding(.vertical, DulcetSpacing.lg)
+#else
+                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                    compactIdentity
                         .padding(.horizontal, padding)
-                        .padding(.bottom, DulcetSpacing.md)
+                    queueColumn
+                    VStack(spacing: DulcetSpacing.xs) {
+                        playbackProgress
+                        transportControls
+                        footer(alignment: .leading, showsQueueToggle: true)
+                    }
+                    .padding(.horizontal, padding)
+                    .padding(.bottom, DulcetSpacing.md)
                 }
                 .frame(maxWidth: 600)
                 .frame(maxWidth: .infinity)
+#endif
             } else {
 #if os(tvOS)
                 // A television is wide and short: the cover beside everything else, sized from
@@ -210,9 +231,12 @@ struct DulcetNowPlayingView: View {
 #endif
             }
         }
-        .background(Color.dulcetWindow.ignoresSafeArea())
+        .background { DulcetPlayerBackdrop(artwork: player.current.artwork).ignoresSafeArea() }
         .dulcetForeground(.primaryTextOnWindow)
-        .dulcetNavigationTitle(DulcetStrings.nowPlaying)
+        .dulcetNavigationTitle(presentation == .destination ? DulcetStrings.nowPlaying : "")
+        .onGeometryChange(for: Bool.self) { sideBySide(width: $0.size.width) } action: {
+            regularLayout = $0
+        }
 #if os(tvOS)
         .onAppear(perform: claimArrivalFocus)
         // The focus engine can fall back to the section bar after this appeared.
@@ -301,35 +325,16 @@ struct DulcetNowPlayingView: View {
         case upNext
     }
 
-    /// Which footer controls the player offers. The heart and the stars beside it are offered only
-    /// while the reader holds the playing track's account -- one rule for both, so they never
-    /// part; on macOS they are in the window's toolbar instead. Apple TV routes audio with the
-    /// remote and the TV and has no Up Next toggle, but it has lyrics, the heart and the stars, all
-    /// reached by focus.
+    /// Mode switches stay available independently of server-side track actions.
     static func footerControls(offersFavourite: Bool, showsQueueToggle: Bool) -> [FooterControl] {
-        let marks: [FooterControl] = offersFavourite ? [.favourite, .rating] : []
 #if os(tvOS)
-        return marks + [.sleepTimer, .lyrics]
-#elseif os(macOS)
-        return [.airPlay, .sleepTimer, .lyrics] + (showsQueueToggle ? [.upNext] : [])
+        [.lyrics] + (showsQueueToggle ? [.upNext] : [])
 #else
-        return marks + [.airPlay, .sleepTimer, .lyrics] + (showsQueueToggle ? [.upNext] : [])
+        [.lyrics, .airPlay] + (showsQueueToggle ? [.upNext] : [])
 #endif
     }
 
-    /// The footer's rows. On iPhone and iPad five 44-point stars, the heart and three 44-point
-    /// controls do not fit a phone's width beside the format badge, so the track's own marks --
-    /// heart, then stars -- take a row of their own above the others. Apple TV's controls column
-    /// fits them all in one row, which Down from the transport reaches.
-    static func footerRows(_ controls: [FooterControl]) -> [[FooterControl]] {
-#if os(iOS)
-        let marks = controls.filter { $0 == .favourite || $0 == .rating }
-        let rest = controls.filter { $0 != .favourite && $0 != .rating }
-        return [marks, rest].filter { !$0.isEmpty }
-#else
-        [controls]
-#endif
-    }
+    static func footerRows(_ controls: [FooterControl]) -> [[FooterControl]] { [controls] }
 
     /// Side by side only when both panels fit at their natural widths; otherwise one column.
     /// Dynamic Type at accessibility sizes always gets one column, whatever the width.
@@ -419,9 +424,8 @@ struct DulcetNowPlayingView: View {
         if showingLyrics { lyricsPanel } else { queueColumn }
     }
 
-#if !os(tvOS)
-    /// The one-column lyrics screen's header: a small cover beside the track's name and artist.
-    private var lyricsHeader: some View {
+    /// Queue and lyrics keep the current track and its actions above their scrollable content.
+    private var compactIdentity: some View {
         HStack(spacing: DulcetSpacing.sm) {
             DulcetArtworkView(artwork: player.current.artwork, size: Self.lyricsHeaderArtworkSize)
             VStack(alignment: .leading, spacing: 2) {
@@ -439,6 +443,7 @@ struct DulcetNowPlayingView: View {
                 .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            moreMenu
         }
         // The header is the track's name, not a reading surface: it stops growing at the
         // largest standard size and leaves the screen to the lines.
@@ -446,7 +451,6 @@ struct DulcetNowPlayingView: View {
     }
 
     static let lyricsHeaderArtworkSize: CGFloat = 56
-#endif
 
     private var lyricsPanel: some View {
         DulcetLyricsPanel(
@@ -472,7 +476,10 @@ struct DulcetNowPlayingView: View {
         Button {
             withAnimation(reduceMotion ? nil : .snappy) {
                 showingLyrics.toggle()
-                if showingLyrics { showingQueue = false }
+                if showingLyrics {
+                    showingQueue = false
+                    hidingSideColumn = false
+                }
             }
 #if os(tvOS)
             // The layout under the button changes; keep the remote on it, so the same press
@@ -521,10 +528,7 @@ struct DulcetNowPlayingView: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Image(systemName: timer == nil ? "moon.zzz" : "moon.zzz.fill")
-                .font(.title3)
-                .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
-                .contentShape(Rectangle())
+            Label(DulcetStrings.sleepTimer, systemImage: timer == nil ? "moon.zzz" : "moon.zzz.fill")
         }
         .menuIndicator(.hidden)
         .dulcetMediaButtonStyle()
@@ -548,20 +552,29 @@ struct DulcetNowPlayingView: View {
         }
     }
 
+    private var queueIsVisible: Bool {
+        showingQueue || (regularLayout && !hidingSideColumn && !showingLyrics)
+    }
+
     private var upNextToggle: some View {
         Button {
             withAnimation(reduceMotion ? nil : .snappy) {
-                showingQueue.toggle()
-                if showingQueue { showingLyrics = false }
+                if regularLayout {
+                    hidingSideColumn = showingLyrics ? false : !hidingSideColumn
+                    showingLyrics = false
+                } else {
+                    showingQueue.toggle()
+                    if showingQueue { showingLyrics = false }
+                }
             }
         } label: {
-            Image(systemName: showingQueue ? "list.bullet.circle.fill" : "list.bullet")
+            Image(systemName: queueIsVisible ? "list.bullet.circle.fill" : "list.bullet")
                 .font(.title3)
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
                 .contentShape(Rectangle())
         }
         .dulcetMediaButtonStyle()
-        .accessibilityLabel(showingQueue ? DulcetStrings.hideUpNext : DulcetStrings.showUpNext)
+        .accessibilityLabel(queueIsVisible ? DulcetStrings.hideUpNext : DulcetStrings.showUpNext)
         .accessibilityIdentifier("dulcet.now-playing.up-next")
     }
 
@@ -593,9 +606,6 @@ struct DulcetNowPlayingView: View {
     /// so edits name entries. A source without identities gets the read-only listing instead.
     @ViewBuilder
     private var queueColumn: some View {
-#if os(tvOS)
-        ScrollView { queuePanel.padding(DulcetSpacing.xl) }
-#else
         Group {
             if player.queueEntries.isEmpty {
                 ScrollView { queuePanel.padding(DulcetSpacing.lg) }
@@ -609,15 +619,17 @@ struct DulcetNowPlayingView: View {
                             isActive: player.autoplayActive,
                             set: { store.setAutoplay($0) }
                         )
-                    }
+                    },
+                    showsCurrentTrack: regularLayout || !showingQueue
                 )
+#if !os(tvOS)
                     .scrollContentBackground(.hidden)
                     .dulcetQueueDropTarget(store: store, cornerRadius: 12)
+#endif
             }
         }
 #if os(iOS)
         .dulcetPlayerGestureRegion()
-#endif
 #endif
     }
 
@@ -677,25 +689,77 @@ struct DulcetNowPlayingView: View {
     }
 
     private func trackIdentity(alignment: HorizontalAlignment) -> some View {
-        let textAlignment: TextAlignment = alignment == .leading ? .leading : .center
-        return VStack(alignment: alignment, spacing: DulcetSpacing.xxs) {
-            Text(player.current.title)
-                .font(presentation == .sheet ? .title2.weight(.bold) : .largeTitle.weight(.bold))
-                .multilineTextAlignment(textAlignment)
-                .lineLimit(nil)
-                .accessibilityIdentifier("dulcet.now-playing.title")
-            DulcetArtistLink(
-                credits: player.current.credits.filter { $0.role == .artist },
-                font: .title3,
-                onNavigate: onNavigate
-            )
-            .multilineTextAlignment(textAlignment)
-            if let album = player.current.albumTitle {
-                DulcetAlbumLink(track: player.current, title: album, onNavigate: onNavigate)
-                    .multilineTextAlignment(textAlignment)
+        HStack(alignment: .center, spacing: DulcetSpacing.sm) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(player.current.title)
+                    .font(.title2.weight(.bold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("dulcet.now-playing.title")
+                DulcetArtistLink(
+                    credits: player.current.credits.filter { $0.role == .artist },
+                    font: .title3,
+                    onNavigate: onNavigate
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+#if !os(macOS)
+            favouriteButton
+#endif
+            moreMenu
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            DulcetAddTrackToPlaylistMenuItem(track: player.current)
+            if let albumID = store.libraryAlbumID(for: player.current) {
+                Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
+                    onNavigate()
+                    store.showAlbum(albumID)
+                }
+            }
+            artistMenu
+            Divider()
+            DulcetPlayerRatingMenu(track: player.current)
+            sleepTimerMenu
+            Divider()
+            Text(player.audioFormat.sampleRateKilohertz > 0
+                ? DulcetStrings.audioFormat(codec: player.audioFormat.codec,
+                    sampleRateKilohertz: player.audioFormat.sampleRateKilohertz)
+                : player.audioFormat.codec)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.title3.weight(.medium))
+                .frame(width: Self.footerControlSide, height: Self.footerControlSide)
+                .contentShape(Circle())
+        }
+        .menuIndicator(.hidden)
+        .dulcetMediaButtonStyle()
+        .accessibilityLabel(DulcetStrings.more)
+        .accessibilityIdentifier("dulcet.now-playing.more")
+    }
+
+    @ViewBuilder
+    private var artistMenu: some View {
+        let targets = player.current.credits.filter { $0.role == .artist }.compactMap { credit in
+            store.libraryArtistID(for: credit).map { (name: credit.name, id: $0) }
+        }
+        if targets.count == 1, let target = targets.first {
+            Button(DulcetStrings.goToArtist, systemImage: "music.mic") {
+                onNavigate()
+                store.showArtist(target.id)
+            }
+        } else if !targets.isEmpty {
+            Menu(DulcetStrings.goToArtist, systemImage: "music.mic") {
+                ForEach(targets, id: \.id) { target in
+                    Button(target.name) {
+                        onNavigate()
+                        store.showArtist(target.id)
+                    }
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
     }
 
     private var transportControls: some View {
@@ -828,10 +892,13 @@ struct DulcetNowPlayingView: View {
                 .font(font)
                 .symbolRenderingMode(.hierarchical)
                 .contentTransition(.symbolEffect(.replace))
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
+                .frame(width: Self.footerControlSide, height: Self.footerControlSide)
+                .contentShape(Circle())
         }
         .dulcetMediaButtonStyle()
+#if os(tvOS)
+        .buttonBorderShape(.circle)
+#endif
         // A plain style does not grey its own label when disabled; a control that cannot act
         // is dimmed, as the system player's are.
         .disabled(!enabled)
@@ -844,86 +911,32 @@ struct DulcetNowPlayingView: View {
         }
     }
 
-    @ViewBuilder
     private func footer(alignment: HorizontalAlignment, showsQueueToggle: Bool) -> some View {
-        VStack(alignment: alignment, spacing: Self.footerStackSpacing) {
-#if os(tvOS)
-            // The heart, its stars and lyrics sit under the transport, where Down from it lands.
-            // One row of equal targets, so every focus platter matches and none touches the next.
-            HStack(spacing: DulcetSpacing.lg) {
+        VStack(spacing: DulcetSpacing.sm) {
+#if !os(tvOS)
+            DulcetPlayerVolumeControl()
+#if os(iOS)
+                .dulcetPlayerGestureRegion()
+#endif
+#endif
+            HStack(spacing: 0) {
                 ForEach(footerControls(showsQueueToggle: showsQueueToggle), id: \.self) { control in
                     footerControl(control)
+                        .frame(maxWidth: .infinity)
                 }
             }
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+#if os(tvOS)
             .focusSection()
-            // tvOS routes and sets volume with the remote and the TV, so it names the output.
-            formatBadge
+#endif
+#if os(tvOS)
             Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
                 .font(.caption)
                 .dulcetForeground(.secondaryTextOnWindow)
-#else
-            if DulcetSystemVolumeSlider.isAvailable {
-                DulcetSystemVolumeSlider()
-#if os(iOS)
-                    .dulcetPlayerGestureRegion()
 #endif
-            }
-            let rows = Self.footerRows(footerControls(showsQueueToggle: showsQueueToggle))
-            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                HStack(spacing: DulcetSpacing.sm) {
-                    // The badge leads the last row, the one with the player's own controls.
-                    if index == rows.count - 1 {
-                        formatBadge
-                    }
-                    Spacer(minLength: 0)
-                    ForEach(row, id: \.self) { control in
-                        footerControl(control)
-                    }
-                }
-                // As the transport row: the stars stop growing at the largest standard size, so
-                // five of them never push the heart off a phone's width.
-                .dynamicTypeSize(...(row.contains(.rating) ? DynamicTypeSize.xxxLarge : DynamicTypeSize.accessibility5))
-            }
-#endif
-            // Up Next's header already says where the queue is playing from; with the list on
-            // screen, a second copy under the controls only repeats it.
-            if let sourceDisplayName = player.sourceDisplayName, !upNextListVisible(showsQueueToggle) {
-                Text(DulcetStrings.playingFrom(sourceDisplayName))
-                    .font(.caption)
-                    .dulcetForeground(.secondaryTextOnWindow)
-            }
         }
-        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+        .frame(maxWidth: .infinity)
         .anchorPreference(key: DulcetPlayerLayoutKey.self, value: .bounds) { [.footer: $0] }
-    }
-
-    /// Whether the editable Up Next list, whose header names the queue's source, is on screen
-    /// beside this footer: always in the side-by-side layout, and once opened in one column.
-    private func upNextListVisible(_ showsQueueToggle: Bool) -> Bool {
-#if os(tvOS)
-        false
-#else
-        !player.queueEntries.isEmpty && !showingLyrics && (!showsQueueToggle || showingQueue)
-#endif
-    }
-
-    private var formatBadge: some View {
-        Text(player.audioFormat.sampleRateKilohertz > 0
-            ? DulcetStrings.audioFormat(
-                codec: player.audioFormat.codec,
-                sampleRateKilohertz: player.audioFormat.sampleRateKilohertz
-            )
-            : player.audioFormat.codec)
-            .font(.caption.monospaced())
-            // One line, scaled down rather than wrapped: at accessibility sizes the row's
-            // controls leave it little width, and a badge wrapped over several lines pushed the
-            // footer below a phone's window.
-            .lineLimit(1)
-            .minimumScaleFactor(0.5)
-            .dulcetForeground(.secondaryTextOnRegularMaterial)
-            .padding(.horizontal, DulcetSpacing.xs)
-            .padding(.vertical, DulcetSpacing.xxs)
-            .background(.regularMaterial, in: Capsule())
     }
 
     /// The scrubber, once media time has advanced -- and whenever the player is paused, which
@@ -939,27 +952,34 @@ struct DulcetNowPlayingView: View {
 
     private var playbackProgress: some View {
         VStack(spacing: DulcetSpacing.xxs) {
+            if player.phase == .buffering {
+                HStack(spacing: DulcetSpacing.xs) {
+                    ProgressView().controlSize(.small)
+                    Text(DulcetStrings.buffering).font(.footnote)
+                }
+                .accessibilityIdentifier("dulcet.now-playing.buffering")
+            }
             if Self.showsProgressIndicator(progressBegan: player.progressBegan, phase: player.phase) {
-                // The times flank the bar, as the system player lays them out.
-                HStack(alignment: .center, spacing: DulcetSpacing.xs) {
-                    Text(displayedElapsed.dulcetDuration)
-                        .accessibilityLabel(DulcetStrings.elapsedTime)
-                        .accessibilityValue(displayedElapsed.dulcetDuration)
-                        .lineLimit(1)
+                VStack(spacing: 0) {
                     playbackProgressIndicator
                         .accessibilityLabel(DulcetStrings.nowPlaying)
                         .accessibilityValue(DulcetStrings.playbackProgress(
                             elapsed: displayedElapsed.dulcetDuration,
                             duration: player.current.duration.dulcetDuration
                         ))
-                    Text(DulcetStrings.remaining(displayedRemaining.dulcetDuration))
-                        .accessibilityLabel(DulcetStrings.remainingTime)
-                        .accessibilityValue(displayedRemaining.dulcetDuration)
-                        .lineLimit(1)
+                    HStack {
+                        Text(displayedElapsed.dulcetDuration)
+                            .accessibilityLabel(DulcetStrings.elapsedTime)
+                            .accessibilityValue(displayedElapsed.dulcetDuration)
+                        Spacer()
+                        Text(DulcetStrings.remaining(displayedRemaining.dulcetDuration))
+                            .accessibilityLabel(DulcetStrings.remainingTime)
+                            .accessibilityValue(displayedRemaining.dulcetDuration)
+                    }
+                    .font(.caption.monospacedDigit())
+                    .dulcetForeground(.secondaryTextOnWindow)
                 }
-                .font(.caption.monospacedDigit())
-                .dulcetForeground(.secondaryTextOnWindow)
-            } else {
+            } else if player.phase != .buffering {
                 Text(playbackPhaseLabel)
                     .font(.subheadline)
                     .dulcetForeground(.secondaryTextOnWindow)
@@ -1163,9 +1183,6 @@ struct DulcetPlayerCover: View {
     var body: some View {
         DulcetArtworkView(artwork: artwork, size: size)
             .shadow(color: .black.opacity(isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
-            .background {
-                DulcetArtworkGlow(artwork: artwork, size: size)
-            }
             .scaleEffect(scale)
             .animation(reduceMotion ? nil : .spring(duration: 0.4), value: isPlaying)
     }

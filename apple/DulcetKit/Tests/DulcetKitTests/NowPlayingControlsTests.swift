@@ -131,47 +131,19 @@ private func account(_ providerInstanceID: String) -> DulcetLibraryReaderAccount
 // MARK: - The footer
 
 @Test @MainActor
-func theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform() {
+func thePlayerKeepsModeSwitchesIndependentOfTrackActions() {
     typealias Player = DulcetNowPlayingView
     let offered = Player.footerControls(offersFavourite: true, showsQueueToggle: true)
     let withheld = Player.footerControls(offersFavourite: false, showsQueueToggle: true)
-    #expect(offered.contains(.lyrics), "every Apple player offers lyrics")
-    #expect(withheld.contains(.lyrics), "lyrics do not depend on the reader")
-    #expect(!withheld.contains(.favourite), "no heart while the reader does not hold the track's account")
-    #expect(!withheld.contains(.rating), "no stars while the reader does not hold the track's account")
-#if os(macOS)
-    // The Mac's heart and stars are in the window's toolbar, so the footer never draws a second set.
-    #expect(offered == [.airPlay, .sleepTimer, .lyrics, .upNext])
-    #expect(Player.footerControls(offersFavourite: true, showsQueueToggle: false) == [.airPlay, .sleepTimer, .lyrics])
-#elseif os(tvOS)
-    // Apple TV: the heart, its stars beside it, then lyrics, all reached by focus under the transport.
-    #expect(offered == [.favourite, .rating, .sleepTimer, .lyrics])
-    #expect(withheld == [.sleepTimer, .lyrics])
+    #expect(offered == withheld, "server-side rating and favorite capabilities cannot hide player modes")
+    #expect(!offered.contains(.rating) && !offered.contains(.sleepTimer), "track actions belong in More")
+#if os(tvOS)
+    #expect(offered == [.lyrics, .upNext])
 #else
-    #expect(offered == [.favourite, .rating, .airPlay, .sleepTimer, .lyrics, .upNext])
-    #expect(Player.footerControls(offersFavourite: true, showsQueueToggle: false) == [.favourite, .rating, .airPlay, .sleepTimer, .lyrics])
-    #expect(withheld == [.airPlay, .sleepTimer, .lyrics, .upNext])
+    #expect(offered == [.lyrics, .airPlay, .upNext])
 #endif
-}
-
-@Test @MainActor
-func theNowPlayingStarsSitBesideTheHeartOnTheirOwnRowWhereAPhoneCannotFitThemAll() {
-    typealias Player = DulcetNowPlayingView
-    let offered = Player.footerControls(offersFavourite: true, showsQueueToggle: true)
-    // The heart and the stars are adjacent in every footer that draws them, heart first.
-    if let heart = offered.firstIndex(of: .favourite) {
-        #expect(offered.indices.contains(heart + 1) && offered[heart + 1] == .rating)
-    }
-    let rows = Player.footerRows(offered)
-#if os(iOS)
-    // Five 44-point stars, the heart and three 44-point controls do not fit a phone's width in one
-    // row, so the track's own marks take the first row and the rest keep the second.
-    #expect(rows == [[.favourite, .rating], [.airPlay, .sleepTimer, .lyrics, .upNext]])
-    #expect(Player.footerRows(Player.footerControls(offersFavourite: false, showsQueueToggle: true))
-        == [[.airPlay, .sleepTimer, .lyrics, .upNext]], "no empty marks row without a reader")
-#else
-    #expect(rows == [offered], "one row where it fits")
-#endif
+    #expect(!Player.footerControls(offersFavourite: true, showsQueueToggle: false).contains(.upNext))
+    #expect(Player.footerRows(offered) == [offered], "one compact row leaves room for transport and volume")
 }
 
 @Test

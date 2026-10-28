@@ -503,30 +503,9 @@ private struct DulcetLyricsGapDots: View {
     }
 }
 
-/// The playing cover's colours washed across the lyrics screen: the artwork, greatly enlarged and
-/// blurred past recognition, dimmed by the window colour so the registered text pairs keep the
-/// contrast they were measured at. The player's glow (``DulcetArtworkGlow``) is the small-scale
-/// version of the same idea. Reduce Transparency removes it, leaving the plain window.
+/// Compatibility name for lyric hosts; the full player uses this same sampled cover backdrop.
 struct DulcetLyricsBackdrop: View {
     let artwork: DulcetArtwork
-    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
-    @Environment(\.dulcetReduceTransparencyOverride) private var reduceTransparencyOverride
-
-    /// The cover is drawn square at this size and stretched past the screen; after a blur this
-    /// wide only colour remains, so the size buys nothing more.
-    static let artworkSize: CGFloat = 512
-    /// Drawn this much larger than the screen, so the blur's falloff never reaches an edge.
-    static let overdraw: CGFloat = 1.3
-    static let blurRadius: CGFloat = 70
-    /// How much of the window colour sits over the blurred cover.
-    static let scrimOpacity: Double = 0.55
-
-    var body: some View {
-        DulcetPlayerBackdrop(artwork: artwork)
-    }
-
-    static func scale(for size: CGSize) -> CGFloat {
-        max(size.width, size.height, 1) / artworkSize * overdraw
-    }
+    var body: some View { DulcetPlayerBackdrop(artwork: artwork) }
 }
 #endif

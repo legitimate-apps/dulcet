@@ -91,6 +91,14 @@ struct DulcetNowPlayingBar: View {
         if !store.snapshot.playbackFailed, let player = store.snapshot.nowPlaying {
             DulcetArtworkView(artwork: player.current.artwork, size: size)
                 .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                .overlay {
+                    if player.phase == .buffering {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(5)
+                            .background(.regularMaterial, in: Circle())
+                    }
+                }
         } else {
             RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius * 0.6, style: .continuous)
                 .fill(Color.dulcetControl)
@@ -236,6 +244,7 @@ struct DulcetNowPlayingBar: View {
         if store.snapshot.playbackFailed {
             return failedTrack == nil ? nil : store.snapshot.playbackFailure.map(Self.failureLine(for:))
         }
+        if store.snapshot.nowPlaying?.phase == .buffering { return DulcetStrings.buffering }
         return artists(of: store.snapshot.nowPlaying?.current)
     }
 

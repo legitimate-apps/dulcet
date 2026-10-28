@@ -140,7 +140,7 @@ public struct DulcetUpNextSection: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .accessibilityLabel(DulcetStrings.more)
-            .accessibilityIdentifier("dulcet.upNext.row.\(offset).more")
+            .accessibilityIdentifier("dulcet.upNext.more.\(offset)")
         }
         // Reordering is a drag, which VoiceOver and Switch Control cannot perform on a row, so
         // Move Up and Move Down are named actions. Removal needs one only where the platform does
@@ -294,6 +294,7 @@ public struct DulcetUpNextList: View {
     private let nowPlaying: DulcetNowPlaying?
     private let onEdit: (DulcetQueueEditIntent) -> Void
     private let autoplay: DulcetAutoplayToggle?
+    private let showsCurrentTrack: Bool
 #if os(iOS)
     @State private var editMode: EditMode = .inactive
 #endif
@@ -301,16 +302,18 @@ public struct DulcetUpNextList: View {
     public init(
         nowPlaying: DulcetNowPlaying?,
         onEdit: @escaping (DulcetQueueEditIntent) -> Void,
-        autoplay: DulcetAutoplayToggle? = nil
+        autoplay: DulcetAutoplayToggle? = nil,
+        showsCurrentTrack: Bool = true
     ) {
         self.nowPlaying = nowPlaying
         self.onEdit = onEdit
         self.autoplay = autoplay
+        self.showsCurrentTrack = showsCurrentTrack
     }
 
     public var body: some View {
         List {
-            if let current = nowPlaying {
+            if showsCurrentTrack, let current = nowPlaying {
                 Section(DulcetStrings.nowPlaying) {
                     HStack(spacing: DulcetSpacing.sm) {
                         DulcetArtworkView(artwork: current.current.artwork, size: 48)
