@@ -1,0 +1,40 @@
+#!/bin/bash
+# Proof branch only: unchanged seven production selections plus passive reset position samples.
+set -euo pipefail
+: "${RUNNER_TEMP:?}"
+python3 tools/ci/isolate-simulator --phase identity-stopgap-iphone --keep-name "iPhone 18 Pro" --settle --require-settle --settle-pressure --require-isolation \
+  --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
+proof_udid="$(xcrun simctl list -j devices | python3 -c 'import json,sys; d=[x["udid"] for group in json.load(sys.stdin)["devices"].values() for x in group if x.get("state")=="Booted" and x.get("name")=="iPhone 18 Pro"]; assert len(d)==1,d; print(d[0])')"
+xcrun simctl spawn "$proof_udid" log stream --style compact --level debug --predicate 'subsystem == "com.legitimateapps.dulcet.library-reset-proof"' > "$RUNNER_TEMP/reset-cost.log" 2>&1 &
+proof_log_pid=$!
+finish_proof() {
+  kill "$proof_log_pid" 2>/dev/null || true
+  wait "$proof_log_pid" 2>/dev/null || true
+  python3 - "$proof_udid" "$RUNNER_TEMP/reset-cost-history.log" <<'PYTHON'
+import subprocess,sys
+with open(sys.argv[2], 'w') as output:
+ try:
+  subprocess.run(['xcrun','simctl','spawn',sys.argv[1],'log','show','--style','compact','--last','3h','--predicate','subsystem == "com.legitimateapps.dulcet.library-reset-proof"'],stdout=output,stderr=subprocess.STDOUT,timeout=30,check=False)
+ except subprocess.TimeoutExpired: output.write('\nRESET HISTORY deadline expired; see live capture\n')
+PYTHON
+}
+trap finish_proof EXIT
+methods=(BrowseAddRemoveRelaunchAndOfflineReplay NonDulcetServerKeepsTheOriginalLibraryNavigation LibraryBrowseAndAlbumInLightDarkAndLargestText LibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable LibrarySearchGroupsAndRecentQuerySurviveRelaunch AlbumAddRemainsVisibleAtLargestTextOnIPhone IPhoneLibrarySortShuffleAndArtistDepth)
+selected=()
+for method in "${methods[@]}"; do selected+=("-only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/test${method}"); done
+set +e
+xcodebuild test-without-building -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+  -destination "platform=iOS Simulator,id=$proof_udid" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+  -resultBundlePath "$RUNNER_TEMP/identity-stopgap.xcresult" -parallel-testing-enabled NO \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
+  "${selected[@]}" 2>&1 | tee "$RUNNER_TEMP/identity-stopgap-tests.log"
+proof_exit=$?
+set -e
+xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/identity-stopgap.xcresult" > "$RUNNER_TEMP/identity-stopgap-tests.json"
+xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/identity-stopgap.xcresult" > "$RUNNER_TEMP/identity-stopgap-summary.json"
+python3 - "$RUNNER_TEMP/identity-stopgap-summary.json" <<'PYTHON'
+import json,sys
+s=json.load(open(sys.argv[1]));print('EXACT IPHONE RESULT',json.dumps({k:s[k] for k in ['totalTestCount','passedTests','failedTests','skippedTests']}))
+assert s['totalTestCount']==7 and s['passedTests']==7 and s['failedTests']==0 and s['skippedTests']==0,s
+PYTHON
+exit "$proof_exit"

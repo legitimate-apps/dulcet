@@ -1,6 +1,124 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
+#if DEBUG && os(iOS)
+import OSLog
+
+private struct DulcetResetHeightClassKey: EnvironmentKey { static let defaultValue = "unmeasured" }
+private extension EnvironmentValues {
+    var resetHeightClass: String {
+        get { self[DulcetResetHeightClassKey.self] }
+        set { self[DulcetResetHeightClassKey.self] = newValue }
+    }
+}
+private struct DulcetResetScrollSample: Equatable {
+    var offset: CGPoint = .zero
+    var visible: CGRect = .zero
+    var insetTop: CGFloat = 0
+}
+
+/// Proof branch only. Passive geometry samples; no accessibility queries or scroll restoration.
+@MainActor
+private enum DulcetLibraryResetMetrics {
+    static let enabled = ProcessInfo.processInfo.arguments.contains("-dulcet-debug-library-reset-metrics")
+    static var active = false
+    static var geometry = DulcetResetScrollSample()
+    static var frames: [String: [String: (String, CGRect)]] = [:]
+    static var committed: String?
+    static var sequence = 0
+    struct Pending { let id: Int; let old: String; let before: [String: Any]; let time: UInt64; var target: String }
+    static var pending: Pending?
+    static let logger = Logger(subsystem: "com.legitimateapps.dulcet.library-reset-proof", category: "position")
+    static func log(_ event: String, _ fields: [String: Any]) {
+        guard enabled else { return }
+        var row = fields; row["event"] = event
+        let data = try! JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
+        let receipt = "RESET_COST " + String(decoding: data, as: UTF8.self)
+        logger.notice("\(receipt, privacy: .public)")
+    }
+    static func sample(_ key: String) -> [String: Any] {
+        let items = (frames[key] ?? [:]).filter { $0.value.1.intersects(geometry.visible) && !$0.value.1.isEmpty }
+        let first = items.sorted {
+            if abs($0.value.1.minY - $1.value.1.minY) > 0.1 { return $0.value.1.minY < $1.value.1.minY }
+            return $0.value.1.minX < $1.value.1.minX
+        }.first
+        return ["offsetX": geometry.offset.x, "offsetY": geometry.offset.y,
+                "insetTop": geometry.insetTop, "distanceFromTop": geometry.offset.y + geometry.insetTop,
+                "visibleRect": String(describing: geometry.visible), "knownFrames": frames[key]?.count ?? 0,
+                "firstID": first?.key ?? "none", "firstTitle": first?.value.0 ?? "none",
+                "firstFrame": first.map { String(describing: $0.value.1) } ?? "none"]
+    }
+    static func willPublish(_ library: DulcetMyLibrarySnapshot) {
+        guard enabled, active, let old = committed, !(frames[old] ?? [:]).isEmpty else { return }
+        let key = String(describing: DulcetMyLibraryStatusLayout(library))
+        guard key != old else {
+            if let p = pending {
+                log("coalesced", ["id": p.id, "old": old, "requested": p.target, "final": key])
+                pending = nil
+            }
+            return
+        }
+        frames[key] = [:]
+        if var p = pending {
+            p.target = key; pending = p
+            log("request", ["id": p.id, "new": key])
+        } else {
+            sequence += 1
+            let p = Pending(id: sequence, old: old, before: sample(old), time: DispatchTime.now().uptimeNanoseconds, target: key)
+            pending = p
+            log("before", ["id": p.id, "old": old, "new": key, "sample": p.before])
+        }
+    }
+    static func appeared(_ key: String) {
+        guard enabled else { return }
+        committed = key
+        guard let p = pending, p.target == key else { return }
+        pending = nil
+        DispatchQueue.main.async {
+            log("after", ["id": p.id, "old": p.old, "new": key, "before": p.before, "sample": sample(key),
+                          "elapsedMs": Double(DispatchTime.now().uptimeNanoseconds - p.time) / 1_000_000])
+            // This receipt is published only after both position samples have been taken.
+            DulcetUIProofMarkers.record("RESET_COST_AFTER|new=\(key)|id=\(p.id)")
+        }
+    }
+}
+// The publication hook is internal; measurement state stays private to this proof build.
+@MainActor
+func dulcetMeasureLibraryReset(_ library: DulcetMyLibrarySnapshot) { DulcetLibraryResetMetrics.willPublish(library) }
+
+private struct DulcetResetScrollObserver: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.onScrollGeometryChange(for: DulcetResetScrollSample.self) { geometry in
+                DulcetResetScrollSample(offset: geometry.contentOffset, visible: geometry.visibleRect, insetTop: geometry.contentInsets.top)
+            } action: { _, sample in DulcetLibraryResetMetrics.geometry = sample }
+            .onAppear { DulcetLibraryResetMetrics.active = true }
+            .onDisappear {
+                DulcetLibraryResetMetrics.active = false
+                DulcetLibraryResetMetrics.committed = nil
+                DulcetLibraryResetMetrics.pending = nil
+                DulcetLibraryResetMetrics.frames = [:]
+            }
+        } else { content }
+    }
+}
+private struct DulcetResetItemGeometry: ViewModifier {
+    let item: DulcetReaderItem
+    let key: String
+    func body(content: Content) -> some View {
+        content.background(GeometryReader { proxy in
+            Color.clear.onAppear { update(proxy) }
+                .onChange(of: proxy.frame(in: .named("library-reset-content"))) { _, _ in update(proxy) }
+        })
+    }
+    private func update(_ proxy: GeometryProxy) {
+        guard DulcetLibraryResetMetrics.enabled, key != "unmeasured" else { return }
+        let id = item.kind.rawValue + ":" + item.id.rawID
+        DulcetLibraryResetMetrics.frames[key, default: [:]][id] = (item.title ?? "(untitled)", proxy.frame(in: .named("library-reset-content")))
+    }
+}
+#endif
+
 struct DulcetReaderCollectionRoot: View {
     @Environment(DulcetPresentationStore.self) private var store
     let destination: DulcetSidebarDestination
@@ -117,6 +235,9 @@ struct DulcetMyLibraryEmptyState: View {
 
 /// The albums, artists and songs of one My Library section, on the root or a pushed page.
 struct DulcetMyLibraryCollection: View {
+#if DEBUG && os(iOS)
+    @Environment(\.resetHeightClass) private var resetHeightClass
+#endif
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let library: DulcetMyLibrarySnapshot
@@ -139,7 +260,12 @@ struct DulcetMyLibraryCollection: View {
     private func tiles(_ items: [DulcetReaderItem]) -> some View {
         let tileWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : (width < 500 ? 150 : 180)
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
-            ForEach(items) { item in DulcetReaderTile(item: item, width: tileWidth) }
+            ForEach(items) { item in
+                DulcetReaderTile(item: item, width: tileWidth)
+#if DEBUG && os(iOS)
+                    .modifier(DulcetResetItemGeometry(item: item, key: resetHeightClass))
+#endif
+            }
         }
     }
 
@@ -307,6 +433,10 @@ struct DulcetMyLibraryView: View {
                                 .font(.title2.weight(.semibold))
                                 .accessibilityAddTraits(.isHeader)
                             DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width)
+#if DEBUG
+                                .environment(\.resetHeightClass, String(describing: DulcetMyLibraryStatusLayout(library)))
+                                .onAppear { DulcetLibraryResetMetrics.appeared(String(describing: DulcetMyLibraryStatusLayout(library))) }
+#endif
                                 // On iOS 27, a layout move can leave a lazy AX node childless with a null frame.
                                 // Recreate it for status height changes; remove when status no longer moves lazy content.
                                 .id(DulcetMyLibraryStatusLayout(library))
@@ -315,8 +445,14 @@ struct DulcetMyLibraryView: View {
                 }
                 .padding(DulcetSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
+#if DEBUG
+                .coordinateSpace(name: "library-reset-content")
+#endif
             }
             .refreshable { refresh() }
+#if DEBUG
+            .modifier(DulcetResetScrollObserver())
+#endif
         }
     }
 #endif

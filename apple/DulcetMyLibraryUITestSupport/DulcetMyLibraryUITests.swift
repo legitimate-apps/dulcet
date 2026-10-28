@@ -131,6 +131,20 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            // Measure the stopgap at a real scrolled position without restoring that position.
+            let tile = albumTile(album.title)
+            print("RESET_COST_UI before-refresh album=\(tile.frame) hittable=\(tile.isHittable)")
+            try setOffline(true)
+            activate(app.buttons["dulcet.myLibrary.refresh"].firstMatch)
+            let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+            let after = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "RESET_COST_AFTER|new=failure"), object: markers)
+            XCTAssertEqual(XCTWaiter.wait(for: [after], timeout: 20), .completed, "The scrolled reset must produce an after-layout position sample")
+            print("RESET_COST_UI after-refresh albumExists=\(tile.exists) frame=\(tile.exists ? String(describing: tile.frame) : "absent") hittable=\(tile.exists && tile.isHittable)")
+            try setOffline(false)
+        }
+#endif
         app.terminate()
         try launch(connect: false)
         try select("library")
@@ -477,6 +491,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 "-dulcet-debug-account-username", username ?? user, "-dulcet-debug-account-password", password ?? self.password]
         }
         launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
+        launchArguments += ["-dulcet-debug-library-reset-metrics"]
         app.launchArguments = launchArguments
 #if os(macOS)
         if !installedFixtureNetworkMonitor {
