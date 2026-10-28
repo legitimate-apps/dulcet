@@ -22,6 +22,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
     private var hostingView: NSView?
     private var window: NSWindow?
     private var appearance: NSAppearance?
+    private var accountSettingsWindow: NSWindow?
 
     func testDesignTour() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -71,6 +72,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
         let previousEnhancedUI = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
         NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
         defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "settings-scene" {
+            try await captureShippingSettingsScene(serverURL: serverURL, username: username, password: password)
+            return
+        }
         let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
         hosting.frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
         let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
@@ -82,7 +87,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hosting.sceneBridgingOptions = [.toolbars]
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
-        defer { window.close() }
+        defer { window.close(); accountSettingsWindow?.close() }
         hostingView = hosting
         self.window = window
 
@@ -226,6 +231,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         await step("connection-empty") {
             store.selectDestination(.settings)
+            await self.presentAccountSurface(store, mainWindow: window, mainHosting: hosting)
             return await self.find("dulcet.account-connect.title") != nil
         }
         func enter(_ url: String, password enteredPassword: String = password, allowHTTP: Bool = true) {
@@ -236,7 +242,14 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         await step("connection-filled") {
             enter(serverURL)
-            return await self.find("dulcet.account-connect.primary-action") != nil
+            if await self.find("dulcet.account-connect.primary-action", seconds: 2) != nil { return true }
+            for element in self.interactionElements() {
+                let label = self.label(of: element) ?? ""
+                if label.contains("Sign In") || label.contains("Connect") {
+                    print("DULCET ACCOUNT ACTION label=\(label) identifier=\(self.objectValue("accessibilityIdentifier", of: element) ?? "none") role=\(self.objectValue("accessibilityRole", of: element) ?? "none")")
+                }
+            }
+            return false
         }
         let refused = try XCTUnwrap(DesignTourLoopbackPort(listening: false))
         let silent = try XCTUnwrap(DesignTourLoopbackPort(listening: true))
@@ -287,6 +300,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             return await self.find("dulcet.account-connect.title") != nil
         }
         if environment["DULCET_DESIGN_TOUR_PHASE"] != "account" {
+            accountSettingsWindow?.orderOut(nil)
             let settingsHosting = NSHostingView(rootView: DulcetSettingsView(store: store))
             settingsHosting.appearance = appearance
             settingsHosting.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
@@ -527,6 +541,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             shippingStore.accountPassword = password
             shippingStore.accountAllowLocalHTTP = true
             shippingStore.submitAccountConnection()
+            await self.presentAccountSurface(shippingStore, mainWindow: window, mainHosting: shippingHosting)
             return await self.waitFor(seconds: 45) { shippingStore.snapshot.state == .accountErrorPersistence }
         }
         print("DULCET DESIGN TOUR absent=downloads-screen,songs-list (downloads appear on track rows; library has no Songs destination)")
@@ -551,7 +566,77 @@ final class DulcetMacDesignTourTest: XCTestCase {
         window.contentView = savedHosting
         self.hostingView = savedHosting
         guard savedStore.snapshot.state == .accountSavedDisconnected else { return false }
+        await presentAccountSurface(savedStore, mainWindow: window, mainHosting: savedHosting)
         return await self.find("dulcet.account-connect.title") != nil
+    }
+
+    /// Open the actual SwiftUI Settings scene through its registered menu command.
+    /// This distinguishes missing scene chrome from a manually hosted view limitation.
+    private func captureShippingSettingsScene(serverURL: String, username: String, password: String) async throws {
+        func settingsCommand(in menu: NSMenu) -> (NSMenu, Int)? {
+            for (index, item) in menu.items.enumerated() {
+                if item.title == "Settings…" { return (menu, index) }
+                if let submenu = item.submenu, let found = settingsCommand(in: submenu) { return found }
+            }
+            return nil
+        }
+        let store = try XCTUnwrap(DulcetMacProduction.launchedPresentationStore)
+        store.accountServerURL = serverURL
+        store.accountUsername = username
+        store.accountPassword = password
+        store.accountAllowLocalHTTP = true
+        let menu = try XCTUnwrap(NSApp.mainMenu)
+        let command = try XCTUnwrap(settingsCommand(in: menu), "The app must register its Settings command")
+        let existing = Set(NSApp.windows.map(ObjectIdentifier.init))
+        command.0.performActionForItem(at: command.1)
+        guard await waitFor(seconds: 10, {
+            NSApp.windows.contains { !existing.contains(ObjectIdentifier($0)) && $0.isVisible }
+        }) else { XCTFail("The shipping Settings command must open a window"); return }
+        let target = try XCTUnwrap(NSApp.windows.first { !existing.contains(ObjectIdentifier($0)) && $0.isVisible })
+        target.appearance = appearance
+        target.makeKeyAndOrderFront(nil)
+        self.window = target
+        hostingView = target.contentView
+        defer { target.close() }
+        await step("connection-filled-shipping-scene") {
+            await self.find("dulcet.account-connect.primary-action", seconds: 5) != nil
+        }
+        for element in interactionElements() {
+            if let text = label(of: element), text.contains("Sign In") || text.contains("Connect") {
+                print("DULCET SETTINGS SCENE action=\(text) identifier=\(objectValue("accessibilityIdentifier", of: element) ?? "none")")
+            }
+        }
+        print("DULCET SETTINGS SCENE windows=\(NSApp.windows.count) primaryActionPresent=\(await find("dulcet.account-connect.primary-action", seconds: 1) != nil)")
+    }
+
+    /// Account states use the shipping Settings view when it contains the account tab.
+    /// The accepted baseline predates that tab and retains its main-window Connection route.
+    private func presentAccountSurface(_ store: DulcetPresentationStore,
+                                       mainWindow: NSWindow, mainHosting: NSView) async {
+        let settings = NSHostingView(rootView: DulcetSettingsView(store: store))
+        settings.frame = NSRect(x: 0, y: 0, width: 600, height: 560)
+        settings.appearance = appearance
+        settings.sceneBridgingOptions = [.toolbars]
+        let target = accountSettingsWindow ?? NSWindow(contentRect: settings.frame,
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        target.isReleasedWhenClosed = false
+        target.appearance = appearance
+        target.contentView = settings
+        target.makeKeyAndOrderFront(nil)
+        self.window = target
+        hostingView = settings
+        if await find("dulcet.account-connect.title", seconds: 2) != nil {
+            accountSettingsWindow = target
+            print("DULCET ACCOUNT CAPTURE container=native-settings-window")
+        } else {
+            target.orderOut(nil)
+            target.close()
+            accountSettingsWindow = nil
+            self.window = mainWindow
+            hostingView = mainHosting
+            mainWindow.makeKeyAndOrderFront(nil)
+            print("DULCET ACCOUNT CAPTURE container=legacy-main-window")
+        }
     }
 
     // MARK: - Steps and shots
