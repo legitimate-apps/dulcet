@@ -75,7 +75,7 @@ DEVICE=all
 VARIANT="${DULCET_DESIGN_TOUR_VARIANT:-}"
 SKIP_VARIANTS="${DULCET_DESIGN_TOUR_SKIP_VARIANTS:-}"
 PHASE="${DULCET_DESIGN_TOUR_PHASE:-all}"
-case "$PHASE" in all|account|connected|foundation) ;; *) echo "DULCET_DESIGN_TOUR_PHASE must be all, account, connected or foundation" >&2; exit 2 ;; esac
+case "$PHASE" in all|account|connected|foundation|settings-scene) ;; *) echo "DULCET_DESIGN_TOUR_PHASE must be all, account, connected, foundation or settings-scene" >&2; exit 2 ;; esac
 KEEP_SERVER=0
 KEEP_SIMULATOR=0
 while [[ $# -gt 0 ]]; do
@@ -433,6 +433,7 @@ fi
 if want mac; then
   RUN=$(tour_xctestrun 'DulcetMac_macosx*.xctestrun' mac)
   for appearance in light dark; do
+    [[ -z "$VARIANT" || "$VARIANT" == "mac-$appearance" ]] || continue
     export DULCET_DESIGN_TOUR_APPEARANCE="$appearance" TEST_RUNNER_DULCET_DESIGN_TOUR_APPEARANCE="$appearance"
     run_tour "mac-$appearance" "$RUN" DulcetMacTests/DulcetMacDesignTourTest/testDesignTour -destination platform=macOS
   done

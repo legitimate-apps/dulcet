@@ -106,7 +106,7 @@ struct DulcetDestinationStatus: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Label(title, systemImage: symbol)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .dulcetForeground(.secondaryTextOnWindow)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             if let retry {
@@ -125,10 +125,10 @@ struct DulcetShelfHeader: View {
     var body: some View {
         Button(action: onSeeAll) {
             HStack(alignment: .firstTextBaseline) {
-                Text(title).font(.title2.bold()).foregroundStyle(.primary)
+                Text(title).font(.title2.bold()).dulcetForeground(.primaryTextOnWindow)
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.forward").font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .dulcetForeground(.secondaryTextOnWindow)
             }
             .contentShape(Rectangle())
         }

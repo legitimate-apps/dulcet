@@ -620,7 +620,7 @@ struct DulcetReaderTile: View {
                     ? AnyShape(Circle())
                     : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
             HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xxs) {
-                if let rank { Text(rank.formatted()).font(.headline).foregroundStyle(.secondary) }
+                if let rank { Text(rank.formatted()).font(.headline).dulcetForeground(.secondaryTextOnWindow) }
                 Text(item.displayTitle)
                     .font(.subheadline.weight(.medium))
                     .dulcetForeground(.primaryTextOnWindow)

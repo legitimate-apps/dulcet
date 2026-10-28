@@ -1103,34 +1103,16 @@ private struct DulcetSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(DulcetStrings.serverStatus(serverName))
-        case let .disconnected(serverName):
-            HStack(spacing: DulcetSpacing.xs) {
-                DulcetStatusDot(color: .dulcetOffline)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(serverName)
-                        .font(.subheadline.weight(.medium))
-                    Text(DulcetStrings.disconnected)
-                        .font(.caption)
-                        .dulcetForeground(.secondaryTextOnThinMaterial)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(DulcetStrings.serverDisconnected(serverName))
-        case let .connectionFailed(failure):
-            HStack(spacing: DulcetSpacing.xs) {
-                DulcetStatusDot(color: .dulcetDanger)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(failure.serverName)
-                        .font(.subheadline.weight(.medium))
-                    Text(DulcetStrings.connectionFailed)
-                        .font(.caption)
-                        .dulcetForeground(.primaryTextOnThinMaterial)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(DulcetStrings.serverConnectionFailed(failure.serverName))
+        case .disconnected:
+            Label(DulcetStrings.offline, systemImage: "wifi.slash")
+                .font(.caption)
+                .dulcetForeground(.secondaryTextOnThinMaterial)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .connectionFailed:
+            Label(DulcetStrings.connectionFailed, systemImage: "exclamationmark.circle")
+                .font(.caption)
+                .dulcetForeground(.primaryTextOnThinMaterial)
+                .frame(maxWidth: .infinity, alignment: .leading)
         case let .offline(lastSyncedDescription):
             HStack(spacing: DulcetSpacing.xs) {
                 DulcetStatusDot(color: .dulcetOffline)

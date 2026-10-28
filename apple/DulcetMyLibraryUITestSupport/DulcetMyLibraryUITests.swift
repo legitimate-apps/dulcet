@@ -55,7 +55,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try capture("tvos-82-browse")
         try openAlbum(album.title)
         revealAlbumActions()
-        let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
         let added = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
         XCTAssertEqual(XCTWaiter.wait(for: [added], timeout: 20), .completed)
@@ -122,11 +122,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
         try openAlbum(album.title)
         revealAlbumActions()
-        let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
-        XCTAssertEqual(add.label, "Add to Library")
+        XCTAssertEqual(actionText(add), "Add to Library")
         activate(add)
-        awaitLabel(add, "Remove from Library")
+        awaitLabel(add, "Remove from Library", albumMenu: true)
 #if !os(tvOS)
         // The production reader expands the newly added album, and the existing executor
         // downloads it without an explicit Download action. Cut only this account's HTTP
@@ -166,7 +166,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
         revealAlbumActions()
-        let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let remove = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 20))
         activate(remove)
         try select("library")
@@ -177,9 +177,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("browse"); try openAlbum(album.title)
         try setOffline(true)
         revealAlbumActions()
-        let offlineAdd = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let offlineAdd = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         activate(offlineAdd)
-        awaitLabel(offlineAdd, "Remove from Library")
+        awaitLabel(offlineAdd, "Remove from Library", albumMenu: true)
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
@@ -225,10 +225,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("browse")
         try openAlbum(album.title)
         revealAlbumActions()
-        let pin = app.buttons["dulcet.pin.album.\(album.id)"].firstMatch
+        let pin = app.descendants(matching: .any)["dulcet.pin.album.\(album.id)"].firstMatch
         XCTAssertTrue(pin.waitForExistence(timeout: 20))
-        if !pin.label.hasPrefix("Unpin") { activate(pin) }
-        awaitLabel(pin, "Unpin \(album.title)")
+        if !actionText(pin).hasPrefix("Unpin") { activate(pin) }
+        awaitLabel(pin, "Unpin \(album.title)", albumMenu: true)
         app.terminate()
         try setOffline(true)
         try launch(connect: false)
@@ -274,10 +274,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("browse")
         try openAlbum(album.title)
         revealAlbumActions()
-        let unpin = app.buttons["dulcet.pin.album.\(album.id)"].firstMatch
+        let unpin = app.descendants(matching: .any)["dulcet.pin.album.\(album.id)"].firstMatch
         XCTAssertTrue(unpin.waitForExistence(timeout: 20))
-        if unpin.label.hasPrefix("Unpin") { activate(unpin) }
-        awaitLabel(unpin, "Pin \(album.title)")
+        if actionText(unpin).hasPrefix("Unpin") { activate(unpin) }
+        awaitLabel(unpin, "Pin \(album.title)", albumMenu: true)
     }
 
 #if !os(tvOS)
@@ -335,7 +335,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         app.scrollViews.firstMatch.swipeUp()
         XCTAssertTrue(artistAlbum.isHittable, "The discography can be brought fully into the compact viewport")
         try capture("Library-Depth-Artist-Discography")
-        try select("library")
+        // This proof shuffles the complete server catalog. Its destination is Browse;
+        // Library's Songs category contains only personal membership.
+        try select("browse")
         let songs = app.buttons["dulcet.library.songs"].firstMatch
         try reveal(songs); activate(songs)
         let shuffle = app.buttons["dulcet.songs.shuffleAll"].firstMatch
@@ -353,7 +355,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func reveal(_ element: XCUIElement) throws {
         for _ in 0..<12 {
             if element.exists && element.isHittable { return }
-            app.scrollViews.firstMatch.swipeUp()
+            let list = app.collectionViews.firstMatch
+            if list.exists { list.swipeUp() }
+            else { app.scrollViews.firstMatch.swipeUp() }
         }
         XCTAssertTrue(element.waitForExistence(timeout: 10))
         XCTAssertTrue(element.isHittable)
@@ -450,9 +454,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
             try capture("Browse-\(variant)")
             try openAlbum(album.title)
             revealAlbumActions()
-            let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+            let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
             XCTAssertTrue(add.waitForExistence(timeout: 30))
-            XCTAssertEqual(add.label, "Add to Library")
+            XCTAssertEqual(actionText(add), "Add to Library")
             try captureAlbumAdd("Album-Add-\(variant)", button: add)
         }
     }
@@ -480,9 +484,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         print("MY LIBRARY LARGEST TEXT catalog-scrolls=\(catalogScrolls) catalog-visible=true")
         try openAlbum(album.title)
         revealAlbumActions()
-        let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
-        XCTAssertEqual(add.label, "Add to Library")
+        XCTAssertEqual(actionText(add), "Add to Library")
         try captureAlbumAdd("Album-Add-largest-text", button: add)
 #else
         throw XCTSkip("Compact iPhone capture correction")
@@ -515,7 +519,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 
     @MainActor
     private func launch(connect: Bool = true, server: String? = nil, username: String? = nil, password: String? = nil, variant: String = "light") throws {
-        var launchArguments = ["-dulcet-debug-ui-markers", variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
+        var launchArguments = ["-dulcet-debug-ui-markers", "-dulcet-debug-navigation-receipts", variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if variant == "largest-text" { launchArguments += ["-dulcet-debug-largest-text"] }
         if connect {
             launchArguments += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server ?? base,
@@ -612,17 +616,27 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     @MainActor private func select(_ section: String) throws {
 #if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            // Each launch installs a new application process. Scope this navigation to
-            // that process; destination readiness and selected-state checks stay explicit.
-            withoutIdleWaits { [self] in selectDestination(section) }
-            return
-        }
-#endif
+        // Scope native input to this launch's process, as the design tour does.
+        // Destination readiness and selected-state checks remain explicit.
+        withoutIdleWaits { [self] in selectDestination(section) }
+#else
         selectDestination(section)
+#endif
     }
     @MainActor private func selectDestination(_ section: String) {
-        let membership = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
+#if os(iOS)
+        // A saved/debug connection can leave Account presented above the landing page.
+        // Its underlying tab frames remain queryable but cannot receive the tap.
+        let accountClose = app.buttons["dulcet.account.close"].firstMatch
+        if accountClose.exists {
+            activate(accountClose)
+            let dismissed = accountClose.waitForNonExistence(timeout: 10)
+            XCTAssertTrue(dismissed, "Dismiss Account before selecting a native destination")
+            print("MY LIBRARY IOS account-dismissed=\(dismissed) target=\(section)")
+            guard dismissed else { return }
+        }
+#endif
+        let membership = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
         if membership.exists {
 #if os(macOS)
             app.typeKey(.escape, modifierFlags: [])
@@ -675,47 +689,26 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }
         XCTFail("Remote could not reach \(section): \(app.debugDescription)")
 #else
-        activate(control)
+        activateDestination(control)
 #if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .phone {
-            // A correctly targeted native tab tap can finish without selecting its tab.
-            // Observe acknowledgement and retry ordinary input within the same budget.
-            let deadline = Date().addingTimeInterval(10)
-            var retries = 0
-            repeat {
-                let remaining = max(0, deadline.timeIntervalSince(Date()))
-                let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
-                if XCTWaiter.wait(for: [selected], timeout: min(3, remaining)) == .completed { return }
-                guard Date() < deadline else { break }
-                if retries < 2, control.isHittable, Date() < deadline {
-                    retries += 1
-                    print("MY LIBRARY IPHONE unacknowledged-tab-tap target=\(section) retry=\(retries)")
-                    activate(control)
-                    if control.isSelected { return }
-                }
-            } while Date() < deadline
-            XCTAssertTrue(control.isSelected, "The tab tap must select \(section): \(app.debugDescription)")
-        } else {
-            // A synthesized iPad label tap can finish without changing the sidebar selection.
-            // Retained failures show Listen Now still selected after a tap inside Library's
-            // correct bounds, at both default and accessibility text sizes. Observe selection
-            // before reading destination content; make at most one second real row tap.
-            let firstSelection = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
-            if XCTWaiter.wait(for: [firstSelection], timeout: 3) != .completed {
-                let row = app.buttons.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
-                guard row.waitForExistence(timeout: 3) else {
-                    XCTFail("Missing native sidebar row for \(section): \(app.debugDescription)")
-                    return
-                }
-                if !row.isSelected {
-                    print("MY LIBRARY IPAD unacknowledged-sidebar-tap target=\(section) retry=button")
-                    row.tap()
-                }
-            }
+        // Adaptable tabs can be top-bar Buttons or sidebar Cells on iPad. Observe
+        // the destination returned by the native query instead of assuming the legacy
+        // sidebar identifier exists. A tap is acknowledged only by selected state.
+        let deadline = Date().addingTimeInterval(10)
+        var retries = 0
+        repeat {
+            let remaining = max(0, deadline.timeIntervalSince(Date()))
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
-                           "The sidebar tap must select \(section): \(app.debugDescription)")
-        }
+            if XCTWaiter.wait(for: [selected], timeout: min(3, remaining)) == .completed { return }
+            guard Date() < deadline else { break }
+            if retries < 2, Date() < deadline {
+                retries += 1
+                print("MY LIBRARY IOS unacknowledged-destination-tap target=\(section) retry=\(retries)")
+                activateDestination(control)
+                if control.isSelected { return }
+            }
+        } while Date() < deadline
+        XCTAssertTrue(control.isSelected, "The native destination tap must select \(section): \(app.debugDescription)")
 #endif
 #if os(macOS)
         // A macOS List does not write its selection binding when its selected row is clicked
@@ -740,7 +733,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         guard let method = class_getInstanceMethod(type(of: app), selector),
               let encoding = method_getTypeEncoding(method).map({ String(cString: $0) }),
               encoding.filter({ !$0.isNumber }) == "v@:I@?" else {
-            print("MY LIBRARY IPAD sidebar interaction options unavailable; using ordinary waits")
+            print("MY LIBRARY IOS destination interaction options unavailable; using ordinary waits")
             body()
             return
         }
@@ -756,11 +749,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) -> Int {
 #if os(iOS)
         guard UIDevice.current.userInterfaceIdiom == .phone else { return 0 }
-        // Library's destination rows and Browse's largest-text introduction precede a lazy
-        // album grid. Reach that grid with touch scrolling before asserting its publication.
+        // Native List exposes a CollectionView; artwork pages expose a ScrollView.
+        // Scroll the actual destination container before asserting a lazy tile's publication.
         for scrolls in 0..<8 {
             if tile.exists && tile.isHittable { return scrolls }
-            app.scrollViews.firstMatch.swipeUp()
+            let list = app.collectionViews.firstMatch
+            if list.exists { list.swipeUp() }
+            else { app.scrollViews.firstMatch.swipeUp() }
         }
         return 8
 #else
@@ -841,6 +836,24 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(opened, "The activated tile must open its album page")
         XCTAssertEqual(header.label, title, "The album page must name the activated tile")
     }
+    @MainActor private func activateDestination(_ element: XCUIElement) {
+#if os(iOS)
+        if element.identifier.hasPrefix("dulcet.tab.") {
+            // A native tab can report an invalid synthesized hit point (-1, -1)
+            // despite publishing its visible frame. Tap that frame, then require selection.
+            let frame = element.frame
+            guard frame.width > 0, frame.height > 0, app.frame.contains(frame) else {
+                XCTFail("The native destination must have an on-screen frame: " + element.debugDescription)
+                return
+            }
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            origin.withOffset(CGVector(dx: frame.midX - app.frame.minX,
+                                       dy: frame.midY - app.frame.minY)).tap()
+            return
+        }
+#endif
+        activate(element)
+    }
     @MainActor private func activate(_ element: XCUIElement) {
 #if os(tvOS)
         focus(element)
@@ -915,17 +928,36 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 #endif
     @MainActor private func revealAlbumActions() {
-        let action = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
+        let action = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
+#if os(macOS)
+        // AppKit can retain a closed menu item's node. Existence alone is not visibility.
+        if action.exists && action.isHittable { return }
+#else
         if action.exists { return }
-        let more = app.buttons["dulcet.album.more"].firstMatch
+#endif
+        let more = app.descendants(matching: .any)["dulcet.album.more"].firstMatch
         XCTAssertTrue(more.waitForExistence(timeout: 15), "The album must offer More")
         activate(more)
         XCTAssertTrue(action.waitForExistence(timeout: 10), "The native menu must offer the membership action")
     }
 
-    @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String) {
-        if element.identifier.hasPrefix("dulcet.membership.album.") || element.identifier.hasPrefix("dulcet.pin.album.") { revealAlbumActions() }
+    @MainActor private func actionText(_ element: XCUIElement) -> String {
+#if os(macOS)
+        // Native AppKit menu items publish their visible text as title, with an empty label.
+        return element.label.isEmpty ? element.title : element.label
+#else
+        return element.label
+#endif
+    }
+    @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String, albumMenu: Bool = false) {
+        // Reopen before resolving a menu item's identifier: selecting an item closes its menu.
+        if albumMenu { revealAlbumActions() }
+#if os(macOS)
+        let menuTitle = label.hasPrefix("Unpin ") ? "Unpin" : label.hasPrefix("Pin ") ? "Pin" : label
+        let expected = NSPredicate(format: "label == %@ OR title == %@", label, menuTitle)
+#else
         let expected = NSPredicate(format: "label == %@", label)
+#endif
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)], timeout: 20), .completed)
     }
     @MainActor private func capture(_ name: String) throws {
