@@ -41,6 +41,7 @@ enum DulcetQueueStrings {
 public struct DulcetUpNextSection: View {
     private let model: DulcetUpNextModel
     private let onEdit: (DulcetQueueEditIntent) -> Void
+    @State private var confirmingClear = false
 
     public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void) {
         model = DulcetUpNextModel(nowPlaying: nowPlaying)
@@ -68,8 +69,18 @@ public struct DulcetUpNextSection: View {
                 }
                 Spacer()
                 if !model.upcoming.isEmpty {
-                    Button(DulcetQueueStrings.clear) { onEdit(.clearUpcoming) }
+                    Button(DulcetQueueStrings.clear) { confirmingClear = true }
+                        .buttonStyle(.borderless)
+                        .tint(.accentColor)
                         .accessibilityIdentifier("dulcet.upNext.clear")
+                        .confirmationDialog(DulcetQueueStrings.clear, isPresented: $confirmingClear) {
+                            Button(DulcetQueueStrings.clear, role: .destructive) { onEdit(.clearUpcoming) }
+                        }
+#if os(iOS)
+                    EditButton()
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("dulcet.upNext.edit")
+#endif
                 }
             }
         }
@@ -97,26 +108,40 @@ public struct DulcetUpNextSection: View {
     }
 
     private func row(_ entry: DulcetQueueEntry, offset: Int) -> some View {
-        Button {
-            onEdit(model.jumpIntent(to: entry))
-        } label: {
-            HStack(spacing: DulcetSpacing.xs) {
-                DulcetArtworkView(artwork: entry.track.artwork, size: 40)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.track.title)
-                        .lineLimit(1)
-                    Text(DulcetStrings.artistNames(entry.track.artistNames))
-                        .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .lineLimit(1)
+        HStack(spacing: DulcetSpacing.sm) {
+            Button {
+                onEdit(model.jumpIntent(to: entry))
+            } label: {
+                HStack(spacing: DulcetSpacing.sm) {
+                    DulcetArtworkView(artwork: entry.track.artwork, size: 48)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(entry.track.title)
+                            .font(.body.weight(.medium))
+                            .lineLimit(2)
+                        Text(DulcetStrings.artistNames(entry.track.artistNames))
+                            .font(.subheadline)
+                            .dulcetForeground(.secondaryTextOnWindow)
+                            .lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .dulcetHoverEffect()
+            .accessibilityIdentifier("dulcet.upNext.row.\(offset)")
+            Menu {
+                rowActions(entry, offset: offset)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .accessibilityLabel(DulcetStrings.more)
+            .accessibilityIdentifier("dulcet.upNext.row.\(offset).more")
         }
-        .buttonStyle(.plain)
-        .dulcetHoverEffect()
-        .accessibilityIdentifier("dulcet.upNext.row.\(offset)")
         // Reordering is a drag, which VoiceOver and Switch Control cannot perform on a row, so
         // Move Up and Move Down are named actions. Removal needs one only where the platform does
         // not already offer it: on iOS the row's swipe comes with a Delete action derived from
@@ -142,7 +167,11 @@ public struct DulcetUpNextSection: View {
             Button(DulcetQueueStrings.remove) { onEdit(.remove(entry.id)) }
             #endif
         }
-        .contextMenu {
+        .contextMenu { rowActions(entry, offset: offset) }
+    }
+
+    @ViewBuilder
+    private func rowActions(_ entry: DulcetQueueEntry, offset: Int) -> some View {
             Button(DulcetQueueStrings.playNow) { onEdit(model.jumpIntent(to: entry)) }
             if offset > 0,
                let intent = model.moveIntent(
@@ -159,7 +188,6 @@ public struct DulcetUpNextSection: View {
                 Button(DulcetQueueStrings.moveDown) { onEdit(intent) }
             }
             Button(DulcetQueueStrings.remove, role: .destructive) { onEdit(.remove(entry.id)) }
-        }
     }
 }
 
@@ -266,6 +294,9 @@ public struct DulcetUpNextList: View {
     private let nowPlaying: DulcetNowPlaying?
     private let onEdit: (DulcetQueueEditIntent) -> Void
     private let autoplay: DulcetAutoplayToggle?
+#if os(iOS)
+    @State private var editMode: EditMode = .inactive
+#endif
 
     public init(
         nowPlaying: DulcetNowPlaying?,
@@ -279,6 +310,27 @@ public struct DulcetUpNextList: View {
 
     public var body: some View {
         List {
+            if let current = nowPlaying {
+                Section(DulcetStrings.nowPlaying) {
+                    HStack(spacing: DulcetSpacing.sm) {
+                        DulcetArtworkView(artwork: current.current.artwork, size: 48)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(current.current.title).font(.headline).lineLimit(2)
+                            Text(DulcetStrings.artistNames(current.current.artistNames))
+                                .font(.subheadline)
+                                .dulcetForeground(.secondaryTextOnWindow)
+                                .lineLimit(2)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: current.isPlaying ? "waveform" : "pause.fill")
+                            .accessibilityHidden(true)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isSelected)
+                    .accessibilityIdentifier("dulcet.upNext.current")
+                    .listRowBackground(Color.clear)
+                }
+            }
             DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit)
                 .listRowBackground(Color.clear)
             if let autoplay {
@@ -294,6 +346,9 @@ public struct DulcetUpNextList: View {
         // drew an inset card in the dark appearance and bare rows in the light one.
 #if !os(tvOS)
         .listStyle(.plain)
+#endif
+#if os(iOS)
+        .environment(\.editMode, $editMode)
 #endif
         .accessibilityIdentifier("dulcet.upNext")
     }

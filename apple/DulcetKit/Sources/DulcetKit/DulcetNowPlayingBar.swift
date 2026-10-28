@@ -22,9 +22,22 @@ struct DulcetNowPlayingBar: View {
 
     static let identifier = "dulcet.mini-player"
 
+    @ViewBuilder
     var body: some View {
+#if os(iOS)
+        if #available(iOS 26.0, *) {
+            DulcetMiniPlayerAccessoryLayout { inline in bar(inline: inline) }
+        } else {
+            bar(inline: false)
+        }
+#else
+        bar(inline: false)
+#endif
+    }
+
+    private func bar(inline: Bool) -> some View {
         HStack(spacing: style == .expanded ? DulcetSpacing.md : DulcetSpacing.sm) {
-            openButton
+            openButton(inline: inline)
             if style == .expanded {
                 Spacer(minLength: DulcetSpacing.sm)
                 if let player = store.snapshot.nowPlaying {
@@ -39,7 +52,7 @@ struct DulcetNowPlayingBar: View {
                 transport
             }
         }
-        .padding(.leading, DulcetSpacing.xs)
+        .padding(.leading, DulcetSpacing.sm)
         .padding(.trailing, DulcetSpacing.sm)
         .padding(.vertical, DulcetSpacing.xs)
         // A bar that grew with accessibility text sizes would cover the screen it floats over
@@ -49,14 +62,14 @@ struct DulcetNowPlayingBar: View {
         .accessibilityIdentifier(Self.identifier)
     }
 
-    private var openButton: some View {
+    private func openButton(inline: Bool) -> some View {
         Button {
             DulcetUIProofMarkers.record("mini-player-open")
             onOpen()
         } label: {
             HStack(spacing: DulcetSpacing.sm) {
                 artwork
-                identity
+                identity(inline: inline)
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
@@ -74,7 +87,7 @@ struct DulcetNowPlayingBar: View {
 
     @ViewBuilder
     private var artwork: some View {
-        let size: CGFloat = style == .expanded ? 44 : 40
+        let size: CGFloat = style == .expanded ? 44 : 36
         if !store.snapshot.playbackFailed, let player = store.snapshot.nowPlaying {
             DulcetArtworkView(artwork: player.current.artwork, size: size)
                 .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
@@ -98,7 +111,7 @@ struct DulcetNowPlayingBar: View {
     /// with three actions beside them, a narrow phone at the largest text size cut both the track
     /// and "Couldn't play this track" to their first words, and that line is the one that must
     /// be read.
-    private var identity: some View {
+    private func identity(inline: Bool) -> some View {
         let lines = store.snapshot.playbackFailed ? 2 : 1
         return VStack(alignment: .leading, spacing: 1) {
             Text(title)
@@ -106,7 +119,7 @@ struct DulcetNowPlayingBar: View {
                 .lineLimit(lines)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("\(Self.identifier).title")
-            if let subtitle {
+            if let subtitle, !inline {
                 Text(subtitle)
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnRegularMaterial)
@@ -188,7 +201,7 @@ struct DulcetNowPlayingBar: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(prominent ? .title2 : .title3)
+                .font(.system(size: prominent ? 20 : 18, weight: .medium))
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
@@ -257,6 +270,16 @@ struct DulcetNowPlayingBar: View {
             : DulcetStrings.playbackFailed(title: track.title)
     }
 }
+
+#if os(iOS)
+@available(iOS 26.0, *)
+private struct DulcetMiniPlayerAccessoryLayout<Content: View>: View {
+    @Environment(\.tabViewBottomAccessoryPlacement) private var placement
+    @ViewBuilder let content: (Bool) -> Content
+
+    var body: some View { content(placement == .inline) }
+}
+#endif
 
 /// The expanded bar's elapsed/remaining line. Read-only: seeking lives in the full player.
 private struct DulcetNowPlayingBarProgress: View {

@@ -132,12 +132,12 @@ struct DulcetLyricsPanel: View {
         }
     }
 
-    /// Plain lyrics' lines, sized for the room: a television reads from a sofa.
+    /// Plain lyrics use the same readable hierarchy as timed lyrics.
     private static var plainLineFont: Font {
 #if os(tvOS)
-        .title2.weight(.semibold)
+        .title.weight(.semibold)
 #else
-        .title2.weight(.semibold)
+        .title.weight(.semibold)
 #endif
     }
 }
@@ -282,7 +282,13 @@ private struct DulcetSyncedLyrics: View {
     /// The synced lines, set as the system player sets them: the lines are the screen. One size
     /// for lit and unlit lines alike, so the follow of the lit line never jumps the layout; the
     /// lit line reads by its full-strength colour, and Dynamic Type still scales the style.
-    private static let lineFont: Font = .title.weight(.bold)
+    private static var lineFont: Font {
+#if os(tvOS)
+        .largeTitle.weight(.bold)
+#else
+        .largeTitle.weight(.bold)
+#endif
+    }
 
     private static var lineSpacing: CGFloat { DulcetSpacing.lg }
 
@@ -516,34 +522,7 @@ struct DulcetLyricsBackdrop: View {
     static let scrimOpacity: Double = 0.55
 
     var body: some View {
-        if !(reduceTransparencyOverride ?? systemReduceTransparency) {
-            GeometryReader { geometry in
-                DulcetArtworkView(artwork: artwork, size: Self.artworkSize)
-                    .scaleEffect(Self.scale(for: geometry.size))
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .blur(radius: Self.blurRadius)
-                    .clipped()
-            }
-            .overlay {
-                Color.dulcetWindow.opacity(Self.scrimOpacity)
-            }
-            // The cover's colour recedes behind the scrubber and transport at the bottom and the
-            // header at the top, where small text and the track must stay readable.
-            .overlay {
-                LinearGradient(
-                    stops: [
-                        .init(color: Color.dulcetWindow.opacity(0.55), location: 0),
-                        .init(color: Color.dulcetWindow.opacity(0.12), location: 0.2),
-                        .init(color: Color.dulcetWindow.opacity(0.3), location: 0.6),
-                        .init(color: Color.dulcetWindow.opacity(0.78), location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
+        DulcetPlayerBackdrop(artwork: artwork)
     }
 
     static func scale(for size: CGSize) -> CGFloat {
