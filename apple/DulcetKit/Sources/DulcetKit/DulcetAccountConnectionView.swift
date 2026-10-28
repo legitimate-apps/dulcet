@@ -265,7 +265,7 @@ struct DulcetAccountConnectionView: View {
                         .accessibilityIdentifier("dulcet.account.connected")
                 }
                 .accessibilityIdentifier("dulcet.account-connect.title")
-                .accessibilityHint(store.librarySession?.serverReportsNoEpoch == true ? DulcetStrings.readerNoEpoch : "")
+                .accessibilityHint(store.librarySession?.serverReportsNoEpoch == true ? DulcetStrings.readerNoEpoch : String())
                 Section {
                     NavigationLink { DulcetPlaybackSettingsPage(store: store) } label: {
                         Label(DulcetStrings.playbackSettings, systemImage: "play.circle")
