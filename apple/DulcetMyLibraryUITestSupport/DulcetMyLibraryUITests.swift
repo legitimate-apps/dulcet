@@ -55,7 +55,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try capture("tvos-82-browse")
         try openAlbum(album.title)
         revealAlbumActions()
-        let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
         let added = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
         XCTAssertEqual(XCTWaiter.wait(for: [added], timeout: 20), .completed)
@@ -122,7 +122,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
         try openAlbum(album.title)
         revealAlbumActions()
-        let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
         XCTAssertEqual(add.label, "Add to Library")
         activate(add)
@@ -166,7 +166,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
         revealAlbumActions()
-        let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let remove = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 20))
         activate(remove)
         try select("library")
@@ -177,7 +177,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("browse"); try openAlbum(album.title)
         try setOffline(true)
         revealAlbumActions()
-        let offlineAdd = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let offlineAdd = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         activate(offlineAdd)
         awaitLabel(offlineAdd, "Remove from Library")
         try select("library")
@@ -225,7 +225,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("browse")
         try openAlbum(album.title)
         revealAlbumActions()
-        let pin = app.buttons["dulcet.pin.album.\(album.id)"].firstMatch
+        let pin = app.descendants(matching: .any)["dulcet.pin.album.\(album.id)"].firstMatch
         XCTAssertTrue(pin.waitForExistence(timeout: 20))
         if !pin.label.hasPrefix("Unpin") { activate(pin) }
         awaitLabel(pin, "Unpin \(album.title)")
@@ -274,7 +274,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("browse")
         try openAlbum(album.title)
         revealAlbumActions()
-        let unpin = app.buttons["dulcet.pin.album.\(album.id)"].firstMatch
+        let unpin = app.descendants(matching: .any)["dulcet.pin.album.\(album.id)"].firstMatch
         XCTAssertTrue(unpin.waitForExistence(timeout: 20))
         if unpin.label.hasPrefix("Unpin") { activate(unpin) }
         awaitLabel(unpin, "Pin \(album.title)")
@@ -450,7 +450,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             try capture("Browse-\(variant)")
             try openAlbum(album.title)
             revealAlbumActions()
-            let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+            let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
             XCTAssertTrue(add.waitForExistence(timeout: 30))
             XCTAssertEqual(add.label, "Add to Library")
             try captureAlbumAdd("Album-Add-\(variant)", button: add)
@@ -480,7 +480,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         print("MY LIBRARY LARGEST TEXT catalog-scrolls=\(catalogScrolls) catalog-visible=true")
         try openAlbum(album.title)
         revealAlbumActions()
-        let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 30))
         XCTAssertEqual(add.label, "Add to Library")
         try captureAlbumAdd("Album-Add-largest-text", button: add)
@@ -622,7 +622,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         selectDestination(section)
     }
     @MainActor private func selectDestination(_ section: String) {
-        let membership = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
+        let membership = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
         if membership.exists {
 #if os(macOS)
             app.typeKey(.escape, modifierFlags: [])
@@ -675,47 +675,26 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }
         XCTFail("Remote could not reach \(section): \(app.debugDescription)")
 #else
-        activate(control)
+        activateDestination(control)
 #if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .phone {
-            // A correctly targeted native tab tap can finish without selecting its tab.
-            // Observe acknowledgement and retry ordinary input within the same budget.
-            let deadline = Date().addingTimeInterval(10)
-            var retries = 0
-            repeat {
-                let remaining = max(0, deadline.timeIntervalSince(Date()))
-                let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
-                if XCTWaiter.wait(for: [selected], timeout: min(3, remaining)) == .completed { return }
-                guard Date() < deadline else { break }
-                if retries < 2, control.isHittable, Date() < deadline {
-                    retries += 1
-                    print("MY LIBRARY IPHONE unacknowledged-tab-tap target=\(section) retry=\(retries)")
-                    activate(control)
-                    if control.isSelected { return }
-                }
-            } while Date() < deadline
-            XCTAssertTrue(control.isSelected, "The tab tap must select \(section): \(app.debugDescription)")
-        } else {
-            // A synthesized iPad label tap can finish without changing the sidebar selection.
-            // Retained failures show Listen Now still selected after a tap inside Library's
-            // correct bounds, at both default and accessibility text sizes. Observe selection
-            // before reading destination content; make at most one second real row tap.
-            let firstSelection = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
-            if XCTWaiter.wait(for: [firstSelection], timeout: 3) != .completed {
-                let row = app.buttons.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
-                guard row.waitForExistence(timeout: 3) else {
-                    XCTFail("Missing native sidebar row for \(section): \(app.debugDescription)")
-                    return
-                }
-                if !row.isSelected {
-                    print("MY LIBRARY IPAD unacknowledged-sidebar-tap target=\(section) retry=button")
-                    row.tap()
-                }
-            }
+        // Adaptable tabs can be top-bar Buttons or sidebar Cells on iPad. Observe
+        // the destination returned by the native query instead of assuming the legacy
+        // sidebar identifier exists. A tap is acknowledged only by selected state.
+        let deadline = Date().addingTimeInterval(10)
+        var retries = 0
+        repeat {
+            let remaining = max(0, deadline.timeIntervalSince(Date()))
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
-                           "The sidebar tap must select \(section): \(app.debugDescription)")
-        }
+            if XCTWaiter.wait(for: [selected], timeout: min(3, remaining)) == .completed { return }
+            guard Date() < deadline else { break }
+            if retries < 2, Date() < deadline {
+                retries += 1
+                print("MY LIBRARY IOS unacknowledged-destination-tap target=\(section) retry=\(retries)")
+                activateDestination(control)
+                if control.isSelected { return }
+            }
+        } while Date() < deadline
+        XCTAssertTrue(control.isSelected, "The native destination tap must select \(section): \(app.debugDescription)")
 #endif
 #if os(macOS)
         // A macOS List does not write its selection binding when its selected row is clicked
@@ -841,6 +820,22 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(opened, "The activated tile must open its album page")
         XCTAssertEqual(header.label, title, "The album page must name the activated tile")
     }
+    @MainActor private func activateDestination(_ element: XCUIElement) {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad, element.identifier.hasPrefix("dulcet.tab.") {
+            // The native top tab can report an invalid synthesized hit point (-1, -1)
+            // despite publishing its visible frame. Tap that frame, then require selection.
+            let frame = element.frame
+            guard frame.width > 0, frame.height > 0, app.frame.contains(frame) else {
+                XCTFail("The native destination must have an on-screen frame: " + element.debugDescription)
+                return
+            }
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            return
+        }
+#endif
+        activate(element)
+    }
     @MainActor private func activate(_ element: XCUIElement) {
 #if os(tvOS)
         focus(element)
@@ -915,9 +910,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 #endif
     @MainActor private func revealAlbumActions() {
-        let action = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
+        let action = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
         if action.exists { return }
-        let more = app.buttons["dulcet.album.more"].firstMatch
+        let more = app.descendants(matching: .any)["dulcet.album.more"].firstMatch
         XCTAssertTrue(more.waitForExistence(timeout: 15), "The album must offer More")
         activate(more)
         XCTAssertTrue(action.waitForExistence(timeout: 10), "The native menu must offer the membership action")
