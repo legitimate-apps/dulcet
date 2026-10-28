@@ -718,6 +718,14 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// Trailing content -- the reader's favourite heart. At the accessibility text sizes the row
     /// stacks and it sits on the meta line under the full-width title instead of crowding it.
     let trailing: Trailing
+    private var extraMenuActions = AnyView(EmptyView())
+
+    /// Queue-entry actions are distinct from the track's library and playback actions.
+    func additionalMenuActions<Actions: View>(@ViewBuilder _ actions: () -> Actions) -> Self {
+        var row = self
+        row.extraMenuActions = AnyView(actions())
+        return row
+    }
 
     init(
         track: DulcetTrack,
@@ -769,6 +777,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                     onDownload: offline ? nil : onDownload,
                     onNavigate: {}
                 )
+                extraMenuActions
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.body.weight(.semibold))
@@ -780,6 +789,12 @@ struct DulcetTrackRow<Trailing: View>: View {
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
             .accessibilityIdentifier("dulcet.track.more")
+        }
+        .contextMenu {
+            DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
+                queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: nil,
+                onDownload: offline ? nil : onDownload, onNavigate: {})
+            extraMenuActions
         }
 #if os(iOS)
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
