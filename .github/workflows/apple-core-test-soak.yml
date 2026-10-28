@@ -522,6 +522,27 @@ jobs:
         \ --phase diagnostic-ipad-lyrics --keep \"$IPAD_UDID\" --settle --require-settle --settle-pressure\
         \ --require-isolation \\\n --warmup-app \"$RUNNER_TEMP/DulcetiPadOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet\
         \ DEV.app\"\ntools/ci/run-native-ui-diagnostic ipad \"platform=iOS Simulator,id=$IPAD_UDID\"\n"
+    - name: Return the lyrics device to Shutdown before Discover boot admission
+      if: ${{ !cancelled() && steps.ipados_conformance_destination.outcome == 'success' }}
+      env:
+        IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
+      run: 'python3 - <<''PYDEVICE''
+
+        import json, os, subprocess
+
+        udid=os.environ[''IPAD_UDID'']
+
+        inventory=json.loads(subprocess.check_output([''xcrun'',''simctl'',''list'',''devices'',''--json'']))
+
+        device=next(d for ds in inventory[''devices''].values() for d in ds if d[''udid'']==udid)
+
+        print(''lyrics device before Discover:'',udid,device[''state''])
+
+        if device[''state''] != ''Shutdown'':subprocess.run([''xcrun'',''simctl'',''shutdown'',udid],check=True,timeout=60)
+
+        PYDEVICE
+
+        '
     - name: Configure isolated edition fixture
       run: 'echo "DULCET_DISCOVER_NAVIDROME_BIN=${{ steps.conformance_root.outputs.path }}/bin/navidrome" >>
         "$GITHUB_ENV"
