@@ -130,7 +130,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
             remote.press(.playPause)
             step("player-paused", app) {
-                app.buttons["Play"].firstMatch.waitForExistence(timeout: 10) && self.settle(1)
+                let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+                let transport = app.buttons["dulcet.now-playing.play-pause"].firstMatch
+                return title.waitForExistence(timeout: 10)
+                    && transport.waitForExistence(timeout: 10)
+                    && self.waitFor(10, { transport.label == "Play" }) && self.settle(1)
             }
         } else {
         step("now-playing-heart", app) {
