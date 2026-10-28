@@ -902,47 +902,59 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return cell.exists && cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
     }
     private func focus(_ target: XCUIElement) {
-        var previousFrame: CGRect?
+        func currentFocus() -> XCUIElement {
+            let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            return cell.exists ? cell : app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        }
+        func identity(_ element: XCUIElement) -> String {
+            "\(element.elementType.rawValue)|\(element.identifier)|\(element.label)"
+        }
+        func opposite(_ direction: XCUIRemote.Button) -> XCUIRemote.Button {
+            switch direction {
+            case .up: .down
+            case .down: .up
+            case .left: .right
+            default: .left
+            }
+        }
+        var tried: [String: Set<UInt>] = [:]
+        var arrival: [String: XCUIRemote.Button] = [:]
         for move in 0..<40 {
-            func press(_ direction: XCUIRemote.Button, reason: String) {
-                func state() -> String {
-                    let nodes = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).allElementsBoundByIndex
-                    return nodes.map { "type=\($0.elementType.rawValue) id=\($0.identifier.debugDescription) label=\($0.label.debugDescription) frame=\($0.frame)" }.joined(separator: " | ")
-                }
-                print("FOCUS MOVE \(move) direction=\(direction) reason=\(reason) targetID=\(target.identifier) targetLabel=\(target.label) targetFrame=\(target.frame) before=[\(state())]")
-                XCUIRemote.shared.press(direction)
-                print("FOCUS AFTER \(move) targetFrame=\(target.frame) after=[\(state())]")
-            }
             if isFocused(target) { return }
-            let focusedCell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-            let current = focusedCell.exists ? focusedCell : app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-            guard current.exists else { press(.down, reason: "no-current"); continue }
-            let a = current.frame, b = target.frame
-            // Album Add is centred beside the vertical Play/Shuffle stack. Its centre is
-            // below Play and above Shuffle, so centre-only steering oscillates Up/Down.
-            // Overlapping vertical spans identify the reachable horizontal neighbour.
-            if min(a.maxY, b.maxY) > max(a.minY, b.minY),
-               b.minX >= a.maxX || b.maxX <= a.minX {
-                press(b.midX > a.midX ? .right : .left, reason: "overlap")
-                previousFrame = a
-                continue
+            let current = currentFocus()
+            guard current.exists else { XCUIRemote.shared.press(.down); continue }
+            let key = identity(current), a = current.frame, b = target.frame
+            let horizontal: XCUIRemote.Button = b.midX > a.midX ? .right : .left
+            let vertical: XCUIRemote.Button = b.midY > a.midY ? .down : .up
+            let overlaps = min(a.maxY, b.maxY) > max(a.minY, b.minY)
+            let horizontalNeighbor = overlaps && (b.minX >= a.maxX || b.maxX <= a.minX)
+            let verticalDistance = abs(a.midY - b.midY) > max(20, min(a.height, b.height) / 2)
+            var directions: [XCUIRemote.Button] = horizontalNeighbor || !verticalDistance
+                ? [horizontal, vertical, opposite(vertical), opposite(horizontal)]
+                : [vertical, horizontal, opposite(vertical), opposite(horizontal)]
+            // Focus geometry is a preference, not a route. A tall, staggered grid can
+            // require moving back onto the card above a More control before moving left.
+            // Explore each direction once per focus identity, even if scrolling moves it.
+            if let entered = arrival[key] {
+                let back = opposite(entered)
+                directions.removeAll { $0 == back }; directions.append(back)
             }
-            if previousFrame == a && abs(a.midX - b.midX) > 20 {
-                // A narrow first-column tile can have no Down neighbor from a wider section bar.
-                press(b.midX > a.midX ? .right : .left, reason: "stalled-frame")
-                previousFrame = nil
-                continue
-            }
-            previousFrame = a
-            if abs(a.midY - b.midY) > max(20, min(a.height, b.height) / 2) {
-                press(b.midY > a.midY ? .down : .up, reason: "vertical-distance")
-            } else {
-                press(b.midX > a.midX ? .right : .left, reason: "horizontal-distance")
-            }
+            let direction = directions.first { !(tried[key] ?? []).contains($0.rawValue) }
+                ?? arrival[key].map(opposite) ?? .up
+            tried[key, default: []].insert(direction.rawValue)
+            print("FOCUS MOVE \(move) direction=\(direction) tried=\(tried[key] ?? []) currentID=\(current.identifier) currentLabel=\(current.label) currentFrame=\(a) targetID=\(target.identifier) targetLabel=\(target.label) targetFrame=\(b)")
+            XCUIRemote.shared.press(direction)
+            let after = currentFocus()
+            if after.exists {
+                let next = identity(after)
+                if next != key, arrival[next] == nil { arrival[next] = direction }
+                print("FOCUS AFTER \(move) changed=\(next != key) id=\(after.identifier) label=\(after.label) frame=\(after.frame) targetFrame=\(target.frame)")
+            } else { print("FOCUS AFTER \(move) none=true") }
         }
         diagnosticState("tv-focus-timeout")
         XCTFail("Remote could not focus " + target.debugDescription)
     }
+
 #endif
     @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String) {
         let expected = NSPredicate(format: "label == %@", label)
