@@ -107,13 +107,9 @@ fi
 if [ "$mode" = ipad ]; then
     python3 tools/ci/isolate-simulator --phase my-library-ipad --keep "${IPAD_UDID:?}" --settle --require-settle --settle-pressure --require-isolation \
         --warmup-app "$RUNNER_TEMP/DulcetiPadOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
-    # Post-boot destination discovery competes with the same burst as accessibility. Confirm the
-    # build's original device only after pressure settles, before starting any proof allowance.
-    confirmed_ipad="$(python3 tools/resolve-ipad-destination --print udid)"
-    if [ "$confirmed_ipad" != "$IPAD_UDID" ]; then
-        echo "Booted iPad destination changed: expected=$IPAD_UDID resolved=$confirmed_ipad" >&2
-        exit 1
-    fi
+    # Isolation kept the exact iPad already accepted by Xcode and used for build-for-testing.
+    # Reuse that destination; the test invocation reports any subsequent loss of eligibility.
+    echo "IPADOS XCODE DESTINATION REUSED udid=$IPAD_UDID source=job-start"
     # 600 s per test on iPhone and iPad (docs/TRAPS.md 56): after admission, one accessibility query
     # can still take 17-30 s, and the browse/relaunch/offline test was cut off at 300 s while it was
     # still progressing (40232687092). The allowance remains a hang guard, not a retry.
