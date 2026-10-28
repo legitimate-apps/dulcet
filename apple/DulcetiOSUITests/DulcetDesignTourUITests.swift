@@ -411,7 +411,8 @@ final class DulcetDesignTourUITests: XCTestCase {
             let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
             if app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch.exists, lyrics.exists { lyrics.tap() }
             let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
-            if toggle.waitForExistence(timeout: 3) { toggle.tap() }
+            if !app.descendants(matching: .any)["dulcet.upNext"].firstMatch.exists,
+               toggle.waitForExistence(timeout: 3) { toggle.tap() }
             return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
                 && self.settle(app)
         }

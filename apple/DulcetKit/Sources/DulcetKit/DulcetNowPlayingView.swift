@@ -1183,6 +1183,7 @@ struct DulcetPlayerCover: View {
     var body: some View {
         DulcetArtworkView(artwork: artwork, size: size)
             .shadow(color: .black.opacity(isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
+            .background { DulcetArtworkGlow(artwork: artwork, size: size) }
             .scaleEffect(scale)
             .animation(reduceMotion ? nil : .spring(duration: 0.4), value: isPlaying)
     }

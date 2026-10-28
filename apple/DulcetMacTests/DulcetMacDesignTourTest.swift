@@ -86,6 +86,43 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hostingView = hosting
         self.window = window
 
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            store.selectDestination(.nowPlaying)
+            await shoot("now-playing-empty")
+            store.accountServerURL = serverURL
+            store.accountUsername = username
+            store.accountPassword = password
+            store.accountAllowLocalHTTP = true
+            store.submitAccountConnection()
+            guard await waitFor(seconds: 30, { store.snapshot.accountConnected && session.mode == .connected }) else {
+                XCTFail("The player tour must connect to its disposable server")
+                return
+            }
+            await step("now-playing") {
+                guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
+                guard await self.waitFor(seconds: 20, { store.showsNowPlayingBar }) else { return false }
+                await self.shoot("mini-player")
+                store.selectDestination(.nowPlaying)
+                return await self.find("dulcet.now-playing.title") != nil
+            }
+            await step("lyrics") {
+                guard await self.press("dulcet.now-playing.lyrics") else { return false }
+                return await self.find("dulcet.lyrics.line.current", seconds: 25) != nil
+            }
+            await step("up-next") {
+                _ = await self.press("dulcet.now-playing.lyrics")
+                return await self.find("dulcet.upNext") != nil
+            }
+            store.sendPlaybackControl(.pause)
+            await step("player-paused") {
+                await self.waitFor(seconds: 5) { store.snapshot.nowPlaying?.phase == .paused }
+            }
+            if let player = store.snapshot.nowPlaying {
+                await capturePlayerPresentationVariants(player: player, store: store)
+            }
+            return
+        }
+
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "home" {
             store.accountServerURL = serverURL
             store.accountUsername = username
@@ -317,12 +354,20 @@ final class DulcetMacDesignTourTest: XCTestCase {
             }
             await step("up-next") {
                 _ = await self.press("dulcet.now-playing.lyrics")
-                if await self.find("dulcet.now-playing.up-next", seconds: 2) != nil {
+                if await self.find("dulcet.upNext", seconds: 2) == nil,
+                   await self.find("dulcet.now-playing.up-next", seconds: 2) != nil {
                     _ = await self.press("dulcet.now-playing.up-next")
                 }
                 return await self.find("dulcet.upNext") != nil
             }
             store.sendPlaybackControl(.pause)
+            await step("player-paused") {
+                store.selectDestination(.nowPlaying)
+                return await self.waitFor(seconds: 5) { store.snapshot.nowPlaying?.phase == .paused }
+            }
+            if let player = store.snapshot.nowPlaying {
+                await capturePlayerPresentationVariants(player: player, store: store)
+            }
             await step("favourites") {
                 if store.playingTrackFavourite?.isFavourite == false { _ = store.togglePlayingTrackFavourite() }
                 store.selectDestination(.library)
@@ -446,6 +491,48 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         print("DULCET DESIGN TOUR absent=downloads-screen,songs-list (downloads appear on track rows; library has no Songs destination)")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
+    }
+
+    /// Supplemental layout projections of the real disposable-server track. These exercise
+    /// presentation only; buffering here is not evidence of a transport stall or recovery.
+    private func capturePlayerPresentationVariants(player: DulcetNowPlaying, store: DulcetPresentationStore) async {
+        guard let window, let original = window.contentView else { return }
+        defer { window.contentView = original; hostingView = original }
+        let track = player.current
+        for name in ["player-buffering", "player-long-title", "player-no-artwork"] {
+            let projectedTrack = DulcetTrack(
+                id: track.id,
+                title: name == "player-long-title"
+                    ? "A Very Long Song Title That Keeps Going Across the Evening and Into the Morning Light"
+                    : track.title,
+                credits: track.credits, albumTitle: track.albumTitle,
+                discNumber: track.discNumber, trackNumber: track.trackNumber, duration: track.duration,
+                sourceContainer: track.sourceContainer, mediaSourceID: track.mediaSourceID,
+                artwork: name == "player-no-artwork" ? DulcetArtwork(seed: "no-artwork", palette: .oceanMint) : track.artwork,
+                availability: track.availability, isFavorite: track.isFavorite,
+                downloadState: track.downloadState, albumID: track.albumID
+            )
+            let projected = DulcetNowPlaying(
+                sessionID: player.sessionID, current: projectedTrack, queue: player.queue,
+                currentIndex: player.currentIndex, sourceDisplayName: player.sourceDisplayName,
+                elapsed: player.elapsed, isPlaying: name == "player-buffering",
+                outputName: player.outputName, volume: player.volume, audioFormat: player.audioFormat,
+                phase: name == "player-buffering" ? .buffering : .paused,
+                seekability: player.seekability, progressBegan: player.progressBegan,
+                repeatMode: player.repeatMode, shuffleEnabled: player.shuffleEnabled,
+                canGoNext: player.canGoNext, canGoPrevious: player.canGoPrevious,
+                queueEntries: player.queueEntries, currentEntryIndex: player.currentEntryIndex,
+                autoplayActive: player.autoplayActive, sleepTimer: player.sleepTimer
+            )
+            let host = NSHostingView(rootView: DulcetNowPlayingView(player: projected).environment(store))
+            host.frame = original.frame
+            host.appearance = appearance
+            window.contentView = host
+            hostingView = host
+            await settle()
+            await shoot(name)
+            print("DULCET PLAYER SUPPLEMENT screen=\(name) evidence=presentation-projection source=disposable-server")
+        }
     }
 
     private func showSavedDisconnected(databaseName: String, providerInstanceID: String,
