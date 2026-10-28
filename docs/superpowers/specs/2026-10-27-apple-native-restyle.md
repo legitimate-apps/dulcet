@@ -211,3 +211,7 @@ actions attach to the current navigation content, including Playback and Downloa
 The Mac current-track toolbar exposes numeric Rating through a native More submenu; Favorite
 remains a direct action. Queue entries can inject Move and Remove into the shared row's More
 and context menus through `additionalMenuActions`.
+
+### 2026-10-28 status reflow correction
+
+OBSERVED in iOS 27 capture diagnostics: a top safe-area inset still changes a lazy grid's screen position and can leave its accessibility node stale after status changes. Destination status now uses an overlay outside the scrolling content, without changing its insets. This supersedes the earlier safe-area-inset placement note. Loading and account changes must not insert status above an existing lazy grid. The existing offline pending-add UI proof remains the behavioral gate.

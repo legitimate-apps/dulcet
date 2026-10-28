@@ -713,6 +713,20 @@ final class DulcetDesignTourUITests: XCTestCase {
                 && self.scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: form)
                 && automatic.waitForExistence(timeout: 10) && self.settle(app)
         }
+        if nativeAccount {
+            let close = app.buttons["dulcet.account.close"].firstMatch
+            if close.exists {
+                close.tap()
+                XCTAssertTrue(close.waitForNonExistence(timeout: 10), "Account must dismiss before visiting the tabs")
+                _ = settle(app)
+                // A display capture survives a failed accessibility snapshot and identifies
+                // what the sheet actually left on screen. It is diagnostic, not a page pair.
+                if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
+                    try? XCUIScreen.main.screenshot().pngRepresentation.write(to:
+                        URL(fileURLWithPath: directory).appendingPathComponent("98-account-dismissal-diagnostic.png"))
+                }
+            }
+        }
         step("listen-now", app) {
             destination("Listen Now", "dulcet.sidebar.listenNow")
                 && app.descendants(matching: .any)["dulcet.listenNow"].firstMatch.waitForExistence(timeout: 20)
@@ -838,10 +852,16 @@ final class DulcetDesignTourUITests: XCTestCase {
             let close = app.buttons["dulcet.account.close"].firstMatch
             if close.exists {
                 if app.navigationBars["Account"].firstMatch.exists { return true }
-                close.tap()
-                guard close.waitForNonExistence(timeout: 10) else { return false }
+                // Return inside the same presented NavigationStack. Dismissing and
+                // immediately reopening the sheet needlessly queries two presenters
+                // during the system's dismissal transition.
+                let backButtons = [app.navigationBars.buttons["Account"].firstMatch,
+                                   app.navigationBars.buttons["BackButton"].firstMatch]
+                guard let back = backButtons.first(where: { $0.exists && $0.isHittable }) else { return false }
+                back.tap()
+                return app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
             }
-            let account = app.buttons["dulcet.account.open"].firstMatch
+            let account = app.navigationBars.buttons["dulcet.account.open"].firstMatch
             if !account.exists, legacySidebar.exists, legacySidebar.isHittable { legacySidebar.tap(); return settle(app) }
             guard account.waitForExistence(timeout: 10), account.isHittable else { return false }
             account.tap()
@@ -851,6 +871,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         if close.exists {
             close.tap()
             guard close.waitForNonExistence(timeout: 10) else { return false }
+            _ = settle(app, seconds: 1.2)
         }
         let nativeTab = app.tabBars.buttons[tab].firstMatch
         // The system exposes the same Tab as a Button on phone and a Cell in iPad's sidebar.

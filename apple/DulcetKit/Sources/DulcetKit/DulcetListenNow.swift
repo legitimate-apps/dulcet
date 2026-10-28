@@ -35,7 +35,7 @@ struct DulcetListenNowView: View {
 #if os(macOS) || os(tvOS)
         .toolbar { ToolbarItem(placement: .primaryAction) { DulcetListenNowRefresh() } }
 #endif
-        .safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
+        .overlay(alignment: .top) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
         .accessibilityIdentifier("dulcet.listenNow")
     }
 }

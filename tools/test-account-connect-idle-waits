@@ -159,6 +159,8 @@ final class XCUIApplication: NSObject {
     var accountPresented = false
     var accountOpens = 0
     var accountCloses = 0
+    var accountPage = "Account"
+    var accountBacks = 0
     var navigationBars: ElementQuery { ElementQuery(app: self, scope: "navigation") }
     func descendants(matching type: XCUIElementType) -> ElementQuery { ElementQuery(app: self, scope: "descendants") }
     var tabBars: ElementQuery { ElementQuery(app: self, scope: "tab") }
@@ -181,7 +183,7 @@ final class XCUIApplication: NSObject {
 struct ElementQuery {
     let app: XCUIApplication
     let scope: String
-    var buttons: Self { self }
+    var buttons: Self { ElementQuery(app: app, scope: scope == "navigation" ? "navigation-button" : scope) }
     subscript(_ key: String) -> Element { Element(app: app, scope: scope, key: key) }
 }
 struct Element {
@@ -198,7 +200,11 @@ struct Element {
         // only label "Connection". A text query must not invent that child's identifier.
         if key == "dulcet.account.open" { return app.nativeAccountFlow && !app.accountPresented }
         if key == "dulcet.account.close" { return app.nativeAccountFlow && app.accountPresented }
-        if key == "Account" || key == "dulcet.account.settingsForm" { return app.nativeAccountFlow && app.accountPresented }
+        if key == "Account" {
+            return app.nativeAccountFlow && app.accountPresented
+                && (scope == "navigation-button" ? app.accountPage != "Account" : app.accountPage == "Account")
+        }
+        if key == "dulcet.account.settingsForm" { return app.nativeAccountFlow && app.accountPresented && app.accountPage == "Account" }
         if scope == "navigation" { return false }
         if key.hasPrefix("dulcet.tab.") { return false }
         if key == app.sidebarButtonIdentifier { return scope == "root" }
@@ -287,6 +293,10 @@ struct Element {
     func waitForExistence(timeout: TimeInterval) -> Bool { exists }
     func waitForNonExistence(timeout: TimeInterval) -> Bool { !exists }
     func tap() {
+        if scope == "navigation-button", key == "Account" {
+            precondition(app.accountPresented && app.accountPage != "Account")
+            app.accountPage = "Account"; app.accountBacks += 1; return
+        }
         if key == "dulcet.account.open" { app.accountPresented = true; app.accountOpens += 1; return }
         if key == "dulcet.account.close" { app.accountPresented = false; app.accountCloses += 1; return }
         precondition(!app.accountPresented, "dismiss the Account sheet before navigating behind it")
@@ -413,6 +423,12 @@ struct Check {
         sheetApp.nativeAccountFlow = true
         precondition(proof.openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: sheetApp, compact: true))
         precondition(sheetApp.accountPresented && sheetApp.accountOpens == 1)
+        sheetApp.accountPage = "Playback"
+        precondition(proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: sheetApp, compact: true))
+        precondition(sheetApp.accountPresented && sheetApp.accountPage == "Account"
+                     && sheetApp.accountBacks == 1 && sheetApp.accountCloses == 0 && sheetApp.accountOpens == 1,
+                     "a pushed settings page returns inside its existing Account sheet")
+        print("pushed Playback / native Account back / same presenter: PASS")
         precondition(proof.openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: sheetApp, compact: true))
         precondition(!sheetApp.accountPresented && sheetApp.accountCloses == 1 && sheetApp.selectedTab == "Search")
         precondition(proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: sheetApp, compact: true))

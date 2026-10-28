@@ -36,7 +36,7 @@ struct DulcetReaderScreen<Content: View>: View {
 
     var body: some View {
         content(model)
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .overlay(alignment: .top) {
                 if showsDestinationStatus {
                     DulcetReaderStatusView(window: model.window, localCollection: model.query == .downloaded)
                         .padding(.horizontal, 16)
@@ -1246,7 +1246,7 @@ struct DulcetReaderHomeView: View {
             }
             .listStyle(.plain)
         }
-        .safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
+        .overlay(alignment: .top) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
         .dulcetNavigationTitle(DulcetStrings.browseSection, keepsTVNavigationBar: true)
         .environment(\.dulcetAccountMessageShown, store.librarySession?.ownsConnectionMessage == true)
 #if !os(tvOS)

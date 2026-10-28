@@ -173,7 +173,7 @@ struct DulcetMyLibrarySectionPage: View {
                 }
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
+        .overlay(alignment: .top) {
             if let library = store.librarySession?.myLibrary {
                 DulcetMyLibraryStatusLines(library: library, onRetry: refresh).padding(.horizontal, 16).background(.background)
             }
@@ -225,7 +225,7 @@ struct DulcetMyLibraryView: View {
             .dulcetForeground(.primaryTextOnWindow)
             .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
             .accessibilityIdentifier("dulcet.myLibrary")
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .overlay(alignment: .top) {
                 if let library = store.librarySession?.myLibrary {
                     if store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
                         DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background)
@@ -428,7 +428,7 @@ struct DulcetPersonalLibraryRoot: View {
         }
         .listStyle(.plain)
         .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
-        .safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
+        .overlay(alignment: .top) { DulcetReaderAccountBanner().padding(.horizontal, 16).background(.background) }
     }
 }
 
