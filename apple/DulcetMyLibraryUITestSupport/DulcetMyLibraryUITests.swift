@@ -14,6 +14,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
     private var tileDiagnosticCheckpoint = 0
     private var diagnosticLaunchCount = 0
 #if os(iOS)
+    func testTileDiagnosticGridContain() throws { tileDiagnosticVariant = "grid-contain"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testTileDiagnosticGridWrap() throws { tileDiagnosticVariant = "grid-wrap"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
+    func testTileDiagnosticGridWrapContain() throws { tileDiagnosticVariant = "grid-wrap-contain"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
     func testTileDiagnosticNoDrag() throws { tileDiagnosticVariant = "no-drag"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
     func testTileDiagnosticNoMenu() throws { tileDiagnosticVariant = "no-menu"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
     func testTileDiagnosticCustomPreview() throws { tileDiagnosticVariant = "custom-preview"; try testBrowseAddRemoveRelaunchAndOfflineReplay() }
@@ -65,6 +68,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let nodes = (prefix + titled).map { "type=\($0.elementType.rawValue) id=\($0.identifier) label=\($0.label) value=\(String(describing: $0.value)) frame=\($0.frame)" }
         print("TILE RESULT variant=\(tileDiagnosticVariant) checkpoint=\(tileDiagnosticCheckpoint) original20s=\(found) artist=\(artist.exists) artistFrame=\(artist.exists ? String(describing: artist.frame) : "absent") nodes=\(nodes)")
         diagnosticState("tile-\(tileDiagnosticVariant)-\(tileDiagnosticCheckpoint)-\(found ? "published" : "miss")")
+        if found && tileDiagnosticVariant.hasPrefix("grid-") {
+            XCTAssertTrue(artist.exists, "The grid fix must retain the artist control as well as the album")
+            if artist.exists { XCTAssertGreaterThan(artist.frame.width, 0); XCTAssertGreaterThan(artist.frame.height, 0) }
+        }
         return found
     }
 
@@ -917,13 +924,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
             default: .left
             }
         }
+        let targetIdentifier = target.identifier, targetLabel = target.label
+        var lastTargetFrame = target.frame
         var tried: [String: Set<UInt>] = [:]
         var arrival: [String: XCUIRemote.Button] = [:]
         for move in 0..<40 {
-            if isFocused(target) { return }
+            let published = target.exists
+            if published {
+                if isFocused(target) { return }
+                lastTargetFrame = target.frame
+            }
             let current = currentFocus()
             guard current.exists else { XCUIRemote.shared.press(.down); continue }
-            let key = identity(current), a = current.frame, b = target.frame
+            let key = identity(current), a = current.frame, b = lastTargetFrame
             let horizontal: XCUIRemote.Button = b.midX > a.midX ? .right : .left
             let vertical: XCUIRemote.Button = b.midY > a.midY ? .down : .up
             let overlaps = min(a.maxY, b.maxY) > max(a.minY, b.minY)
@@ -934,7 +947,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 : [vertical, horizontal, opposite(vertical), opposite(horizontal)]
             // Focus geometry is a preference, not a route. A tall, staggered grid can
             // require moving back onto the card above a More control before moving left.
-            // Explore each direction once per focus identity, even if scrolling moves it.
+            // Remember tried directions by focus identity. A press that scrolls the same
+            // focused element still makes progress and remains eligible below. The target
+            // itself can leave the lazy snapshot while a route moves back through a card.
             if let entered = arrival[key] {
                 let back = opposite(entered)
                 directions.removeAll { $0 == back }; directions.append(back)
@@ -942,17 +957,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
             let direction = directions.first { !(tried[key] ?? []).contains($0.rawValue) }
                 ?? arrival[key].map(opposite) ?? .up
             tried[key, default: []].insert(direction.rawValue)
-            print("FOCUS MOVE \(move) direction=\(direction) tried=\(tried[key] ?? []) currentID=\(current.identifier) currentLabel=\(current.label) currentFrame=\(a) targetID=\(target.identifier) targetLabel=\(target.label) targetFrame=\(b)")
+            print("FOCUS MOVE \(move) direction=\(direction) tried=\(tried[key] ?? []) currentID=\(current.identifier) currentLabel=\(current.label) currentFrame=\(a) targetID=\(targetIdentifier) targetLabel=\(targetLabel) targetFrame=\(b) published=\(published)")
             XCUIRemote.shared.press(direction)
             let after = currentFocus()
             if after.exists {
                 let next = identity(after)
+                let afterFrame = after.frame
                 if next != key, arrival[next] == nil { arrival[next] = direction }
-                print("FOCUS AFTER \(move) changed=\(next != key) id=\(after.identifier) label=\(after.label) frame=\(after.frame) targetFrame=\(target.frame)")
+                if next == key, afterFrame != a { tried[key]?.remove(direction.rawValue) }
+                print("FOCUS AFTER \(move) changed=\(next != key) id=\(after.identifier) label=\(after.label) frame=\(afterFrame) targetPublished=\(target.exists)")
             } else { print("FOCUS AFTER \(move) none=true") }
         }
         diagnosticState("tv-focus-timeout")
-        XCTFail("Remote could not focus " + target.debugDescription)
+        XCTFail("Remote could not focus \(targetIdentifier), \(targetLabel), last frame \(lastTargetFrame)")
     }
 
 #endif

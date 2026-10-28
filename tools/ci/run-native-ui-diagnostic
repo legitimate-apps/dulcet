@@ -10,7 +10,7 @@ iphone)
   -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
   -resultBundlePath "$RUNNER_TEMP/album-matrix.xcresult" -parallel-testing-enabled NO \
   -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
-  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoDrag -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoMenu -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticCustomPreview -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoCombine -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoLabel -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoIdentifier -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticNoSubtitle -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticSwapGrid 2>&1 | tee "$RUNNER_TEMP/album-matrix.log"
+  -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticGridContain -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticGridWrap -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testTileDiagnosticGridWrapContain 2>&1 | tee "$RUNNER_TEMP/album-matrix.log"
  ;;
 tvos)
  python3 tools/ci/isolate-simulator --phase diagnostic-tv-focus --keep-name "Apple TV 4K (3rd generation)" --settle --require-settle --settle-pressure --require-isolation \

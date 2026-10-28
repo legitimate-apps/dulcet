@@ -11,6 +11,7 @@ name: Native UI diagnostics on Xcode 27
         - iphone
         - tvos
         - ipad
+        - iphone-tvos
 permissions:
   contents: read
 concurrency:
@@ -18,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   diagnostic-iphone:
-    name: Album modifier matrix
+    name: Lazy grid accessibility matrix
     runs-on: xcode-27
     timeout-minutes: 180
     strategy:
@@ -205,7 +206,7 @@ jobs:
         if-no-files-found: warn
         compression-level: 0
         retention-days: 14
-    if: ${{ inputs.device == 'all' || inputs.device == 'iphone' }}
+    if: ${{ inputs.device == 'all' || inputs.device == 'iphone' || inputs.device == 'iphone-tvos' }}
   diagnostic-tvos:
     name: TV focus transitions
     runs-on: xcode-27
@@ -394,7 +395,7 @@ jobs:
         if-no-files-found: warn
         compression-level: 0
         retention-days: 14
-    if: ${{ inputs.device == 'all' || inputs.device == 'tvos' }}
+    if: ${{ inputs.device == 'all' || inputs.device == 'tvos' || inputs.device == 'iphone-tvos' }}
   diagnostic-ipad:
     name: iPad lyrics and edition state
     runs-on: xcode-27

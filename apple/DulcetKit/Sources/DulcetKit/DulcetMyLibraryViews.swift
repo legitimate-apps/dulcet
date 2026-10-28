@@ -131,11 +131,22 @@ struct DulcetMyLibraryCollection: View {
         }
     }
 
-    private func tiles(_ items: [DulcetReaderItem]) -> some View {
+    @ViewBuilder private func tiles(_ items: [DulcetReaderItem]) -> some View {
         let tileWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : (width < 500 ? 150 : 180)
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
+        let grid = LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
             ForEach(items) { item in DulcetReaderTile(item: item, width: tileWidth) }
         }
+#if DEBUG && os(iOS)
+        if ProcessInfo.processInfo.arguments.contains("grid-contain") {
+            grid.accessibilityElement(children: .contain)
+        } else if ProcessInfo.processInfo.arguments.contains("grid-wrap") {
+            VStack(alignment: .leading, spacing: 0) { grid }
+        } else if ProcessInfo.processInfo.arguments.contains("grid-wrap-contain") {
+            VStack(alignment: .leading, spacing: 0) { grid }.accessibilityElement(children: .contain)
+        } else { grid }
+#else
+        grid
+#endif
     }
 
     private func tracks(_ items: [DulcetReaderItem]) -> some View {
