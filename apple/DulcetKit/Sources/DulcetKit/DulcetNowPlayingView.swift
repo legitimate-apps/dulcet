@@ -595,6 +595,8 @@ struct DulcetNowPlayingView: View {
         case .airPlay:
 #if os(tvOS)
             EmptyView()
+#elseif os(macOS)
+            DulcetPlayerRoutePicker().frame(width: 44, height: 44)
 #else
             DulcetAirPlayRoutePicker(tint: .primary)
 #endif

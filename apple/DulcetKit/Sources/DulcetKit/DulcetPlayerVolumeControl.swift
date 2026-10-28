@@ -28,7 +28,7 @@ struct DulcetPlayerVolumeControl: View {
             Image(systemName: "speaker.wave.3.fill").accessibilityHidden(true)
         }
         .font(.caption)
-        .foregroundStyle(.secondary)
+        .dulcetForeground(.secondaryTextOnWindow)
         .onAppear { output.start() }
         .onDisappear { output.stop() }
 #endif
