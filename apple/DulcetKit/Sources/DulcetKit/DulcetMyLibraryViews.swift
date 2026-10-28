@@ -81,21 +81,6 @@ struct DulcetMyLibraryStatusLines: View {
     }
 }
 
-#if os(iOS)
-/// Status layouts occupy different heights above the compact Library collection.
-enum DulcetMyLibraryStatusLayout: Hashable {
-    case unchanged, hidden, progress, cached, failure
-
-    init(_ library: DulcetMyLibrarySnapshot) {
-        guard #available(iOS 27, *) else { self = .unchanged; return }
-        if library.error != nil { self = .failure }
-        else if library.syncState == "syncing" { self = .progress }
-        else if library.syncState == "cached", library.lastReadAt != nil { self = .cached }
-        else { self = .hidden }
-    }
-}
-#endif
-
 /// The empty library's invitation; the Browse action reads and acts as a button.
 struct DulcetMyLibraryEmptyState: View {
     @Environment(DulcetPresentationStore.self) private var store
@@ -122,11 +107,12 @@ struct DulcetMyLibraryCollection: View {
     let library: DulcetMyLibrarySnapshot
     let section: DulcetMyLibrarySection
     let width: CGFloat
+    var onFirstGridTopChange: ((CGFloat) -> Void)? = nil
 
     var body: some View {
         switch section {
         case .recent:
-            tiles(library.albums)
+            tiles(library.albums, observesTop: true)
             tiles(library.artists)
             tracks(library.songs)
         case .albums: tiles(library.albums)
@@ -136,11 +122,21 @@ struct DulcetMyLibraryCollection: View {
         }
     }
 
-    private func tiles(_ items: [DulcetReaderItem]) -> some View {
+    @ViewBuilder
+    private func tiles(_ items: [DulcetReaderItem], observesTop: Bool = false) -> some View {
         let tileWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : (width < 500 ? 150 : 180)
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
+        let grid = LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
             ForEach(items) { item in DulcetReaderTile(item: item, width: tileWidth) }
         }
+#if os(iOS)
+        if #available(iOS 27, *), observesTop, let onFirstGridTopChange {
+            grid.onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.frame(in: .named("dulcet.myLibrary.content")).minY
+            } action: { top in onFirstGridTopChange(top) }
+        } else { grid }
+#else
+        grid
+#endif
     }
 
     private func tracks(_ items: [DulcetReaderItem]) -> some View {
@@ -207,6 +203,9 @@ struct DulcetMyLibraryView: View {
     private var section: DulcetMyLibrarySection { store.myLibrarySection }
 #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.displayScale) private var displayScale
+    @State private var recentGridTop: CGFloat?
+    @State private var recentGridGeneration = 0
     /// A phone lists the sections as rows that push their pages; a regular width has the sidebar's.
     private var listsSections: Bool { horizontalSizeClass == .compact }
 #endif
@@ -306,18 +305,29 @@ struct DulcetMyLibraryView: View {
                             Text(DulcetStrings.recentlyAdded)
                                 .font(.title2.weight(.semibold))
                                 .accessibilityAddTraits(.isHeader)
-                            DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width)
-                                // On iOS 27, a layout move can leave a lazy AX node childless with a null frame.
-                                // Recreate it for status height changes; remove when status no longer moves lazy content.
-                                .id(DulcetMyLibraryStatusLayout(library))
+                            DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width,
+                                                      onFirstGridTopChange: recordRecentGridTop)
+                                // On iOS 27, layout moves can stale a lazy AX node with a null frame and no children.
+                                // Recreate it after content moves; remove when content above the grids stays stable.
+                                .id(recentGridGeneration)
                         }
                     }
                 }
                 .padding(DulcetSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .coordinateSpace(name: "dulcet.myLibrary.content")
             }
             .refreshable { refresh() }
         }
+    }
+
+    private func recordRecentGridTop(_ top: CGFloat) {
+        guard #available(iOS 27, *), top.isFinite else { return }
+        // Compare physical pixels so floating-point layout noise does not recreate the grid.
+        let pixelTop = (top * displayScale).rounded() / displayScale
+        guard recentGridTop != pixelTop else { return }
+        if recentGridTop != nil { recentGridGeneration += 1 }
+        recentGridTop = pixelTop
     }
 #endif
 
