@@ -613,7 +613,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         guard let window, let original = window.contentView else { return }
         defer { window.contentView = original; hostingView = original }
         let track = player.current
-        for name in ["player-buffering", "player-long-title", "player-no-artwork", "up-next-empty", "up-next-long", "lyrics-loading", "lyrics-absent", "lyrics-failure", "lyrics-unsynced"] {
+        for name in ["player-buffering", "player-long-title", "player-no-artwork", "player-artwork-reference", "up-next-empty", "up-next-long", "lyrics-loading", "lyrics-absent", "lyrics-failure", "lyrics-unsynced"] {
             let projectedTrack = DulcetTrack(
                 id: track.id,
                 title: name == "player-long-title"
