@@ -510,14 +510,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 credentials: credentials, frame: hosting.frame, window: window)
         }
         await step("connection-error-persistence") {
-            let key = "com.legitimateapps.dulcet.active-account-id"
-            let previous = UserDefaults.standard.string(forKey: key)
-            UserDefaults.standard.removeObject(forKey: key)
-            defer {
-                if let previous { UserDefaults.standard.set(previous, forKey: key) }
-                else { UserDefaults.standard.removeObject(forKey: key) }
-            }
-            let shippingStore = DulcetMacProduction.makePresentationStore()
+            // Exercise the production connection/persistence failure path without relying
+            // on this host's Keychain entitlement or touching its normal account defaults.
+            let refusingCredentials = DesignTourCredentialStore()
+            refusingCredentials.rejectsSaves = true
+            let shippingStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(), credentialStore: refusingCredentials
+            ))
             let shippingHosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: shippingStore))
             shippingHosting.frame = hosting.frame
             shippingHosting.appearance = self.appearance
@@ -992,13 +991,16 @@ private final class DesignTourCredentialStore: DulcetProviderInstanceCredentialS
     private var persisted: DulcetAccountConnectRequest?
     private(set) var providerInstanceID: String?
     private(set) var credentialGeneration: Int64 = 0
+    var rejectsSaves = false
 
     func load() throws -> DulcetAccountConnectRequest? { persisted }
     func save(_ request: DulcetAccountConnectRequest) throws {
+        if rejectsSaves { throw DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement }
         persisted = request
         credentialGeneration += 1
     }
     func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        if rejectsSaves { throw DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement }
         persisted = request
         self.providerInstanceID = providerInstanceID
         credentialGeneration += 1
