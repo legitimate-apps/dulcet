@@ -1,0 +1,31 @@
+#!/bin/bash
+# Diagnostic branch only. One native case, with public-safe geometry log capture.
+set -euo pipefail
+phase="${1:?trace|cost}"
+case "$phase" in trace) method=testMovementTraceAtRelaunch;; cost) method=testMovementScrollCost;; *) exit 2;; esac
+python3 tools/ci/isolate-simulator --phase "movement-$phase" --keep-name 'iPhone 18 Pro' --settle --require-settle --settle-pressure --require-isolation \
+ --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
+udid="$(xcrun simctl list -j devices | python3 -c 'import json,sys; d=[x["udid"] for g in json.load(sys.stdin)["devices"].values() for x in g if x.get("name")=="iPhone 18 Pro" and x.get("state")=="Booted"]; assert len(d)==1,d; print(d[0])')"
+xcrun simctl spawn "$udid" log stream --style compact --level debug --predicate 'subsystem == "com.legitimateapps.dulcet.library-movement-proof"' > "$RUNNER_TEMP/movement-$phase-live.log" 2>&1 &
+log_pid=$!
+finish() {
+ kill "$log_pid" 2>/dev/null || true
+ wait "$log_pid" 2>/dev/null || true
+ python3 - "$udid" "$RUNNER_TEMP/movement-$phase-history.log" <<'PY'
+import subprocess,sys
+with open(sys.argv[2],'w') as out:
+ try: subprocess.run(['xcrun','simctl','spawn',sys.argv[1],'log','show','--style','compact','--last','3h','--predicate','subsystem == "com.legitimateapps.dulcet.library-movement-proof"'],stdout=out,stderr=subprocess.STDOUT,timeout=30)
+ except subprocess.TimeoutExpired: out.write('\nHistory deadline expired; live stream retained.\n')
+PY
+}
+trap finish EXIT
+set +e
+xcodebuild test-without-building -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+ -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+ -resultBundlePath "$RUNNER_TEMP/movement-$phase.xcresult" -parallel-testing-enabled NO \
+ -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
+ "-only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/$method" 2>&1 | tee "$RUNNER_TEMP/movement-$phase-tests.log"
+result=$?
+set -e
+xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/movement-$phase.xcresult" > "$RUNNER_TEMP/movement-$phase-summary.json"
+exit "$result"

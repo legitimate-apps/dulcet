@@ -75,6 +75,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
 
     @MainActor
+    private var measuresMovementCost = false
+
+    func testMovementTraceAtRelaunch() throws {
+        try testBrowseAddRemoveRelaunchAndOfflineReplay()
+    }
+
+    func testMovementScrollCost() throws {
+        measuresMovementCost = true
+        try testBrowseAddRemoveRelaunchAndOfflineReplay()
+    }
+
     func testBrowseAddRemoveRelaunchAndOfflineReplay() throws {
         continueAfterFailure = false
         try setOffline(false)
@@ -87,6 +98,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(tvOS)
         try addFromFullGridMore(album)
         try select("library")
+        print("MOVEMENT_CHECKPOINT online uptime=\(ProcessInfo.processInfo.systemUptime)")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
@@ -131,10 +143,25 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
+#if os(iOS)
+        if measuresMovementCost, UIDevice.current.userInterfaceIdiom == .phone {
+            let tile = albumTile(album.title)
+            print("RESET_COST_UI before-refresh album=\(tile.frame) hittable=\(tile.isHittable) uptime=\(ProcessInfo.processInfo.systemUptime)")
+            XCTAssertTrue(tile.isHittable, "Position measurement starts with the scrolled album visible")
+            try setOffline(true)
+            activate(app.buttons["dulcet.myLibrary.refresh"].firstMatch)
+            let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+            let after = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "RESET_COST_AFTER|status=failure"), object: markers)
+            XCTAssertEqual(XCTWaiter.wait(for: [after], timeout: 20), .completed)
+            print("RESET_COST_UI after-refresh albumExists=\(tile.exists) frame=\(tile.exists ? String(describing: tile.frame) : "absent") hittable=\(tile.exists && tile.isHittable) uptime=\(ProcessInfo.processInfo.systemUptime)")
+            try setOffline(false)
+        }
+#endif
         app.terminate()
         try launch(connect: false)
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
+        print("MOVEMENT_CHECKPOINT saved-account uptime=\(ProcessInfo.processInfo.systemUptime)")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
         let remove = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
@@ -152,6 +179,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         awaitLabel(offlineAdd, "Remove from Library")
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
+        print("MOVEMENT_CHECKPOINT pending-add uptime=\(ProcessInfo.processInfo.systemUptime)")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         // A direct read bypasses the offline proxy: it proves the write has not reached the server.
         let pendingBeforeRelaunch = try serverContains(album.id)
@@ -477,6 +505,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 "-dulcet-debug-account-username", username ?? user, "-dulcet-debug-account-password", password ?? self.password]
         }
         launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
+        launchArguments += ["-dulcet-debug-movement-proof"]
         app.launchArguments = launchArguments
 #if os(macOS)
         if !installedFixtureNetworkMonitor {

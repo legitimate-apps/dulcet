@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""Summarize diagnostic geometry without changing any test verdict or app state."""
+import collections,json,pathlib,re,sys
+root=pathlib.Path(sys.argv[1]);phase=sys.argv[2]
+rows=[]
+for line in (root/f'movement-{phase}-live.log').read_text().splitlines():
+ if 'MOVEMENT_PROOF ' not in line:continue
+ raw=line.split('MOVEMENT_PROOF ',1)[1]
+ raw=re.sub(r'\\([0-7]{3})',lambda m:chr(int(m[1],8)),raw)
+ row=json.loads(raw);pid=re.search(r'Dulcet DEV\[(\d+):',line)
+ row['pid']=int(pid[1]) if pid else 0;rows.append(row)
+counts={};movers=[]
+for r in rows:
+ if r['event']=='grid-top':
+  key=f"{r['pid']}/{r['root']}";counts[key]=max(counts.get(key,0),r['resetsSinceRootAppear'])
+ if r['event']=='above-geometry' and r['old']:
+  old,new=r['old'],r['frame']
+  if abs(old['height']-new['height'])>0.1:
+   movers.append({k:r[k] for k in ['pid','root','sequence','uptimeNs','status','sync','name','old','frame']})
+summary=dict(rows=len(rows),maxResetsPerRoot=max(counts.values(),default=0),resetsPerRoot=counts,heightChanges=movers)
+(root/f'movement-{phase}-geometry-summary.json').write_text(json.dumps(summary,indent=2))
+print('MOVEMENT GEOMETRY',phase,'records',len(rows),'resetsPerRoot',json.dumps(counts),'heightChanges',len(movers))

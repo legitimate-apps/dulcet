@@ -416,6 +416,9 @@ public final class DulcetLibrarySession {
         if let library = made as? any DulcetMyLibraryReading {
             myLibrarySubscription = library.subscribeMyLibrary { [weak self] publication in
                 guard let self, self.readerGeneration == generation else { return }
+#if DEBUG && os(iOS)
+                dulcetTraceLibraryMovementPublication(publication)
+#endif
                 self.myLibrary = publication
             }
         }

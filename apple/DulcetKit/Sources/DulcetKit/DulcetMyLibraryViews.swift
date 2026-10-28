@@ -1,6 +1,138 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
+#if DEBUG && os(iOS)
+import OSLog
+
+/// Diagnostic branch only. Geometry and logs do not query accessibility or restore scrolling.
+@MainActor
+private enum DulcetMovementProof {
+    static let enabled = ProcessInfo.processInfo.arguments.contains("-dulcet-debug-movement-proof")
+    static var status = "unknown"
+    static var sync = "unknown"
+    static var sequence = 0
+    static var root = 0
+    static var rootGenerationStart = 0
+    static var geometry = DulcetMovementScrollSample()
+    static var frames: [Int: [String: (String, CGRect)]] = [:]
+    static var above: [String: CGRect] = [:]
+    static var pending: [Int: [String: Any]] = [:]
+    static let logger = Logger(subsystem: "com.legitimateapps.dulcet.library-movement-proof", category: "geometry")
+    static func log(_ event: String, _ fields: [String: Any]) {
+        guard enabled else { return }
+        sequence += 1
+        var row = fields
+        row["event"] = event; row["sequence"] = sequence; row["root"] = root
+        row["uptimeNs"] = DispatchTime.now().uptimeNanoseconds
+        row["status"] = status; row["sync"] = sync
+        let data = try! JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
+        let receipt = "MOVEMENT_PROOF " + String(decoding: data, as: UTF8.self)
+        logger.notice("\(receipt, privacy: .public)")
+    }
+    static func publish(_ library: DulcetMyLibrarySnapshot) {
+        guard enabled else { return }
+        sync = library.syncState
+        if library.error != nil { status = "failure" }
+        else if sync == "syncing" { status = "progress" }
+        else if sync == "cached", library.lastReadAt != nil { status = "cached" }
+        else { status = "hidden" }
+        log("publish", ["albums": library.albums.count, "artists": library.artists.count,
+                        "error": library.error?.rawValue ?? "none"])
+    }
+    static func rect(_ r: CGRect) -> [String: Double] {
+        ["x": Double(r.minX), "y": Double(r.minY), "width": Double(r.width), "height": Double(r.height)]
+    }
+    static func changed(_ name: String, _ frame: CGRect) {
+        guard enabled else { return }
+        let old = above.updateValue(frame, forKey: name)
+        log("above-geometry", ["name": name, "old": old.map(rect) ?? [:], "frame": rect(frame)])
+    }
+    static func sample(_ generation: Int) -> [String: Any] {
+        let visible = (frames[generation] ?? [:]).filter { !$0.value.1.isEmpty && $0.value.1.intersects(geometry.visible) }
+        let first = visible.sorted { $0.value.1.minY == $1.value.1.minY ? $0.value.1.minX < $1.value.1.minX : $0.value.1.minY < $1.value.1.minY }.first
+        return ["offsetY": geometry.offset.y, "insetTop": geometry.insetTop,
+                "distanceFromTop": geometry.offset.y + geometry.insetTop, "visible": rect(geometry.visible),
+                "firstID": first?.key ?? "none", "firstTitle": first?.value.0 ?? "none",
+                "firstFrame": first.map { rect($0.value.1) } ?? [:], "frameSource": "single-item-grid"]
+    }
+    static func willReset(oldTop: CGFloat?, newTop: CGFloat, generation: Int) {
+        guard enabled else { return }
+        let before = sample(generation)
+        log("grid-top", ["oldTop": oldTop.map { Double($0) as Any } ?? "first",
+                         "newTop": newTop, "generation": generation,
+                         "resetsSinceRootAppear": generation + (oldTop == nil ? 0 : 1) - rootGenerationStart,
+                         "above": above.mapValues(rect), "sample": before])
+        if oldTop != nil { pending[generation + 1] = before }
+    }
+    static func grid(_ items: [DulcetReaderItem], _ frame: CGRect, _ generation: Int, screen: CGRect, appeared: Bool = false) {
+        guard enabled else { return }
+        if items.count == 1, let item = items.first {
+            frames[generation, default: [:]][item.kind.rawValue + ":" + item.id.rawID] = (item.title ?? "(untitled)", frame)
+        }
+        log(appeared ? "grid-appear" : "grid-geometry", ["kind": items.first?.kind.rawValue ?? "empty", "count": items.count,
+                                                        "generation": generation, "frame": rect(frame), "screenFrame": rect(screen)])
+        guard !appeared, items.first?.kind == .album, let before = pending.removeValue(forKey: generation) else { return }
+        DispatchQueue.main.async {
+            log("reset-after", ["generation": generation, "before": before, "sample": sample(generation)])
+            // Publish a test receipt only after both samples have been recorded.
+            DulcetUIProofMarkers.record("RESET_COST_AFTER|status=\(status)|generation=\(generation)")
+        }
+    }
+}
+@MainActor
+func dulcetTraceLibraryMovementPublication(_ library: DulcetMyLibrarySnapshot) { DulcetMovementProof.publish(library) }
+
+private struct DulcetMovementTrace: ViewModifier {
+    let name: String
+    func body(content: Content) -> some View {
+        content.onGeometryChange(for: CGRect.self) { $0.frame(in: .named("dulcet.myLibrary.content")) }
+        action: { DulcetMovementProof.changed(name, $0) }
+    }
+}
+private struct DulcetMovementGridSample: Equatable {
+    var content = CGRect.zero
+    var screen = CGRect.zero
+}
+private struct DulcetMovementGridTrace: ViewModifier {
+    let items: [DulcetReaderItem]
+    let generation: Int
+    @State private var sample = DulcetMovementGridSample()
+    func body(content: Content) -> some View {
+        content.onGeometryChange(for: DulcetMovementGridSample.self) {
+            DulcetMovementGridSample(content: $0.frame(in: .named("dulcet.myLibrary.content")), screen: $0.frame(in: .global))
+        } action: { value in
+            sample = value
+            DulcetMovementProof.grid(items, value.content, generation, screen: value.screen)
+        }
+        .onAppear { DulcetMovementProof.grid(items, sample.content, generation, screen: sample.screen, appeared: true) }
+    }
+}
+private struct DulcetMovementScrollSample: Equatable {
+    var offset: CGPoint = .zero
+    var visible: CGRect = .zero
+    var insetTop: CGFloat = 0
+}
+private struct DulcetMovementScrollTrace: ViewModifier {
+    let generation: Int
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.onScrollGeometryChange(for: DulcetMovementScrollSample.self) { g in
+                DulcetMovementScrollSample(offset: g.contentOffset,
+                    visible: CGRect(x: g.visibleRect.minX, y: g.visibleRect.minY + g.contentInsets.top,
+                                    width: g.visibleRect.width,
+                                    height: max(0, g.visibleRect.height - g.contentInsets.top - g.contentInsets.bottom)), insetTop: g.contentInsets.top)
+            } action: { _, value in DulcetMovementProof.geometry = value }
+            .onAppear {
+                DulcetMovementProof.root += 1
+                DulcetMovementProof.rootGenerationStart = generation
+                DulcetMovementProof.log("root-appear", ["generation": generation])
+            }
+            .onDisappear { DulcetMovementProof.log("root-disappear", [:]) }
+        } else { content }
+    }
+}
+#endif
+
 struct DulcetReaderCollectionRoot: View {
     @Environment(DulcetPresentationStore.self) private var store
     let destination: DulcetSidebarDestination
@@ -71,12 +203,24 @@ struct DulcetMyLibraryStatusLines: View {
     var body: some View {
         if let error = library.error {
             Text(DulcetStrings.myLibraryRefreshFailed(DulcetStrings.readerErrorPhrase(error)))
+#if DEBUG && os(iOS)
+                .modifier(DulcetMovementTrace(name: "status.failure-text"))
+#endif
             Button(DulcetStrings.tryAgain, action: onRetry)
+#if DEBUG && os(iOS)
+                .modifier(DulcetMovementTrace(name: "status.retry"))
+#endif
         } else if library.syncState == "syncing" {
             ProgressView()
+#if DEBUG && os(iOS)
+                .modifier(DulcetMovementTrace(name: "status.progress"))
+#endif
         } else if library.syncState == "cached", let date = library.lastReadAt {
             Text(date, style: .relative)
                 .dulcetForeground(.secondaryTextOnWindow)
+#if DEBUG && os(iOS)
+                .modifier(DulcetMovementTrace(name: "status.cached"))
+#endif
         }
     }
 }
@@ -108,6 +252,9 @@ struct DulcetMyLibraryCollection: View {
     let section: DulcetMyLibrarySection
     let width: CGFloat
     var onFirstGridTopChange: ((CGFloat) -> Void)? = nil
+#if DEBUG && os(iOS)
+    var movementGeneration = 0
+#endif
 
     var body: some View {
         switch section {
@@ -128,6 +275,9 @@ struct DulcetMyLibraryCollection: View {
         let grid = LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
             ForEach(items) { item in DulcetReaderTile(item: item, width: tileWidth) }
         }
+#if DEBUG && os(iOS)
+        .modifier(DulcetMovementGridTrace(items: items, generation: movementGeneration))
+#endif
 #if os(iOS)
         if #available(iOS 27, *), observesTop, let onFirstGridTopChange {
             grid.onGeometryChange(for: CGFloat.self) { proxy in
@@ -280,13 +430,28 @@ struct DulcetMyLibraryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     Text(DulcetStrings.libraryPersonalTitle).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+#if DEBUG
+                        .modifier(DulcetMovementTrace(name: "personal-title"))
+#endif
                     Text(DulcetStrings.libraryPersonalHint).font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+#if DEBUG
+                        .modifier(DulcetMovementTrace(name: "personal-hint"))
+#endif
                     if store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
                         DulcetReaderHomeLink(title: DulcetStrings.wishlist, symbolName: "bookmark", identifier: "wishlist.destination") { store.pushReaderPage(.wishlist) }
+#if DEBUG
+                        .modifier(DulcetMovementTrace(name: "wishlist"))
+#endif
                     }
                     DulcetLibraryDepthHome(width: geometry.size.width)
+#if DEBUG
+                        .modifier(DulcetMovementTrace(name: "library-depth"))
+#endif
                     if let library = store.librarySession?.myLibrary {
                         DulcetMyLibraryShuffle(songs: library.songs)
+#if DEBUG
+                        .modifier(DulcetMovementTrace(name: "shuffle-personal"))
+#endif
                         DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                         VStack(spacing: 0) {
                             ForEach(DulcetMyLibrarySection.allCases) { choice in
@@ -299,14 +464,20 @@ struct DulcetMyLibraryView: View {
                                 }
                             }
                         }
+#if DEBUG
+                        .modifier(DulcetMovementTrace(name: "section-rows"))
+#endif
                         if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
                             DulcetMyLibraryEmptyState()
                         } else {
                             Text(DulcetStrings.recentlyAdded)
                                 .font(.title2.weight(.semibold))
                                 .accessibilityAddTraits(.isHeader)
+#if DEBUG
+                                .modifier(DulcetMovementTrace(name: "recent-heading"))
+#endif
                             DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width,
-                                                      onFirstGridTopChange: recordRecentGridTop)
+                                                      onFirstGridTopChange: recordRecentGridTop, movementGeneration: recentGridGeneration)
                                 // On iOS 27, layout moves can stale a lazy AX node with a null frame and no children.
                                 // Recreate it after content moves; remove when content above the grids stays stable.
                                 .id(recentGridGeneration)
@@ -316,8 +487,14 @@ struct DulcetMyLibraryView: View {
                 .padding(DulcetSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .coordinateSpace(name: "dulcet.myLibrary.content")
+#if DEBUG
+                .modifier(DulcetMovementTrace(name: "content"))
+#endif
             }
             .refreshable { refresh() }
+#if DEBUG
+            .modifier(DulcetMovementScrollTrace(generation: recentGridGeneration))
+#endif
         }
     }
 
@@ -326,6 +503,9 @@ struct DulcetMyLibraryView: View {
         // Compare physical pixels so floating-point layout noise does not recreate the grid.
         let pixelTop = (top * displayScale).rounded() / displayScale
         guard recentGridTop != pixelTop else { return }
+#if DEBUG
+        DulcetMovementProof.willReset(oldTop: recentGridTop, newTop: pixelTop, generation: recentGridGeneration)
+#endif
         if recentGridTop != nil { recentGridGeneration += 1 }
         recentGridTop = pixelTop
     }
