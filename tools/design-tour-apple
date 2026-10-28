@@ -192,7 +192,8 @@ for target in targets:
     if sys.argv[3] == "mac":
         namespace = str(uuid.uuid4())
         target["CommandLineArguments"] = target.get("CommandLineArguments", []) + [
-            "-dulcet-debug-account-fixture", namespace, "-dulcet-debug-download-handoff", namespace]
+            "-dulcet-debug-account-fixture", namespace, "-dulcet-debug-download-handoff", namespace,
+            "-dulcet-debug-capture-hide-diagnostics"]
 plistlib.dump(plan, open(sys.argv[2], "wb"))
 PY
   # xcodebuild resolves the products relative to the .xctestrun's own directory.
@@ -382,6 +383,10 @@ run_ios_variant() { # label destination appearance text-size orientation
   else
     xcrun simctl ui "$udid" increase_contrast disabled
   fi
+  local increased=0
+  [[ "$label" != *increase-contrast ]] || increased=1
+  export TEST_RUNNER_DULCET_DESIGN_TOUR_VARIANT="$label" DULCET_DESIGN_TOUR_VARIANT="$label"
+  export TEST_RUNNER_DULCET_DESIGN_TOUR_INCREASE_CONTRAST="$increased" DULCET_DESIGN_TOUR_INCREASE_CONTRAST="$increased"
   local reduce=0
   [[ "$label" != *reduce-transparency ]] || reduce=1
   export TEST_RUNNER_DULCET_DESIGN_TOUR_REDUCE_TRANSPARENCY="$reduce" DULCET_DESIGN_TOUR_REDUCE_TRANSPARENCY="$reduce"

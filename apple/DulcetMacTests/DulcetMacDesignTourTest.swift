@@ -105,10 +105,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
             print("DULCET FOUNDATION fixture=navidrome platform=mac appearance=\(environment["DULCET_DESIGN_TOUR_APPEARANCE"] ?? "light")")
             store.selectDestination(.settings)
             await settle()
-            let nativeAccount = await find("dulcet.account.playback", seconds: 3) != nil
+            let nativeAccount = await find("dulcet.account.settingsForm", seconds: 3) != nil
             var settingsWindow: NSWindow?
-            func showSettings() {
-                let settings = NSHostingView(rootView: DulcetSettingsView(store: store))
+            func showSettings(_ pane: DulcetSettingsPane = .account) {
+                let settings = NSHostingView(rootView: DulcetSettingsView(store: store, selectedPane: pane))
                 settings.appearance = appearance
                 settings.frame = NSRect(x: 0, y: 0, width: 600, height: 560)
                 let target = settingsWindow ?? NSWindow(contentRect: settings.frame,
@@ -126,18 +126,17 @@ final class DulcetMacDesignTourTest: XCTestCase {
             if nativeAccount { showSettings() }
             await step("connection-connected") { await self.findLabel("Sign Out") != nil }
             if !nativeAccount { showSettings() }
+            if nativeAccount { showSettings(.playback) }
             await step("settings-quality") {
-                if nativeAccount, !(await self.press("dulcet.account.playback")) { return false }
                 return await self.find("dulcet.streaming-quality.unmetered") != nil
             }
-            if nativeAccount { showSettings() }
+            if nativeAccount { showSettings(.downloadsStorage) }
             else {
                 self.window = window
                 hostingView = hosting
                 window.makeKeyAndOrderFront(nil)
             }
             await step("settings-storage") {
-                if nativeAccount, !(await self.press("dulcet.account.downloadsStorage")) { return false }
                 guard let control = await self.find("dulcet.offline.automaticDownloads") else { return false }
                 if let target = control as? NSObject {
                     let scroll = NSSelectorFromString("accessibilityPerformScrollToVisible")

@@ -429,6 +429,16 @@ struct DulcetMyLibraryShuffle: View {
 struct DulcetPersonalLibraryRoot: View {
     @Environment(DulcetPresentationStore.self) private var store
     var body: some View {
+#if os(macOS)
+        // Open the publication outside the List's lazy row lifecycle. An empty conditional
+        // section inside a List can otherwise never receive the appearance that starts it.
+        DulcetReaderScreen(query: .favourites) { model in personalList(model.window) }
+#else
+        personalList(nil)
+#endif
+    }
+
+    private func personalList(_ favorites: DulcetLibraryWindow?) -> some View {
         List {
             DulcetReaderNavigationLink(title: DulcetStrings.readerPlaylists, symbol: "music.note.list",
                 route: .section(.playlists), identifier: "dulcet.reader.section.playlists")
@@ -437,16 +447,12 @@ struct DulcetPersonalLibraryRoot: View {
                 DulcetPinnedLibraryItems().dulcetHideListRowSeparator()
             }
 #if os(macOS)
-            DulcetReaderScreen(query: .favourites) { model in
-                if let window = model.window, window.hasContent {
-                    Section {
-                        ForEach(window.items.filter { $0.kind == .album || $0.kind == .artist }.prefix(8)) { item in
-                            DulcetReaderListRow(item: item)
-                        }
-                    } header: { Text(DulcetStrings.readerFavorites) }
-                } else if model.window == nil {
-                    ProgressView().frame(maxWidth: .infinity, minHeight: 40)
-                }
+            if let favorites, favorites.hasContent {
+                Section {
+                    ForEach(favorites.items.filter { $0.kind == .album || $0.kind == .artist }.prefix(8)) { item in
+                        DulcetReaderListRow(item: item)
+                    }
+                } header: { Text(DulcetStrings.readerFavorites) }
             }
 #endif
         }

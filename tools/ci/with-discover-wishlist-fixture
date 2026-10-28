@@ -20,7 +20,7 @@ REPO=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(REPO/'tools/ci'))
 sys.path.insert(0,str(REPO/'tools/discover-wishlist-fixtures'))
 from discover_process_owner import ProcessOwner
-from fixture import IDS,USER,OTHER,ADMIN,PASSWORD,mbid,request,rest,rest_url
+from fixture import png, IDS,USER,OTHER,ADMIN,PASSWORD,mbid,request,rest,rest_url
 
 class DiscoverFixture:
     def __init__(self,root=None,evidence=None,navidrome=None,ffmpeg=None):
@@ -83,6 +83,7 @@ class DiscoverFixture:
         self.owned=True;(self.root/'.owned-discover-fixture').write_text('finite\n')
         if self.evidence:self.evidence.mkdir(parents=True,exist_ok=False)
         music=self.root/'music';music.mkdir()
+        (music/'cover.png').write_bytes(png())
         for album,count in [(0,8),(1,12)]:
             for i in range(count):self.media(f'music/{album}-{i}.flac',album*100+10+i,album,300+album,i+1)
         arrival=self.media('arrival-staged.flac',1,4,304,1)

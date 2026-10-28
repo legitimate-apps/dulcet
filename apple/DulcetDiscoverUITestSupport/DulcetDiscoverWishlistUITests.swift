@@ -52,6 +52,9 @@ import UIKit
     func launch(server: String? = nil, other: Bool = false, connect: Bool = true, variant: String = "light", navigationReceipts: Bool = true) throws {
         if !prepared { try prepare(); prepared = true }
         var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
+        if baselineVariant != nil {
+            args += ["-dulcet-debug-download-handoff", namespace, "-dulcet-debug-capture-hide-diagnostics"]
+        }
         if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
         if variant == "largest" { args.append("-dulcet-debug-largest-text") }
         if other { args += ["-dulcet-debug-add-account"] }
@@ -326,6 +329,8 @@ import UIKit
         reveal(add); XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
         let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
         XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 20), .completed)
+        let personalSeed = try control("populate-personal", [:])
+        XCTAssertEqual(personalSeed["populated"] as? Bool, true)
         destination("library")
         let recent = app.buttons["dulcet.myLibrary.section.recent"].firstMatch
         let sidebarRecent = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.recent"].firstMatch
@@ -358,6 +363,8 @@ import UIKit
         } else {
             XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.songs"].waitForExistence(timeout: 15))
         }
+        XCTAssertTrue(app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 30),
+                      "The populated personal Songs capture must contain a real track row")
         try photo("songs")
         if !sidebarSongs.exists {
             // Tabs retain their navigation stacks. Leave Library at its root before
@@ -366,6 +373,13 @@ import UIKit
             XCTAssertTrue(back.waitForExistence(timeout: 10)); activate(back)
             XCTAssertTrue(recent.waitForExistence(timeout: 15))
         }
+        destination("library")
+        let favorites = app.buttons["dulcet.reader.section.favourites"].firstMatch
+        reveal(favorites); XCTAssertTrue(favorites.waitForExistence(timeout: 15)); activate(favorites)
+        XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["dulcet.library.artist"].firstMatch.waitForExistence(timeout: 30))
+        try photo("favourites-populated")
+        destination("library")
         try search()
         XCTAssertTrue(item("artist", 100).waitForExistence(timeout: 30)); try photo("discover-search")
         activate(item("artist", 100))

@@ -232,7 +232,7 @@ jobs:
         if: always() && steps.selection.outputs.enabled == 'true' && inputs.phase != 'foundation' && (!inputs.supplement_only || matrix.device == 'tvos' || inputs.general_variant == matrix.variant)
         run: tools/apple-restyle-review "$RUNNER_TEMP/captures" --revision "$GITHUB_SHA" --logs "$RUNNER_TEMP/design-tour/logs"
       - name: Capture personal Library and Discover fixture states
-        if: always() && steps.selection.outputs.enabled == 'true' && inputs.phase != 'foundation'
+        if: always() && steps.selection.outputs.enabled == 'true' && (inputs.phase != 'foundation' || matrix.variant == 'iphone-light-default')
         timeout-minutes: 45
         env:
           CAPTURE_DEVICE: ${{ matrix.device }}

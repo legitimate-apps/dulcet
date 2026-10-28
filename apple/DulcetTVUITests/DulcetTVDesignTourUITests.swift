@@ -45,6 +45,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         continueAfterFailure = true
         let remote = XCUIRemote.shared
         let app = XCUIApplication()
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation" {
+            foundationTour(app, server: (url, username, password))
+            return
+        }
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "saved" {
             guard let proxy = faultProxy(),
                   connectByLaunchHook(app, server: (proxy.url, username, password)) else { return }
@@ -206,6 +210,52 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         tourLibrarySections(app, server: (url, username, password))
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
+    }
+
+    /// The current root destinations and pushed pages, by remote, without the removed
+    /// horizontal catalog section bar. Every image witnesses its destination before capture.
+    @MainActor
+    private func foundationTour(_ app: XCUIApplication, server: Server) {
+        app.launchArguments = ["-dulcet-debug-account-fixture", UUID().uuidString,
+            "-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server.url,
+            "-dulcet-debug-account-username", server.username,
+            "-dulcet-debug-account-password", server.password]
+        app.launch()
+        step("listen-now", app) {
+            app.navigationBars["Listen Now"].waitForExistence(timeout: 60)
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+        }
+        step("library", app) {
+            self.selectSection(app, "library")
+                && app.buttons["dulcet.reader.section.playlists"].firstMatch.waitForExistence(timeout: 20)
+        }
+        step("browse", app) {
+            self.selectSection(app, "browse")
+                && app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch.waitForExistence(timeout: 30)
+        }
+        step("albums", app) {
+            self.pressByRemote(app.buttons["dulcet.reader.section.albums"].firstMatch, in: app, name: "Albums")
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+        }
+        step("album", app) {
+            let tile = app.buttons.matching(identifier: "dulcet.library.album")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
+            return self.pressByRemote(tile, in: app, name: Self.album)
+                && app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20)
+        }
+        step("now-playing-empty", app) {
+            self.selectSection(app, "nowPlaying")
+                && app.buttons["dulcet.now-playing.empty.library"].firstMatch.waitForExistence(timeout: 15)
+        }
+        step("connection-connected", app) {
+            self.selectSection(app, "settings") && app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 20)
+        }
+        step("settings-quality", app) {
+            self.pressByRemote(app.buttons["dulcet.account.playback"].firstMatch, in: app, name: "Playback")
+                && app.buttons["dulcet.streaming-quality.unmetered.original"].firstMatch.waitForExistence(timeout: 20)
+        }
+        print("DULCET FOUNDATION platform=tvos tabs=Listen Now|Library|Browse|Search|Now Playing|Account shots=\(shotNumber)")
     }
 
     @MainActor

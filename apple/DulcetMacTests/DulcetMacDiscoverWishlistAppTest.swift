@@ -254,14 +254,22 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             }
             try app.press(add, named: "Add to Library")
             try await waitUntil(timeout: .seconds(20), "album added") { !app.session.myLibrary.albums.isEmpty }
+            let personalSeed = try await control("populate-personal", [:])
+            XCTAssertEqual(personalSeed["populated"] as? Bool, true)
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.library"); try await photo("library-personal")
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.myLibrary.recent")
             try await waitUntil(timeout: .seconds(15), "Recently Added section selected") { app.store.myLibrarySection == .recent }
             try await photo("recently-added")
             if requested == ["recently-added"] { app.close(); continue }
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.myLibrary.songs")
-            try await waitUntil(timeout: .seconds(15), "Songs section selected") { app.store.myLibrarySection == .songs }
+            try await waitUntil(timeout: .seconds(15), "Songs page opened") { app.store.readerPath.last == .myLibrarySection(.songs) }
+            _ = try await app.element(identifiedBy: "dulcet.reader.track", timeout: .seconds(30))
             try await photo("songs")
+            try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.library")
+            try await press("dulcet.reader.section.favourites", in: app)
+            _ = try await app.element(identifiedBy: "dulcet.library.album", timeout: .seconds(30))
+            _ = try await app.element(identifiedBy: "dulcet.library.artist", timeout: .seconds(30))
+            try await photo("favourites-populated")
             try await search(in: app)
             _ = try await item("Fixture Artist 00", in: app); try await photo("discover-search")
             try await open("Fixture Artist 00", in: app)
