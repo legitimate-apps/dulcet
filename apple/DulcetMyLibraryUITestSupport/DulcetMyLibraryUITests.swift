@@ -601,9 +601,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let nativeTab = app.tabBars.buttons[section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"].firstMatch
         if nativeTab.exists { return nativeTab }
         if UIDevice.current.userInterfaceIdiom == .pad {
-            // iPad sidebar choices are explicit buttons. Resolve the indexed action itself,
-            // including its selected trait, rather than a label or a former List cell.
-            return app.buttons.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
+            // Adaptable TabView exposes its native sidebar destination as a Cell.
+            let nativeSidebar = app.descendants(matching: .any)["dulcet.tab.\(section)"].firstMatch
+            if nativeSidebar.exists { return nativeSidebar }
+            return app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
         }
         let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch

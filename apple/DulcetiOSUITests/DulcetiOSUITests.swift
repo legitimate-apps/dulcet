@@ -956,35 +956,40 @@ final class DulcetiOSUITests: XCTestCase {
     /// bar on a compact window, the sidebar on a regular one.
     @MainActor
     private func openDestination(
-        _ tabTitle: String,
-        sidebarIdentifier: String,
-        in app: XCUIApplication,
-        compact: Bool
+        _ tabTitle: String, sidebarIdentifier: String, in app: XCUIApplication, compact: Bool
     ) -> Bool {
         if tabTitle == "Connection" {
+            if app.navigationBars["Account"].firstMatch.exists { return true }
             let close = app.buttons["dulcet.account.close"].firstMatch
-            if close.exists {
-                if app.navigationBars["Account"].firstMatch.exists { return true }
-                close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false }
-            }
+            if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
             let account = app.buttons["dulcet.account.open"].firstMatch
-            guard account.waitForExistence(timeout: 10), account.isHittable else {
-                XCTFail("The account button must be visible: " + app.debugDescription)
-                return false
+            if account.exists {
+                guard account.isHittable else { return false }
+                account.tap()
+                return app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
             }
-            account.tap()
-            return close.waitForExistence(timeout: 10)
+            let legacySidebar = app.buttons[sidebarIdentifier].firstMatch
+            if !compact, legacySidebar.exists, legacySidebar.isHittable { legacySidebar.tap(); return true }
         }
         let close = app.buttons["dulcet.account.close"].firstMatch
         if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
         let tab = app.tabBars.buttons[tabTitle].firstMatch
-        let row = tab.exists ? tab : app.buttons[sidebarIdentifier].firstMatch
-        guard row.waitForExistence(timeout: 10), row.isHittable else {
+        let nativeSidebar = app.descendants(matching: .any)[sidebarIdentifier.replacingOccurrences(of: "dulcet.sidebar.", with: "dulcet.tab.")].firstMatch
+        let legacySidebar = app.buttons[sidebarIdentifier].firstMatch
+        guard let row = [tab, nativeSidebar, legacySidebar].first(where: { $0.exists && $0.isHittable }) else {
             XCTFail("The \(tabTitle) destination must be visible: " + app.debugDescription)
             return false
         }
-        row.tap()
-        return true
+        for _ in 0..<2 {
+            row.tap()
+            let deadline = Date().addingTimeInterval(3)
+            repeat {
+                if row.isSelected { return true }
+                Thread.sleep(forTimeInterval: 0.1)
+            } while Date() < deadline
+        }
+        XCTFail("The destination tap must select \(tabTitle): " + app.debugDescription)
+        return false
     }
 
     /// Playing leaves the person where they were; the full player is one tap on the bar away.

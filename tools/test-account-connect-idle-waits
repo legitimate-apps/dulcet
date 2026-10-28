@@ -84,7 +84,7 @@ import CoreGraphics
 import Foundation
 import ObjectiveC
 
-enum XCUIElementType { case button, `switch`, textField, secureTextField, window, navigationBar, tabBar, keyboard, staticText }
+enum XCUIElementType { case any, button, `switch`, textField, secureTextField, window, navigationBar, tabBar, keyboard, staticText }
 protocol XCUIElementSnapshot {
     var children: [XCUIElementSnapshot] { get }
     var elementType: XCUIElementType { get }
@@ -155,6 +155,12 @@ final class XCUIApplication: NSObject {
     var sidebarButtonIdentifier: String?
     var ignoredNavigationTaps = 0
     var navigationTaps = 0
+    var nativeAccountFlow = false
+    var accountPresented = false
+    var accountOpens = 0
+    var accountCloses = 0
+    var navigationBars: ElementQuery { ElementQuery(app: self, scope: "navigation") }
+    func descendants(matching type: XCUIElementType) -> ElementQuery { ElementQuery(app: self, scope: "descendants") }
     var tabBars: ElementQuery { ElementQuery(app: self, scope: "tab") }
     var staticTexts: ElementQuery { ElementQuery(app: self, scope: "sidebar") }
     var confirmationExists = false
@@ -190,7 +196,13 @@ struct Element {
                      "Sign Out must not traverse Library before Connection is opened")
         // Captured iPad AX: the identifier belongs to the Button, while its text child has
         // only label "Connection". A text query must not invent that child's identifier.
+        if key == "dulcet.account.open" { return app.nativeAccountFlow && !app.accountPresented }
+        if key == "dulcet.account.close" { return app.nativeAccountFlow && app.accountPresented }
+        if key == "Account" || key == "dulcet.account.settingsForm" { return app.nativeAccountFlow && app.accountPresented }
+        if scope == "navigation" { return false }
+        if key.hasPrefix("dulcet.tab.") { return false }
         if key == app.sidebarButtonIdentifier { return scope == "root" }
+        if scope == "tab", key == "Connection", app.nativeAccountFlow { return false }
         if scope == "tab" || scope == "sidebar" { return true }
         if key == "moving-button" || key == "window" { return true }
         if key == "dulcet.account-connect.primary-action" { return app.state == "signed-out" }
@@ -271,9 +283,13 @@ struct Element {
         }
         return CGRect(x: 20, y: app.lastTargetY, width: 100, height: 30)
     }
-    var label: String { key == "dulcet.account-connect.primary-action" ? "Connect" : "Sign Out" }
+    var label: String { key == "dulcet.account-connect.primary-action" ? "Sign In" : "Sign Out" }
     func waitForExistence(timeout: TimeInterval) -> Bool { exists }
+    func waitForNonExistence(timeout: TimeInterval) -> Bool { !exists }
     func tap() {
+        if key == "dulcet.account.open" { app.accountPresented = true; app.accountOpens += 1; return }
+        if key == "dulcet.account.close" { app.accountPresented = false; app.accountCloses += 1; return }
+        precondition(!app.accountPresented, "dismiss the Account sheet before navigating behind it")
         if key == app.sidebarButtonIdentifier {
             precondition(scope == "root", "activate the identified sidebar button")
             app.navigationTaps += 1
@@ -301,6 +317,12 @@ func XCTFail(_ message: String) { preconditionFailure(message) }
 @MainActor
 final class Proof {
     var driven = 0
+    func settle(_ app: XCUIApplication, seconds: TimeInterval = 0) -> Bool { true }
+    func waitFor(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = AccountWaitClock.now.addingTimeInterval(timeout)
+        repeat { if condition() { return true } } while AccountWaitClock.now < deadline
+        return false
+    }
     func dismissPasswordSavePromptIfPresent() {}
     func driveEveryAccountConnectState(in app: XCUIApplication, compact: Bool) {
         app.tapTryAgain()
@@ -387,6 +409,17 @@ struct Check {
         precondition(proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: sidebarApp, compact: false))
         precondition(sidebarApp.navigationTaps == 1 && sidebarApp.selectedTab == "dulcet.sidebar.settings")
         print("design tour / captured iPad sidebar Button / actual activation: PASS")
+        let sheetApp = XCUIApplication()
+        sheetApp.nativeAccountFlow = true
+        precondition(proof.openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: sheetApp, compact: true))
+        precondition(sheetApp.accountPresented && sheetApp.accountOpens == 1)
+        precondition(proof.openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: sheetApp, compact: true))
+        precondition(!sheetApp.accountPresented && sheetApp.accountCloses == 1 && sheetApp.selectedTab == "Search")
+        precondition(proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: sheetApp, compact: true))
+        precondition(sheetApp.accountPresented && sheetApp.accountOpens == 2)
+        precondition(proof.openDesignTourDestination("Library", sidebar: "dulcet.sidebar.library", in: sheetApp, compact: true))
+        precondition(!sheetApp.accountPresented && sheetApp.accountCloses == 2 && sheetApp.selectedTab == "Library")
+        print("native Account sheet / observed presentation / close before tab navigation: PASS")
         // A hittable control may still overlap native chrome. Keep the fixture independent of
         // the implementation's safe-viewport arithmetic, including a nonzero window origin.
         let geometryApp = XCUIApplication()

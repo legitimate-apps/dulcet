@@ -54,8 +54,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
         playback.streamingQuality = quality
         let store = DulcetPresentationStore(source: DulcetAccountDataSource(
             connector: DulcetCoreAccountConnector(), credentialStore: credentials,
-            libraryBrowser: DulcetCoreLibraryBrowser(), artworkFetcher: artwork,
-            serverSearch: DulcetCoreServerSearch(), playbackController: playback,
+            libraryBrowser: DulcetCoreLibraryBrowser(databaseName: databaseName), artworkFetcher: artwork,
+            serverSearch: DulcetCoreServerSearch(databaseName: databaseName), playbackController: playback,
             downloadController: downloads, providerInstanceIDFactory: { providerInstanceID }, librarySession: session
         ))
         store.streamingQualitySetting = quality
@@ -574,7 +574,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
-        NSApp.activate()
+        // The runner can grant foreground activation to this exact test host.
+        if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
+            try? String(ProcessInfo.processInfo.processIdentifier).write(
+                to: URL(fileURLWithPath: directory).appendingPathComponent("tour-host.activate"),
+                atomically: true, encoding: .utf8)
+        }
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         // Scene toolbar bridging installs the toolbar after the window mounts. Match the
         // production WindowGroup's compact unified style once that toolbar exists.

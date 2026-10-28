@@ -18,21 +18,9 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
     /// The track the rating proof rates: the first of "Threshold Boundary".
     private let track = "Twenty Nine Seconds"
 
-    /// The five stars the Mac draws beside the heart in the window's toolbar, clicked where each
-    /// star is drawn:
-    ///
-    /// 1. a click on star N shows N at once, before the server answers, and the server's
-    ///    `userRating` reads N back;
-    /// 2. another client's rating is written to the server directly, the app is reopened over
-    ///    the same reader database and account, and the stars show the server's value -- so what
-    ///    they show is read from the server, not remembered from the click;
-    /// 3. a click on the star shown removes the rating, and the server reads back 0.
-    ///
-    /// Each star is clicked at the centre of its own button by a mouse event the window
-    /// hit-tests, and what the stars show is read from the group's label, checked against the
-    /// star buttons' own labels.
-    /// Each value is chosen against what the server holds first, so no earlier run's rating can
-    /// make a write unobservable, and the server's rating is put back afterwards.
+    /// Rating is chosen in the native More > Rating submenu. Checkmarks must reflect the
+    /// server's value, selecting a value must write it, reopening must re-read another client's
+    /// value, and No Rating must clear it. The historical test identity remains stable.
     func nowPlayingStarsRateTheTrackOnTheServerThroughTheHostedMacApp() async throws {
         let server = try disposableServer()
         let album = "Threshold Boundary"
@@ -46,7 +34,7 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         // 1. A click rates the track: shown at once, then saved on the server.
         let app = try await HostedApp(serverURL: server.baseURL, username: username, password: password, run: run, toolbar: true)
         try await app.play(query: "Twenty Nine", track: track)
-        _ = try await app.windowElement(identifiedBy: "dulcet.now-playing.rating", timeout: .seconds(10))
+        _ = try await app.windowElement(identifiedBy: "dulcet.now-playing.toolbar.more", timeout: .seconds(10))
         try await waitForShown(before, in: app, timeout: .seconds(15))
         try await clickStar(rating, in: app)
         try await waitForShown(rating, in: app, timeout: .seconds(3), allowingPending: true)
@@ -63,14 +51,14 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         let reopened = try await HostedApp(serverURL: server.baseURL, username: username, password: password, run: run, toolbar: true)
         defer { reopened.close() }
         try await reopened.play(query: "Twenty Nine", track: track)
-        let reread = try await reopened.windowElement(identifiedBy: "dulcet.now-playing.rating", timeout: .seconds(10))
+        let reread = try await reopened.windowElement(identifiedBy: "dulcet.now-playing.toolbar.more", timeout: .seconds(10))
         try await waitForShown(elsewhere, in: reopened, timeout: .seconds(30))
 
-        // 3. A click on the star shown removes the rating.
-        try await clickStar(elsewhere, in: reopened)
+        // 3. No Rating removes the current rating.
+        try await clickStar(0, in: reopened)
         try await waitForShown(0, in: reopened, timeout: .seconds(3), allowingPending: true)
         let removed = try await awaitRating(0, of: songID, on: server)
-        XCTAssertEqual(removed, 0, "The click on the star shown must remove the rating on the server")
+        XCTAssertEqual(removed, 0, "No Rating must remove the rating on the server")
         print("DULCET MAC STARS PROOF PASS track=\(track.debugDescription) server-before=\(before) clicked=\(rating)"
             + " other-client=\(elsewhere) shown-after-reopen=\(elsewhere) removed=0 frame=\(try reopened.frame(reread)) window-width=\(reopened.hostingView.bounds.width)")
     }
@@ -388,57 +376,48 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         return LiveServer(baseURL: baseURL, username: username, password: password)
     }
 
-    /// What the stars show, as the group's label says it after the track's name -- "3 stars",
-    /// "Not rated", "Rating unknown", with ", Waiting to send" while pending -- checked against
-    /// the five star buttons, of which only the N-th offers to remove the rating. "unreadable"
-    /// when the two disagree.
-    private func shownRating(in app: HostedApp) -> String {
-        let prefix = "Rating for \(track), "
-        guard let group = app.windowFirstElement(where: { app.identifier($0) == "dulcet.now-playing.rating" }),
-              let label = app.label(group), label.hasPrefix(prefix) else { return "absent" }
-        let said = String(label.dropFirst(prefix.count))
-        let labels = (1...5).map { star in
-            app.windowFirstElement(where: { app.identifier($0) == "dulcet.now-playing.rating.star.\(star)" }).flatMap(app.label) ?? "absent"
-        }
-        let removable = labels.indices.filter { labels[$0] == "Remove Rating" }.map { $0 + 1 }
-        let rated = Int(said.split(separator: " ").first ?? "") ?? 0
-        let consistent = removable == (rated == 0 ? [] : [rated])
-            && labels.enumerated().allSatisfy { index, label in
-                label == "Remove Rating" || label == (index == 0 ? "Rate 1 star" : "Rate \(index + 1) stars")
+    private func ratingTitle(_ value: Int) -> String {
+        value == 0 ? DulcetStrings.readerRatingMenuNone : DulcetStrings.readerRatingMenuStars(value)
+    }
+
+    /// Inspect the native menu's actual checkmarks, rather than reading the presentation store.
+    private func shownRating(in app: HostedApp) async throws -> Int? {
+        @MainActor final class Checked { var values: [Int] = [] }
+        let checked = Checked()
+        try await app.chooseMenuItem(nil, described: "current track rating", attempts: 2, inspecting: { menu in
+            @MainActor func inspect(_ current: NSMenu) {
+                for item in current.items {
+                    if let value = (0...5).first(where: { self.ratingTitle($0) == item.title }), item.state == .on {
+                        checked.values.append(value)
+                    }
+                    if let submenu = item.submenu { inspect(submenu) }
+                }
             }
-        return consistent ? said : "unreadable said=\(said.debugDescription) stars=\(labels)"
+            inspect(menu)
+        }) {
+            let more = try await app.windowElement(identifiedBy: "dulcet.now-playing.toolbar.more", timeout: .seconds(5))
+            try app.press(more, named: "Now Playing More")
+        }
+        return checked.values.count == 1 ? checked.values.first : nil
     }
 
-    /// Waits until the stars show `rating`, settled -- or, with `allowingPending`, with a pending
-    /// or held change after it.
     private func waitForShown(_ rating: Int, in app: HostedApp, timeout: Duration, allowingPending: Bool = false) async throws {
-        let expected = Self.ratingValue(rating)
-        try await waitUntil(timeout: timeout, "the stars must show \(expected.debugDescription); show \(shownRating(in: app))") {
-            let shown = self.shownRating(in: app)
-            return shown == expected || (allowingPending && shown.hasPrefix(expected + ", "))
-        }
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        var actual: Int?
+        repeat {
+            actual = try await shownRating(in: app)
+            if actual == rating { return }
+            try await Task.sleep(for: .milliseconds(200))
+        } while ContinuousClock.now < deadline
+        XCTFail("The Rating submenu must check \(ratingTitle(rating)); checked value=\(String(describing: actual))")
+        throw HostedAppError.refused
     }
 
-    /// What the stars say their value is, settled: "Not rated", "1 star", "3 stars".
-    private static func ratingValue(_ rating: Int) -> String {
-        switch rating {
-        case 0: "Not rated"
-        case 1: "1 star"
-        default: "\(rating) stars"
+    private func clickStar(_ value: Int, in app: HostedApp) async throws {
+        try await app.chooseMenuItem(ratingTitle(value), described: "Now Playing Rating", attempts: 2) {
+            let more = try await app.windowElement(identifiedBy: "dulcet.now-playing.toolbar.more", timeout: .seconds(5))
+            try app.press(more, named: "Now Playing More")
         }
-    }
-
-    /// Clicks star `star` where it is drawn: a mouse click at the centre of that star's own
-    /// button, which the window hit-tests.
-    private func clickStar(_ star: Int, in app: HostedApp) async throws {
-        let button = try await app.windowElement(identifiedBy: "dulcet.now-playing.rating.star.\(star)", timeout: .seconds(5))
-        let frame = try app.frame(button)
-        // The window's width is whatever the host's screen allowed (a CI Mac fits the window to a
-        // narrower screen), so it is reported, never assumed; the stars live in the toolbar in
-        // either Now Playing layout.
-        XCTAssertGreaterThan(frame.width, 0, "Star \(star) must be drawn in the toolbar, not overflowed;"
-            + " frame=\(frame) window-width=\(app.hostingView.bounds.width)")
-        try app.click(atScreenPoint: NSPoint(x: frame.midX, y: frame.midY))
     }
 
     /// Clicks `heart` at its centre and proves the star reaches the server, then clicks it again

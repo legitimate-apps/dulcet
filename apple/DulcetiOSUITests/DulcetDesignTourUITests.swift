@@ -261,7 +261,10 @@ final class DulcetDesignTourUITests: XCTestCase {
         if let size = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]
         }
+        let namespace = UUID().uuidString
         app.launchArguments += [
+            "-dulcet-debug-account-fixture", namespace,
+            "-dulcet-debug-download-handoff", namespace,
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", server.url,
             "-dulcet-debug-account-username", server.username,
@@ -615,8 +618,21 @@ final class DulcetDesignTourUITests: XCTestCase {
     /// Runs one screen: reach it, then photograph it whether or not it was reached.
     @MainActor
     private func enableReduceTransparency() -> Bool {
+        if UIAccessibility.isReduceTransparencyEnabled {
+            print("DULCET ACCESSIBILITY reduceTransparency=true evidence=UIAccessibility")
+            return true
+        }
         let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
         settings.launch()
+        for _ in 0..<8 {
+            if settings.navigationBars["Settings"].firstMatch.exists { break }
+            let back = settings.navigationBars.buttons.firstMatch
+            if !back.exists { break }
+            back.tap()
+        }
+        func setting(_ title: String) -> XCUIElement {
+            settings.descendants(matching: .any).matching(NSPredicate(format: "label == %@", title)).firstMatch
+        }
         func revealSetting(_ element: XCUIElement) -> Bool {
             for _ in 0..<8 {
                 if element.exists && element.isHittable { return true }
@@ -624,10 +640,14 @@ final class DulcetDesignTourUITests: XCTestCase {
             }
             return element.exists && element.isHittable
         }
-        let accessibility = settings.cells["Accessibility"].firstMatch
-        guard revealSetting(accessibility) else { XCTFail("Settings must expose Accessibility"); return false }
+        let accessibility = setting("Accessibility")
+        guard revealSetting(accessibility) else {
+            shoot("reduce-transparency-setting-UNREACHED", settings)
+            XCTFail("Settings must expose Accessibility: " + settings.debugDescription)
+            return false
+        }
         accessibility.tap()
-        let display = settings.cells["Display & Text Size"].firstMatch
+        let display = setting("Display & Text Size")
         guard display.waitForExistence(timeout: 10), revealSetting(display) else {
             XCTFail("Accessibility must expose Display & Text Size"); return false
         }
@@ -637,7 +657,9 @@ final class DulcetDesignTourUITests: XCTestCase {
             XCTFail("Display & Text Size must expose Reduce Transparency"); return false
         }
         if transparency.value as? String != "1" { transparency.tap() }
-        let enabled = waitFor(timeout: 5) { transparency.value as? String == "1" }
+        let enabled = waitFor(timeout: 5) {
+            transparency.value as? String == "1" && UIAccessibility.isReduceTransparencyEnabled
+        }
         XCTAssertTrue(enabled, "The real system setting must be enabled before a labelled capture")
         print("DULCET ACCESSIBILITY reduceTransparency=\(enabled) evidence=Settings-switch")
         settings.terminate()
@@ -667,7 +689,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         }
         step("connection-connected", app) {
             destination("Connection", "dulcet.sidebar.settings")
-                && app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30)
+                && self.awaitConnection(in: app, compact: compact)
         }
         step("settings-quality", app) {
             if nativeAccount {
@@ -747,6 +769,8 @@ final class DulcetDesignTourUITests: XCTestCase {
             .split(separator: " ").map(String.init) ?? []
         guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
         let name = String(format: "%02d-%@", shotNumber, screen)
+        let tabs = app.tabBars.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|")
+        print("DULCET CAPTURE META screen=\(screen) tabs=\(tabs)")
         // Element screenshots use a stale crop rectangle after landscape rotation on Simulator.
         // The screen request preserves the whole iPad display and its orientation metadata.
         // Portrait uses the element request: whole-display capture has stalled after grid navigation.
@@ -792,15 +816,23 @@ final class DulcetDesignTourUITests: XCTestCase {
     /// A first launch waits on Connection while it connects; a saved account opens into its library.
     @MainActor
     private func awaitConnection(in app: XCUIApplication, compact: Bool) -> Bool {
-        let signOut = app.buttons["Sign Out"].firstMatch
-        if signOut.waitForExistence(timeout: 10) { return true }
+        // Account is a sheet, and its Sign Out row is lazy at accessibility text sizes.
+        // The connected status is visible before those lower account actions are realized.
+        let connected = app.staticTexts.matching(NSPredicate(
+            format: "identifier == %@ AND label BEGINSWITH %@", "dulcet.account-connect.title", "Connected to "
+        )).firstMatch
+        if connected.exists || app.buttons["Sign Out"].firstMatch.exists { return true }
         guard openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact) else { return false }
-        return signOut.waitForExistence(timeout: 30)
+        return waitFor(timeout: 45) { connected.exists || app.buttons["Sign Out"].firstMatch.exists }
     }
 
     @MainActor
     private func openDestination(_ tab: String, sidebar: String, in app: XCUIApplication, compact: Bool) -> Bool {
         if tab == "Connection" {
+            if app.navigationBars["Account"].firstMatch.exists,
+               app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch.exists { return true }
+            let legacySidebar = app.buttons[sidebar].firstMatch
+            if !compact, legacySidebar.exists, legacySidebar.isHittable { legacySidebar.tap(); return settle(app) }
             let legacy = app.tabBars.buttons["Connection"].firstMatch
             if legacy.exists { if !legacy.isSelected { legacy.tap() }; return settle(app) }
             let close = app.buttons["dulcet.account.close"].firstMatch
@@ -810,17 +842,22 @@ final class DulcetDesignTourUITests: XCTestCase {
                 guard close.waitForNonExistence(timeout: 10) else { return false }
             }
             let account = app.buttons["dulcet.account.open"].firstMatch
-            let legacySidebar = app.buttons[sidebar].firstMatch
             if !account.exists, legacySidebar.exists, legacySidebar.isHittable { legacySidebar.tap(); return settle(app) }
             guard account.waitForExistence(timeout: 10), account.isHittable else { return false }
             account.tap()
-            return close.waitForExistence(timeout: 10)
+            return app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
         }
         let close = app.buttons["dulcet.account.close"].firstMatch
-        if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
+        if close.exists {
+            close.tap()
+            guard close.waitForNonExistence(timeout: 10) else { return false }
+        }
         let nativeTab = app.tabBars.buttons[tab].firstMatch
-        let button = nativeTab.exists ? nativeTab : app.buttons[sidebar].firstMatch
-        guard button.waitForExistence(timeout: 10), button.isHittable else { return false }
+        // The system exposes the same Tab as a Button on phone and a Cell in iPad's sidebar.
+        let nativeSidebar = app.descendants(matching: .any)[sidebar.replacingOccurrences(of: "dulcet.sidebar.", with: "dulcet.tab.")].firstMatch
+        let legacySidebar = app.descendants(matching: .any)[sidebar].firstMatch
+        guard waitFor(timeout: 10, { [nativeTab, nativeSidebar, legacySidebar].contains { $0.exists && $0.isHittable } }) else { return false }
+        guard let button = [nativeTab, nativeSidebar, legacySidebar].first(where: { $0.exists && $0.isHittable }) else { return false }
         button.tap()
         if tab == "Library" || tab == "Browse" { button.tap() }
         return waitFor(timeout: 5, { button.isSelected }) && settle(app, seconds: 1.2)
