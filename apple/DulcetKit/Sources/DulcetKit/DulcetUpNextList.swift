@@ -111,6 +111,15 @@ public struct DulcetUpNextSection: View {
 #if !os(tvOS)
                 .toggleStyle(.button)
 #endif
+#if os(iOS)
+                // Keep the native Switch semantics and 0/1 value used by VoiceOver and the
+                // existing AutoPlay proofs while drawing the compact infinity control.
+                .accessibilityRepresentation {
+                    Toggle(DulcetStrings.autoplay, isOn: Binding(get: { autoplay.isOn }, set: autoplay.set))
+                        .toggleStyle(.switch)
+                        .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
+                }
+#endif
                 .accessibilityLabel(DulcetStrings.autoplay)
                 .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
             }

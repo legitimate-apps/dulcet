@@ -336,8 +336,20 @@ final class DulcetDesignTourUITests: XCTestCase {
             let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
             if !app.descendants(matching: .any)["dulcet.upNext"].firstMatch.exists,
                toggle.waitForExistence(timeout: 3) { toggle.tap() }
-            return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
-                && self.settle(app)
+            guard app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10), self.settle(app) else { return false }
+            let autoplay = app.switches["dulcet.upNext.autoplay.toggle"].firstMatch
+            guard autoplay.waitForExistence(timeout: 5), autoplay.isHittable,
+                  let value = autoplay.value as? String, ["0", "1"].contains(value) else { return false }
+            // Match the existing proof's native-switch hit point, then restore the fixture's
+            // preference so the following photographs retain their original state.
+            let hit = autoplay.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+                .withOffset(CGVector(dx: -24, dy: 0))
+            hit.tap()
+            guard self.waitFor(timeout: 8, { (autoplay.value as? String) == (value == "1" ? "0" : "1") }) else { return false }
+            hit.tap()
+            guard self.waitFor(timeout: 8, { (autoplay.value as? String) == value }) else { return false }
+            print("DULCET PLAYER AX autoplay=switch value=\(value) toggle-and-restore=passed identifier=dulcet.upNext.autoplay.toggle")
+            return true
         }
             if compact {
                 step("up-next-edit", app) {
