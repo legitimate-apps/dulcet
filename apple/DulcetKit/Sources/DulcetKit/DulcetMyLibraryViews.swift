@@ -185,7 +185,7 @@ struct DulcetMyLibrarySectionPage: View {
             if section != .recent && section != .playlists {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
+                        DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists, menuPresentation: true)
                     } label: { Label(DulcetStrings.readerSortBy, systemImage: "arrow.up.arrow.down") }
                     .accessibilityIdentifier("dulcet.myLibrary.\(section.rawValue).options")
                 }

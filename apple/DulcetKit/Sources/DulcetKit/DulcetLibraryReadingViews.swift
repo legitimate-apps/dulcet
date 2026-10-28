@@ -1421,7 +1421,7 @@ struct DulcetReaderAlbumGridView: View {
             .toolbar {
                 if let category {
                     ToolbarItem(placement: .primaryAction) {
-                        Menu { DulcetLibraryCategoryControls(category: category, albumSort: true) }
+                        Menu { DulcetLibraryCategoryControls(category: category, albumSort: true, menuPresentation: true) }
                         label: { Label(DulcetStrings.readerSortBy, systemImage: "arrow.up.arrow.down") }
                         .accessibilityIdentifier("dulcet.library.\(category).options")
                     }

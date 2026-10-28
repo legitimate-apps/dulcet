@@ -177,6 +177,7 @@ struct DulcetLibraryCategoryControls: View {
     let category: String
     var albumSort = false
     var offersArtist = true
+    var menuPresentation = false
 
     var body: some View {
         if let session = store.librarySession {
@@ -184,19 +185,36 @@ struct DulcetLibraryCategoryControls: View {
                                set: { session.setLibraryCategory(category, sort: $0) })
             let filter = Binding(get: { session.libraryDepth.filters[category] ?? "all" },
                                  set: { session.setLibraryCategory(category, filter: $0) })
-            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                ViewThatFits(in: .horizontal) {
-                    HStack { sortPicker(sort); categoryFilter(filter) }
-                    VStack(alignment: .leading) { sortPicker(sort); categoryFilter(filter) }
-                }
-                if albumSort && sort.wrappedValue == "releaseDate" {
-                    Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+            if menuPresentation {
+                Menu {
+                    sortChoices(sort).pickerStyle(.inline)
+                } label: { Text(DulcetStrings.readerSortBy) }
+                .accessibilityIdentifier("dulcet.library.\(category).sort")
+                .accessibilityValue(sortTitle(sort.wrappedValue))
+                Menu {
+                    filterChoices(filter).pickerStyle(.inline)
+                } label: { Text(DulcetStrings.libraryFilter) }
+                .accessibilityIdentifier("dulcet.library.\(category).filter")
+            } else {
+                VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack { sortPicker(sort); categoryFilter(filter) }
+                        VStack(alignment: .leading) { sortPicker(sort); categoryFilter(filter) }
+                    }
+                    if albumSort && sort.wrappedValue == "releaseDate" {
+                        Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                    }
                 }
             }
         }
     }
 
     private func sortPicker(_ binding: Binding<String>) -> some View {
+        sortChoices(binding)
+            .accessibilityIdentifier("dulcet.library.\(category).sort")
+    }
+
+    private func sortChoices(_ binding: Binding<String>) -> some View {
         Picker(DulcetStrings.readerSortBy, selection: binding) {
             Text(DulcetStrings.readerSortTitle).tag("title")
             if offersArtist {
@@ -210,7 +228,17 @@ struct DulcetLibraryCategoryControls: View {
                 Text(DulcetStrings.readerSortRecentlyAdded).tag("recentlyAdded")
             }
         }
-        .accessibilityIdentifier("dulcet.library.\(category).sort")
+    }
+
+    private func sortTitle(_ value: String) -> String {
+        switch value {
+        case "artist": DulcetStrings.readerSortArtist
+        case "releaseDate": DulcetStrings.libraryReleaseDate
+        case "mostPlayed": DulcetStrings.readerSortMostPlayed
+        case "titleDescending": DulcetStrings.librarySortDescending
+        case "recentlyAdded": DulcetStrings.readerSortRecentlyAdded
+        default: DulcetStrings.readerSortTitle
+        }
     }
 
     @ViewBuilder
@@ -228,12 +256,16 @@ struct DulcetLibraryCategoryControls: View {
     }
 
     private func filterPicker(_ binding: Binding<String>) -> some View {
+        filterChoices(binding)
+            .accessibilityIdentifier("dulcet.library.\(category).filter")
+    }
+
+    private func filterChoices(_ binding: Binding<String>) -> some View {
         Picker(DulcetStrings.libraryFilter, selection: binding) {
             Text(DulcetStrings.libraryAll).tag("all")
             Text(DulcetStrings.libraryFilterFavorites).tag("favorites")
             if store.downloadsEnabled && category != "downloaded" { Text(DulcetStrings.libraryDownloaded).tag("downloaded") }
         }
-        .accessibilityIdentifier("dulcet.library.\(category).filter")
     }
 }
 
