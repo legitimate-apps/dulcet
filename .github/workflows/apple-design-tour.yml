@@ -39,6 +39,10 @@ on:
         description: Optional source commit for paired foundation photographs using the same test instrument
         type: string
         default: ''
+      paired_variants:
+        description: Optional space-separated variants needing baseline recapture; empty pairs every variant
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -155,13 +159,15 @@ jobs:
           DULCET_DESIGN_TOUR_SCREENS: ${{ (!inputs.general_variant || inputs.general_variant == matrix.variant) && inputs.general_screens || inputs.screens }}
           DULCET_DESIGN_TOUR_PHASE: ${{ inputs.phase == 'foundation' && 'foundation' || matrix.device != 'mac' && inputs.phase || 'all' }}
           BASELINE_REF: ${{ inputs.baseline_ref }}
+          PAIRED_VARIANTS: ${{ inputs.paired_variants }}
         run: |
           if [[ "$CAPTURE_DEVICE" == iphone || "$CAPTURE_DEVICE" == ipad ]]; then
             export DULCET_DESIGN_TOUR_VARIANT="$CAPTURE_VARIANT"
           fi
           DULCET_FFMPEG="$(command -v ffmpeg)"
           export DULCET_FFMPEG
-          if [[ "$DULCET_DESIGN_TOUR_PHASE" == foundation && -n "$BASELINE_REF" ]]; then
+          if [[ "$DULCET_DESIGN_TOUR_PHASE" == foundation && -n "$BASELINE_REF" &&
+                ( -z "$PAIRED_VARIANTS" || " $PAIRED_VARIANTS " == *" $CAPTURE_VARIANT "* ) ]]; then
             git fetch --no-tags origin "$BASELINE_REF"
             git worktree add --detach "$RUNNER_TEMP/before-source" FETCH_HEAD
             cp apple/DulcetiOSUITests/DulcetDesignTourUITests.swift "$RUNNER_TEMP/before-source/apple/DulcetiOSUITests/"
@@ -182,6 +188,10 @@ jobs:
             tools/design-tour-apple "$RUNNER_TEMP/captures/after" --device "$CAPTURE_DEVICE" || after_status=$?
             echo "PAIRED CAPTURE before=$before_status after=$after_status"
             (( before_status == 0 && after_status == 0 ))
+          elif [[ "$DULCET_DESIGN_TOUR_PHASE" == foundation && -n "$BASELINE_REF" ]]; then
+            mkdir -p "$RUNNER_TEMP/captures/after"
+            git rev-parse HEAD > "$RUNNER_TEMP/captures/after/revision.txt"
+            tools/design-tour-apple "$RUNNER_TEMP/captures/after" --device "$CAPTURE_DEVICE"
           else
             tools/design-tour-apple "$RUNNER_TEMP/captures" --device "$CAPTURE_DEVICE"
           fi

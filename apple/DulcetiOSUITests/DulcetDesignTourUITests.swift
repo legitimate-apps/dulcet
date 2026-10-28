@@ -758,11 +758,15 @@ final class DulcetDesignTourUITests: XCTestCase {
         step("album", app) {
             let tile = app.buttons.matching(identifier: "dulcet.library.album")
                 .matching(NSPredicate(format: "label BEGINSWITH %@", "Threshold Boundary")).firstMatch
-            guard tile.waitForExistence(timeout: 20), self.scrollIntoView(tile, in: app) else { return false }
-            tile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
             let title = app.staticTexts["dulcet.album.title"].firstMatch
-            return title.waitForExistence(timeout: 15) && title.label == "Threshold Boundary"
-                && app.buttons["dulcet.album.play"].firstMatch.waitForExistence(timeout: 10)
+            for _ in 0..<3 {
+                guard tile.waitForExistence(timeout: 10), self.scrollIntoView(tile, in: app) else { return false }
+                _ = self.settle(app, seconds: 0.5)
+                tile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+                if title.waitForExistence(timeout: 5), title.label == "Threshold Boundary",
+                   app.buttons["dulcet.album.play"].firstMatch.waitForExistence(timeout: 5) { return true }
+            }
+            return false
         }
     }
 
