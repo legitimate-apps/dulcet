@@ -96,8 +96,8 @@ APPEARANCES = ("light", "dark")
 WINDOW_WIDTH_POINTS = 1180
 WINDOW_HEIGHT_POINTS = 760
 REFERENCE_CAPTURE_WIDTH_POINTS = 1180
-# macOS 27: the 760-point titled window has 28 points of native chrome.
-REFERENCE_CAPTURE_HEIGHT_POINTS = 732
+# The native navigation toolbar occupies 52 points of the fixed 760-point window.
+REFERENCE_CAPTURE_HEIGHT_POINTS = 708
 # This is deliberately one contract value. The renderer uses it for layout, layer contents, and
 # bitmap density, so the verifier must reject any manifest that claims those grids differ.
 CAPTURE_SCALE = 1.0
