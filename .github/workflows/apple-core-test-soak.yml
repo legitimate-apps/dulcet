@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   diagnostic-iphone:
-    name: Exact iPhone Library cases and reset position cost
+    name: Clean exact iPhone cases then reset position cost
     runs-on: xcode-27
     timeout-minutes: 180
     strategy:
@@ -21,6 +21,8 @@ jobs:
       HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 4
     - name: Read toolchain pins
       id: pins
       run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
@@ -74,6 +76,9 @@ jobs:
     - name: Build the Apple framework the iPhone and iPadOS conformance legs read
       timeout-minutes: 10
       run: tools/run-gradle-exclusive --no-daemon :core:linkDebugFrameworkIosSimulatorArm64
+    - name: Use the production source for the clean exact cases
+      run: git restore --source=26ef74ca --worktree -- apple/DulcetKit/Sources/DulcetKit/DulcetMyLibraryViews.swift
+        apple/DulcetKit/Sources/DulcetKit/DulcetLibraryReading.swift apple/DulcetMyLibraryUITestSupport/DulcetMyLibraryUITests.swift
     - name: Build the iOS shell for the iPhone conformance legs
       if: ${{ matrix.device == 'iphone' }}
       timeout-minutes: 10
@@ -93,7 +98,7 @@ jobs:
     - name: Stop the idle build daemons before the timed proofs
       timeout-minutes: 3
       run: python3 tools/ci/stop-build-daemons
-    - name: Run exact iPhone My Library cases with reset position measurement
+    - name: Prove clean exact cases then measure the scrolled reset
       timeout-minutes: 130
       id: darwin_conformance
       env:
@@ -142,7 +147,7 @@ jobs:
         tools/ci/with-my-library-fixture --root "$ROOT/my-library-iphone" --music "$ROOT/music" \
           --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
           --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
-          -- tools/ci/run-identity-stopgap-proof iphone
+          -- tools/ci/run-clean-then-position-proof iphone
     - name: Stop host-pressure sampling and bound unfinished stack captures
       if: ${{ always() }}
       timeout-minutes: 1

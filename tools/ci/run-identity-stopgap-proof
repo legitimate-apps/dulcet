@@ -19,7 +19,7 @@ with open(sys.argv[2], 'w') as output:
 PYTHON
 }
 trap finish_proof EXIT
-methods=(BrowseAddRemoveRelaunchAndOfflineReplay NonDulcetServerKeepsTheOriginalLibraryNavigation LibraryBrowseAndAlbumInLightDarkAndLargestText LibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable LibrarySearchGroupsAndRecentQuerySurviveRelaunch AlbumAddRemainsVisibleAtLargestTextOnIPhone IPhoneLibrarySortShuffleAndArtistDepth)
+methods=(BrowseAddRemoveRelaunchAndOfflineReplay)
 selected=()
 for method in "${methods[@]}"; do selected+=("-only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/test${method}"); done
 set +e
@@ -34,7 +34,7 @@ xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/identity-stopgap.
 xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/identity-stopgap.xcresult" > "$RUNNER_TEMP/identity-stopgap-summary.json"
 python3 - "$RUNNER_TEMP/identity-stopgap-summary.json" <<'PYTHON'
 import json,sys
-s=json.load(open(sys.argv[1]));print('EXACT IPHONE RESULT',json.dumps({k:s[k] for k in ['totalTestCount','passedTests','failedTests','skippedTests']}))
-assert s['totalTestCount']==7 and s['passedTests']==7 and s['failedTests']==0 and s['skippedTests']==0,s
+s=json.load(open(sys.argv[1]));print('POSITION CASE RESULT',json.dumps({k:s[k] for k in ['totalTestCount','passedTests','failedTests','skippedTests']}))
+assert s['totalTestCount']==1 and s['passedTests']==1 and s['failedTests']==0 and s['skippedTests']==0,s
 PYTHON
 exit "$proof_exit"

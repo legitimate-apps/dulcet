@@ -1,0 +1,21 @@
+#!/bin/bash
+# First prove the uninstrumented production source, then measure the same stopgap separately.
+set -euo pipefail
+: "${RUNNER_TEMP:?}"
+set +e
+tools/ci/run-my-library-proofs iphone
+clean_exit=$?
+set -e
+xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" > "$RUNNER_TEMP/clean-iphone-summary.json"
+python3 - "$RUNNER_TEMP/clean-iphone-summary.json" <<'PYTHON'
+import json,sys
+s=json.load(open(sys.argv[1]));print('CLEAN EXACT IPHONE RESULT',json.dumps({k:s[k] for k in ['totalTestCount','passedTests','failedTests','skippedTests']}))
+assert s['totalTestCount']==7 and s['passedTests']==7 and s['failedTests']==0 and s['skippedTests']==0,s
+PYTHON
+[ "$clean_exit" -eq 0 ]
+git restore --source=HEAD --worktree -- apple/DulcetKit/Sources/DulcetKit/DulcetMyLibraryViews.swift apple/DulcetKit/Sources/DulcetKit/DulcetLibraryReading.swift apple/DulcetMyLibraryUITestSupport/DulcetMyLibraryUITests.swift
+xcodebuild build-for-testing -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+  -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
+  -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" > "$RUNNER_TEMP/position-build.log" 2>&1
+python3 tools/ci/stop-build-daemons
+tools/ci/run-identity-stopgap-proof

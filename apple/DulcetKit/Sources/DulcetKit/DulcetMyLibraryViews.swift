@@ -4,13 +4,6 @@ import SwiftUI
 #if DEBUG && os(iOS)
 import OSLog
 
-private struct DulcetResetHeightClassKey: EnvironmentKey { static let defaultValue = "unmeasured" }
-private extension EnvironmentValues {
-    var resetHeightClass: String {
-        get { self[DulcetResetHeightClassKey.self] }
-        set { self[DulcetResetHeightClassKey.self] = newValue }
-    }
-}
 private struct DulcetResetScrollSample: Equatable {
     var offset: CGPoint = .zero
     var visible: CGRect = .zero
@@ -58,7 +51,7 @@ private enum DulcetLibraryResetMetrics {
             }
             return
         }
-        frames[key] = [:]
+        if pending?.target != key { frames[key] = [:] }
         if var p = pending {
             p.target = key; pending = p
             log("request", ["id": p.id, "new": key])
@@ -90,7 +83,11 @@ private struct DulcetResetScrollObserver: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 18, *) {
             content.onScrollGeometryChange(for: DulcetResetScrollSample.self) { geometry in
-                DulcetResetScrollSample(offset: geometry.contentOffset, visible: geometry.visibleRect, insetTop: geometry.contentInsets.top)
+                DulcetResetScrollSample(offset: geometry.contentOffset,
+                    visible: CGRect(x: geometry.visibleRect.minX, y: geometry.visibleRect.minY + geometry.contentInsets.top,
+                                    width: geometry.visibleRect.width,
+                                    height: max(0, geometry.visibleRect.height - geometry.contentInsets.top - geometry.contentInsets.bottom)),
+                    insetTop: geometry.contentInsets.top)
             } action: { _, sample in DulcetLibraryResetMetrics.geometry = sample }
             .onAppear { DulcetLibraryResetMetrics.active = true }
             .onDisappear {
@@ -102,17 +99,23 @@ private struct DulcetResetScrollObserver: ViewModifier {
         } else { content }
     }
 }
-private struct DulcetResetItemGeometry: ViewModifier {
-    let item: DulcetReaderItem
+private struct DulcetResetGridGeometry: ViewModifier {
+    let items: [DulcetReaderItem]
     let key: String
     func body(content: Content) -> some View {
         content.background(GeometryReader { proxy in
-            Color.clear.onAppear { update(proxy) }
-                .onChange(of: proxy.frame(in: .named("library-reset-content"))) { _, _ in update(proxy) }
+            Color.clear.onAppear {
+                update(proxy)
+                DulcetLibraryResetMetrics.log("grid-appear", ["key": key, "count": items.count, "frame": String(describing: proxy.frame(in: .named("library-reset-content")))])
+                DulcetLibraryResetMetrics.appeared(key)
+            }
+            .onChange(of: proxy.frame(in: .named("library-reset-content"))) { _, _ in update(proxy) }
         })
     }
     private func update(_ proxy: GeometryProxy) {
-        guard DulcetLibraryResetMetrics.enabled, key != "unmeasured" else { return }
+        // The fixture adds one album and one artist. Whole-grid bounds identify each single item
+        // without changing the tile's modifier chain or asking accessibility to materialize it.
+        guard DulcetLibraryResetMetrics.enabled, items.count == 1, let item = items.first else { return }
         let id = item.kind.rawValue + ":" + item.id.rawID
         DulcetLibraryResetMetrics.frames[key, default: [:]][id] = (item.title ?? "(untitled)", proxy.frame(in: .named("library-reset-content")))
     }
@@ -235,9 +238,7 @@ struct DulcetMyLibraryEmptyState: View {
 
 /// The albums, artists and songs of one My Library section, on the root or a pushed page.
 struct DulcetMyLibraryCollection: View {
-#if DEBUG && os(iOS)
-    @Environment(\.resetHeightClass) private var resetHeightClass
-#endif
+
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let library: DulcetMyLibrarySnapshot
@@ -260,13 +261,11 @@ struct DulcetMyLibraryCollection: View {
     private func tiles(_ items: [DulcetReaderItem]) -> some View {
         let tileWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : (width < 500 ? 150 : 180)
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
-            ForEach(items) { item in
-                DulcetReaderTile(item: item, width: tileWidth)
-#if DEBUG && os(iOS)
-                    .modifier(DulcetResetItemGeometry(item: item, key: resetHeightClass))
-#endif
-            }
+            ForEach(items) { item in DulcetReaderTile(item: item, width: tileWidth) }
         }
+#if DEBUG && os(iOS)
+        .modifier(DulcetResetGridGeometry(items: items, key: String(describing: DulcetMyLibraryStatusLayout(library))))
+#endif
     }
 
     private func tracks(_ items: [DulcetReaderItem]) -> some View {
@@ -433,10 +432,6 @@ struct DulcetMyLibraryView: View {
                                 .font(.title2.weight(.semibold))
                                 .accessibilityAddTraits(.isHeader)
                             DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width)
-#if DEBUG
-                                .environment(\.resetHeightClass, String(describing: DulcetMyLibraryStatusLayout(library)))
-                                .onAppear { DulcetLibraryResetMetrics.appeared(String(describing: DulcetMyLibraryStatusLayout(library))) }
-#endif
                                 // On iOS 27, a layout move can leave a lazy AX node childless with a null frame.
                                 // Recreate it for status height changes; remove when status no longer moves lazy content.
                                 .id(DulcetMyLibraryStatusLayout(library))
