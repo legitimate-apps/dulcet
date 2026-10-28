@@ -5178,6 +5178,9 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("Now Playing must show \(track): " + app.debugDescription)
             return nil
         }
+        let more = app.buttons["dulcet.now-playing.more"].firstMatch
+        guard more.waitForExistence(timeout: 10) else { return nil }
+        more.tap()
         let stars = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
         guard stars.waitForExistence(timeout: 10), stars.isHittable else {
             XCTFail("Now Playing must offer the playing track's stars: " + app.debugDescription)
@@ -5206,6 +5209,9 @@ final class DulcetiOSUITests: XCTestCase {
     /// finished queue's first Previous replaying its final selection before stepping backward.
     @MainActor
     private func bringPausedNowPlaying(to track: String, in app: XCUIApplication) -> Bool {
+        if app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch.exists {
+            app.buttons["dulcet.now-playing.more"].firstMatch.tap()
+        }
         // Re-query by label: Pause becomes Play, and the hidden bar has another transport row.
         func playerButton(_ label: String) -> XCUIElement? { visiblePlayerButton(label, in: app) }
         func pauseCurrent(waitForStart: Bool) -> Bool {
@@ -5253,10 +5259,18 @@ final class DulcetiOSUITests: XCTestCase {
         return true
     }
 
-    /// Taps star `star` of a five-star row where it is drawn.
+    /// Chooses a rating through the current track's More menu, then exposes its updated value.
     @MainActor
     private func tapStar(_ star: Int, of stars: XCUIElement) {
-        stars.coordinate(withNormalizedOffset: CGVector(dx: (Double(star) - 0.5) / 5, dy: 0.5)).tap()
+        let app = XCUIApplication()
+        let more = app.buttons["dulcet.now-playing.more"].firstMatch
+        if !stars.exists { more.tap() }
+        guard stars.waitForExistence(timeout: 5) else { XCTFail("Rating must be in More"); return }
+        stars.tap()
+        let choice = app.buttons["dulcet.now-playing.rating.star.\(star)"].firstMatch
+        guard choice.waitForExistence(timeout: 5) else { XCTFail("Rating value must be reachable"); return }
+        choice.tap()
+        if !stars.exists { more.tap() }
     }
 
     /// What the stars say their value is, settled: "Not rated", "1 star", "3 stars".

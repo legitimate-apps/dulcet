@@ -274,7 +274,7 @@ extension DulcetStrings {
     static let lyrics = dynamicText("lyrics.title", fallback: "Lyrics")
     static let lyricsShow = dynamicText("lyrics.show", fallback: "Show Lyrics")
     static let lyricsHide = dynamicText("lyrics.hide", fallback: "Hide Lyrics")
-    static let lyricsNone = dynamicText("lyrics.none", fallback: "No lyrics for this song.")
+    static let lyricsNone = dynamicText("lyrics.none", fallback: "No Lyrics")
     static let lyricsLoading = dynamicText("lyrics.loading", fallback: "Loading lyrics")
     static let lyricsOffline = dynamicText("lyrics.offline", fallback: "Lyrics for this song haven\u{2019}t been loaded on this device, and your server can\u{2019}t be reached.")
     static let lyricsUnavailable = dynamicText("lyrics.unavailable", fallback: "Lyrics couldn\u{2019}t be loaded.")

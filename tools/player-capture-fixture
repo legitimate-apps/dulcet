@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Add two deterministic cover palettes to the disposable player screenshot fixture.
+
+Usage: tools/player-capture-fixture --root DIR --port 4877
+Uses design-tour-server's local fixture only. Does not change conformance seed data.
+"""
+import argparse
+from pathlib import Path
+import struct
+import subprocess
+import zlib
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--root', type=Path, required=True)
+parser.add_argument('--port', type=int, required=True)
+args = parser.parse_args()
+tools = Path(__file__).resolve().parent
+command = [str(tools / 'design-tour-server'), 'up', '--root', str(args.root), '--port', str(args.port)]
+subprocess.run(command, check=True)
+music = args.root / 'music'
+assert (music / 'corpus-manifest.json').is_file(), 'Expected disposable conformance corpus'
+
+def cover(path, a, b):
+    size = 512
+    rows = bytearray()
+    for y in range(size):
+        rows.append(0)
+        for x in range(size):
+            t = (x + y) / (2 * size - 2)
+            rgb = tuple(round(left * (1-t) + right * t) for left, right in zip(a, b))
+            if (x-256)**2 + (y-256)**2 < 150**2:
+                rgb = tuple(round(value * .72) for value in rgb)
+            rows.extend(rgb)
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    path.write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+
+cover(music / 'Threshold Boundary' / 'cover.png', (35, 77, 159), (18, 172, 169))
+# Full-song timed text exercises a real regular-width lyrics column, not a two-line excerpt.
+# This changes only the disposable screenshot corpus; the conformance seed stays untouched.
+first = music / 'Threshold Boundary' / '01 - Twenty Nine Seconds.flac'
+lyrics = "\n".join(f"[00:{second:02d}.00]{line}" for second, line in [
+    (0, "Across the evening sky, we follow the fading light"),
+    (3, "The city settles softly beneath the quiet clouds"),
+    (6, "Every road is carrying a story of its own"),
+    (9, "We leave the windows open and let the music through"),
+    (12, "The colors turn to gold along the water's edge"),
+    (15, "And every passing moment brings us closer to the dawn"),
+    (18, "We follow every quiet road, wherever it may lead"),
+    (21, "Until the morning comes and fills the world with light"),
+    (25, "Across the evening sky, the song goes on")])
+remuxed = first.with_suffix('.capture.flac')
+subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-i', str(first),
+    '-map', '0', '-c', 'copy', '-metadata', 'LYRICS:ENG=' + lyrics,
+    '-metadata', 'LYRICS:DEU=' + lyrics, '-y', str(remuxed)], check=True)
+remuxed.replace(first)
+
+second = music / 'Player Color Study'
+second.mkdir(exist_ok=True)
+if not (second / '01 - Amber Evening.flac').exists():
+    subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono:d=60', '-c:a', 'flac', '-metadata', 'title=Amber Evening', '-metadata', 'album=Player Color Study', '-metadata', 'artist=Dulcet Fixtures', '-metadata', 'album_artist=Dulcet Fixtures', '-metadata', 'track=1', '-y', str(second / '01 - Amber Evening.flac')], check=True)
+cover(second / 'cover.png', (175, 45, 76), (239, 158, 47))
+subprocess.run(command, check=True)
+print('PLAYER FIXTURE palettes=blue-teal,rose-amber extra-tracks=1 timed-lyric-lines=9 source=local-disposable')

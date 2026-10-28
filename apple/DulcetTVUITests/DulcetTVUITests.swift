@@ -623,25 +623,11 @@ final class DulcetTVUITests: XCTestCase {
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
         let stars = (1...5).map { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch }
         XCTAssertTrue(heart.waitForExistence(timeout: 10), "Now Playing must offer the heart: " + app.debugDescription)
-        XCTAssertTrue(stars.allSatisfy(\.exists), "Now Playing must offer five stars beside the heart: " + app.debugDescription)
-        // Lyrics first, while the 29-second track is still early: the heart's and stars' server
-        // round trips can outlast it, and an ended track lights no line. Lyrics sit after the
-        // stars, beside the heart's group: Down from the transport to that row, then Right across
-        // it, bounded and re-checked after every press.
+        let more = app.buttons["dulcet.now-playing.more"].firstMatch
+        XCTAssertTrue(more.exists, "Track actions must be available in More")
         XCTAssertTrue(lyrics.exists, "Now Playing must offer lyrics: " + app.debugDescription)
-        XCTAssertTrue(app.buttons["dulcet.now-playing.sleep-timer"].firstMatch.exists,
-                      "The footer must offer the Sleep Timer between the stars and Lyrics")
-        var lyricsPresses = 0
-        var crossedSleepTimer = false
-        while !lyrics.hasFocus, lyricsPresses < 12 {
-            let onSleepTimer = sleepTimerHasRemoteFocus(in: app)
-            crossedSleepTimer = crossedSleepTimer || onSleepTimer
-            let inRow = onSleepTimer || (heart.exists && heart.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
-            XCUIRemote.shared.press(inRow ? .right : .down)
-            lyricsPresses += 1
-        }
-        XCTAssertTrue(crossedSleepTimer, "The remote path must actually traverse the Sleep Timer before reaching Lyrics")
-        XCTAssertTrue(lyrics.hasFocus, "Lyrics must take remote focus after the stars: " + app.debugDescription)
+        let lyricsReached = focusPlayerControl(lyrics, in: app)
+        XCTAssertTrue(lyricsReached, "Lyrics must take remote focus: " + app.debugDescription)
         XCTAssertEqual(lyrics.label, "Show Lyrics")
         XCUIRemote.shared.press(.select)
         let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
@@ -672,18 +658,7 @@ final class DulcetTVUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "The same press must hide the lyrics")
 
-        // The heart: Left from Lyrics across the stars, or Down first if focus left the row. Bounded and re-checked after every press, so a heart
-        // the remote cannot reach fails here, with the presses it took in the pass line when it
-        // does not.
-        var heartPresses: [String] = []
-        while !heart.hasFocus, heartPresses.count < 12 {
-            let besideHeart = (lyrics.exists && lyrics.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
-                || sleepTimerHasRemoteFocus(in: app)
-            let direction: XCUIRemote.Button = besideHeart ? .left : .down
-            XCUIRemote.shared.press(direction)
-            heartPresses.append(direction == .left ? "left" : "down")
-        }
-        XCTAssertTrue(heart.hasFocus, "The heart must take remote focus: " + app.debugDescription)
+        XCTAssertTrue(focusPlayerControl(heart, in: app), "The title-row Favorite must take remote focus")
         if heart.label == "Remove Favorite" {
             // An earlier run's favourite, cleared first so the change below is observable.
             XCUIRemote.shared.press(.select)
@@ -711,30 +686,26 @@ final class DulcetTVUITests: XCTestCase {
         let ratingBefore = try XCTUnwrap(readServerSongRating(track, album: album, server: server),
             "The control: the server's rating must be readable before the press")
         let rating = ratingBefore == 3 ? 2 : 3
-        var starPresses = 0
-        for star in stars.prefix(rating) {
-            XCUIRemote.shared.press(.right)
-            starPresses += 1
-            XCTAssertTrue(star.hasFocus, "The remote must move across the stars in order: " + app.debugDescription)
+        func chooseRating() {
+            XCTAssertTrue(focusPlayerControl(more, in: app), "More must take remote focus")
+            XCUIRemote.shared.press(.select)
+            let ratingMenu = app.buttons["dulcet.now-playing.rating"].firstMatch
+            XCTAssertTrue(focusPlayerControl(ratingMenu, in: app), "Rating must be reachable in More")
+            XCUIRemote.shared.press(.select)
+            XCTAssertTrue(focusPlayerControl(stars[rating - 1], in: app), "The requested rating must take focus")
+            XCUIRemote.shared.press(.select)
         }
-        XCUIRemote.shared.press(.select)
+        chooseRating()
         XCTAssertEqual(awaitServerSongRating(track, album: album, server: server, expected: rating, timeout: 30), rating,
             "Select on star \(rating) must rate the playing track \(rating) on the server (was \(ratingBefore))")
-        XCTAssertTrue(stars[rating - 1].hasFocus, "The press must leave focus on the star: " + app.debugDescription)
-        XCUIRemote.shared.press(.select)
+        chooseRating()
         XCTAssertEqual(awaitServerSongRating(track, album: album, server: server, expected: 0, timeout: 30), 0,
             "Select on the star already shown must remove the rating on the server")
         XCTAssertEqual(title.label, track, "Rating must not change what is playing")
-        for star in stars.dropFirst(rating) {
-            XCUIRemote.shared.press(.right)
-            starPresses += 1
-            XCTAssertTrue(star.hasFocus, "The remote must move across the stars in order: " + app.debugDescription)
-        }
-        print("DULCET TV rating presses=\(starPresses) rated=\(rating) before=\(ratingBefore)")
+        print("DULCET TV rating route=more-menu rated=\(rating) before=\(ratingBefore)")
 
-        print("DULCET TV NOW PLAYING PASS track=\(track.debugDescription) heart-presses=\(heartPresses.joined(separator: ","))"
-            + " heart=remote-select starred=true->false lyrics=remote-select lyrics-presses=\(lyricsPresses) lit=\(lit.debugDescription)"
-            + " sleep-timer-traversed=\(crossedSleepTimer)"
+        print("DULCET TV NOW PLAYING PASS track=\(track.debugDescription) heart-route=title-row"
+            + " heart=remote-select starred=true->false lyrics=remote-select lit=\(lit.debugDescription)"
             + " setup=debug-account-only")
     }
 
@@ -2627,21 +2598,36 @@ final class DulcetTVUITests: XCTestCase {
             .matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists
     }
 
+    @MainActor
+    private func focusPlayerControl(_ target: XCUIElement, in app: XCUIApplication, bound: Int = 18) -> Bool {
+        guard target.waitForExistence(timeout: 5) else { return false }
+        for _ in 0..<bound {
+            if target.hasFocus { return true }
+            let focused = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            guard focused.exists else { XCUIRemote.shared.press(.down); continue }
+            let current = focused.frame
+            let destination = target.frame
+            let dx = destination.midX - current.midX
+            let dy = destination.midY - current.midY
+            let direction: XCUIRemote.Button
+            if abs(dy) > max(24, destination.height / 2) {
+                direction = dy > 0 ? .down : .up
+            } else {
+                direction = dx > 0 ? .right : .left
+            }
+            XCUIRemote.shared.press(direction)
+        }
+        return target.hasFocus
+    }
+
     /// Down from the transport to the footer row, Right across the stars and Sleep Timer to
     /// Lyrics, Select; returns the panel.
     @MainActor
     private func showLyricsByRemote(_ app: XCUIApplication) throws -> XCUIElement {
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
         XCTAssertTrue(lyrics.waitForExistence(timeout: 10), "Now Playing must offer lyrics: " + app.debugDescription)
-        var presses = 0
-        while !lyrics.hasFocus, presses < 12 {
-            let inFooter = app.buttons["dulcet.now-playing.favorite"].firstMatch.hasFocus
-                || (1...5).contains { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch.hasFocus }
-                || sleepTimerHasRemoteFocus(in: app)
-            XCUIRemote.shared.press(inFooter ? .right : .down)
-            presses += 1
-        }
-        XCTAssertTrue(lyrics.hasFocus, "Lyrics must take remote focus: " + app.debugDescription)
+        XCTAssertTrue(focusPlayerControl(lyrics, in: app), "Lyrics must take remote focus: " + app.debugDescription)
         XCTAssertEqual(lyrics.label, "Show Lyrics")
         XCUIRemote.shared.press(.select)
         let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch

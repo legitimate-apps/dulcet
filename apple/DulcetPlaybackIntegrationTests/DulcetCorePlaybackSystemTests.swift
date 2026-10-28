@@ -12,6 +12,78 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     /// process, so a fixed provider would let one test's queue decide what another test sees.
     private let provider = "system-provider-\(UUID().uuidString)"
 
+    func testPreviousIsEnabledOnTheFirstEntry() async throws {
+        let fixture = try await previousFixture(index: 0)
+        XCTAssertTrue(try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying).canGoPrevious)
+    }
+
+    func testPreviousRestartsPastThreeSecondsWithoutReplacingPlaybackIdentities() async throws {
+        let fixture = try await previousFixture(index: 1, position: 4)
+        let before = try XCTUnwrap(fixture.queue.snapshot().snapshot)
+        let session = try XCTUnwrap(before.currentSession)
+        let prepares = fixture.engine.count("prepare")
+        fixture.controller.send(.previous)
+        await fixture.waitFor { fixture.engine.count("seek") > 0 }
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "seek" }?.position, 0)
+        let after = try XCTUnwrap(fixture.queue.snapshot().snapshot)
+        XCTAssertEqual(after.currentIndex, 1)
+        XCTAssertEqual(after.currentSession?.playbackSessionId, session.playbackSessionId)
+        XCTAssertEqual(after.currentSession?.attemptId, session.attemptId)
+        XCTAssertEqual(after.entries.map(\.queueEntryId), before.entries.map(\.queueEntryId))
+        XCTAssertEqual(fixture.engine.count("prepare"), prepares)
+    }
+
+    func testPreviousMovesBeforeThreeSeconds() async throws {
+        let fixture = try await previousFixture(index: 1, position: 2)
+        fixture.controller.send(.previous)
+        _ = try await fixture.waitForPrepare(rawID: "a")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
+        XCTAssertEqual(fixture.engine.count("seek"), 0)
+    }
+
+    func testPreviousReplaysTheUnseekableFirstEntryFromZero() async throws {
+        let fixture = try await previousFixture(index: 0, seekability: .notSeekable, position: 8)
+        let before = try XCTUnwrap(fixture.queue.snapshot().snapshot)
+        let prepares = fixture.engine.count("prepare")
+        fixture.controller.send(.previous)
+        let attempt = try await fixture.waitForPrepare(rawID: "a", after: prepares)
+        let after = try XCTUnwrap(fixture.queue.snapshot().snapshot)
+        XCTAssertNotEqual(after.currentSession?.playbackSessionId, before.currentSession?.playbackSessionId)
+        XCTAssertNotEqual(attempt.rawValue, before.currentSession?.attemptId)
+        // Before Ready, the core uses -1 for an as-yet-unreported engine position.
+        fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: .notSeekable))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.phase == .ready }
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.elapsed, .zero)
+        XCTAssertEqual(after.entries.map(\.queueEntryId), before.entries.map(\.queueEntryId))
+        XCTAssertEqual(fixture.engine.count("seek"), 0)
+    }
+
+    func testPreviousRemoteCapabilityMatchesTheFirstEntryButton() async throws {
+        let fixture = try await previousFixture(index: 0)
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        let capability = try XCTUnwrap(fixture.engine.remoteCapabilities.last)
+        XCTAssertEqual(capability.0.rawValue, session.playbackSessionId)
+        XCTAssertTrue(capability.1.allowsPrevious)
+        let router = try XCTUnwrap(fixture.engine.remoteRouter)
+        XCTAssertTrue(router.handleRemotePlaybackCommand(.previous(sessionID: .init(session.playbackSessionId))))
+        await fixture.waitFor { fixture.engine.count("seek") > 0 }
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "seek" }?.position, 0)
+    }
+
+    private func previousFixture(index: Int, seekability: DulcetPlaybackSeekability = .seekable,
+                                 position: Double = 0) async throws -> Fixture {
+        let fixture = makeFixture(tracks: ["a", "b", "c"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: index))
+        let attempt = try await fixture.waitForPrepare(rawID: index == 0 ? "a" : "b")
+        fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: seekability))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.phase == .ready }
+        if position > 0 {
+            fixture.emit(.playbackProgressBegan(attemptID: attempt, wallClock: Date(), mediaPosition: position))
+            await fixture.waitFor { (fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds ?? 0) >= Int64(position * 1000) }
+        }
+        return fixture
+    }
+
     /// Spec §12.5: the quality for the network reaches each resolve. A change replaces a preload
     /// resolved at the old quality, so the next item plays at the new one, and never restarts or
     /// re-prepares what is playing. The choice is saved in the core's stored form.
@@ -2092,6 +2164,9 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
         completion(outcome)
     }
 
+    private var capabilityStorage: [(DulcetPlaybackSessionID, DulcetRemoteCommandCapabilities)] = []
+    var remoteCapabilities: [(DulcetPlaybackSessionID, DulcetRemoteCommandCapabilities)] { lock.withLock { capabilityStorage } }
+
     private var router: (any DulcetRemotePlaybackCommandRouting)?
 
     /// The router the controller installed: what a system control reaches, and nothing else.
@@ -2104,7 +2179,10 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
     func updateRemoteCommandCapabilities(
         _ capabilities: DulcetRemoteCommandCapabilities,
         for sessionID: DulcetPlaybackSessionID
-    ) -> Bool { true }
+    ) -> Bool {
+        lock.withLock { capabilityStorage.append((sessionID, capabilities)) }
+        return true
+    }
 
     func setNowPlayingArtwork(_ imageData: Data?, for sessionID: DulcetPlaybackSessionID) {
         lock.withLock { artworkStorage.append((sessionID.rawValue, imageData)) }

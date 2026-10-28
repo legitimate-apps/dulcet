@@ -21,8 +21,11 @@ struct DulcetLyricsPanel: View {
     let isPlaying: Bool
     /// Whether the playing track can be sought; a line tap seeks only then.
     var canSeek: Bool = false
+    /// Explicit state for previews and presentation-only capture instruments.
+    var presentationState: DulcetLyricsPanelState? = nil
     /// A tapped line's seek request; the caller routes it into the player's control path.
     var onSeek: (Duration) -> Void = { _ in }
+    var onAvailabilityChanged: (Bool) -> Void = { _ in }
 
     private var reader: (any DulcetLyricsReading)? {
         guard let session = store.librarySession,
@@ -38,6 +41,9 @@ struct DulcetLyricsPanel: View {
             // no-lyrics text reported `dulcet.lyrics.panel`, not `dulcet.lyrics.none`).
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dulcet.lyrics.panel")
+            .onChange(of: presentationState ?? model.state, initial: true) { _, state in
+                onAvailabilityChanged(state == .none)
+            }
             .onAppear {
                 anchor = DulcetLyricsClockAnchor(elapsed: elapsed, at: .now)
                 model.load(DulcetLyricsRequest(track: track), from: reader)
@@ -56,11 +62,14 @@ struct DulcetLyricsPanel: View {
 
     @ViewBuilder
     private var content: some View {
-        switch model.state {
+        switch presentationState ?? model.state {
         case .loading:
-            ProgressView()
-                .accessibilityLabel(DulcetStrings.lyricsLoading)
-                .frame(maxWidth: .infinity, minHeight: 160)
+            ContentUnavailableView {
+                ProgressView().accessibilityLabel(DulcetStrings.lyricsLoading)
+            } description: {
+                Text(DulcetStrings.lyricsLoading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         case let .synced(document):
             TimelineView(.periodic(from: .now, by: 0.2)) { context in
                 let position = anchor.position(at: context.date, playing: isPlaying)
@@ -77,11 +86,11 @@ struct DulcetLyricsPanel: View {
             }
         case let .plain(document):
             ScrollView {
-                VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
                     notes(document)
                     ForEach(Array(document.lines.enumerated()), id: \.offset) { _, line in
                         Text(line.text.isEmpty ? DulcetStrings.lyricsPlainBlankLine : line.text)
-                            .font(Self.plainLineFont)
+                            .modifier(DulcetLyricsLineTypography())
                             .dulcetForeground(.primaryTextOnWindow)
                             .frame(maxWidth: .infinity, alignment: .leading)
 #if os(tvOS)
@@ -96,29 +105,24 @@ struct DulcetLyricsPanel: View {
                 .padding(.vertical, DulcetSpacing.md)
             }
         case .none:
-            Text(DulcetStrings.lyricsNone)
-                .font(.headline)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .frame(maxWidth: .infinity, minHeight: 160)
-                .accessibilityIdentifier("dulcet.lyrics.none")
+            ContentUnavailableView {
+                Label(DulcetStrings.lyricsNone, systemImage: "quote.bubble")
+                    .accessibilityIdentifier("dulcet.lyrics.none")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         case let .unavailable(message, offersRetry):
-            VStack(spacing: DulcetSpacing.sm) {
-                Text(message)
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    // The message is the state's own witness. An identifier on the stack around
-                    // it was applied to the message and Try Again alike, and as a container of
-                    // its own the stack was folded into the panel and its identifier lost
-                    // (both OBSERVED on iOS 26.5).
-                    .accessibilityIdentifier("dulcet.lyrics.unavailable")
+            ContentUnavailableView {
+                Label(DulcetStrings.lyricsUnavailable, systemImage: "exclamationmark.bubble")
+            } description: {
+                Text(message).accessibilityIdentifier("dulcet.lyrics.unavailable")
+            } actions: {
                 if offersRetry {
                     Button(DulcetStrings.lyricsTryAgain) { model.retry(from: reader) }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("dulcet.lyrics.retry")
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 160)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -132,12 +136,20 @@ struct DulcetLyricsPanel: View {
         }
     }
 
-    /// Plain lyrics' lines, sized for the room: a television reads from a sofa.
-    private static var plainLineFont: Font {
-#if os(tvOS)
-        .title2.weight(.semibold)
+}
+
+/// Both timed and untimed lyrics use the same type scale and column width.
+private struct DulcetLyricsLineTypography: ViewModifier {
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @ScaledMetric(relativeTo: .largeTitle) private var wideLineSize: CGFloat = 44
+#endif
+    func body(content: Content) -> some View {
+#if os(iOS)
+        content.font(horizontalSizeClass == .regular
+            ? .system(size: wideLineSize, weight: .bold) : .largeTitle.weight(.bold))
 #else
-        .title2.weight(.semibold)
+        content.font(.largeTitle.weight(.bold))
 #endif
     }
 }
@@ -279,11 +291,6 @@ private struct DulcetSyncedLyrics: View {
     @FocusState private var focusedLine: Int?
 #endif
 
-    /// The synced lines, set as the system player sets them: the lines are the screen. One size
-    /// for lit and unlit lines alike, so the follow of the lit line never jumps the layout; the
-    /// lit line reads by its full-strength colour, and Dynamic Type still scales the style.
-    private static let lineFont: Font = .title.weight(.bold)
-
     private static var lineSpacing: CGFloat { DulcetSpacing.lg }
 
     /// The top and bottom inset as a share of the panel's height, so the first and last lines can
@@ -402,7 +409,7 @@ private struct DulcetSyncedLyrics: View {
         let focused = false
 #endif
         let text = Text(line.text.isEmpty ? DulcetStrings.lyricsSyncedBlankLine : line.text)
-            .font(Self.lineFont)
+            .modifier(DulcetLyricsLineTypography())
             .multilineTextAlignment(.leading)
             .dulcetForeground(lit ? .primaryTextOnWindow : .secondaryTextOnWindow)
             .opacity(Self.lineOpacity(distance: distance, following: following, focused: focused))
@@ -497,57 +504,9 @@ private struct DulcetLyricsGapDots: View {
     }
 }
 
-/// The playing cover's colours washed across the lyrics screen: the artwork, greatly enlarged and
-/// blurred past recognition, dimmed by the window colour so the registered text pairs keep the
-/// contrast they were measured at. The player's glow (``DulcetArtworkGlow``) is the small-scale
-/// version of the same idea. Reduce Transparency removes it, leaving the plain window.
+/// Compatibility name for lyric hosts; the full player uses this same sampled cover backdrop.
 struct DulcetLyricsBackdrop: View {
     let artwork: DulcetArtwork
-    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
-    @Environment(\.dulcetReduceTransparencyOverride) private var reduceTransparencyOverride
-
-    /// The cover is drawn square at this size and stretched past the screen; after a blur this
-    /// wide only colour remains, so the size buys nothing more.
-    static let artworkSize: CGFloat = 512
-    /// Drawn this much larger than the screen, so the blur's falloff never reaches an edge.
-    static let overdraw: CGFloat = 1.3
-    static let blurRadius: CGFloat = 70
-    /// How much of the window colour sits over the blurred cover.
-    static let scrimOpacity: Double = 0.55
-
-    var body: some View {
-        if !(reduceTransparencyOverride ?? systemReduceTransparency) {
-            GeometryReader { geometry in
-                DulcetArtworkView(artwork: artwork, size: Self.artworkSize)
-                    .scaleEffect(Self.scale(for: geometry.size))
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .blur(radius: Self.blurRadius)
-                    .clipped()
-            }
-            .overlay {
-                Color.dulcetWindow.opacity(Self.scrimOpacity)
-            }
-            // The cover's colour recedes behind the scrubber and transport at the bottom and the
-            // header at the top, where small text and the track must stay readable.
-            .overlay {
-                LinearGradient(
-                    stops: [
-                        .init(color: Color.dulcetWindow.opacity(0.55), location: 0),
-                        .init(color: Color.dulcetWindow.opacity(0.12), location: 0.2),
-                        .init(color: Color.dulcetWindow.opacity(0.3), location: 0.6),
-                        .init(color: Color.dulcetWindow.opacity(0.78), location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
-    }
-
-    static func scale(for size: CGSize) -> CGFloat {
-        max(size.width, size.height, 1) / artworkSize * overdraw
-    }
+    var body: some View { DulcetPlayerBackdrop(artwork: artwork) }
 }
 #endif
