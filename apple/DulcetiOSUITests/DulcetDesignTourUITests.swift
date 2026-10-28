@@ -290,6 +290,13 @@ final class DulcetDesignTourUITests: XCTestCase {
             let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
             return title.waitForExistence(timeout: 10) && self.settle(app, seconds: 2)
         }
+            let pause = app.buttons.matching(NSPredicate(format: "label == %@", "Pause"))
+                .allElementsBoundByIndex.first(where: { $0.isHittable })
+            if let pause { pause.tap() }
+            step("player-paused", app) {
+                app.buttons.matching(NSPredicate(format: "label == %@", "Play"))
+                    .allElementsBoundByIndex.contains(where: { $0.isHittable })
+            }
         step("lyrics", app) {
             let toggle = app.buttons["dulcet.now-playing.lyrics"].firstMatch
             guard toggle.waitForExistence(timeout: 10) else { return false }
@@ -307,15 +314,6 @@ final class DulcetDesignTourUITests: XCTestCase {
             return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
                 && self.settle(app)
         }
-            let queue = app.buttons["dulcet.now-playing.up-next"].firstMatch
-            if queue.exists, queue.label == "Hide Up Next" { queue.tap() }
-            let pause = app.buttons.matching(NSPredicate(format: "label == %@", "Pause"))
-                .allElementsBoundByIndex.first(where: { $0.isHittable })
-            if let pause { pause.tap() }
-            step("player-paused", app) {
-                app.buttons.matching(NSPredicate(format: "label == %@", "Play"))
-                    .allElementsBoundByIndex.contains(where: { $0.isHittable })
-            }
             closePlayer(in: app)
             return
         }
