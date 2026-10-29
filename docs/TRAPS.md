@@ -720,3 +720,17 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     helpers: the old implementation fails the lazy-status positive control, and disconnected,
     failed, missing-Form and wrong-destination controls still refuse readiness. This is host
     control evidence; actual simulator execution remains the conformance leg's responsibility.
+
+
+65. **Every independent UI readiness helper must reveal the lazy status it witnesses.**
+    **OBSERVED 2026-10-29:** run40887985432 passed My Library7/7 and the corrected iPhone
+    search readiness case, then Design Tour Home failed its separate `awaitConnection`.
+    App PID67961 opened a reader in connected mode at15:32:35.298770UTC; thirty-seven
+    completed Sign Out queries returned empty results. Its retained402x874 hierarchy ended
+    at local-HTTP consent below the credentials, after the new Connections section; the later
+    status row was not realized. This helper still queried globally before opening Connection
+    and then waited without revealing the Form. It now opens Connection before reading status
+    and makes at most three upward gestures on the named Settings Form inside its original
+    ten- then thirty-second readiness budgets. It still requires the real Sign Out control,
+    preserves visible failure actions and adds no authentication retry. The independent host
+    controls extract this actual helper; simulator conformance remains the runtime evidence.

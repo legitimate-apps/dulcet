@@ -617,9 +617,33 @@ final class DulcetDesignTourUITests: XCTestCase {
     @MainActor
     private func awaitConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
-        if signOut.waitForExistence(timeout: 10) { return true }
+        var remainingScrolls = 3
         guard openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact) else { return false }
-        return signOut.waitForExistence(timeout: 30)
+        revealConnectionStatus(in: app, compact: compact, remainingScrolls: &remainingScrolls)
+        if signOut.waitForExistence(timeout: 10) { return true }
+        let deadline = Date().addingTimeInterval(30)
+        repeat {
+            // A completed connection can navigate to Listen Now while readiness is observed.
+            guard openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact) else { return false }
+            revealConnectionStatus(in: app, compact: compact, remainingScrolls: &remainingScrolls)
+            let remaining = max(0, deadline.timeIntervalSince(Date()))
+            if signOut.waitForExistence(timeout: min(10, remaining)) { return true }
+        } while Date() < deadline
+        return false
+    }
+
+    /// Connections and credentials can put status below the lazy phone Form's viewport.
+    /// Reveal only that named Form; the caller still requires the actual connected control
+    /// within its original ten- then thirty-second waits. Keep visible failure actions in view.
+    @MainActor
+    private func revealConnectionStatus(in app: XCUIApplication, compact: Bool, remainingScrolls: inout Int) {
+        guard compact, remainingScrolls > 0,
+              !app.buttons["Sign Out"].firstMatch.exists,
+              !app.buttons["Try Again"].firstMatch.exists else { return }
+        let form = app.collectionViews["dulcet.account.settingsForm"].firstMatch
+        guard form.exists else { return }
+        form.swipeUp()
+        remainingScrolls -= 1
     }
 
     @MainActor
