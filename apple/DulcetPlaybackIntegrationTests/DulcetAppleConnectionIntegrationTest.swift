@@ -52,11 +52,23 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         // Positive legacy control: the ordinary URLSession executor downloads a real file on the
         // explicitly opted-in HTTP account before its preserving adoption.
         let oldTrack = fixture.track(0, provider: provider)
+        // Reconciliation is a per-client gate. The controller reconciles its own client;
+        // this independent local-file observer must acquire readiness before any task starts.
+        let unreconciled = bindings.localPlaybackPlan(rawId: oldTrack.id.rawID)
+        XCTAssertNil(unreconciled.plan)
+        XCTAssertEqual(unreconciled.errorKind, "persistence")
+        XCTAssertEqual(unreconciled.unavailableKind, "notDownloaded")
+        let reconciliation = bindings.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1)
+        XCTAssertNil(reconciliation.errorKind)
+        XCTAssertTrue(bindings.isMediaBindingCurrent())
         downloads.requestDownload(oldTrack)
         try await eventually("The legacy HTTP positive download did not complete") {
             downloads.status(for: oldTrack.id) == .downloaded
         }
-        let oldFile = try XCTUnwrap(bindings.localPlaybackPlan(rawId: oldTrack.id.rawID).plan)
+        let oldOutcome = bindings.localPlaybackPlan(rawId: oldTrack.id.rawID)
+        XCTAssertNil(oldOutcome.errorKind)
+        let oldFile = try XCTUnwrap(oldOutcome.plan,
+            "Completed legacy file: error=\(oldOutcome.errorKind ?? "none") unavailable=\(oldOutcome.unavailableKind ?? "none") bindingCurrent=\(bindings.isMediaBindingCurrent())")
         let oldHash = try digest(URL(fileURLWithPath: oldFile.filePath))
         XCTAssertEqual(oldHash, fixture.tracks[0].sourceSha256)
         XCTAssertEqual(oldFile.exactByteLength, Int64(fixture.tracks[0].sourceBytes))
@@ -107,7 +119,10 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         try await eventually("The adopted account's URLSession download did not complete") {
             downloads.status(for: newTrack.id) == .downloaded
         }
-        let newFile = try XCTUnwrap(bindings.localPlaybackPlan(rawId: newTrack.id.rawID).plan)
+        let newOutcome = bindings.localPlaybackPlan(rawId: newTrack.id.rawID)
+        XCTAssertNil(newOutcome.errorKind)
+        let newFile = try XCTUnwrap(newOutcome.plan,
+            "Completed adopted file: error=\(newOutcome.errorKind ?? "none") unavailable=\(newOutcome.unavailableKind ?? "none") bindingCurrent=\(bindings.isMediaBindingCurrent())")
         XCTAssertEqual(newFile.exactByteLength, Int64(fixture.tracks[2].sourceBytes))
         XCTAssertEqual(try digest(URL(fileURLWithPath: newFile.filePath)), fixture.tracks[2].sourceSha256)
         let artwork = await fetchArtwork(fixture: fixture, provider: provider, artworkID: fixture.tracks[2].artworkId)
