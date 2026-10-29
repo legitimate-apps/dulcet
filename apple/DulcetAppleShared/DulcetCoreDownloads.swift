@@ -20,9 +20,11 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         private weak var owner: DulcetCoreDownloadController?
         private var redirects = 0
         private let routeBaseURL: String?
-        init(owner: DulcetCoreDownloadController, routeBaseURL: String?) {
+        private let routeGeneration: Int64
+        init(owner: DulcetCoreDownloadController, routeBaseURL: String?, routeGeneration: Int64) {
             self.owner = owner
             self.routeBaseURL = routeBaseURL
+            self.routeGeneration = routeGeneration
         }
         nonisolated func urlSession(_ session: URLSession, task: URLSessionTask,
             willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
@@ -32,8 +34,11 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                 guard let client = owner?.client, let source = response.url, let target = request.url else {
                     completion.value(nil); return
                 }
+                if routeBaseURL == nil && !client.allowsRestoredRequest(url: source.absoluteString) {
+                    completion.value(nil); return
+                }
                 let decision = if let routeBaseURL {
-                    client.evaluateScopedRedirect(routeBaseUrl: routeBaseURL,
+                    client.evaluateScopedRedirect(routeBaseUrl: routeBaseURL, routeGeneration: routeGeneration,
                         sourceUrl: source.absoluteString, proposedUrl: target.absoluteString,
                         redirectsAlreadyFollowed: Int32(redirects))
                 } else {
@@ -87,6 +92,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var knownTaskIdentifiers: [Int: String] = [:]
     private var redirectsByTaskIdentifier: [Int: Int] = [:]
     private var routeBasesByTaskIdentifier: [Int: String] = [:]
+    private var routeGenerationsByTaskIdentifier: [Int: Int64] = [:]
     private var queuePrepareOperation: (any AppleDownloadOperation)?
     private var retryTask: Task<Void, Never>?
     private var retryNotBeforeWallClock: Int64?
@@ -804,6 +810,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             knownTaskIdentifiers[task.taskIdentifier] = task.taskDescription
             if let url = task.originalRequest?.url {
                 routeBasesByTaskIdentifier[task.taskIdentifier] = client.restoredRequestRouteBase(url: url.absoluteString)
+                routeGenerationsByTaskIdentifier[task.taskIdentifier] = client.restoredRequestRouteGeneration(url: url.absoluteString)
             }
         }
         let identifiers = admittedTasks.compactMap(\.taskDescription)
@@ -900,6 +907,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             return
         }
         if let prepared = outcome.prepared,
+           client?.isPreparedRequestCurrent(routeBaseUrl: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration) == true,
            let url = URL(string: prepared.url),
            let account {
             var request = URLRequest(url: url)
@@ -973,7 +981,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         itemID: DulcetProviderItemID,
         request: URLRequest
     ) {
-        guard remoteEligible, !identityRejected, let client else { return }
+        guard remoteEligible, !identityRejected, let client,
+              client.isPreparedRequestCurrent(routeBaseUrl: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration) else { return }
         // A secured OS delivery may have promoted while preparation was suspended in identity
         // validation or URL resolution. Its committed bytes win over the stale prepared URL.
         let current = client.status(rawId: itemID.rawID)
@@ -996,8 +1005,12 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         task.taskDescription = prepared.downloadIdentifier
         knownTaskIdentifiers[task.taskIdentifier] = prepared.downloadIdentifier
         routeBasesByTaskIdentifier[task.taskIdentifier] = prepared.routeBaseUrl
+        routeGenerationsByTaskIdentifier[task.taskIdentifier] = prepared.routeGeneration
         publish(.downloading, for: itemID)
         authorizedTaskGenerations[task.taskIdentifier] = reconciliationGeneration
+        guard client.isPreparedRequestCurrent(routeBaseUrl: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration) else {
+            task.cancel(); return
+        }
         task.resume()
         probe("task-started download=\(prepared.downloadIdentifier) item=\(itemID.rawID)")
     }
@@ -1100,7 +1113,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         configuration.urlCredentialStorage = nil
         let verification = URLSession(configuration: configuration,
                                       delegate: FramingDownloadDelegate(owner: self,
-                                        routeBaseURL: routeBasesByTaskIdentifier[task.taskIdentifier]), delegateQueue: .main)
+                                        routeBaseURL: routeBasesByTaskIdentifier[task.taskIdentifier],
+                                        routeGeneration: routeGenerationsByTaskIdentifier[task.taskIdentifier] ?? -1), delegateQueue: .main)
         framingVerificationSessions[token] = FramingVerification(session: verification, downloadIdentifier: downloadIdentifier)
         request.allowsCellularAccess = request.allowsCellularAccess && configuration.allowsCellularAccess
         request.allowsExpensiveNetworkAccess = request.allowsExpensiveNetworkAccess && configuration.allowsExpensiveNetworkAccess
@@ -1121,6 +1135,16 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         replacement.taskDescription = task.taskDescription
         guard generation == reconciliationGeneration, remoteEligible, !identityRejected,
               let identifier = task.taskDescription, client?.ownsDownloadTask(downloadIdentifier: identifier) == true else {
+            framingVerificationSessions.removeValue(forKey: token)?.session.invalidateAndCancel()
+            return
+        }
+        if let base = routeBasesByTaskIdentifier[task.taskIdentifier] {
+            guard client?.isPreparedRequestCurrent(routeBaseUrl: base,
+                routeGeneration: routeGenerationsByTaskIdentifier[task.taskIdentifier] ?? -1) == true else {
+                framingVerificationSessions.removeValue(forKey: token)?.session.invalidateAndCancel()
+                return
+            }
+        } else if client?.allowsRestoredRequest(url: url.absoluteString) != true {
             framingVerificationSessions.removeValue(forKey: token)?.session.invalidateAndCancel()
             return
         }
@@ -1265,6 +1289,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         redirectsByTaskIdentifier[task.taskIdentifier] = nil
         knownTaskIdentifiers[task.taskIdentifier] = nil
         routeBasesByTaskIdentifier[task.taskIdentifier] = nil
+        routeGenerationsByTaskIdentifier[task.taskIdentifier] = nil
         if removedTaskIdentifiers.remove(task.taskIdentifier) != nil {
             resumedTaskIdentifiers.remove(task.taskIdentifier)
             return
@@ -1512,13 +1537,14 @@ extension DulcetCoreDownloadController: URLSessionDownloadDelegate, URLSessionTa
             let redirects = redirectsByTaskIdentifier[task.taskIdentifier, default: 0]
             let decision = if let routeBaseURL = routeBasesByTaskIdentifier[task.taskIdentifier] {
                 client.evaluateScopedRedirect(routeBaseUrl: routeBaseURL,
+                    routeGeneration: routeGenerationsByTaskIdentifier[task.taskIdentifier] ?? -1,
                     sourceUrl: sourceURL.absoluteString, proposedUrl: proposedURL.absoluteString,
                     redirectsAlreadyFollowed: Int32(redirects))
             } else if client.allowsRestoredRequest(url: sourceURL.absoluteString) {
                 client.evaluateRedirect(sourceUrl: sourceURL.absoluteString,
                     proposedUrl: proposedURL.absoluteString, redirectsAlreadyFollowed: Int32(redirects))
             } else {
-                client.evaluateScopedRedirect(routeBaseUrl: "",
+                client.evaluateScopedRedirect(routeBaseUrl: "", routeGeneration: -1,
                     sourceUrl: sourceURL.absoluteString, proposedUrl: proposedURL.absoluteString,
                     redirectsAlreadyFollowed: Int32(redirects))
             }

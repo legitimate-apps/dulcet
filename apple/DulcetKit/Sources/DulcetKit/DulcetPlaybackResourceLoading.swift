@@ -62,10 +62,12 @@ public struct DulcetPlaybackAuthorizedRequest: @unchecked Sendable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public let request: URLRequest
     public let routeBaseURL: String?
+    public let routeGeneration: Int64?
 
-    public init(request: URLRequest, routeBaseURL: String? = nil) {
+    public init(request: URLRequest, routeBaseURL: String? = nil, routeGeneration: Int64? = nil) {
         self.request = request
         self.routeBaseURL = routeBaseURL
+        self.routeGeneration = routeGeneration
     }
 
     public var description: String { "DulcetPlaybackAuthorizedRequest(<redacted>)" }
@@ -141,8 +143,10 @@ public protocol DulcetPlaybackRedirectEvaluating: AnyObject, Sendable {
 /// A production authorizer captures its route before dispatch; redirects cannot
 /// borrow a newer selected route while this byte request is still in flight.
 public protocol DulcetPlaybackScopedRedirectEvaluating: DulcetPlaybackRedirectEvaluating {
+    func isCurrent(routeBaseURL: String, routeGeneration: Int64) -> Bool
     func evaluate(
         routeBaseURL: String,
+        routeGeneration: Int64,
         sourceURL: URL,
         proposedURL: URL,
         redirectsAlreadyFollowed: Int
@@ -161,6 +165,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
     private let lock = NSLock()
     private var redirectsByTask: [Int: Int] = [:]
     private var routeBasesByTask: [Int: String] = [:]
+    private var routeGenerationsByTask: [Int: Int64] = [:]
     /// Per task: the body received so far and what to do when the task completes. A delegate
     /// task rather than a completion-handler one, because a completion handler is given no data
     /// when the task ends in an error, so a body cut short could not reach the validator.
@@ -217,6 +222,12 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
             case let .failure(error):
                 completion(.failed(error: error, refreshReason: nil))
             case let .success(authorized):
+                if let base = authorized.routeBaseURL, let routeGeneration = authorized.routeGeneration,
+                    let scoped = self.redirectEvaluator as? any DulcetPlaybackScopedRedirectEvaluating,
+                    !scoped.isCurrent(routeBaseURL: base, routeGeneration: routeGeneration) {
+                    completion(.failed(error: .transport, refreshReason: nil))
+                    return
+                }
                 var mediaRequest = authorized.request
                 mediaRequest.allowsCellularAccess = mediaRequest.allowsCellularAccess && self.sessionConfiguration.allowsCellularAccess
                 mediaRequest.allowsExpensiveNetworkAccess = mediaRequest.allowsExpensiveNetworkAccess && self.sessionConfiguration.allowsExpensiveNetworkAccess
@@ -295,6 +306,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                 self.setRedirectCount(0, taskIdentifier: task.taskIdentifier)
                 self.lock.lock()
                 self.routeBasesByTask[task.taskIdentifier] = authorized.routeBaseURL
+                self.routeGenerationsByTask[task.taskIdentifier] = authorized.routeGeneration
                 self.lock.unlock()
                 task.resume()
             }
@@ -311,6 +323,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         transfersByTask.removeAll()
         redirectsByTask.removeAll()
         routeBasesByTask.removeAll()
+        routeGenerationsByTask.removeAll()
         lock.unlock()
         // Never construct a session from deinit: its delegate must be a living object. The
         // proxy also lets an already used resource release without a session/delegate cycle.
@@ -387,6 +400,8 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         guard let taskIdentifier else { return }
         lock.lock()
         redirectsByTask.removeValue(forKey: taskIdentifier)
+        routeBasesByTask.removeValue(forKey: taskIdentifier)
+        routeGenerationsByTask.removeValue(forKey: taskIdentifier)
         lock.unlock()
     }
 }
@@ -458,10 +473,11 @@ extension DulcetURLSessionPlaybackResource: URLSessionDataDelegate {
         let redirects = redirectCount(taskIdentifier: task.taskIdentifier)
         lock.lock()
         let capturedBase = routeBasesByTask[task.taskIdentifier]
+        let capturedGeneration = routeGenerationsByTask[task.taskIdentifier]
         lock.unlock()
         let decision: DulcetPlaybackRedirectDecision
-        if let capturedBase, let scoped = redirectEvaluator as? any DulcetPlaybackScopedRedirectEvaluating {
-            decision = scoped.evaluate(routeBaseURL: capturedBase, sourceURL: sourceURL,
+        if let capturedBase, let capturedGeneration, let scoped = redirectEvaluator as? any DulcetPlaybackScopedRedirectEvaluating {
+            decision = scoped.evaluate(routeBaseURL: capturedBase, routeGeneration: capturedGeneration, sourceURL: sourceURL,
                 proposedURL: proposedURL, redirectsAlreadyFollowed: redirects)
         } else {
             decision = redirectEvaluator.evaluate(sourceURL: sourceURL,

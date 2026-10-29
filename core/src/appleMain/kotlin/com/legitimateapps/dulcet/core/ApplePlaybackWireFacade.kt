@@ -42,6 +42,7 @@ public class ApplePlaybackPreparedRequestDto internal constructor(
     public val hostHeader: String?,
     public val rangeHeader: String?,
     public val routeBaseUrl: String = "",
+    public val routeGeneration: Long = -1,
 ) {
     override fun toString(): String = "ApplePlaybackPreparedRequestDto(<redacted>)"
 }
@@ -137,6 +138,7 @@ public class ApplePlaybackWireClient(
                     prepared.hostHeader,
                     prepared.rangeHeader,
                     prepared.routeBaseUrl,
+                    prepared.routeGeneration ?: -1,
                 ),
                 errorKind = null,
             )
@@ -301,12 +303,18 @@ public class ApplePlaybackWireClient(
     }
 
     /** Request-scoped redirect guard; another admitted route needs a fresh request. */
+    public fun isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Long): Boolean =
+        ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,
+            routeBaseUrl, routeGeneration.takeIf { it >= 0 })
+
     public fun evaluateScopedRedirect(
         routeBaseUrl: String,
+        routeGeneration: Long,
         sourceUrl: String,
         proposedUrl: String,
         redirectsAlreadyFollowed: Int,
     ): ApplePlaybackRedirectDecisionDto {
+        if (!isPreparedRequestCurrent(routeBaseUrl, routeGeneration)) return ApplePlaybackRedirectDecisionDto("reject", emptyList())
         if (!ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) {
             return evaluateRedirect(sourceUrl, proposedUrl, redirectsAlreadyFollowed)
         }

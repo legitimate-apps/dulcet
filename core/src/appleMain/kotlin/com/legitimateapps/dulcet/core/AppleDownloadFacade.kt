@@ -36,6 +36,7 @@ public class ApplePreparedDownloadDto internal constructor(
     public val hostHeader: String?,
     public val temporaryFilePath: String,
     public val routeBaseUrl: String = "",
+    public val routeGeneration: Long = -1,
 ) {
     override fun toString(): String = "ApplePreparedDownloadDto(<redacted>)"
 }
@@ -270,6 +271,12 @@ public class AppleDownloadClient(
             it.baseUrl.takeIf { base -> ConnectionResourcePolicy.resolve(base, url) != null }
         }
     } catch (_: Throwable) { null }
+
+    public fun restoredRequestRouteGeneration(url: String): Long = try {
+        ConnectionRouteRegistry.leaseFor(account.normalizedBaseUrl, account.username)?.let {
+            it.generation.takeIf { _ -> ConnectionResourcePolicy.resolve(it.baseUrl, url) != null }
+        } ?: -1
+    } catch (_: Throwable) { -1 }
 
     /** Authenticated shared gate, used before resuming OS tasks or promoting their deliveries. */
     public fun startValidateServerIdentity(completion: (String?) -> Unit): AppleDownloadOperation =
@@ -589,12 +596,18 @@ public class AppleDownloadClient(
     }
 
     /** Every redirect stays under the lease captured by this task's preparation. */
+    public fun isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Long): Boolean =
+        ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,
+            routeBaseUrl, routeGeneration.takeIf { it >= 0 })
+
     public fun evaluateScopedRedirect(
         routeBaseUrl: String,
+        routeGeneration: Long,
         sourceUrl: String,
         proposedUrl: String,
         redirectsAlreadyFollowed: Int,
     ): ApplePlaybackRedirectDecisionDto {
+        if (!isPreparedRequestCurrent(routeBaseUrl, routeGeneration)) return ApplePlaybackRedirectDecisionDto("reject", emptyList())
         if (!ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) {
             return evaluateRedirect(sourceUrl, proposedUrl, redirectsAlreadyFollowed)
         }
@@ -897,6 +910,7 @@ public class AppleDownloadClient(
                 hostHeader = prepared.hostHeader,
                 temporaryFilePath = scheduled.temporaryFilePath,
                 routeBaseUrl = prepared.routeBaseUrl,
+                routeGeneration = prepared.routeGeneration ?: -1,
             ),
             terminalState = null,
             errorKind = null,
