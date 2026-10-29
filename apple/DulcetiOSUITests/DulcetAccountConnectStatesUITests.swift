@@ -254,19 +254,15 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func openArtworkGrid(in app: XCUIApplication, compact: Bool) -> Bool {
-        if compact {
-            guard tap(app.tabBars.buttons["Library"].firstMatch, in: app, name: "Library") else { return false }
-            let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
-            // At accessibility sizes the account message places this row below the viewport.
-            for _ in 0..<6 where !albums.isHittable { app.swipeUp() }
-            guard tap(albums, in: app, name: "Albums") else { return false }
-        } else {
-            let albums = app.descendants(matching: .any)["dulcet.sidebar.section.albums"].firstMatch
-            guard albums.waitForExistence(timeout: 10), albums.isHittable else {
-                XCTFail("Albums must be visible in the sidebar: " + app.debugDescription); return false
-            }
-            albums.tap()
+        guard openRootDestination("Browse", identifier: "browse", in: app) else { return false }
+        let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
+        let back = app.navigationBars.buttons["BackButton"].firstMatch
+        var pops = 0
+        while !albums.exists, back.exists, back.isHittable, pops < 4 {
+            back.tap()
+            pops += 1
         }
+        guard tap(albums, in: app, name: "Albums") else { return false }
         let tile = app.buttons["dulcet.library.album"].firstMatch
         for _ in 0..<8 {
             if tile.waitForExistence(timeout: 2), tile.isHittable { return true }
@@ -274,6 +270,24 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
         XCTFail("The cached library must contain a visible album tile: " + app.debugDescription)
         return false
+    }
+
+    @MainActor
+    private func openRootDestination(_ title: String, identifier: String, in app: XCUIApplication) -> Bool {
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        if close.exists {
+            close.tap()
+            guard close.waitForNonExistence(timeout: 10) else { return false }
+        }
+        let choices = [app.tabBars.buttons[title].firstMatch,
+                       app.descendants(matching: .any)["dulcet.tab.\(identifier)"].firstMatch,
+                       app.buttons["dulcet.sidebar.\(identifier)"].firstMatch]
+        guard let destination = choices.first(where: { $0.exists && $0.isHittable }) else {
+            XCTFail("\(title) must be visible: " + app.debugDescription)
+            return false
+        }
+        destination.tap()
+        return true
     }
 
     @MainActor
@@ -366,13 +380,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
 
         if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
-            if compact { app.tabBars.buttons["Library"].firstMatch.tap() }
-            else { app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.tap() }
-            if app.staticTexts["Your music, wherever you listen"].firstMatch.waitForExistence(timeout: 10) {
+            guard openRootDestination("Library", identifier: "library", in: app) else { return }
+            if app.navigationBars["Library"].firstMatch.waitForExistence(timeout: 10),
+               !app.buttons["Sign Out"].firstMatch.exists {
                 tourPhotograph("first-run-library")
             } else { XCTFail("First-run Library must have no saved account") }
-            if compact { app.tabBars.buttons["Search"].firstMatch.tap() }
-            else { app.descendants(matching: .any)["dulcet.sidebar.search"].firstMatch.tap() }
+            guard openRootDestination("Search", identifier: "search", in: app) else { return }
             // The interaction scope skips animation-idle waits. Wait for Search's own content,
             // then let the tab transition finish before photographing its resting surface.
             XCTAssertTrue(app.staticTexts["Search your server"].firstMatch.waitForExistence(timeout: 10))
@@ -511,7 +524,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             XCTFail("Cancel must end the connection and offer Connect again: " + app.debugDescription)
             return
         }
-        XCTAssertFalse(tryAgain.exists, "A cancelled connection is not a failure")
+        let accountErrors = [invalidAddress, plaintextRefused, unreachable, rejected, notOpenSubsonic, serverRejected,
+                             app.staticTexts["The server took too long to respond"].firstMatch]
+        XCTAssertTrue(accountErrors.allSatisfy { !$0.exists }, "Cancel must clear previous errors without timing out")
         XCTAssertFalse(serverRejected.exists, "Cancel returns to the form, not the earlier error")
         let accepted = silent.drainAcceptedConnections()
         XCTAssertGreaterThan(accepted, 0, "The progress shown must have been a real connection to the silent port")
@@ -541,7 +556,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         largestTextShot.lifetime = .keepAlways
         add(largestTextShot)
         primary.tap()
-        guard waitForLabel(containing: "Sign In", of: primary, timeout: 5), !tryAgain.exists else {
+        guard waitForLabel(containing: "Sign In", of: primary, timeout: 5), !connecting.exists,
+              accountErrors.allSatisfy({ !$0.exists }) else {
             XCTFail("Cancel at the largest text size must end the request without a failure: " + app.debugDescription)
             return
         }
@@ -741,7 +757,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func tap(_ control: XCUIElement, in app: XCUIApplication, name: String) -> Bool {
-        let target: HitTarget = (name == "Connect" || name == "Cancel")
+        // The toolbar keeps Sign In after an error. Match the actual primary control,
+        // including retries, rather than the historical action name used in diagnostics.
+        let target: HitTarget = control.identifier == "dulcet.account-connect.primary-action"
             ? .identifier("dulcet.account-connect.primary-action") : .button(name)
         guard reveal(control, in: app), control.waitForExistence(timeout: 5),
               scrollIntoView(control, matching: target, in: app) else {
