@@ -3167,19 +3167,34 @@ public struct DulcetConnectionRow: Identifiable, Sendable {
     }
 }
 
+/// Frozen saved-account scope for a displayed route list and every mutation from that list.
+public struct DulcetConnectionOwnership: Hashable, Sendable {
+    public let accountID: String
+    public let anchorURL: String
+    public let username: String
+    public let serverIdentity: String
+    public init(accountID: String, anchorURL: String, username: String, serverIdentity: String) {
+        self.accountID = accountID; self.anchorURL = anchorURL
+        self.username = username; self.serverIdentity = serverIdentity
+    }
+}
+
 public struct DulcetConnectionsState: Sendable {
+    public let ownership: DulcetConnectionOwnership
     public let routes: [DulcetConnectionRow]
     public let enrolled: Bool
     public let canUpgrade: Bool
     public let error: String?
-    public init(routes: [DulcetConnectionRow], enrolled: Bool, canUpgrade: Bool, error: String? = nil) {
+    public init(ownership: DulcetConnectionOwnership, routes: [DulcetConnectionRow], enrolled: Bool, canUpgrade: Bool, error: String? = nil) {
+        self.ownership = ownership
         self.routes = routes; self.enrolled = enrolled; self.canUpgrade = canUpgrade; self.error = error
     }
 }
 
 @MainActor
 public protocol DulcetAccountConnectionsManaging: AnyObject {
+    var currentOwnership: DulcetConnectionOwnership? { get }
     func restore() -> DulcetConnectionsState?
-    func enroll(httpsURL: String?, completion: @escaping @MainActor (DulcetConnectionsState?) -> Void)
-    func remove(routeID: String) -> DulcetConnectionsState?
+    func enroll(ownership: DulcetConnectionOwnership, httpsURL: String?, completion: @escaping @MainActor (DulcetConnectionsState?) -> Void)
+    func remove(ownership: DulcetConnectionOwnership, routeID: String) -> DulcetConnectionsState?
 }

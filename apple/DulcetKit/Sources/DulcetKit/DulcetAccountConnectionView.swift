@@ -21,10 +21,11 @@ struct DulcetAccountConnectionView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 #endif
     @State private var lastSubmissionTimestamp: TimeInterval?
-#if os(tvOS)
     @State private var connectionState: DulcetConnectionsState?
     @State private var connectionHTTPSAddress = ""
     @State private var enrollingConnections = false
+    @State private var connectionEnrollmentID: UUID?
+#if os(tvOS)
     @Namespace private var accountFocusScope
 #endif
     @State private var showingSignOutConfirmation = false
@@ -177,7 +178,7 @@ struct DulcetAccountConnectionView: View {
         if let manager = store.connectionsManager {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Connections").font(.headline)
-                if let connectionState {
+                if let connectionState, connectionState.ownership == manager.currentOwnership {
                     ForEach(connectionState.routes) { route in
                         if !route.removed {
                             VStack(alignment: .leading, spacing: 4) {
@@ -185,7 +186,7 @@ struct DulcetAccountConnectionView: View {
                                 Text(route.selected ? "Current HTTPS connection" : (route.enabled ? "Verified HTTPS connection" : "Unavailable"))
                                     .font(.caption)
                                 Text(route.address).font(.caption)
-                                Button("Remove connection") { self.connectionState = manager.remove(routeID: route.id) }
+                                Button("Remove connection") { self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id) }
                                     .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
                             }
                         }
@@ -212,15 +213,25 @@ struct DulcetAccountConnectionView: View {
                     .font(.caption)
             }
             .accessibilityIdentifier("dulcet.connections")
-            .task { connectionState = manager.restore() }
+            .task(id: manager.currentOwnership) {
+                connectionEnrollmentID = nil
+                enrollingConnections = false
+                connectionHTTPSAddress = ""
+                connectionState = manager.restore()
+            }
         }
     }
 
     private func enrollConnections(_ manager: any DulcetAccountConnectionsManaging, url: String?) {
+        guard let owner = connectionState?.ownership, owner == manager.currentOwnership else { return }
+        let enrollmentID = UUID()
+        connectionEnrollmentID = enrollmentID
         enrollingConnections = true
-        manager.enroll(httpsURL: url) { result in
+        manager.enroll(ownership: owner, httpsURL: url) { result in
+            guard connectionEnrollmentID == enrollmentID, manager.currentOwnership == owner else { return }
             connectionState = result
             enrollingConnections = false
+            connectionEnrollmentID = nil
         }
     }
 

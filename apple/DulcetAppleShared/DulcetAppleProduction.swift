@@ -1546,8 +1546,13 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
             ?? (credentialStore as? any DulcetSavedServerCredentialStoring)?.serverIdentity ?? ""
         return (id, request, identity)
     }
-    private func state(_ value: AppleConnectionsOutcomeDto, request: DulcetAccountConnectRequest) -> DulcetConnectionsState {
-        DulcetConnectionsState(routes: value.routes.map {
+    private func ownership(_ saved: (String, DulcetAccountConnectRequest, String)) -> DulcetConnectionOwnership {
+        DulcetConnectionOwnership(accountID: saved.0, anchorURL: saved.1.serverURL,
+            username: saved.1.username, serverIdentity: saved.2)
+    }
+    var currentOwnership: DulcetConnectionOwnership? { saved().map(ownership) }
+    private func state(_ value: AppleConnectionsOutcomeDto, ownership: DulcetConnectionOwnership, request: DulcetAccountConnectRequest) -> DulcetConnectionsState {
+        DulcetConnectionsState(ownership: ownership, routes: value.routes.map {
             DulcetConnectionRow(id: $0.id, address: $0.baseUrl, label: $0.label,
                 enabled: $0.enabled, removed: $0.removed, selected: $0.selected)
         }, enrolled: value.enrolled, canUpgrade: request.serverURL.lowercased().hasPrefix("http://"),
@@ -1556,27 +1561,29 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
     func restore() -> DulcetConnectionsState? {
         guard let (id, request, identity) = saved() else { return nil }
         return state(client.restore(accountId: id, anchorUrl: request.serverURL, username: request.username,
-            serverIdentity: identity), request: request)
+            serverIdentity: identity), ownership: ownership((id, request, identity)), request: request)
     }
     func enrollCurrentIfNeeded() {
         guard operation == nil, let current = restore(), !current.enrolled, !current.canUpgrade else { return }
-        enroll(httpsURL: nil) { _ in }
+        enroll(ownership: current.ownership, httpsURL: nil) { _ in }
     }
-    func enroll(httpsURL: String?, completion: @escaping @MainActor (DulcetConnectionsState?) -> Void) {
-        guard operation == nil, let (id, request, identity) = saved() else { completion(restore()); return }
+    func enroll(ownership expected: DulcetConnectionOwnership, httpsURL: String?, completion: @escaping @MainActor (DulcetConnectionsState?) -> Void) {
+        guard operation == nil, let (id, request, identity) = saved(),
+              ownership((id, request, identity)) == expected else { completion(restore()); return }
         let bootstrap = httpsURL ?? request.serverURL
         operation = client.startEnroll(accountId: id, anchorUrl: request.serverURL,
             username: request.username, serverIdentity: identity, bootstrapUrl: bootstrap, password: request.password) { [weak self] value in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.operation = nil
-                completion(self.state(value, request: request))
+                guard self.currentOwnership == expected else { completion(self.restore()); return }
+                completion(self.state(value, ownership: expected, request: request))
             }
         }
     }
-    func remove(routeID: String) -> DulcetConnectionsState? {
-        guard let (id, request, identity) = saved() else { return nil }
+    func remove(ownership expected: DulcetConnectionOwnership, routeID: String) -> DulcetConnectionsState? {
+        guard let (id, request, identity) = saved(), ownership((id, request, identity)) == expected else { return restore() }
         return state(client.remove(accountId: id, anchorUrl: request.serverURL, username: request.username,
-            serverIdentity: identity, routeId: routeID), request: request)
+            serverIdentity: identity, routeId: routeID), ownership: expected, request: request)
     }
 }

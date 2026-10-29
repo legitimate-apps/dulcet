@@ -18,9 +18,10 @@ internal fun ConnectionSettingsSection() {
     val scope = rememberCoroutineScope()
     val settings = remember(context) { ConnectionSettings(context, scope) }
     val state by settings.state.collectAsStateWithLifecycle()
-    var httpsAddress by remember { mutableStateOf("") }
-    LaunchedEffect(settings) { settings.restore() }
-    if (state.snapshot == null) return
+    val owner = state.snapshot?.anchor
+    var httpsAddress by remember(owner) { mutableStateOf("") }
+    DisposableEffect(settings) { settings.restore(); onDispose { settings.close() } }
+    if (owner == null) return
     Column(Modifier.testTag("connections.section"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Connections")
         state.snapshot?.routes?.filterNot { it.removed }?.forEach { route ->
@@ -28,18 +29,18 @@ internal fun ConnectionSettingsSection() {
             Text(if (route.id == state.snapshot?.selectedRouteId) "Current HTTPS connection"
                 else if (route.enabled) "Verified HTTPS connection" else "Unavailable")
             Text(route.baseUrl)
-            TextButton(onClick = { settings.remove(route.id) }, enabled = !state.busy,
+            TextButton(onClick = { settings.remove(owner, route.id) }, enabled = !state.busy,
                 modifier = Modifier.testTag("connections.remove.${route.id}")) { Text("Remove connection") }
         }
         if (state.canUpgrade && state.snapshot?.enrolled != true) {
             OutlinedTextField(value = httpsAddress, onValueChange = { httpsAddress = it },
                 label = { Text("HTTPS server address") }, singleLine = true,
                 modifier = Modifier.testTag("connections.https-address"))
-            TextButton(onClick = { settings.enroll(httpsAddress) },
+            TextButton(onClick = { settings.enroll(owner, httpsAddress) },
                 enabled = !state.busy && httpsAddress.startsWith("https://"),
                 modifier = Modifier.testTag("connections.upgrade")) { Text("Upgrade connection to HTTPS") }
         } else {
-            TextButton(onClick = { settings.enroll() }, enabled = !state.busy,
+            TextButton(onClick = { settings.enroll(owner) }, enabled = !state.busy,
                 modifier = Modifier.testTag("connections.verify")) { Text("Verify connections") }
         }
         if (state.busy) Text("Verifying connections…")
