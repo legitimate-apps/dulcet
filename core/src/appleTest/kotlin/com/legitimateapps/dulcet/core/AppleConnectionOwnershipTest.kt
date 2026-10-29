@@ -24,7 +24,9 @@ class AppleConnectionOwnershipTest {
                 val files = f.files()
                 for (table in listOf("mutation_outbox", "wish_intent", "queue_entry", "my_library_item", "offline_media_retention"))
                     assertTrue(rows.getValue(table).isNotEmpty(), "Required preexisting ownership: $table")
-                assertTrue(files.keys.any { it.endsWith("fixture-audio-v1.bin") })
+                f.store.assertConnectionOwnershipMediaWitness(f.root)
+                assertTrue(files.keys.any { it.endsWith("fixture-audio-v1.bin") },
+                    "Valid completed audio must survive native startup before enrollment; files=${files.keys}")
                 assertTrue(files.keys.any { it.endsWith(".partial") }, "Partial bytes must exist before HTTP enrollment")
                 val epoch = f.store.database.libraryDepthQueries.selectEntry(f.anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne()
                 val calls = mutableListOf<String>()
@@ -125,6 +127,9 @@ class AppleConnectionOwnershipTest {
         store.database.libraryDepthQueries.putEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY,
             encodeMediaBinding(DownloadMediaBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username)), 0)
         ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+        val track = doc.getValue("tracks").jsonArray.first().jsonObject
+        materializeConnectionOwnershipMedia(store, root, routeA, account.username, account.password,
+            track.getValue("id").jsonPrimitive.content, track.getValue("sourceSha256").jsonPrimitive.content)
         val downloads = store.database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsList()
         val partialIds = downloads.filter { it.state !in setOf("complete", "stale") }.map { it.download_id }
         FileSystem.SYSTEM.createDirectories(root / ".tmp")

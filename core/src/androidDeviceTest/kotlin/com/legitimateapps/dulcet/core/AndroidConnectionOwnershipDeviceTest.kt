@@ -8,6 +8,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import okio.FileSystem
+import okio.Path.Companion.toPath
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -42,6 +43,8 @@ class AndroidConnectionOwnershipDeviceTest {
         store.database.libraryDepthQueries.putEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY,
             encodeMediaBinding(DownloadMediaBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username)), 0)
         ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+        materializeConnectionOwnershipMedia(store, root.path.toPath(), fixture.routeA, fixture.username,
+            fixture.password, fixture.trackId, fixture.sha256)
         // Preserve partials under the executor's real temporary names, not only fixture filenames.
         store.database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsList().forEach { row ->
             if (row.state !in setOf("complete", "stale")) {
@@ -60,7 +63,7 @@ class AndroidConnectionOwnershipDeviceTest {
         val controller = controller(account, name, root, tasks)
         val calls = CopyOnWriteArrayList<String>()
         try {
-            assertTrue(controller.awaitReconciled())
+            assertTrue(controller.awaitReconciled(), "Native startup must reconcile the valid owned-media seed")
             controller.reconcileMyLibrary(allowExpansion = false)
             val before = store.driver.connectionOwnershipSnapshot()
             val byteWitness = fileWitness(root)
@@ -69,7 +72,11 @@ class AndroidConnectionOwnershipDeviceTest {
             assertTrue(before.getValue("queue_entry").isNotEmpty())
             assertTrue(before.getValue("my_library_item").isNotEmpty())
             assertTrue(before.getValue("offline_media_retention").any { it.contains("1") })
-            assertTrue(File(root, "downloads/fixture-audio-v1.bin").isFile)
+            store.assertConnectionOwnershipMediaWitness(root.path.toPath())
+            assertTrue(File(root, "downloads/fixture-audio-v1.bin").isFile,
+                "Valid completed audio must survive native startup before enrollment; files=${byteWitness.keys}")
+            assertEquals(fixture.sha256, sha(File(root, "downloads/fixture-audio-v1.bin").readBytes()),
+                "The completed native witness must retain actual disposable fixture audio")
             assertTrue(File(root, ".tmp").listFiles().orEmpty().isNotEmpty(), "Partial bytes must exist at switch")
             val epoch = store.database.libraryDepthQueries.selectEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne()
             OwnershipBindingProbe.observe { calls += it }
