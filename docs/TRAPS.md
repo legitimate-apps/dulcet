@@ -663,3 +663,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     request with a cursor and scrolls the lazy list to artist twenty before checking its
     positive title. A row outside the lazy viewport need not exist in semantics. The disposable
     proxy records only the allowed kind and cursor presence, never query or cursor contents.
+
+61. **A fresh account client may reuse an existing TCP connection.** **OBSERVED 2026-10-29:**
+    Ktor 3.5.2's OkHttp engine derives clients from a static prototype and shares its connection
+    pool. The relay's `hold()` parks new accepts, so an identity ping on an already forwarded
+    socket bypasses that hold. Cutting an idle socket can instead make the next probe return
+    unreachable without another accept. These are different observations from a held/refused
+    request. Identity-sequencing proofs use the relay's fixture-only non-persistent mode, which
+    requests `Connection: close`; controls require the disposable peer to close and preserve
+    request/response bodies. They also finish any initial reconnect, because a new reconnect
+    otherwise joins its screen revalidation after identity has finished. The playback proof
+    still requires the exact held ping, suspended validation, refused ping and recovery without
+    another press. Production pooling and retry policy are unchanged.

@@ -47,7 +47,7 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
 
     @Test fun anAlbumPlayDuringAReaderProbeRecoversAfterItsFailureWithoutAnotherPress() {
         val probe = DisposableServerProbe.fromInstrumentation()
-        com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay -> proveAlbumPlay(probe, relay) }
+        com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl, persistentConnections = false).use { relay -> proveAlbumPlay(probe, relay) }
     }
 
     private fun proveAlbumPlay(probe: DisposableServerProbe,
@@ -120,9 +120,14 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                     val marker = System.nanoTime()
                     relay.hold()
                     reader.reconnect { answered.set(true) }
-                    await("control: the reader request is held while its connection stays verified") {
-                        relay.heldRequestPaths().any { it == "/rest/ping" || it == "/rest/ping.view" } &&
-                            contact.isOpen() && !answered.get()
+                    try {
+                        await("control: the reader identity ping is held while its connection stays verified") {
+                            relay.heldRequestPaths().any { it == "/rest/ping" || it == "/rest/ping.view" } &&
+                                contact.isOpen() && !answered.get()
+                        }
+                    } catch (failure: IllegalStateException) {
+                        error("${failure.message}; contact=${contact.isOpen()} reconnect-completed=${answered.get()}\n" +
+                            relay.connectionDiagnostics(marker))
                     }
                     check(focused("album.play")) { "The held probe must leave the remote on Play" }
                     val previousWaits = playReceiptCount("validation-await")

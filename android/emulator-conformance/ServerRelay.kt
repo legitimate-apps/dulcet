@@ -27,10 +27,13 @@ import kotlin.concurrent.thread
  * in flight for as long as a test needs to look at what the app shows meanwhile.
  *
  * Every forwarded connection's bytes are also kept, up to [TAP_LIMIT] in each direction, so a test
- * can read what the server actually answered ([connections]). They stay in this process's memory
+ * can read what the server actually answered ([connections]). Set [persistentConnections] false
+ * when a proof must hold/refuse a fresh identity request at accept: its first request asks the
+ * disposable server to close the response, so a shared client pool cannot bypass that control.
+ * They stay in this process's memory
  * and carry credentials in their request lines: a test reads them and never prints them whole.
  */
-class ServerRelay(target: String) : AutoCloseable {
+class ServerRelay(target: String, private val persistentConnections: Boolean = true) : AutoCloseable {
     private val targetUri = URI(target)
     private val targetHost = targetUri.host
     private val targetPort = if (targetUri.port > 0) targetUri.port else 80
@@ -235,7 +238,7 @@ class ServerRelay(target: String) : AutoCloseable {
                 synchronized(lock) { open -= client; open -= upstream }
             }
         }
-        pump(client, upstream, release, prefetched) { bytes, count ->
+        pump(client, upstream, release, prefetched, requestClose = !persistentConnections) { bytes, count ->
             contact.record(bytes, count)
             keep(tap, tap.sent, bytes, count)
         }
@@ -276,16 +279,22 @@ class ServerRelay(target: String) : AutoCloseable {
         if (room > 0) sink.write(bytes, 0, minOf(room, count))
     }
 
-    private fun pump(from: Socket, to: Socket, release: () -> Unit, prefetched: ByteArray = byteArrayOf(), tap: (ByteArray, Int) -> Unit) = thread(name = "server-relay-pump", isDaemon = true) {
+    private fun pump(from: Socket, to: Socket, release: () -> Unit, prefetched: ByteArray = byteArrayOf(),
+        requestClose: Boolean = false, tap: (ByteArray, Int) -> Unit) = thread(name = "server-relay-pump", isDaemon = true) {
         val buffer = ByteArray(16 * 1024)
         try {
-            val input = from.getInputStream()
+            val input = java.io.SequenceInputStream(java.io.ByteArrayInputStream(prefetched), from.getInputStream()).buffered()
             val output = to.getOutputStream()
-            if (prefetched.isNotEmpty() && !synchronized(lock) { isCut }) {
-                tap(prefetched, prefetched.size)
-                output.write(prefetched)
+            if (requestClose) {
+                // Rewrite only the first header block. Streaming the body unchanged keeps this
+                // a request/connection control, rather than another media-response implementation.
+                val headers = readRequestHeaders(input)
+                if (synchronized(lock) { isCut }) return@thread
+                tap(headers, headers.size)
+                val closed = headersRequestingClose(headers)
+                output.write(closed)
                 output.flush()
-                forwardedBytes.addAndGet(prefetched.size.toLong())
+                forwardedBytes.addAndGet(closed.size.toLong())
             }
             while (true) {
                 val count = input.read(buffer)
@@ -303,6 +312,32 @@ class ServerRelay(target: String) : AutoCloseable {
             if (synchronized(lock) { isCut }) { runCatching { from.close() }; runCatching { to.close() } }
             release()
         }
+    }
+
+    private fun readRequestHeaders(input: java.io.InputStream): ByteArray {
+        val bytes = java.io.ByteArrayOutputStream()
+        var last = 0
+        while (bytes.size() < 65_536) {
+            val byte = input.read()
+            if (byte < 0) throw IOException("Relay request ended before its headers")
+            bytes.write(byte)
+            last = (last shl 8) or byte
+            if (last == 0x0d0a0d0a) return bytes.toByteArray()
+        }
+        throw IOException("Relay request headers exceed fixture limit")
+    }
+
+    private fun headersRequestingClose(headers: ByteArray): ByteArray {
+        val lines = headers.toString(Charsets.ISO_8859_1).removeSuffix("\r\n\r\n").split("\r\n")
+        val kept = mutableListOf(lines.first())
+        var removing = false
+        for (line in lines.drop(1)) {
+            if (!line.startsWith(' ') && !line.startsWith('\t')) {
+                removing = line.substringBefore(':').equals("Connection", ignoreCase = true)
+            }
+            if (!removing) kept += line
+        }
+        return (kept.joinToString("\r\n") + "\r\nConnection: close\r\n\r\n").toByteArray(Charsets.ISO_8859_1)
     }
 
     private companion object {
