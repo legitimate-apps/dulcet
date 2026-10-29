@@ -1,5 +1,7 @@
 import DulcetCore
-import DulcetKit
+@testable import DulcetKit
+import MediaPlayer
+import AVFoundation
 import XCTest
 
 /// The production controller driving a recording engine: gapless preload wiring (spec §12.8),
@@ -18,9 +20,17 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     }
 
     func testPreviousRestartsPastThreeSecondsWithoutReplacingPlaybackIdentities() async throws {
-        let fixture = try await previousFixture(index: 1, position: 4)
+        let fixture = try await previousFixture(index: 1, position: 3.001)
         let before = try XCTUnwrap(fixture.queue.snapshot().snapshot)
         let session = try XCTUnwrap(before.currentSession)
+        XCTAssertNil(fixture.queue.configureOfflineDelivery().errorKind)
+        fixture.emit(.playbackProgressBegan(attemptID: .init(session.attemptId), wallClock: Date(), mediaPosition: 0))
+        for second in 0...40 {
+            fixture.emit(.positionChanged(attemptID: .init(session.attemptId), mediaPosition: Double(second),
+                monotonicTime: .init(uptimeNanoseconds: UInt64(second) * 1_000_000_000)))
+        }
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds == 40_000 }
+        XCTAssertEqual(fixture.queue.deliveryReport().submittedPlaysPersisted, 0)
         let prepares = fixture.engine.count("prepare")
         fixture.controller.send(.previous)
         await fixture.waitFor { fixture.engine.count("seek") > 0 }
@@ -31,10 +41,33 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(after.currentSession?.attemptId, session.attemptId)
         XCTAssertEqual(after.entries.map(\.queueEntryId), before.entries.map(\.queueEntryId))
         XCTAssertEqual(fixture.engine.count("prepare"), prepares)
+        fixture.emit(.seekCompleted(attemptID: .init(session.attemptId), from: 40, to: 0))
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds == 0 }
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds, 0)
+        XCTAssertEqual(fixture.queue.deliveryReport().submittedPlaysPersisted, 0, "The seek earns no listening")
+        for second in 0...19 {
+            fixture.emit(.positionChanged(attemptID: .init(session.attemptId), mediaPosition: Double(second),
+                monotonicTime: .init(uptimeNanoseconds: UInt64(41 + second) * 1_000_000_000)))
+        }
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds == 19_000 }
+        XCTAssertEqual(fixture.queue.deliveryReport().submittedPlaysPersisted, 0)
+        fixture.emit(.positionChanged(attemptID: .init(session.attemptId), mediaPosition: 20,
+            monotonicTime: .init(uptimeNanoseconds: 61_000_000_000)))
+        await fixture.waitFor { fixture.queue.deliveryReport().submittedPlaysPersisted == 1 }
+        XCTAssertEqual(fixture.queue.deliveryReport().submittedPlaysPersisted, 1,
+                       "40 seconds before restart plus 20 afterwards reaches the 60-second threshold once")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds, 20_000)
     }
 
-    func testPreviousMovesBeforeThreeSeconds() async throws {
-        let fixture = try await previousFixture(index: 1, position: 2)
+    func testPreviousRestartsJustOverThreeSeconds() async throws {
+        let fixture = try await previousFixture(index: 1, position: 3.001)
+        fixture.controller.send(.previous)
+        XCTAssertEqual(fixture.engine.count("seek"), 1)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 1)
+    }
+
+    func testPreviousMovesAtExactlyThreeSeconds() async throws {
+        let fixture = try await previousFixture(index: 1, position: 3)
         fixture.controller.send(.previous)
         _ = try await fixture.waitForPrepare(rawID: "a")
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
@@ -43,6 +76,13 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
 
     func testPreviousReplaysTheUnseekableFirstEntryFromZero() async throws {
         let fixture = try await previousFixture(index: 0, seekability: .notSeekable, position: 8)
+        let old = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        fixture.emit(.paused(attemptID: .init(old.attemptId), position: 8))
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.phase == "Paused" }
+        let seed = ApplePlaybackQueueClient(databaseName: ":memory:")
+        XCTAssertEqual(seed.restoreCurrentPaused().startDirective?.resumePositionMilliseconds, 8_000,
+                       "The persistent store must contain the old position before replay")
+        seed.close()
         let before = try XCTUnwrap(fixture.queue.snapshot().snapshot)
         let prepares = fixture.engine.count("prepare")
         fixture.controller.send(.previous)
@@ -56,6 +96,10 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.elapsed, .zero)
         XCTAssertEqual(after.entries.map(\.queueEntryId), before.entries.map(\.queueEntryId))
         XCTAssertEqual(fixture.engine.count("seek"), 0)
+        let restored = ApplePlaybackQueueClient(databaseName: ":memory:")
+        XCTAssertEqual(restored.restoreCurrentPaused().startDirective?.resumePositionMilliseconds, -1,
+                       "Previous must clear the saved position after the outgoing session writes it")
+        restored.close()
     }
 
     func testPreviousRemoteCapabilityMatchesTheFirstEntryButton() async throws {
@@ -68,6 +112,151 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertTrue(router.handleRemotePlaybackCommand(.previous(sessionID: .init(session.playbackSessionId))))
         await fixture.waitFor { fixture.engine.count("seek") > 0 }
         XCTAssertEqual(fixture.engine.commands.last { $0.kind == "seek" }?.position, 0)
+    }
+
+    /// The production engine and MediaPlayer command centre must receive the terminal capability,
+    /// including the first-entry case that changes an enabled Previous to disabled on failure.
+    func testSystemNowPlayingPreviousCapabilityAfterFailureUsesCoreDecision() async throws {
+        for index in [0, 1] {
+            let fixture = makeFixture(tracks: ["a", "b", "c"])
+            let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+            let engine = DulcetAVPlayerEngine(clock: CapabilityTestClock(), usesAVFoundationMediaStack: false)
+            let controller = DulcetCorePlaybackController(queueClient: queue, engine: engine, catalog: fixture.tracks)
+            controller.configure(account: account(provider))
+            controller.replaceQueueAndPlay(fixture.intent(startIndex: index))
+            let center = MPRemoteCommandCenter.shared()
+            await fixture.waitFor { MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == (index == 0 ? "Track a" : "Track b") }
+            XCTAssertEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String,
+                           index == 0 ? "Track a" : "Track b", "The production engine must have published the item")
+            engine.reportCurrentItemReadyForTesting(duration: 120, seekability: .seekable)
+            await fixture.waitFor { controller.currentPresentation.nowPlaying?.phase == .ready }
+            XCTAssertTrue(center.previousTrackCommand.isEnabled, "A live first entry can restart")
+            engine.reportCurrentItemFailedForTesting(.transport)
+            await fixture.waitFor { controller.currentPresentation.status == .failed }
+            XCTAssertEqual(controller.currentPresentation.status, .failed)
+            XCTAssertEqual(center.previousTrackCommand.isEnabled, index > 0,
+                           "A failed first entry cannot restart; an earlier entry remains reachable")
+            XCTAssertNotNil(MPNowPlayingInfoCenter.default().nowPlayingInfo, "Failure retains the system item")
+            controller.disconnect()
+            queue.close()
+        }
+    }
+
+    func testRemotePreviousLeavesFailedPartialAttemptForEarlierEntry() async throws {
+        let fixture = try await previousFixture(index: 1, position: 10)
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        fixture.emit(.failedAfterPartial(attemptID: .init(session.attemptId), position: 10, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        XCTAssertTrue(try XCTUnwrap(fixture.engine.remoteCapabilities.last).1.allowsPrevious)
+        let router = try XCTUnwrap(fixture.engine.remoteRouter)
+        XCTAssertTrue(router.handleRemotePlaybackCommand(.previous(sessionID: .init(session.playbackSessionId))))
+        _ = try await fixture.waitForPrepare(rawID: "a")
+        XCTAssertEqual(fixture.engine.count("seek"), 0, "Previous must leave the dead attempt")
+        XCTAssertNotEqual(fixture.queue.snapshot().snapshot?.currentSession?.attemptId, session.attemptId)
+    }
+
+    func testTerminalFirstEntryPreviousIsUnavailableAndDoesNotReplay() async throws {
+        for terminal in ["failure", "stop"] {
+            let fixture = try await previousFixture(index: 0, position: 10)
+            let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+            let attempt = DulcetPlaybackAttemptID(session.attemptId)
+            fixture.emit(terminal == "failure"
+                ? .failedAfterPartial(attemptID: attempt, position: 10, error: .transport)
+                : .skipped(attemptID: attempt, position: 10, reason: .user))
+            await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.phase == (terminal == "failure" ? "Failed" : "Stopped") }
+            let prepares = fixture.engine.count("prepare")
+            XCTAssertFalse(try XCTUnwrap(fixture.engine.remoteCapabilities.last).1.allowsPrevious, terminal)
+            XCTAssertFalse(try XCTUnwrap(fixture.engine.remoteRouter).handleRemotePlaybackCommand(
+                .previous(sessionID: .init(session.playbackSessionId))), terminal)
+            fixture.controller.send(.previous)
+            XCTAssertEqual(fixture.engine.count("seek"), 0, terminal)
+            XCTAssertEqual(fixture.engine.count("prepare"), prepares, terminal)
+            XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.attemptId, session.attemptId)
+            if terminal == "stop" {
+                XCTAssertFalse(try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying).canGoPrevious)
+            }
+        }
+    }
+
+    func testPreviousLeavesStoppedAttemptForEarlierEntry() async throws {
+        let fixture = try await previousFixture(index: 1, position: 10)
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        fixture.emit(.skipped(attemptID: .init(session.attemptId), position: 10, reason: .user))
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.phase == "Stopped" }
+        fixture.controller.send(.previous)
+        _ = try await fixture.waitForPrepare(rawID: "a")
+        XCTAssertEqual(fixture.engine.count("seek"), 0)
+    }
+
+    func testPreviousDuringHeldNaturalEndMovesWithoutSeekingOutgoingAttempt() async throws {
+        let fixture = try await previousFixture(index: 1, position: 10)
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        _ = try await fixture.waitForPreload(rawID: "c")
+        await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+        fixture.emit(.endedNaturally(attemptID: .init(session.attemptId), finalPosition: 120))
+        await fixture.waitFor { fixture.controller.preloadLog.contains("end-held") }
+        fixture.controller.send(.previous)
+        _ = try await fixture.waitForPrepare(rawID: "a")
+        XCTAssertEqual(fixture.engine.count("seek"), 0)
+    }
+
+    func testPreviousAtFirstHeldNaturalEndIsUnavailableUntilPreloadAdvances() async throws {
+        let fixture = try await previousFixture(index: 0, position: 10)
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        let preload = try await fixture.waitForPreload(rawID: "b")
+        await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+        fixture.emit(.endedNaturally(attemptID: .init(session.attemptId), finalPosition: 120))
+        await fixture.waitFor { fixture.controller.preloadLog.contains("end-held") }
+        XCTAssertFalse(try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying).canGoPrevious)
+        XCTAssertFalse(try XCTUnwrap(fixture.engine.remoteCapabilities.last).1.allowsPrevious)
+        XCTAssertFalse(try XCTUnwrap(fixture.engine.remoteRouter).handleRemotePlaybackCommand(
+            .previous(sessionID: .init(session.playbackSessionId))))
+        fixture.controller.send(.previous)
+        XCTAssertEqual(fixture.engine.count("seek"), 0)
+        XCTAssertEqual(fixture.engine.count("prepare"), 1)
+        fixture.emit(.advancedToPreloaded(oldAttemptID: .init(session.attemptId), newAttemptID: preload.attempt))
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.attemptId == preload.attempt.rawValue }
+        fixture.emit(.ready(attemptID: preload.attempt, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.canGoPrevious == true }
+        XCTAssertTrue(try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying).canGoPrevious)
+    }
+
+    func testTwoPreviousPressesBeforeSeekCompletionRestartThenMove() async throws {
+        let fixture = try await previousFixture(index: 1, position: 10)
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        fixture.controller.send(.previous)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds, 10_000,
+                       "A pending seek is intent, not completed progress")
+        fixture.controller.send(.previous)
+        _ = try await fixture.waitForPrepare(rawID: "a")
+        XCTAssertEqual(fixture.engine.count("seek"), 1)
+        fixture.emit(.seekCompleted(attemptID: .init(session.attemptId), from: 10, to: 0))
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.rawId == "a" }
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.rawId, "a", "Late completion must not take the queue back")
+    }
+
+    func testFailedPreviousSeekCanRetryThenPendingRetryMoves() async throws {
+        for failure in ["event", "command"] {
+            let fixture = try await previousFixture(index: 1, position: 10)
+            let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+            fixture.engine.rejectNextSeek = failure == "command"
+            fixture.controller.send(.previous)
+            if failure == "event" {
+                let publications = fixture.engine.remoteCapabilities.count
+                fixture.emit(.seekFailed(attemptID: .init(session.attemptId), from: 10, to: 0))
+                await fixture.waitFor { fixture.engine.remoteCapabilities.count > publications }
+            } else {
+                // The controller receives a command rejection asynchronously, without an event.
+                await Task.yield()
+                try await Task.sleep(for: .milliseconds(30))
+            }
+            fixture.controller.send(.previous)
+            XCTAssertEqual(fixture.engine.count("seek"), 2, "\(failure): rejection clears restart intent")
+            XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds, 10_000)
+            fixture.controller.send(.previous)
+            _ = try await fixture.waitForPrepare(rawID: "a")
+            XCTAssertEqual(fixture.engine.count("seek"), 2, "\(failure): the pending retry now moves")
+        }
     }
 
     private func previousFixture(index: Int, seekability: DulcetPlaybackSeekability = .seekable,
@@ -2072,6 +2261,7 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
     private var artworkStorage: [(session: String, data: Data?)] = []
     private var heldPreloads: [(DulcetPlaybackCommandOutcome, DulcetPlaybackCommandCompletion)] = []
     /// When set, `preloadNext` is recorded but not answered until `completeHeldPreloads()`.
+    var rejectNextSeek = false
     var holdPreloadCompletions = false
     var holdStopCompletions = false
     private var heldStops: [(DulcetPlaybackCommandOutcome, DulcetPlaybackCommandCompletion)] = []
@@ -2136,7 +2326,10 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
             outcome = .completed(commandID: commandID, result: .withoutData)
         case let .seek(commandID, position):
             entry = .init(kind: "seek", attempt: nil, session: nil, title: nil, position: position)
-            outcome = .completed(commandID: commandID, result: .withoutData)
+            outcome = rejectNextSeek
+                ? .rejected(commandID: commandID, reason: .failed(.engine))
+                : .completed(commandID: commandID, result: .withoutData)
+            rejectNextSeek = false
         case let .pause(commandID):
             entry = .init(kind: "pause", attempt: nil, session: nil, title: nil)
             outcome = .completed(commandID: commandID, result: .withoutData)
@@ -2229,4 +2422,16 @@ private final class SystemTestsUnusedConnector: DulcetAccountConnecting {
 private final class HeldAutoplayOperation: NSObject, AppleLibraryBrowseOperation {
     private(set) var cancelled = false
     func cancel() { cancelled = true }
+}
+
+/// Readiness and failure are injected explicitly; no media or timer samples race the capability check.
+private struct CapabilityTestClock: DulcetAVPlayerEngineClock {
+    var wallClockNow: Date { Date() }
+    func sample(player: AVQueuePlayer) -> DulcetAVPlayerEngineClockSample {
+        .init(isPlaying: false, mediaPosition: 0, monotonicTime: .init(uptimeNanoseconds: 0))
+    }
+    func startSampler(on queue: DispatchQueue, interval: TimeInterval,
+                      handler: @escaping @Sendable () -> Void) -> @Sendable () -> Void { {} }
+    func scheduleOnce(on queue: DispatchQueue, after interval: TimeInterval,
+                      handler: @escaping @Sendable () -> Void) -> @Sendable () -> Void { {} }
 }

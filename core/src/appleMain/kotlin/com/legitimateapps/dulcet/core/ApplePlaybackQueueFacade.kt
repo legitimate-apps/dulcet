@@ -607,6 +607,20 @@ public class ApplePlaybackQueueClient private constructor(
     public fun recordPlayRequested(playbackSessionId: String): ApplePlaybackQueueTransitionDto =
         runClosed { controllerOrThrow().recordPlayRequested(PlaybackSessionId(playbackSessionId)) }
 
+    /** `none`, `seek`, `move` or `replay`; media facts alone do not establish a live attempt. */
+    public fun previousAction(playbackSessionId: String, restartPending: Boolean): String = try {
+        if (initializationErrorKind != null) "none" else when (
+            controllerOrThrow().previousAction(PlaybackSessionId(playbackSessionId), restartPending)
+        ) {
+            PlaybackPreviousAction.None -> "none"
+            PlaybackPreviousAction.Seek -> "seek"
+            PlaybackPreviousAction.Move -> "move"
+            PlaybackPreviousAction.Replay -> "replay"
+        }
+    } catch (_: Throwable) {
+        "none"
+    }
+
     public fun acceptsCommand(
         playbackSessionId: String,
         requiresSeekable: Boolean,
