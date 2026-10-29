@@ -774,12 +774,10 @@ final class DulcetiOSUITests: XCTestCase {
         add(attachment)
     }
 
-    /// Opens an album from the library the way a person finds one by name: the Recently Added
-    /// grid under a phone's Library list, or Albums in a regular window's sidebar.
+    /// Opens a named server album through Browse and its Albums collection.
     @MainActor
     private func openLibraryAlbum(_ album: String, in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Browse", sidebarIdentifier: "dulcet.sidebar.browse", in: app, compact: compact),
-              openSidebarLibrarySection("albums", in: app) else { return false }
+        guard openSidebarLibrarySection("albums", in: app) else { return false }
         let tile = app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch
         // A phone's Recently Added grid is extended as it scrolls, newest first, so an older album
@@ -937,15 +935,13 @@ final class DulcetiOSUITests: XCTestCase {
         return false
     }
 
-    /// Opens one of the library's own places from a regular-width sidebar -- Albums, to find an
-    /// album by name the way a person does. Library itself opens on Home, whose rows scroll
-    /// sideways and so cannot bring a named album into view by scrolling the page.
+    /// Server categories live in Browse on both compact and regular-width shells.
     @MainActor
     private func openSidebarLibrarySection(_ section: String, in app: XCUIApplication) -> Bool {
-        let nativeLink = app.buttons["dulcet.reader.section.\(section)"].firstMatch
-        let row = nativeLink.exists ? nativeLink : app.descendants(matching: .any)["dulcet.sidebar.section.\(section)"].firstMatch
+        guard openDestination("Browse", sidebarIdentifier: "dulcet.sidebar.browse", in: app, compact: false) else { return false }
+        let row = app.buttons["dulcet.reader.section.\(section)"].firstMatch
         guard row.waitForExistence(timeout: 10), row.isHittable else {
-            XCTFail("The sidebar must list the library's \(section) section: " + app.debugDescription)
+            XCTFail("Browse must offer its \(section) section: " + app.debugDescription)
             return false
         }
         row.tap()
@@ -2868,18 +2864,12 @@ final class DulcetiOSUITests: XCTestCase {
     private func openAlphabeticalAlbumGrid(in app: XCUIApplication, compact: Bool) -> Bool {
         guard openLibraryDestinationForAlbums(in: app, compact: compact) else { return false }
         guard compact else { return true }
-        if compact {
-            let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
-            for _ in 0..<8 {
-                if albums.exists, albums.isHittable { break }
-                app.swipeDown()
-            }
-            guard albums.exists, albums.isHittable else {
-                XCTFail("The Library must offer its Albums collection: " + app.debugDescription)
-                return false
-            }
-            albums.tap()
+        let options = app.buttons["dulcet.library.albums.options"].firstMatch
+        guard options.waitForExistence(timeout: 10), options.isHittable else {
+            XCTFail("The Albums collection must expose its toolbar menu")
+            return false
         }
+        options.tap()
         let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
         guard sort.waitForExistence(timeout: 10) else {
             XCTFail("The Albums collection must expose its sort control")
@@ -2892,6 +2882,18 @@ final class DulcetiOSUITests: XCTestCase {
             return false
         }
         title.tap()
+        // A selected Picker action can leave its parent menu open. Only send an
+        // outside tap while that menu's own action is still visible.
+        if sort.exists && sort.isHittable {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.12)).tap()
+        }
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !sort.exists || !sort.isHittable
+        }, object: nil)
+        guard XCTWaiter.wait(for: [closed], timeout: 10) == .completed else {
+            XCTFail("The Albums toolbar menu must close before the drag proof")
+            return false
+        }
         return true
     }
 
@@ -3147,24 +3149,10 @@ final class DulcetiOSUITests: XCTestCase {
         }
     }
 
-    /// The library place that shows album tiles: Library on a phone, Albums in the sidebar on a
-    /// regular width.
+    /// The full server Albums collection has the same route on every window width.
     @MainActor
     private func openLibraryDestinationForAlbums(in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
-            return false
-        }
-        if compact {
-            // The tab keeps its stack; back to its root, where the Recently Added tiles are.
-            let back = app.navigationBars.buttons["BackButton"].firstMatch
-            var pops = 0
-            while back.exists, back.isHittable, pops < 4 {
-                back.tap()
-                pops += 1
-            }
-            return true
-        }
-        return openSidebarLibrarySection("albums", in: app)
+        openSidebarLibrarySection("albums", in: app)
     }
 
     /// Opens the named playlist from the Playlists list.
