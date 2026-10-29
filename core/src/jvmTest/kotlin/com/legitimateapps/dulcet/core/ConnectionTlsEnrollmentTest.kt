@@ -79,6 +79,29 @@ class ConnectionTlsEnrollmentTest {
                         assertEquals(200, response.statusCode)
                         assertTrue(fixture.requests.any { it.port == fixture.port(1) && it.path == "/music/rest/ping.view" && it.authQuery })
                         assertEquals(anchor.normalizedBaseUrl, snapshot.anchor.normalizedBaseUrl)
+
+                        // Saved reconnects preserve the /music base and the ownership DTO.
+                        val savedRequest = AccountConnectionRequest(anchor.normalizedBaseUrl, "listener", "fixture-password")
+                        val reconnected = runBlocking { AccountConnector().connect(savedRequest) }
+                        assertEquals(anchor.normalizedBaseUrl, assertIs<AccountConnectionResult.Connected>(reconnected).account.normalizedBaseUrl)
+
+                        fixture.requests.clear()
+                        fixture.redirectExtensionsOutsideBase = true
+                        try {
+                            val escaped = runBlocking { AccountConnector().connect(savedRequest) }
+                            assertEquals(DomainError.Security.ResourceOutsideRoute, assertIs<AccountConnectionResult.Failed>(escaped).error)
+                            assertFalse(fixture.requests.any { it.path.startsWith("/outside/") }, "outside-base redirect received a request")
+                        } finally { fixture.redirectExtensionsOutsideBase = false }
+
+                        fixture.requests.clear()
+                        fixture.afterPing = { ConnectionRouteRegistry.publish(anchor, null) }
+                        try {
+                            val revoked = runBlocking { AccountConnector().connect(savedRequest) }
+                            assertEquals(DomainError.Transport.Cancelled, assertIs<AccountConnectionResult.Failed>(revoked).error)
+                            assertTrue(fixture.requests.any { it.path == "/music/rest/ping.view" })
+                            assertFalse(fixture.requests.any { it.path.endsWith("/getUser.view") }, "revoked reconnect sent getUser")
+                            assertTrue(fixture.requests.all { it.port == fixture.port(1) }, "revoked reconnect fell back to its ownership anchor")
+                        } finally { fixture.afterPing = null }
                     } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
                 }
             } finally {
@@ -93,6 +116,8 @@ class ConnectionTlsEnrollmentTest {
         private val directory = Files.createTempDirectory("dulcet-tls-enrollment-")
         val keyStore = directory.resolve("fixture.p12")
         val requests = CopyOnWriteArrayList<Request>()
+        @Volatile var redirectExtensionsOutsideBase = false
+        @Volatile var afterPing: (() -> Unit)? = null
         private val servers: List<HttpsServer>
         init {
             val keytool = java.nio.file.Path.of(System.getProperty("java.home"), "bin", "keytool").toString()
@@ -112,6 +137,13 @@ class ConnectionTlsEnrollmentTest {
                     requests += Request(server.address.port, call.requestURI.path, call.requestMethod, query,
                         body.contains("u=listener") && body.contains("t=") && body.contains("s="),
                         query?.contains("u=listener") == true)
+                    if (redirectExtensionsOutsideBase && call.requestURI.path == "/music/rest/getOpenSubsonicExtensions.view") {
+                        call.responseHeaders.add("Location", "https://localhost:${server.address.port}/outside/rest/getOpenSubsonicExtensions.view")
+                        call.sendResponseHeaders(302, -1)
+                        call.close()
+                        return@createContext
+                    }
+                    if (call.requestURI.path == "/music/rest/ping.view") afterPing?.invoke()
                     val localBase = "https://localhost:${server.address.port}/music"
                     val response = when (call.requestURI.path) {
                         "/.well-known/dulcet", "/music/.well-known/dulcet" -> """{"standard":"dulcet","apis":[{"version":"1","baseUrl":"$localBase/dulcet/v1","status":"current"}],"server":{"instanceId":"${if (server.address.port == port(2)) "different-lineage" else "fixture-lineage"}"},"authorizationServer":"$localBase"}"""
