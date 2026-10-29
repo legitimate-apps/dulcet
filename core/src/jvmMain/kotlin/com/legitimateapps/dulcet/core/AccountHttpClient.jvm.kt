@@ -5,6 +5,11 @@ import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.okhttp.OkHttp
 import okhttp3.Authenticator
 import okhttp3.CookieJar
+import okhttp3.Call
+import okhttp3.Connection
+import okhttp3.EventListener
+import okhttp3.Protocol
+import okhttp3.Response
 import java.net.Proxy
 
 internal actual fun createAccountHttpClient(
@@ -21,6 +26,7 @@ internal actual fun createAccountHttpClient(
             // Keep strict framing, no recovery retries, ambient authentication, cookies or redirects.
             config {
                 retryOnConnectionFailure(false)
+                eventListenerFactory { Http10PersistenceListener() }
                 followRedirects(false)
                 followSslRedirects(false)
                 authenticator(Authenticator.NONE)
@@ -52,3 +58,24 @@ internal actual fun createAccountHttpClient(
 }
 
 private class ExplicitStatusPolicy(var original: Int? = null)
+
+/** HTTP/1.0 is non-persistent unless the peer explicitly opts into keep-alive. */
+private class Http10PersistenceListener : EventListener() {
+    private var connection: Connection? = null
+    private var retireAfterBody = false
+
+    override fun connectionAcquired(call: Call, connection: Connection) {
+        this.connection = connection
+    }
+
+    override fun responseHeadersEnd(call: Call, response: Response) {
+        val tokens = response.headers.values("Connection").flatMap { it.split(',') }.map { it.trim().lowercase() }
+        retireAfterBody = response.protocol == Protocol.HTTP_1_0 && ("keep-alive" !in tokens || "close" in tokens)
+    }
+
+    override fun responseBodyEnd(call: Call, byteCount: Long) {
+        // This event precedes releasing the connection to the pool. Closing after the complete
+        // body preserves framing while preventing a later request from hitting a retired socket.
+        if (retireAfterBody) try { connection?.socket()?.close() } catch (_: java.io.IOException) { }
+    }
+}

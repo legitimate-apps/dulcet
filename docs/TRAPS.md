@@ -630,3 +630,14 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     The JVM request factory now uses its existing strict OkHttp engine for account reads as
     well as media, preserving disabled retries, cookies, ambient authentication and redirects.
     Trusting a fixture root is not permission to bypass hostname verification.
+
+58. **HTTP/1.0 implicit closure must retire its connection without replaying a request.**
+    **OBSERVED 2026-10-29:** the disposable Discover proxy returns HTTP/1.0 with a fixed body
+    length and no keep-alive header, then closes its socket. OkHttp 4.12 pooled that socket;
+    with recovery retries disabled, the next application request failed with EOF or a reset.
+    `LibraryStatusTransportTest` reproduces the second-request failure and requires one wire
+    request per plain, form and binary operation. JVM and Android use a per-call public
+    `EventListener` to close a non-persistent HTTP/1.0 socket after its complete response body,
+    before it is released to the pool. Explicit HTTP/1.0 keep-alive and ordinary HTTP/1.1
+    retain pooling, with a positive single-connection control. Enabling retry would hide the
+    stale connection while changing delivery semantics for state-changing requests.

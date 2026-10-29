@@ -200,8 +200,8 @@ internal class AuthenticatedEndpointClient(
         formPost: Boolean = false,
     ): AuthenticatedEndpointResponse {
         require(!formPost || jsonBody == null)
-        // Only media GETs need a framing-aware engine. Account reads and mutations keep their
-        // existing transport and retry/status behavior. Redirects keep using this same client.
+        // Native engines may specialize media framing; JVM and Android use the strict,
+        // hostname-validating engine for every request. Redirects keep using this same client.
         val client = if (jsonBody == null && !formPost && endpoint in MEDIA_ENDPOINTS) mediaClient.value else client
         val common = authenticatedParameters(parameters)
         val scope = requestRouteScope()
