@@ -56,6 +56,7 @@ internal class SeenCacheStore(
      * (spec §16.17), which carried no binding of its own.
      */
     fun bind(binding: CacheBinding): BoundSeenCache {
+        OwnershipBindingProbe.record("SeenCacheStore.bind")
         var discarded = 0L
         val purged = database.transactionWithResult {
             val queries = database.seenCacheQueries
@@ -80,6 +81,7 @@ internal class SeenCacheStore(
             }
             if (stored != null && !matches) {
                 discarded += database.wishlistQueries.countPending(binding.serverId).executeAsOne()
+                OwnershipBindingProbe.record("purgeNamespace")
                 queries.purgeNamespace(binding.serverId)
                 check(queries.countNamespaceRows(binding.serverId).executeAsOne().sum == 0L) {
                     "binding purge left rows behind"
