@@ -334,6 +334,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         launch().use { activity ->
             everywhere("owner A")
             val ownerA=checkNotNull(AndroidAccountCredentialStore(context).activeAccountId())
+            // Search groups arrive independently. Establish the actual song action
+            // before taking its remaining first-page requests offline.
+            ensureDisplayed("discover.wish.song.0")
             fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync")
             fixture.arm("normal")
             addAccountThroughUi(fixture.server,fixture.other,fixture.password)
@@ -346,6 +349,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             openWishlist();row("Fixture Song 01")
             // Prove a newly pending A mutation immediately before the binding is rejected.
             everywhere("owner A")
+            ensureDisplayed("discover.wish.song.1")
             val blocked=fixture.arm("offline")
             click("discover.wish.song.1")
             fixture.effect(blocked,"addToDulcetWishlist")
