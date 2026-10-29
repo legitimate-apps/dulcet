@@ -9,8 +9,8 @@ if not expected_methods or len(set(expected_methods)) != len(expected_methods):
     raise SystemExit('usage: verify-connection-results RESULTS CLASS METHOD [METHOD ...]')
 cases = [case for path in Path(root).rglob('*.xml')
          for case in ET.parse(path).getroot().iter('testcase')
-         if case.get('classname', '').split('[')[0] == expected_class]
-observed = [case.get('name', '').split('[')[0] for case in cases]
+         if case.get('classname', '') in (expected_class, 'macosArm64Test.' + expected_class)]
+observed = [case.get('name', '').removesuffix('[macosArm64]') for case in cases]
 if sorted(observed) != sorted(expected_methods):
     raise SystemExit(f'Connection proofs missing or duplicated: expected={expected_methods} observed={observed}')
 for case in cases:
