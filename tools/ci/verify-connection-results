@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Require each named native connection proof to execute once and pass, never skip."""
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+root, expected_class, *expected_methods = sys.argv[1:]
+if not expected_methods or len(set(expected_methods)) != len(expected_methods):
+    raise SystemExit('usage: verify-connection-results RESULTS CLASS METHOD [METHOD ...]')
+cases = [case for path in Path(root).rglob('*.xml')
+         for case in ET.parse(path).getroot().iter('testcase')
+         if case.get('classname', '').split('[')[0] == expected_class]
+observed = [case.get('name', '').split('[')[0] for case in cases]
+if sorted(observed) != sorted(expected_methods):
+    raise SystemExit(f'Connection proofs missing or duplicated: expected={expected_methods} observed={observed}')
+for case in cases:
+    if any(case.find(terminal) is not None for terminal in ('failure', 'error', 'skipped')):
+        raise SystemExit(ET.tostring(case, encoding='unicode'))
+print(f'CONNECTIONS NATIVE class={expected_class} executed={len(cases)} passed={len(cases)} skipped=0')

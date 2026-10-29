@@ -46,6 +46,9 @@ never publishes the address list. Administrators may reduce publication by role.
 
 A listed candidate receives no credentials until its own OS-trusted TLS connection and
 same-origin, redirect-free discovery confirm the expected lineage and exact API base mapping.
+Resolve discovery relative to the exact route base: a base ending in `/music` serves
+`/music/.well-known/dulcet` and advertises `/music/dulcet/v1`. The origin-root document cannot
+authorize a different base prefix. Discovery has the same 65,536-byte application limit.
 Discovery alone never authorizes a new address. A TLS failure means unavailable, including on
 an unrelated LAN reusing a private IP; a TLS-valid different lineage is quarantined while old
 offline content remains. HTTP aliases are ignored even with consent and receive zero bytes.

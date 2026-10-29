@@ -489,6 +489,7 @@ targets:
     platform: iOS
     sources:
       - DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest.swift
+      - DulcetPlaybackIntegrationTests/DulcetAppleConnectionIntegrationTest.swift
       - DulcetAppleShared/DulcetCoreDownloads.swift
       - DulcetAppleShared/DulcetCorePlayback.swift
       - DulcetAppleShared/DulcetCorePlaybackController.swift

@@ -161,10 +161,13 @@ paths:
 
   /.well-known/dulcet:
     servers:
-      - url: https://{host}
+      - url: https://{host}{basePath}
         variables:
           host:
             default: music.example.com
+          basePath:
+            default: ''
+            description: Exact configured route base path, such as /music; no trailing slash.
     get:
       tags: [Discovery]
       operationId: getDiscovery
@@ -172,6 +175,8 @@ paths:
       description: |
         The first request a client makes. Needs no authentication. A server that does not answer it
         with this document does not speak Dulcet API; a Dulcet app then falls back to OpenSubsonic.
+        A configured route base prefix is retained: `/music` discovers
+        `/music/.well-known/dulcet`, whose API mapping and issuer describe that same route.
       security: []
       responses:
         '200':
