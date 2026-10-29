@@ -126,10 +126,9 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         downloads.requestDownload(waiting)
         let failedPlan = try await resolve(wire, track: waiting, provider: provider)
         let resource = try XCTUnwrap(failedPlan.resource as? any DulcetPlaybackResourceLoading)
-        async let mediaFailed = failedLoad(resource)
-        async let artworkAfterFailure = fetchArtwork(fixture: fixture, provider: provider,
+        let failed = await failedLoad(resource)
+        let absentArtwork = await fetchArtwork(fixture: fixture, provider: provider,
             artworkID: fixture.tracks[3].artworkId)
-        let (failed, absentArtwork) = await (mediaFailed, artworkAfterFailure)
         XCTAssertTrue(failed)
         XCTAssertNil(absentArtwork)
         try await eventually("The HTTPS outage must interrupt the actual download executor") {
