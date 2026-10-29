@@ -22,11 +22,18 @@ struct DulcetReaderStackPresentation<Route: Hashable, Context: Hashable> {
 
     mutating func request(_ updated: Request) {
         guard request != updated else { return }
+        // A retained parent need not appear again after Back, and a native link can
+        // appear before this request is acknowledged. Keep those actual appearances
+        // while the page remains in this stack, never across an account/destination.
+        if request?.context == updated.context {
+            presentedRoutes.formIntersection(updated.path)
+        } else {
+            presentedRoutes = []
+        }
         request = updated
         path = updated.path
         pendingReplay = nil
         replayed = false
-        presentedRoutes = []
     }
 
     mutating func appeared(_ route: Route) { presentedRoutes.insert(route) }
