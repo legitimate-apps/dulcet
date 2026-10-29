@@ -703,3 +703,20 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     command. The enclosing multipath fixture stops its listeners and deletes every fresh
     private key in finally. Mock controls exercise success, partial setup, timeout,
     cancellation, simulator reset and failed certificate cleanup without local trust writes.
+
+
+64. **A phone Form can hide connected status until its rows are scrolled into view.**
+    **OBSERVED 2026-10-29:** run40838293161 iPhone search failed its live-account readiness
+    assertion after the prior My Library suite passed7/7. The app logged a reader opened in
+    connected mode; CFNetwork recorded the first three account tasks completing HTTP200.
+    Thirty-one Sign Out queries completed with empty results, unlike the unfinished AX query
+    in run40826118582. Three retained hierarchies showed saved servers, the new Connections
+    section and credentials, ending at local-HTTP consent below the phone viewport; the later
+    status section was not realized in the native Form's AX tree. The helper now scrolls only
+    the named Settings Form after confirming Connection, at most three upward gestures within
+    its existing readiness budget. It still requires the actual Sign Out control and preserves
+    visible failure controls; no endpoint shortcut, extra connection retry or longer timeout
+    substitutes for that evidence. `tools/test-live-account-status-witness` extracts the real
+    helpers: the old implementation fails the lazy-status positive control, and disconnected,
+    failed, missing-Form and wrong-destination controls still refuse readiness. This is host
+    control evidence; actual simulator execution remains the conformance leg's responsibility.

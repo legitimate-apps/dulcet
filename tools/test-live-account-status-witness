@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Run the real readiness helpers against a lazy phone Form; no network or simulator.
+
+The independent model exposes Sign Out only after the account status is scrolled into view.
+The old helper fails this positive control. Neither scrolling a disconnected form nor selecting
+Connection may manufacture connected readiness. Run --source-ref HEAD^ for the before control.
+"""
+import argparse
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--source-ref')
+args = parser.parse_args()
+relative = 'apple/DulcetiOSUITests/DulcetiOSUITests.swift'
+source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{relative}'], cwd=ROOT, text=True)
+          if args.source_ref else (ROOT / relative).read_text())
+
+def method(name):
+    start = source.index('    private func ' + name + '(')
+    opening = source.index('{', start)
+    depth, end = 1, opening + 1
+    while depth:
+        depth += (source[end] == '{') - (source[end] == '}')
+        end += 1
+    return source[start:end].replace('private func', 'func', 1).replace('Date()', 'Clock.now')
+
+helpers = method('awaitLiveAccountConnection')
+if 'private func revealLiveAccountStatus(' in source:
+    helpers += '\n' + method('revealLiveAccountStatus')
+control = r'''
+import Foundation
+
+enum Clock {
+    static var offset: TimeInterval = 0
+    static var now: Date { Date(timeIntervalSince1970: offset) }
+}
+final class XCUIApplication {
+    var connected = true
+    var failure = false
+    var formPresent = true
+    var selectedConnection = false
+    var canNavigate = true
+    var neededSwipes = 1
+    var swipes = 0
+    var statusReads = 0
+    var navigationCount = 0
+    var buttons: Query { Query(app: self, form: false) }
+    var staticTexts: Query { Query(app: self, form: false) }
+    var collectionViews: Query { Query(app: self, form: true) }
+}
+struct Query {
+    let app: XCUIApplication
+    let form: Bool
+    subscript(_ key: String) -> Element { Element(app: app, key: key, form: form) }
+}
+struct Element {
+    let app: XCUIApplication
+    let key: String
+    let form: Bool
+    var firstMatch: Self { self }
+    var exists: Bool {
+        precondition(app.selectedConnection, "Readiness must open Connection before querying its lazy Form")
+        if form { return app.formPresent && key == "dulcet.account.settingsForm" }
+        if key == "Sign Out" {
+            app.statusReads += 1
+            return app.connected && app.swipes >= app.neededSwipes
+        }
+        if key == "Try Again" { return app.failure }
+        return false
+    }
+    func waitForExistence(timeout: TimeInterval) -> Bool {
+        let found = exists
+        if !found { Clock.offset += timeout }
+        return found
+    }
+    func swipeUp() {
+        precondition(form && key == "dulcet.account.settingsForm", "Only the named native Form may scroll")
+        precondition(app.selectedConnection)
+        app.swipes += 1
+    }
+    func tap() { preconditionFailure("Only existing timeout retries may tap, and this control has no timeout failure") }
+}
+struct Proof {
+    func openDestination(_ title: String, sidebarIdentifier: String, in app: XCUIApplication, compact: Bool) -> Bool {
+        precondition(title == "Connection" && sidebarIdentifier == "dulcet.sidebar.settings")
+        app.navigationCount += 1
+        Clock.offset += 1
+        app.selectedConnection = app.canNavigate
+        return app.canNavigate
+    }
+__HELPERS__
+}
+@main struct Controls {
+    static func main() {
+        let proof = Proof()
+        let lazy = XCUIApplication()
+        precondition(proof.awaitLiveAccountConnection(in: lazy, compact: true), "A connected lazy status must be revealed before querying Sign Out")
+        precondition(lazy.swipes == 1 && lazy.statusReads > 0)
+        print("connected lazy phone Form / actual Sign Out required after one swipe: PASS")
+        Clock.offset = 0
+        let deeper = XCUIApplication(); deeper.neededSwipes = 2
+        precondition(proof.awaitLiveAccountConnection(in: deeper, compact: true) && deeper.swipes == 2)
+        print("connected deeper phone Form / second bounded reveal: PASS")
+        Clock.offset = 0
+        let visible = XCUIApplication(); visible.neededSwipes = 0
+        precondition(proof.awaitLiveAccountConnection(in: visible, compact: true) && visible.swipes == 0)
+        print("already realized Sign Out / preserve scroll: PASS")
+        Clock.offset = 0
+        let disconnected = XCUIApplication(); disconnected.connected = false
+        precondition(!proof.awaitLiveAccountConnection(in: disconnected, compact: true) && disconnected.swipes == 3 && Clock.offset <= 45)
+        print("disconnected phone / no invented readiness / three-swipe bound / original deadline: PASS")
+        Clock.offset = 0
+        let failed = XCUIApplication(); failed.connected = false; failed.failure = true
+        precondition(!proof.awaitLiveAccountConnection(in: failed, compact: true) && failed.swipes == 0)
+        print("visible failure / preserve failure controls / no readiness: PASS")
+        Clock.offset = 0
+        let regular = XCUIApplication(); regular.neededSwipes = 0
+        precondition(proof.awaitLiveAccountConnection(in: regular, compact: false) && regular.swipes == 0)
+        print("regular-width connection / unchanged readiness: PASS")
+        Clock.offset = 0
+        let missing = XCUIApplication(); missing.connected = false; missing.formPresent = false
+        precondition(!proof.awaitLiveAccountConnection(in: missing, compact: true) && missing.swipes == 0)
+        print("absent native Form / no substitute screen gesture or readiness: PASS")
+        Clock.offset = 0
+        let wrong = XCUIApplication(); wrong.canNavigate = false
+        precondition(!proof.awaitLiveAccountConnection(in: wrong, compact: true) && wrong.statusReads == 0 && wrong.swipes == 0)
+        print("unconfirmed Connection destination / no status query or gesture: PASS")
+    }
+}
+'''
+with tempfile.TemporaryDirectory(prefix='dulcet-status-witness-') as tmp:
+    root = Path(tmp)
+    swift = root / 'controls.swift'
+    swift.write_text(control.replace('__HELPERS__', helpers))
+    subprocess.run(['xcrun', 'swiftc', '-parse-as-library', str(swift), '-o', str(root / 'controls')], check=True)
+    subprocess.run([str(root / 'controls')], check=True)

@@ -908,6 +908,7 @@ final class DulcetiOSUITests: XCTestCase {
         let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
         let tryAgain = app.buttons["Try Again"].firstMatch
         var retries = 0
+        var statusScrollsRemaining = 3
         let deadline = Date().addingTimeInterval(35)
         repeat {
             guard openDestination(
@@ -916,6 +917,7 @@ final class DulcetiOSUITests: XCTestCase {
                 in: app,
                 compact: compact
             ) else { return false }
+            revealLiveAccountStatus(in: app, compact: compact, remainingScrolls: &statusScrollsRemaining)
             if signOut.waitForExistence(timeout: 10) { return true }
             while retries < 2, timedOut.exists, tryAgain.exists {
                 retries += 1
@@ -931,12 +933,28 @@ final class DulcetiOSUITests: XCTestCase {
                         in: app,
                         compact: compact
                     ) else { return false }
+                    revealLiveAccountStatus(in: app, compact: compact, remainingScrolls: &statusScrollsRemaining)
                     let remaining = max(0, retryDeadline.timeIntervalSince(Date()))
                     if signOut.waitForExistence(timeout: min(10, remaining)) { return true }
                 } while Date() < retryDeadline
             }
         } while Date() < deadline
         return false
+    }
+
+    /// Native Form realizes rows as they enter its viewport. Connections and the saved-server
+    /// list can put the connected status below a phone's credentials, so reveal it with the
+    /// same form gesture a person uses. Arrival alone never proves connection: the caller still
+    /// requires Sign Out, within its existing deadline. Preserve visible failures for inspection.
+    @MainActor
+    private func revealLiveAccountStatus(in app: XCUIApplication, compact: Bool, remainingScrolls: inout Int) {
+        guard compact, remainingScrolls > 0,
+              !app.buttons["Sign Out"].firstMatch.exists,
+              !app.buttons["Try Again"].firstMatch.exists else { return }
+        let form = app.collectionViews["dulcet.account.settingsForm"].firstMatch
+        guard form.exists else { return }
+        form.swipeUp()
+        remainingScrolls -= 1
     }
 
     /// Opens one of the library's own places from a regular-width sidebar -- Albums, to find an
