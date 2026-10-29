@@ -30,6 +30,11 @@ selectEnrollment:
 SELECT * FROM connection_enrollment WHERE server_id = ?;
 selectRoutes:
 SELECT * FROM server_route WHERE server_id = ? ORDER BY priority, route_id;
+-- One statement snapshots both authorization rows and their exact transport generation.
+selectPublication:
+SELECT e.*, r.route_id, r.normalized_base_url, r.label, r.role, r.priority, r.enabled, r.tombstoned
+FROM connection_enrollment AS e LEFT JOIN server_route AS r ON r.server_id = e.server_id
+WHERE e.server_id = ? ORDER BY r.priority, r.route_id;
 putEnrollment:
 INSERT OR REPLACE INTO connection_enrollment VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 putRoute:
