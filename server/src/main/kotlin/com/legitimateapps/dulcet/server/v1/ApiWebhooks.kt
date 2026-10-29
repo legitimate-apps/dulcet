@@ -282,7 +282,7 @@ class ApiWebhooks(
     }
     fun install(route:Route) = with(route) {
         get("/webhooks") { call.send(list(call.principal(ctx,"account"))) }
-        post("/webhooks") { val value=create(call.principal(ctx,"account"),call.body());call.response.headers.append(HttpHeaders.Location,"/dulcet/v1/webhooks/${value["id"]!!.jsonPrimitive.content}");call.send(value,201) }
+        post("/webhooks") { val value=create(call.principal(ctx,"account"),call.body());call.response.headers.append(HttpHeaders.Location,call.apiLocation("/dulcet/v1/webhooks/${value["id"]!!.jsonPrimitive.content}"));call.send(value,201) }
         get("/webhooks/{webhookId}") { call.send(get(call.principal(ctx,"account"),call.parameters["webhookId"]!!)) }
         patch("/webhooks/{webhookId}") { call.send(update(call.principal(ctx,"account"),call.parameters["webhookId"]!!,call.body())) }
         delete("/webhooks/{webhookId}") { remove(call.principal(ctx,"account"),call.parameters["webhookId"]!!);call.respond(HttpStatusCode.NoContent) }

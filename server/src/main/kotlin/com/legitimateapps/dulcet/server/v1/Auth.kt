@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.server.v1
 
 import com.legitimateapps.dulcet.server.ServerContext
+import com.legitimateapps.dulcet.server.configuredRoute
 import com.legitimateapps.dulcet.server.auth.AuthOutcome
 import com.legitimateapps.dulcet.server.auth.PasswordVault
 import com.legitimateapps.dulcet.server.auth.SlowHash
@@ -39,6 +40,8 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
             execute("""CREATE TABLE IF NOT EXISTS api_grant(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,kind TEXT NOT NULL,name TEXT NOT NULL,client_id TEXT,verified INTEGER NOT NULL,scopes TEXT NOT NULL,parent_id TEXT REFERENCES api_grant(id),created INTEGER NOT NULL,last_used INTEGER,expires INTEGER,revoked INTEGER NOT NULL DEFAULT 0,password_stamp TEXT NOT NULL,auth_time INTEGER NOT NULL,hint TEXT NOT NULL DEFAULT '')""")
             execute("""CREATE TABLE IF NOT EXISTS api_credential(id TEXT PRIMARY KEY,grant_id TEXT NOT NULL REFERENCES api_grant(id) ON DELETE CASCADE,kind TEXT NOT NULL,secret_hash TEXT NOT NULL,expires INTEGER NOT NULL,used_at INTEGER,retry_pair BLOB)""")
             execute("""CREATE TABLE IF NOT EXISTS api_authorization(id TEXT PRIMARY KEY,secret_hash TEXT,client_id TEXT NOT NULL,client_name TEXT NOT NULL,verified INTEGER NOT NULL,redirect_uri TEXT,state TEXT,challenge TEXT,scopes TEXT NOT NULL,user_id TEXT REFERENCES user(id) ON DELETE CASCADE,expires INTEGER NOT NULL,browser_hash TEXT,user_code TEXT UNIQUE,attempts INTEGER NOT NULL DEFAULT 0,poll_at INTEGER NOT NULL DEFAULT 0,interval_sec INTEGER NOT NULL DEFAULT 5,used INTEGER NOT NULL DEFAULT 0)""")
+            if (query("PRAGMA table_info(api_grant)") { it.string("name") }.none { it == "issuance_origin" }) execute("ALTER TABLE api_grant ADD COLUMN issuance_origin TEXT")
+            if (query("PRAGMA table_info(api_authorization)") { it.string("name") }.none { it == "issuer" }) execute("ALTER TABLE api_authorization ADD COLUMN issuer TEXT")
             execute("""CREATE TABLE IF NOT EXISTS api_profile(user_id TEXT PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,display_name TEXT,settings TEXT NOT NULL DEFAULT '{}')""")
             for((action,ref,op) in listOf(Triple("INSERT","NEW","upsert"),Triple("UPDATE","NEW","upsert"),Triple("DELETE","OLD","delete"))) {
                 execute("CREATE TRIGGER IF NOT EXISTS api_profile_${action.lowercase()} AFTER $action ON api_profile BEGIN INSERT INTO api_journal(type,id,user_id,op,at) VALUES('user',$ref.user_id,$ref.user_id,'$op',CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)); END")
@@ -260,7 +263,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
                 val (gid,secret)=createPersonal(this,p.user,requested,name,expires,parent.id)
                 j(*(tokenJson(grant(this,gid)!!).map { it.key to it.value } + ("secret" to secret)).toTypedArray())
             }
-            call.response.headers.append(HttpHeaders.Location,"${call.request.path()}/${result["id"]!!.jsonPrimitive.content}")
+            call.response.headers.append(HttpHeaders.Location,call.apiLocation("/dulcet/v1/me/tokens/${result["id"]!!.jsonPrimitive.content}"))
             call.send(result,201)
         }
         delete("/me/tokens/{tokenId}") {
@@ -281,7 +284,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
     } }
     private suspend fun oauth(call:ApplicationCall, action:suspend () -> Unit) {
         call.response.headers.append(HttpHeaders.CacheControl,"no-store")
-        if(call.request.path() in setOf("/oauth/token","/oauth/device_authorization","/oauth/revoke")) {
+        if(call.request.path().removePrefix(call.configuredRoute()?.prefix.orEmpty()) in setOf("/oauth/token","/oauth/device_authorization","/oauth/revoke")) {
             call.response.headers.append("Access-Control-Allow-Origin","*")
             call.response.headers.append("Access-Control-Expose-Headers","Retry-After")
         }
@@ -292,7 +295,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
             action()
         }
         catch(e:OAuthFailure) {
-            if(call.request.path()=="/oauth/authorize") call.problem(ApiProblem(400,"invalid-request",e.error))
+            if(call.request.path().removePrefix(call.configuredRoute()?.prefix.orEmpty())=="/oauth/authorize") call.problem(ApiProblem(400,"invalid-request",e.error))
             else call.send(j("error" to e.error),400)
         }
         catch(e:ApiProblem) {
@@ -321,9 +324,14 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
         if(value.second>30) { call.response.headers.append(HttpHeaders.RetryAfter,"60");throw ApiProblem(429,"rate-limited") }
     }
     private fun issuer(call:ApplicationCall):String {
+        call.configuredRoute()?.let { return it.base }
         ctx.config.publicUrl?.let { return it }
         val local=call.request.local
         return "${local.scheme}://${local.serverHost}${if(local.serverPort in setOf(80,443)) "" else ":${local.serverPort}"}"
+    }
+    private fun requireIssuer(id:String,call:ApplicationCall) {
+        val expected=db.read { string("SELECT issuer FROM api_authorization WHERE id=?",id) }
+        if (expected != null && expected != issuer(call) || expected == null && ctx.config.routes.isNotEmpty()) throw OAuthFailure("invalid_grant")
     }
     private fun cookie(call:ApplicationCall)=call.request.cookies["dulcet_consent"]
     private fun validConsentCookie(call:ApplicationCall,storedHash:String?):Boolean {
@@ -333,7 +341,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
     }
     private fun setCookie(call:ApplicationCall,value:String) { call.response.cookies.append(Cookie("dulcet_consent",value,path="/",maxAge=900,httpOnly=true,secure=issuer(call).startsWith("https://"),extensions=mapOf("SameSite" to "Strict"))) }
     private fun html(value:String)=value.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&#39;")
-    private fun form(client:ClientIdentity,scopes:Set<String>,hidden:Map<String,String>,device:Boolean=false):String="""<!doctype html><html lang="en"><meta charset="utf-8"><title>Dulcet sign in</title><h1>Sign in to Dulcet</h1><p>${html(client.name)}${if(client.verified) " (Verified app)" else " (Unverified app)"}</p><p>Requested scopes: ${html(scopes.sorted().joinToString(" "))}</p>${hidden["redirect"]?.let { "<p>Code will go to ${html(it)}</p>" } ?: ""}<form method="post" action="${if(device) "/device" else "/oauth/authorize"}">${hidden.filterKeys { it!="redirect" }.map { "<input type=\"hidden\" name=\"${html(it.key)}\" value=\"${html(it.value)}\">" }.joinToString("")}<label>Username <input name="username" autocomplete="username" required></label><label>Password <input type="password" name="password" autocomplete="current-password" required></label><button name="approve" value="yes">Sign in and approve</button><button name="approve" value="no">Cancel</button></form></html>"""
+    private fun form(client:ClientIdentity,scopes:Set<String>,hidden:Map<String,String>,device:Boolean=false):String="""<!doctype html><html lang="en"><meta charset="utf-8"><title>Dulcet sign in</title><h1>Sign in to Dulcet</h1><p>${html(client.name)}${if(client.verified) " (Verified app)" else " (Unverified app)"}</p><p>Requested scopes: ${html(scopes.sorted().joinToString(" "))}</p>${hidden["redirect"]?.let { "<p>Code will go to ${html(it)}</p>" } ?: ""}<form method="post" action="${if(device) "device" else "authorize"}">${hidden.filterKeys { it!="redirect" }.map { "<input type=\"hidden\" name=\"${html(it.key)}\" value=\"${html(it.value)}\">" }.joinToString("")}<label>Username <input name="username" autocomplete="username" required></label><label>Password <input type="password" name="password" autocomplete="current-password" required></label><button name="approve" value="yes">Sign in and approve</button><button name="approve" value="no">Cancel</button></form></html>"""
     fun installOAuth(route:Route) { with(route) {
         get("/.well-known/oauth-authorization-server") {
             val origin=issuer(call)
@@ -359,19 +367,20 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
                 if(!allowed(user,scope)) throw OAuthFailure("invalid_scope")
                 limitedUser(call,user.name.lowercase())
                 val request=id();val code="$request.${entropy()}"
-                db.write { execute("INSERT INTO api_authorization(id,secret_hash,client_id,client_name,verified,redirect_uri,state,challenge,scopes,user_id,expires) VALUES(?,?,?,?,?,?,?,?,?,?,?)",request,SlowHash.hash(code),client.id,client.name,client.verified,redirect,q["state"],q["code_challenge"],scope.sorted().joinToString(" "),user.id,clock()+300_000) }
+                db.write { execute("INSERT INTO api_authorization(id,secret_hash,client_id,client_name,verified,redirect_uri,state,challenge,scopes,user_id,expires) VALUES(?,?,?,?,?,?,?,?,?,?,?)",request,SlowHash.hash(code),client.id,client.name,client.verified,redirect,q["state"],q["code_challenge"],scope.sorted().joinToString(" "),user.id,clock()+300_000);execute("UPDATE api_authorization SET issuer=? WHERE id=?",issuer(call),request) }
                 val separator=if(redirect.contains('?')) "&" else "?"
                 call.respondRedirect("$redirect${separator}code=${encode(code)}&state=${encode(q["state"]!!)}&iss=${encode(issuer(call))}")
                 return@oauth
             }
             val request=id();val browser=entropy();setCookie(call,browser)
-            db.write { execute("INSERT INTO api_authorization(id,client_id,client_name,verified,redirect_uri,state,challenge,scopes,expires,browser_hash) VALUES(?,?,?,?,?,?,?,?,?,?)",request,client.id,client.name,client.verified,redirect,q["state"],q["code_challenge"],scope.sorted().joinToString(" "),clock()+900_000,sha(browser)) }
+            db.write { execute("INSERT INTO api_authorization(id,client_id,client_name,verified,redirect_uri,state,challenge,scopes,expires,browser_hash) VALUES(?,?,?,?,?,?,?,?,?,?)",request,client.id,client.name,client.verified,redirect,q["state"],q["code_challenge"],scope.sorted().joinToString(" "),clock()+900_000,sha(browser));execute("UPDATE api_authorization SET issuer=? WHERE id=?",issuer(call),request) }
             call.response.headers.append("Content-Security-Policy","default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
             call.respondText(form(client,scope,mapOf("request" to request,"redirect" to redirect)),ContentType.Text.Html)
         } }
         post("/oauth/authorize") { oauth(call) {
             val f=call.receiveParameters(); val rid=f["request"] ?: throw OAuthFailure("invalid_request")
             val pending=db.read { authorization(this,rid) } ?: throw OAuthFailure("invalid_request")
+            requireIssuer(pending.id, call)
             limited(call,pending.clientId)
             if(pending.expires<=clock() || pending.used || !validConsentCookie(call,pending.browserHash)) throw OAuthFailure("invalid_request")
             val suffix="state=${encode(pending.state!!)}&iss=${encode(issuer(call))}"
@@ -387,6 +396,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
             call.respondRedirect("${pending.redirect}${if(pending.redirect!!.contains('?')) "&" else "?"}code=${encode(code)}&$suffix")
         } }
         post("/oauth/token") { oauth(call) {
+            if (call.configuredRoute()?.authAlias == false) throw OAuthFailure("invalid_target")
             val f=call.receiveParameters();val client=f["client_id"] ?: throw OAuthFailure("invalid_client");limited(call,client)
             if(f["resource"]!=null && f["resource"]!=issuer(call)+"/dulcet/v1") throw OAuthFailure("invalid_target")
             val result=db.write {
@@ -396,21 +406,23 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
                     "urn:ietf:params:oauth:grant-type:device_code" -> authorization(this,(f["device_code"] ?: "").substringBefore('.'))?.userId
                     else -> null
                 }
-                userId?.let { uid -> ctx.users.byId(uid)?.let { limitedUser(call,it.name.lowercase()) } }
+                userId?.let { uid -> ctx.users.byId(uid)?.let { if(call.configuredRoute()?.visible(it)==false) throw OAuthFailure("invalid_target");limitedUser(call,it.name.lowercase()) } }
                 when(f["grant_type"]) {
                     "authorization_code" -> {
                         val code=f["code"] ?: throw OAuthFailure("invalid_grant")
                         val a=authorization(this,code.substringBefore('.')) ?: throw OAuthFailure("invalid_grant")
+                        requireIssuer(a.id,call)
                         if(a.userId==null || a.userCode!=null || a.used || a.expires<=clock() || a.clientId!=client || a.redirect!=f["redirect_uri"] || a.hash==null || !SlowHash.verify(code,a.hash)) throw OAuthFailure("invalid_grant")
                         val verifier=f["code_verifier"] ?: throw OAuthFailure("invalid_grant")
                         if(!verifier.matches(Regex("[A-Za-z0-9._~-]{43,128}")) || !MessageDigest.isEqual(sha(verifier).toByteArray(),a.challenge!!.toByteArray())) throw OAuthFailure("invalid_grant")
                         execute("UPDATE api_authorization SET used=1 WHERE id=?",a.id)
                         val user=ctx.users.byId(a.userId)!!;if(!allowed(user,a.scopes)) throw OAuthFailure("invalid_scope")
                         val gid=createGrant(this,user,a.scopes,"oauth",a.clientName,client,a.verified,null,null)
+                        execute("UPDATE api_grant SET issuance_origin=? WHERE id=?",issuer(call),gid)
                         pair(this,grant(this,gid)!!)
                     }
                     "refresh_token" -> refresh(this,f["refresh_token"] ?: "",client,f["scope"])
-                    "urn:ietf:params:oauth:grant-type:device_code" -> deviceToken(this,f["device_code"] ?: "",client)
+                    "urn:ietf:params:oauth:grant-type:device_code" -> { requireIssuer((f["device_code"] ?: "").substringBefore('.'),call);deviceToken(this,f["device_code"] ?: "",client) }
                     else -> throw OAuthFailure("unsupported_grant_type")
                 }
             }
@@ -438,7 +450,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
             }
             val cid=id();val device="$cid.${entropy()}";val alphabet="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
             val userCode=(1..8).map { alphabet[random.nextInt(alphabet.length)] }.joinToString("").chunked(4).joinToString("-")
-            db.write { execute("INSERT INTO api_authorization(id,secret_hash,client_id,client_name,verified,scopes,expires,user_code,user_id) VALUES(?,?,?,?,?,?,?,?,?)",cid,SlowHash.hash(device),client.id,client.name,client.verified,scope.sorted().joinToString(" "),clock()+900_000,userCode,autoUser?.id) }
+            db.write { execute("INSERT INTO api_authorization(id,secret_hash,client_id,client_name,verified,scopes,expires,user_code,user_id) VALUES(?,?,?,?,?,?,?,?,?)",cid,SlowHash.hash(device),client.id,client.name,client.verified,scope.sorted().joinToString(" "),clock()+900_000,userCode,autoUser?.id);execute("UPDATE api_authorization SET issuer=? WHERE id=?",issuer(call),cid) }
             call.send(j("device_code" to device,"user_code" to userCode,"verification_uri" to "${issuer(call)}/device","verification_uri_complete" to "${issuer(call)}/device?user_code=$userCode","expires_in" to 900,"interval" to 5))
         } }
         get("/device") {
@@ -455,6 +467,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
             val f=call.receiveParameters();limited(call,"device-approval")
             val code=f["user_code"] ?: throw OAuthFailure("invalid_request")
             val a=db.read { single("SELECT id FROM api_authorization WHERE user_code=?",code) { authorization(this,it.string("id"))!! } } ?: throw OAuthFailure("access_denied")
+            requireIssuer(a.id,call)
             if(a.expires<=clock() || a.attempts>=5 || a.used || !validConsentCookie(call,a.browserHash)) throw OAuthFailure("access_denied")
             limitedUser(call,(f["username"] ?: "").lowercase())
             val user=(ctx.users.authenticateDulcet(f["username"] ?: "",f["password"] ?: "") as? AuthOutcome.Ok)?.user
@@ -501,6 +514,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
         val user=ctx.users.byId(a.userId)!!;if(!allowed(user,a.scopes)) throw OAuthFailure("invalid_scope")
         s.execute("UPDATE api_authorization SET used=1 WHERE id=?",a.id)
         val gid=createGrant(s,user,a.scopes,"oauth",a.clientName,client,a.verified,null,null)
+        s.execute("UPDATE api_grant SET issuance_origin=(SELECT issuer FROM api_authorization WHERE id=?) WHERE id=?",a.id,gid)
         return pair(s,grant(s,gid)!!)
     }
     private fun encode(value:String)=URLEncoder.encode(value,Charsets.UTF_8)
