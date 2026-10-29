@@ -245,6 +245,7 @@ OBSERVED in iOS 27 capture diagnostics: a top safe-area inset still changes a la
   sibling pages. Sign In and Reconnect are bottom default buttons. The saved account explicitly
   says Not Connected. Address rows show the normalized host, nondefault port and base path,
   without user information, query or fragment. Sign Out remains confirmed and destructive.
+- tvOS retains its v1 no-download contract. Account offers Playback without a Downloads & Storage link. Android TV retains its existing download support.
 - Storage has Offline Music, Storage and Streaming Cache sections, with relevant section footers.
   Clear Streaming Cache names the cache being cleared. Remove All Downloads awaits a controller
   operation that defines removal of active, automatic and pinned downloads; account-data removal

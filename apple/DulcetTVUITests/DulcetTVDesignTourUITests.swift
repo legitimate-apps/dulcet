@@ -252,6 +252,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("connection-connected", app) {
             self.selectSection(app, "settings") && app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 20)
+                && !app.buttons["dulcet.account.downloadsStorage"].firstMatch.exists
         }
         step("settings-quality", app) {
             self.pressByRemote(app.buttons["dulcet.account.playback"].firstMatch, in: app, name: "Playback")

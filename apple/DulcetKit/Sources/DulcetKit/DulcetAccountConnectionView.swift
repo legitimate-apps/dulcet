@@ -267,9 +267,7 @@ struct DulcetAccountConnectionView: View {
                     NavigationLink { DulcetPlaybackSettingsPage(store: store) }
                     label: { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
                         .accessibilityIdentifier("dulcet.account.playback")
-                    NavigationLink { DulcetDownloadsStoragePage(store: store) }
-                    label: { Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle") }
-                        .accessibilityIdentifier("dulcet.account.downloadsStorage")
+
                 }
                 Section { savedServers }
                 Section {
