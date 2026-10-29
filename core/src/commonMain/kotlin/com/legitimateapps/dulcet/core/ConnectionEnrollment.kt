@@ -64,6 +64,13 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
         return if (published) result else snapshot(anchor)
     }
 
+    /** Reject received continuity violations before any later source-availability check. */
+    fun validateDirectory(anchor: OwnershipAnchor, directory: ConnectionDirectory) {
+        val stored = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull()
+        validateDirectoryContinuity(anchor, directory, stored?.principal_id,
+            stored?.directory_revision ?: 0, stored?.directory_json)
+    }
+
     fun commit(anchor: OwnershipAnchor, directory: ConnectionDirectory, bootstrapBase: String,
         verifiedRouteIds: Set<String>, verifiedWall: Long, expectedOwnership: ConnectionOwnershipFence? = null,
         explicitReAddBase: String? = null,
@@ -74,15 +81,9 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
             expectedTransport?.checkCurrent(database, anchor)
             val before = snapshot(anchor)
             val stored = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull()
-            if (directory.revision < before.revision || (stored != null &&
-                    (stored.principal_id != directory.principalId ||
-                        directory.revision == stored.directory_revision && directory.json != stored.directory_json))) {
-                throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
-            }
+            validateDirectoryContinuity(anchor, directory, stored?.principal_id,
+                stored?.directory_revision ?: 0, stored?.directory_json)
             val normalizedAnchor = canonicalConnectionBase(anchor.normalizedBaseUrl, true)
-            if (directory.username != anchor.username || directory.instanceId != lineage(anchor.serverIdentity) ||
-                normalizedAnchor.startsWith("http:") && normalizedAnchor !in directory.legacyOwnershipAnchors
-            ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
             val source = directory.routes.singleOrNull { it.baseUrl == bootstrapBase && it.id in verifiedRouteIds }
                 ?: throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
             val explicitTarget = explicitReAddBase?.let { base ->
@@ -134,6 +135,19 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
     }
 
     companion object {
+        private fun validateDirectoryContinuity(anchor: OwnershipAnchor, directory: ConnectionDirectory,
+            storedPrincipalId: String?, storedRevision: Long, storedJson: String?,
+        ) {
+            if (directory.revision < storedRevision || storedPrincipalId != null &&
+                (storedPrincipalId != directory.principalId ||
+                    directory.revision == storedRevision && directory.json != storedJson)
+            ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
+            val normalizedAnchor = canonicalConnectionBase(anchor.normalizedBaseUrl, true)
+            if (directory.username != anchor.username || directory.instanceId != lineage(anchor.serverIdentity) ||
+                normalizedAnchor.startsWith("http:") && normalizedAnchor !in directory.legacyOwnershipAnchors
+            ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
+        }
+
         fun lineage(identity: String): String = try {
             val array = Json.parseToJsonElement(identity) as? JsonArray
             (array?.getOrNull(1) as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
@@ -310,6 +324,7 @@ internal class ConnectionEnrollmentService(
                 retryAfter = response.headers.retryAfter).okPayload()
             if (response.statusCode !in 200..299) throw ConnectionEnrollmentFailure(DomainError.Server.HttpStatus(response.statusCode))
             val directory = ConnectionDirectoryParser.parse(response.body, expectedInstance, anchor.username)
+            store.validateDirectory(anchor, directory)
             if (directory.routes.none { it.baseUrl == base })
                 throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
             // Authenticated continuity and the separate secret-free API/base check are both required.

@@ -205,6 +205,40 @@ class ConnectionEnrollmentRecoveryTest {
         }
     }
 
+    @Test fun receivedDirectoryContinuityFailuresCannotBeMaskedByALaterSourceAvailabilityFailure() = runTest {
+        val corruptions: List<Pair<String, (String) -> String>> = listOf(
+            "principal" to { it.replace("user:1", "user:foreign") },
+            "rollback" to { it.replace("\"revision\":2", "\"revision\":1") },
+            "same-revision changed content" to { it.replace("\"priority\":20", "\"priority\":21") },
+            "missing legacy attestation" to { it.replace("\"http://legacy.example.test/music\"", "") },
+        )
+        val laterErrors = listOf(DomainError.Transport.Unreachable, DomainError.Transport.Timeout,
+            DomainError.Security.TlsUntrusted(TlsTrustFailure.Hostname))
+        for ((label, corrupt) in corruptions) for (laterError in laterErrors) fixture(http = true) { f ->
+            f.directoryBody = { _, body -> body.replace("\"revision\":1", "\"revision\":2") }
+            assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request(f.home, explicit = true)))
+            f.service.remove(f.anchor, "home")
+            val before = f.service.snapshot(f.anchor)
+            val epoch = f.epoch()
+            f.directoryBody = { url, body ->
+                val current = body.replace("\"revision\":1", "\"revision\":2")
+                if (url == f.remote) corrupt(current) else current
+            }
+            f.afterFetch = { f.failedProbes += f.remote; f.probeFailure = laterError }
+            f.clearReceipts()
+            val result = f.service.enroll(f.request(f.home, explicit = true))
+            val failure = assertIs<ConnectionEnrollmentResult.Failed>(result,
+                "Received $label violation must be fatal before later $laterError; result=$result events=${f.events}")
+            assertEquals(DomainError.Protocol.ServerIdentityChanged, failure.error)
+            assertEquals(listOf(f.remote), f.authenticated)
+            assertEquals(listOf(f.remote), f.fetched)
+            assertEquals(listOf("probe:${f.remote}", "auth:${f.remote}"), f.events,
+                "Validate the received directory before the later availability probe or any chosen-bootstrap request")
+            assertEquals(before, f.service.snapshot(f.anchor))
+            assertEquals(epoch, f.epoch())
+        }
+    }
+
     @Test fun unlistedExplicitAddNeverReceivesCredentialsAndDoesNotChangeSelection() = runTest {
         fixture { f ->
             val before = assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request())).snapshot
@@ -311,6 +345,7 @@ class ConnectionEnrollmentRecoveryTest {
         val fetched = mutableListOf<String>()
         val events = mutableListOf<String>()
         var afterFetch: (() -> Unit)? = null
+        var directoryBody: (String, String) -> String = { _, body -> body }
         val failedProbes = mutableSetOf<String>()
         var probeFailure: DomainError = DomainError.Protocol.ServerIdentityChanged
         val connectFailures = mutableMapOf<String, DomainError>()
@@ -344,7 +379,7 @@ class ConnectionEnrollmentRecoveryTest {
             fetchFailures[request.serverUrl]?.let { throw AuthenticatedEndpointFailure(it) }
             afterFetch?.invoke()
             val body = """{"subsonic-response":{"status":"ok","version":"1.16.1","dulcetConnections":{"version":1,"revision":1,"instanceId":"lineage","principal":{"id":"user:1","username":"listener"},"routes":[{"id":"home","baseUrl":"$home","role":"private","priority":10},{"id":"remote","baseUrl":"$remote","role":"public","priority":20}],"legacyOwnershipAnchors":["http://legacy.example.test/music"],"authAliases":[]}}}""".encodeToByteArray()
-            AuthenticatedEndpointResponse(200, body, "<redacted>", AuthenticatedEndpointResponseHeaders("application/json", null, null, null, null),
+            AuthenticatedEndpointResponse(200, directoryBody(request.serverUrl, body.decodeToString()).encodeToByteArray(), "<redacted>", AuthenticatedEndpointResponseHeaders("application/json", null, null, null, null),
                 RequestTrace.observed("getDulcetConnections", "POST", "<redacted>", AuthenticationLocation.FormBody,
                     emptySet(), emptySet(), emptySet(), "1.16.1", "fixture"))
         })
