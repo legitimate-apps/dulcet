@@ -111,7 +111,9 @@ jobs:
       - name: Prove account-state interactions use their screen-state waits
         run: python3 tools/test-account-connect-idle-waits
       - name: Prove live account status requires the native phone Form witness
-        run: python3 tools/test-live-account-status-witness
+        run: |
+          python3 tools/test-live-account-status-witness
+          python3 tools/test-live-account-status-witness --design-tour
       - name: Prove download-handoff diagnostics explain namespace rejection without exposing paths
         run: python3 tools/test-download-handoff-diagnostics
       - name: Prove nonexistent promotion targets are rejected
