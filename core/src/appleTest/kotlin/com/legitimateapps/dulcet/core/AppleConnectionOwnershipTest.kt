@@ -129,6 +129,34 @@ class AppleConnectionOwnershipTest {
                     ConnectionEnrollmentRequest(f.anchor, AccountConnectionRequest(f.routeA, f.account.username, f.account.password))))
                 assertEquals(rows, f.store.driver.connectionOwnershipSnapshot(), "Enrollment preserves every prior owned row")
                 assertEquals(files, f.files(), "Enrollment preserves every complete and partial byte")
+                f.control("reset", "POST")
+                val service = ConnectionEnrollmentService(f.store.database)
+                val original = enrolled.snapshot.routes.single { it.baseUrl == f.routeA }.id
+                val removed = service.remove(f.anchor, original)
+                assertNull(removed.selectedRouteId, "Removing the selected connection leaves this account offline")
+                assertNull(ConnectionRouteRegistry.leaseFor(f.anchor.normalizedBaseUrl, f.anchor.username))
+                val verifyStart = f.control("state").getValue("requests").jsonArray.size
+                val verified = assertIs<ConnectionEnrollmentResult.Enrolled>(service.enroll(ConnectionEnrollmentRequest(f.anchor,
+                    AccountConnectionRequest(f.anchor.normalizedBaseUrl, f.account.username, f.account.password, true)))).snapshot
+                assertNull(verified.selectedRouteId, "Verify cannot automatically select the remaining HTTPS route")
+                assertTrue(verified.routes.single { it.id == original }.removed, "Refresh preserves the local removal")
+                val verificationReceipts = f.control("state").getValue("requests").jsonArray.drop(verifyStart).map { it.jsonObject }
+                assertTrue(verificationReceipts.any { it.getValue("routeId").jsonPrimitive.content == "remote" &&
+                    it.getValue("endpoint").jsonPrimitive.content == "getDulcetConnections" &&
+                    it.getValue("bodyAuth").jsonPrimitive.boolean }, "Darwin Verify after HTTP adoption actually reads its directory through admitted HTTPS")
+                assertEquals(rows, f.store.driver.connectionOwnershipSnapshot(), "Removal and Verify preserve all owned rows")
+                assertEquals(files, f.files(), "Removal and Verify preserve explicit/automatic complete and partial bytes")
+                val readded = assertIs<ConnectionEnrollmentResult.Enrolled>(service.enroll(ConnectionEnrollmentRequest(f.anchor,
+                    AccountConnectionRequest(f.routeA, f.account.username, f.account.password), explicitAdd = true))).snapshot
+                assertEquals(original, readded.selectedRouteId, "Explicit re-add selects only the person's chosen HTTPS route")
+                assertFalse(readded.routes.single { it.id == original }.removed)
+                assertEquals(verified.routes.filter { it.id != original }.associate { it.id to it.removed },
+                    readded.routes.filter { it.id != original }.associate { it.id to it.removed }, "Re-add clears only its chosen removal")
+                assertEquals(rows, f.store.driver.connectionOwnershipSnapshot(), "Explicit recovery preserves all owned rows")
+                assertEquals(files, f.files(), "Explicit recovery preserves complete and partial bytes")
+                assertEquals(f.anchor, readded.anchor)
+                assertEquals(0, f.control("state").getValue("counts").jsonObject.getValue("legacy").jsonPrimitive.int,
+                    "The frozen HTTP anchor is never dialed during removal, Verify or explicit recovery")
                 val wire = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(f.anchor.normalizedBaseUrl,
                     f.account.username, f.account.password, true), "native.apple.connections")
                 val alternate = enrolled.snapshot.routes.single { it.baseUrl == f.routeB }.id

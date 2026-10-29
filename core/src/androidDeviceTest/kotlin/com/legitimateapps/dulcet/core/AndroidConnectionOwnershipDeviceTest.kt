@@ -84,6 +84,34 @@ class AndroidConnectionOwnershipDeviceTest {
                 ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
             assertEquals(before, store.driver.connectionOwnershipSnapshot(), "HTTP upgrade preserves every preexisting owned row")
             assertEquals(byteWitness, fileWitness(root), "HTTP upgrade preserves completed and partial bytes")
+            fixture.control("reset", "POST")
+            val service = ConnectionEnrollmentService(store.database)
+            val originalId = enrolled.snapshot.routes.single { it.baseUrl == fixture.routeA }.id
+            val removed = service.remove(anchor, originalId)
+            assertNull(removed.selectedRouteId, "Removing the selected connection leaves the enrolled account offline")
+            assertNull(ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username))
+            val verifyStart = fixture.control("state").getValue("requests").jsonArray.size
+            val verified = assertIs<ConnectionEnrollmentResult.Enrolled>(service.enroll(ConnectionEnrollmentRequest(anchor,
+                AccountConnectionRequest(anchor.normalizedBaseUrl, fixture.username, fixture.password, true)))).snapshot
+            assertNull(verified.selectedRouteId, "Verify cannot automatically select the remaining HTTPS route")
+            assertTrue(verified.routes.single { it.id == originalId }.removed, "Refresh preserves the local removal")
+            val verificationReceipts = fixture.control("state").getValue("requests").jsonArray.drop(verifyStart).map { it.jsonObject }
+            assertTrue(verificationReceipts.any { it.getValue("routeId").jsonPrimitive.content == "remote" &&
+                it.getValue("endpoint").jsonPrimitive.content == "getDulcetConnections" &&
+                it.getValue("bodyAuth").jsonPrimitive.boolean }, "Verify after HTTP adoption actually authenticates its directory through admitted HTTPS")
+            assertEquals(before, store.driver.connectionOwnershipSnapshot(), "Removal and Verify preserve all owned rows")
+            assertEquals(byteWitness, fileWitness(root), "Removal and Verify preserve explicit/automatic complete and partial bytes")
+            val readded = assertIs<ConnectionEnrollmentResult.Enrolled>(service.enroll(ConnectionEnrollmentRequest(anchor,
+                AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password), explicitAdd = true))).snapshot
+            assertEquals(originalId, readded.selectedRouteId, "The person's explicit re-add restores the chosen HTTPS route")
+            assertFalse(readded.routes.single { it.id == originalId }.removed)
+            assertEquals(verified.routes.filter { it.id != originalId }.associate { it.id to it.removed },
+                readded.routes.filter { it.id != originalId }.associate { it.id to it.removed }, "Re-add clears only the chosen removal")
+            assertEquals(before, store.driver.connectionOwnershipSnapshot(), "Explicit recovery preserves every owned row")
+            assertEquals(byteWitness, fileWitness(root), "Explicit recovery preserves every complete and partial file")
+            assertEquals(anchor, readded.anchor)
+            assertEquals(0, fixture.control("state").getValue("counts").jsonObject.getValue("legacy").jsonPrimitive.int,
+                "HTTP ownership is provenance only throughout removal, verification and explicit recovery")
             val alternateId = enrolled.snapshot.routes.single { it.baseUrl == fixture.routeB }.id
             ConnectionEnrollmentStore(store.database).restore(anchor)
             val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(account.normalizedBaseUrl,
