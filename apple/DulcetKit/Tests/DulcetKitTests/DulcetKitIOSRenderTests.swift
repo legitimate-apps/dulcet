@@ -17,8 +17,9 @@ func accountConnectRootLoadsForIOS() {
     controller.view.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
     controller.view.layoutIfNeeded()
 
-    // Account is now a sheet over Listen Now, rather than a selected content tab.
-    #expect(store.selectedDestination == .listenNow)
+    // Account leaves the content tabs. This source maps Listen Now to its Library
+    // snapshot; the live-shell UI proofs exercise the actual Listen Now destination.
+    #expect(store.selectedDestination == .library)
     #expect(store.snapshot.state == .libraryBrowse)
     #expect(controller.view.bounds.size == CGSize(width: 393, height: 852))
     #expect(controller.view.window === window)
