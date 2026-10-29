@@ -1127,12 +1127,12 @@ def discover_native_condition_errors(lines: list[str]) -> list[str]:
 
 def discover_diagnostic_selector_errors(lines: list[str]) -> list[str]:
     """A focused reproduction cannot narrow a default, push or plain dispatch run."""
-    expected = "${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || 'DulcetDiscoverWishlistIPadUITests' }}"
+    expected = "${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || inputs.discover_only == true && inputs.discover_ipad_case == 'offline' && 'DulcetDiscoverWishlistIPadUITests/testOfflineWishRelaunchRemoveAndScanArrival' || 'DulcetDiscoverWishlistIPadUITests' }}"
     errors = []
     for line in lines:
         entry = mapping_entry(line)
         if entry and entry[1] == "DULCET_DISCOVER_ONLY_TEST" and entry[2] != expected:
-            errors.append("Discover native selector must guard both focused cases with discover_only == true and fall back to the complete iPad suite")
+            errors.append("Discover native selector must guard every focused case with discover_only == true and fall back to the complete iPad suite")
     return errors
 
 

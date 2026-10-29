@@ -298,6 +298,15 @@ def apple_proof(mode):
         tests_result=subprocess.run(['xcrun','xcresulttool','get','test-results','tests','--path',str(output/'proof.xcresult')],capture_output=True,text=True)
         tests=tests_result.stdout if tests_result.returncode==0 else '{}'
         (output/'tests.json').write_text(tests)
+        remove_receipts=[line.strip() for line in (output/'xcodebuild.log').read_text(errors='replace').splitlines()
+                         if line.startswith(('DISCOVER_REMOVE_INPUT ', 'DISCOVER_REMOVE_RECEIVED ', 'DISCOVER_REMOVE_RESYNTHESIZE '))]
+        (output/'remove-input-receipts.txt').write_text('\n'.join(remove_receipts)+'\n')
+        synthesized=sum(line.startswith('DISCOVER_REMOVE_INPUT ') for line in remove_receipts)
+        recovered=sum(line.startswith('DISCOVER_REMOVE_RESYNTHESIZE ') for line in remove_receipts)
+        input_summary=f'Wishlist Remove ({mode}): {synthesized} inputs, {recovered} lost-input recoveries. See remove-input-receipts.txt.'
+        print(input_summary)
+        if os.environ.get('GITHUB_STEP_SUMMARY'):
+            with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as step_summary:step_summary.write(input_summary+'\n')
         for endpoint in ['requests?since=0','state']:
             with urllib.request.urlopen(os.environ['DULCET_DISCOVER_CONTROL_URL']+'/control/'+endpoint) as response:
                 (output/('fixture-'+endpoint.split('?')[0]+'.json')).write_bytes(response.read())
