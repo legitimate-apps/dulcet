@@ -92,11 +92,61 @@ class ServerRelayDiagnosticsTest {
         }
     }
 
+    @Test fun heldRequestPathIdentifiesTheProbeAndReplaysItsExactBytesOnce() {
+        ServerRelay(DisposableServerProbe.fromInstrumentation().baseUrl).use { relay ->
+            relay.hold()
+            val marker = System.nanoTime()
+            Socket("127.0.0.1", URI(relay.url).port).use { socket ->
+                val first = "GET /rest/ping.view?u=user-canary&t=token-canary".toByteArray()
+                val rest = "&s=salt-canary HTTP/1.1\r\nHost: header-canary\r\n\r\n".toByteArray()
+                socket.getOutputStream().apply { write(first); flush() }
+                awaitReport(relay, marker, "#1", ready = { relay.heldConnections.get() == 1 })
+                assertTrue(relay.heldRequestPaths().isEmpty())
+                socket.getOutputStream().apply { write(rest); flush() }
+                val report = awaitReport(relay, marker, "GET /rest/ping.view HTTP/1.1",
+                    ready = { relay.heldRequestPaths() == listOf("/rest/ping.view") })
+                assertEquals(0, relay.forwardedConnections.get())
+                assertEquals(0L, relay.forwardedBytes.get())
+                assertSafe(report)
+                relay.release()
+                awaitReport(relay, marker, "forwarded", ready = {
+                    relay.connections().singleOrNull()?.sent()?.contentEquals(first + rest) == true
+                })
+                assertEquals(1, relay.forwardedConnections.get())
+                assertTrue(relay.connections().single().sent().contentEquals(first + rest))
+            }
+        }
+    }
+
+    @Test fun cuttingAnIdentifiedHeldProbeRefusesItWithoutForwardingThePrefix() {
+        ServerRelay(DisposableServerProbe.fromInstrumentation().baseUrl).use { relay ->
+            relay.hold()
+            val marker = System.nanoTime()
+            Socket("127.0.0.1", URI(relay.url).port).use { socket ->
+                socket.getOutputStream().apply {
+                    write("GET /rest/ping.view?u=user-canary&t=token-canary HTTP/1.1\r\n\r\n".toByteArray())
+                    flush()
+                }
+                awaitReport(relay, marker, "GET /rest/ping.view HTTP/1.1",
+                    ready = { relay.heldRequestPaths() == listOf("/rest/ping.view") })
+                relay.cut()
+                relay.release()
+                val report = awaitReport(relay, marker, "refused GET /rest/ping.view HTTP/1.1")
+                assertEquals(1, relay.refusedConnections.get())
+                assertEquals(0, relay.forwardedConnections.get())
+                assertEquals(0L, relay.forwardedBytes.get())
+                assertTrue(relay.connections().isEmpty())
+                assertSafe(report)
+            }
+        }
+    }
+
     private fun awaitReport(relay: ServerRelay, marker: Long, containing: String, ready: () -> Boolean = { true }): String {
         val deadline = System.nanoTime() + 5_000_000_000L
         while (true) {
+            val isReady = ready()
             val report = relay.connectionDiagnostics(marker)
-            if (report.contains(containing) && ready()) return report
+            if (report.contains(containing) && isReady) return report
             check(System.nanoTime() < deadline) { "Relay diagnostic never contained $containing:\n$report" }
             Thread.sleep(10)
         }

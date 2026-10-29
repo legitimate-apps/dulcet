@@ -69,6 +69,7 @@ class ServerRelay(target: String) : AutoCloseable {
         private var countedNanos: Long? = null
         private var requestNanos: Long? = null
         private var requestLine = "<no request line observed>"
+        private var requestPath: String? = null
         private val firstLine = java.io.ByteArrayOutputStream()
         private var finished = false
 
@@ -83,9 +84,10 @@ class ServerRelay(target: String) : AutoCloseable {
                     val path = parts.getOrNull(1)?.let { target ->
                         runCatching { URI(target).rawPath }.getOrNull()
                     }?.takeIf { it.startsWith('/') && it.all { c -> c.code in 33..126 } }
-                    requestLine = if (parts.size == 3 && parts[0].matches(Regex("[A-Z]+")) &&
+                    val recognized = parts.size == 3 && parts[0].matches(Regex("[A-Z]+")) &&
                         parts[2].matches(Regex("HTTP/[0-9]+\\.[0-9]+")) && path != null
-                    ) "${parts[0]} $path ${parts[2]}" else "<unrecognized request line>"
+                    requestPath = path.takeIf { recognized }
+                    requestLine = if (recognized) "${parts[0]} $path ${parts[2]}" else "<unrecognized request line>"
                     requestNanos = System.nanoTime()
                     finished = true
                     firstLine.reset()
@@ -100,6 +102,8 @@ class ServerRelay(target: String) : AutoCloseable {
                 firstLine.write(byte)
             }
         }
+
+        @Synchronized fun path(): String? = requestPath
 
         @Synchronized fun counted(asDisposition: String) {
             disposition = asDisposition
@@ -126,7 +130,32 @@ class ServerRelay(target: String) : AutoCloseable {
     /** Connections accepted while held, and not yet released. */
     val heldConnections = AtomicInteger()
     private var isHeld = false
-    private val parked = mutableListOf<Pair<Socket, Contact>>()
+    private class Parked(val client: Socket, val contact: Contact) {
+        val prefetched = java.io.ByteArrayOutputStream()
+    }
+    private val parked = mutableListOf<Parked>()
+
+    /**
+     * Observes only bytes already waiting on held sockets, without forwarding any of them.
+     * The bounded prefix is replayed on release; only query-free paths escape this relay.
+     * A held TCP accept alone cannot establish which reader request a proof is blocking.
+     */
+    fun heldRequestPaths(): List<String> = synchronized(lock) {
+        parked.mapNotNull { held ->
+            try {
+                val input = held.client.getInputStream()
+                while (held.contact.path() == null && held.prefetched.size() < 8193 && input.available() > 0) {
+                    val bytes = ByteArray(minOf(input.available(), 8193 - held.prefetched.size()))
+                    val count = input.read(bytes)
+                    if (count <= 0) break
+                    held.prefetched.write(bytes, 0, count)
+                    held.contact.record(bytes, count)
+                }
+            } catch (_: IOException) {
+            }
+            held.contact.path()
+        }
+    }
 
     init {
         thread(name = "server-relay-accept", isDaemon = true) {
@@ -136,7 +165,7 @@ class ServerRelay(target: String) : AutoCloseable {
                     synchronized(lock) { contacts += it; acceptedConnections.incrementAndGet() }
                 }
                 val held = synchronized(lock) {
-                    if (isHeld && !isCut) { parked += client to contact; heldConnections.incrementAndGet(); true } else false
+                    if (isHeld && !isCut) { parked += Parked(client, contact); heldConnections.incrementAndGet(); true } else false
                 }
                 // An upstream dial may block. Never let it leave later app connections queued at
                 // the listener and counted in a different test phase from the one that made them.
@@ -145,7 +174,7 @@ class ServerRelay(target: String) : AutoCloseable {
         }
     }
 
-    private fun forward(client: Socket, contact: Contact) {
+    private fun forward(client: Socket, contact: Contact, prefetched: ByteArray = byteArrayOf()) {
         // Register before dialing so cut/close can interrupt an upstream connect in progress.
         // Dial outside the lock: the accept loop and cut must remain able to make progress.
         val candidate = Socket()
@@ -177,8 +206,10 @@ class ServerRelay(target: String) : AutoCloseable {
                     val buffer = ByteArray(8193)
                     // read() may return a partial line; the socket deadline bounds the whole read.
                     val deadline = System.nanoTime() + 1_000_000_000L
-                    var total = 0
-                    while (total < buffer.size && System.nanoTime() < deadline) {
+                    var total = prefetched.size
+                    prefetched.copyInto(buffer)
+                    while (total < buffer.size && System.nanoTime() < deadline &&
+                        !(0 until total).any { buffer[it] == 10.toByte() }) {
                         client.soTimeout = maxOf(1, ((deadline - System.nanoTime()) / 1_000_000).toInt())
                         val count = input.read(buffer, total, buffer.size - total)
                         if (count < 0) break
@@ -204,7 +235,7 @@ class ServerRelay(target: String) : AutoCloseable {
                 synchronized(lock) { open -= client; open -= upstream }
             }
         }
-        pump(client, upstream, release) { bytes, count ->
+        pump(client, upstream, release, prefetched) { bytes, count ->
             contact.record(bytes, count)
             keep(tap, tap.sent, bytes, count)
         }
@@ -217,7 +248,7 @@ class ServerRelay(target: String) : AutoCloseable {
     /** Stops holding and forwards every parked connection, in the order accepted. */
     fun release() {
         val waiting = synchronized(lock) { isHeld = false; parked.toList().also { parked.clear() } }
-        waiting.forEach { (client, contact) -> forward(client, contact) }
+        waiting.forEach { held -> forward(held.client, held.contact, held.prefetched.toByteArray()) }
     }
 
     /** As [cut], until [makeReachable]. */
@@ -234,7 +265,7 @@ class ServerRelay(target: String) : AutoCloseable {
 
     override fun close() {
         cut()
-        synchronized(lock) { parked.toList().also { parked.clear() } }.forEach { (client, _) -> runCatching { client.close() } }
+        synchronized(lock) { parked.toList().also { parked.clear() } }.forEach { held -> runCatching { held.client.close() } }
         runCatching { listener.close() }
         synchronized(lock) { diagnosticSockets.toList().also { diagnosticSockets.clear() } }
             .forEach { runCatching { it.close() } }
@@ -245,11 +276,17 @@ class ServerRelay(target: String) : AutoCloseable {
         if (room > 0) sink.write(bytes, 0, minOf(room, count))
     }
 
-    private fun pump(from: Socket, to: Socket, release: () -> Unit, tap: (ByteArray, Int) -> Unit) = thread(name = "server-relay-pump", isDaemon = true) {
+    private fun pump(from: Socket, to: Socket, release: () -> Unit, prefetched: ByteArray = byteArrayOf(), tap: (ByteArray, Int) -> Unit) = thread(name = "server-relay-pump", isDaemon = true) {
         val buffer = ByteArray(16 * 1024)
         try {
             val input = from.getInputStream()
             val output = to.getOutputStream()
+            if (prefetched.isNotEmpty() && !synchronized(lock) { isCut }) {
+                tap(prefetched, prefetched.size)
+                output.write(prefetched)
+                output.flush()
+                forwardedBytes.addAndGet(prefetched.size.toLong())
+            }
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
