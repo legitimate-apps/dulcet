@@ -180,40 +180,41 @@ final class DulcetiOSUITests: XCTestCase {
     ///    another tab.
     /// 3. The bar opens the full player as a sheet showing the track that was played, and the
     ///    sheet closes back to the tab with the bar still there.
-    /// The first-run Library's title wraps rather than truncating on an iPhone, at the default
-    /// text size and at a large one. A truncated title keeps one line's height; the full title
-    /// cannot fit one line on a phone at the large-title size, so it must be taller than the
-    /// one-line "Library" navigation title above it.
+    /// Library uses one native navigation title at both default and accessibility text sizes.
+    /// The former second marketing headline is gone; its wrapping is no longer the contract.
     @MainActor
-    func testTheFirstRunLibraryTitleWrapsOnIPhone() {
-        for size in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryXXL"] {
+    func testTheFirstRunLibraryUsesOneVisibleNativeTitleOnIPhone() {
+        for size in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryAccessibilityXXXL"] {
             XCUIDevice.shared.orientation = .portrait
             let app = XCUIApplication()
-            app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", size,
+                "-dulcet-debug-account-fixture", "first-run-" + UUID().uuidString]
             app.launch()
-
-            let libraryTab = app.tabBars.buttons["Library"].firstMatch
-            guard libraryTab.waitForExistence(timeout: 10) else {
-                XCTFail("A compact window must present a tab bar with Library: " + app.debugDescription)
+            guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return }
+            let window = app.windows.firstMatch
+            let title = app.navigationBars.staticTexts["Library"].firstMatch
+            let account = app.buttons["dulcet.account.open"].firstMatch
+            guard title.waitForExistence(timeout: 10), account.waitForExistence(timeout: 10) else {
+                XCTFail("Library must show its native title and Account toolbar item at \(size): " + app.debugDescription)
                 return
             }
-            libraryTab.tap()
-            let title = app.staticTexts["Your music, wherever you listen"].firstMatch
-            let navigationTitle = app.navigationBars.staticTexts["Library"].firstMatch
-            guard title.waitForExistence(timeout: 10), navigationTitle.waitForExistence(timeout: 10) else {
-                XCTFail("The first-run Library must show its title under a Library navigation title at \(size): "
-                    + app.debugDescription)
-                return
+            let visibleTitles = app.navigationBars.staticTexts.matching(identifier: "Library")
+                .allElementsBoundByIndex.filter { $0.isHittable }
+            XCTAssertEqual(visibleTitles.count, 1, "Only one visible Library navigation title")
+            for (name, element) in [("Library title", title), ("Account", account)] {
+                XCTAssertTrue(element.isHittable, "\(name) must be reachable at \(size)")
+                XCTAssertGreaterThan(element.frame.width, 1)
+                XCTAssertGreaterThan(element.frame.height, 1)
+                XCTAssertTrue(window.frame.contains(element.frame), "\(name) must fit the window at \(size)")
             }
+            XCTAssertFalse(title.frame.intersects(account.frame), "Account must not cover the Library title")
+            XCTAssertFalse(app.staticTexts["Your music, wherever you listen"].firstMatch.exists,
+                "Library must not duplicate its native title with the removed marketing headline")
             let shot = XCTAttachment(screenshot: app.screenshot())
             shot.name = "first-run-library-\(size)"
             shot.lifetime = .keepAlways
             add(shot)
-            print("DULCET FIRST RUN TITLE size=\(size) title=\(title.frame) navigationTitle=\(navigationTitle.frame)")
-            XCTAssertGreaterThan(
-                title.frame.height, navigationTitle.frame.height * 1.5,
-                "At \(size) the first-run title must wrap onto a second line, not truncate to one"
-            )
+            print("DULCET FIRST RUN TITLE size=\(size) title=\(title.frame) account=\(account.frame)")
             app.terminate()
         }
     }
@@ -246,12 +247,12 @@ final class DulcetiOSUITests: XCTestCase {
             app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.exists,
             "A compact window must not fall back to the sidebar list"
         )
-        // The fixture opens on the Connection tab. A compact window must not raise the keyboard
-        // there on its own: it would cover the tab bar this proof (and a person) needs.
+        // The fixture opens Account as a sheet. It must not raise the keyboard on arrival;
+        // dismiss it before selecting the underlying content tab.
         XCTAssertFalse(app.keyboards.firstMatch.exists,
-                       "The Connection tab must not raise the keyboard over the tab bar on arrival")
-        libraryTab.tap()
-        XCTAssertTrue(libraryTab.isSelected, "The Library tab must be selected after tapping it")
+                       "Account must not raise the keyboard on arrival")
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return }
+        XCTAssertTrue(libraryTab.isSelected, "The Library tab must be selected after closing Account")
 
         let album = app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH %@", "Double Lines")
@@ -5904,46 +5905,47 @@ final class DulcetiOSUITests: XCTestCase {
         )
     }
 
-    /// Proves the iPad renders the regular-width split: sidebar and detail visible at once, in
-    /// separate columns. An iPhone cannot satisfy this, which is the point -- a test that passed on
-    /// both would let the iPadOS cell claim evidence it does not have.
+    /// A regular-width iPad keeps native destination navigation and presents Account as a sheet.
+    /// The sheet's real form must be visible, contained, and dismiss back to the content page.
     @MainActor
-    func testAccountConnectUsesRegularWidthSplitLayout() {
+    func testAccountSheetUsesRegularWidthNativePresentation() {
         let app = XCUIApplication()
         app.launchArguments.append("-dulcet-account-connect-layout-fixture")
         app.launch()
         print("DULCET IPADOS APP LAUNCH PASS layout-assertions-starting=true")
-
-        // Guard on window width, not XCUIApplication.horizontalSizeClass: that attribute reports
-        // .unspecified for the application element (OBSERVED on iPad Pro 13-inch, rawValue 0), so
-        // asserting .regular against it fails on the very device it is meant to accept. A regular
-        // split needs a window far wider than any iPhone.
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        guard let width = settledWindowWidth(
-            window, expecting: "regular", matching: { $0 > 700 }
-        ) else { return }
-        XCTAssertGreaterThan(
-            width,
-            700,
-            "This proof requires a regular-width window; an iPhone destination is invalid evidence"
-        )
-
-        // staticTexts, not descendants(matching: .any): the row's identifier is carried by BOTH its
-        // SF Symbol image and its label (OBSERVED in the captured hierarchy), so an .any query is
-        // ambiguous and resolves against the decorative image, whose isHittable is false.
-        let sidebar = app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch
-        let detail = app.staticTexts["dulcet.account-connect.title"].firstMatch
-
-        XCTAssertTrue(sidebar.waitForExistence(timeout: 10), "The Library row must be in the sidebar")
-        XCTAssertTrue(detail.waitForExistence(timeout: 10), "The account-connect heading must be in the detail column")
-        XCTAssertTrue(sidebar.isHittable, "The sidebar must be visible, not retained offscreen")
-        XCTAssertTrue(detail.isHittable, "The detail must be visible at the same time as the sidebar")
-        XCTAssertLessThan(
-            sidebar.frame.maxX,
-            detail.frame.minX,
-            "Regular-width layout must place the sidebar and detail in separate visible columns"
-        )
+        guard let width = settledWindowWidth(window, expecting: "regular", matching: { $0 > 700 }) else { return }
+        XCTAssertGreaterThan(width, 700, "This proof requires a regular-width iPad")
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else { return }
+        let libraryTitle = app.navigationBars.staticTexts["Library"].firstMatch
+        XCTAssertTrue(libraryTitle.waitForExistence(timeout: 10) && libraryTitle.isHittable,
+            "The selected content page must be visible before opening Account")
+        let account = app.buttons["dulcet.account.open"].firstMatch
+        guard account.waitForExistence(timeout: 10), account.isHittable else {
+            XCTFail("The iPad content toolbar must offer Account: " + app.debugDescription)
+            return
+        }
+        account.tap()
+        let accountBar = app.navigationBars["Account"].firstMatch
+        let serverField = window.textFields["dulcet.account-connect.server-address"].firstMatch
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        guard accountBar.waitForExistence(timeout: 10), serverField.waitForExistence(timeout: 10),
+              close.waitForExistence(timeout: 10) else {
+            XCTFail("Account must present its native title, server field and Close: " + app.debugDescription)
+            return
+        }
+        for (name, element) in [("server field", serverField), ("Close", close)] {
+            XCTAssertTrue(element.isHittable, "\(name) must be reachable in the sheet")
+            XCTAssertGreaterThan(element.frame.width, 1)
+            XCTAssertGreaterThan(element.frame.height, 1)
+            XCTAssertTrue(window.frame.contains(element.frame), "\(name) must fit the regular-width window")
+        }
+        XCTAssertLessThan(serverField.frame.width, width * 0.9,
+            "The system iPad sheet must not stretch its field across the entire display")
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 10), "Close must dismiss Account")
+        XCTAssertTrue(libraryTitle.isHittable, "Dismissing Account must restore the same content page")
     }
 
     /// Device-only evidence that the production account, library, stream, audio engine, and
