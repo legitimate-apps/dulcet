@@ -27,7 +27,8 @@ public sealed interface ConnectionEnrollmentResult {
 /**
  * Storage and publication are additive. This class has no handle to bindMedia, cache bind,
  * purgeNamespace, secure credentials or any owned-row mutation.
- * Calls are confined to the composition's serial database dispatcher, like the library reader.
+ * Restore snapshots routes and their generation in one SQL statement. Atomic generation-fenced
+ * publication also rejects delayed publishers from other handles or dispatchers.
  */
 internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
     fun snapshot(anchor: OwnershipAnchor): ConnectionSnapshot {
@@ -42,24 +43,35 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
     }
 
     fun restore(anchor: OwnershipAnchor): ConnectionSnapshot {
-        if (database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull() != null) {
-            ConnectionRouteRegistry.publish(anchor, null)
+        val rows = database.connectionsQueries.selectPublication(anchor.accountId).executeAsList()
+        val row = rows.firstOrNull() ?: return ConnectionSnapshot(anchor, emptyList(), null, 0, false)
+        if (row.ownership_anchor != canonicalConnectionBase(anchor.normalizedBaseUrl, true) ||
+            row.username != anchor.username || row.server_identity != anchor.serverIdentity) {
+            ConnectionRouteRegistry.publish(anchor, null, row.generation)
+            throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
         }
-        return snapshot(anchor).also { snapshot ->
-            if (!snapshot.enrolled) return@also
-            val row = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOne()
-            val route = snapshot.routes.singleOrNull { it.id == snapshot.selectedRouteId && it.enabled && !it.removed }
-            ConnectionRouteRegistry.publish(anchor, route?.let {
-                RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), snapshot.revision, row.generation)
-            })
-        }
+        val routes = rows.mapNotNull { item -> item.route_id?.let { id ->
+            ConnectionRoute(id, requireNotNull(item.normalized_base_url), item.label,
+                requireNotNull(item.role), requireNotNull(item.priority).toInt(), item.enabled == 1L, item.tombstoned == 1L)
+        } }
+        val result = ConnectionSnapshot(anchor, routes, row.selected_route_id, row.directory_revision, true)
+        val route = routes.singleOrNull { it.id == result.selectedRouteId && it.enabled && !it.removed }
+        val published = ConnectionRouteRegistry.publish(anchor, route?.let {
+            RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), result.revision, row.generation)
+        }, row.generation)
+        // A newer publication won while this statement was being consumed. Refresh the UI result
+        // without giving this older publisher another opportunity to replace its authorization.
+        return if (published) result else snapshot(anchor)
     }
 
     fun commit(anchor: OwnershipAnchor, directory: ConnectionDirectory, bootstrapBase: String,
         verifiedRouteIds: Set<String>, verifiedWall: Long, expectedOwnership: ConnectionOwnershipFence? = null,
+        explicitReAddBase: String? = null,
+        expectedTransport: ConnectionTransportFence? = null,
     ): ConnectionSnapshot {
         database.transaction {
             expectedOwnership?.checkCurrent(database, anchor)
+            expectedTransport?.checkCurrent(database, anchor)
             val before = snapshot(anchor)
             val stored = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull()
             if (directory.revision < before.revision || (stored != null &&
@@ -73,8 +85,12 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
             ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
             val source = directory.routes.singleOrNull { it.baseUrl == bootstrapBase && it.id in verifiedRouteIds }
                 ?: throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
+            val explicitTarget = explicitReAddBase?.let { base ->
+                directory.routes.singleOrNull { it.baseUrl == base && it.id in verifiedRouteIds }
+                    ?: throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
+            }
             val previous = before.routes.associateBy { it.id }
-            if (source.id.let { previous[it]?.removed } == true) {
+            if (previous[source.id]?.removed == true && explicitTarget?.id != source.id) {
                 throw ConnectionEnrollmentFailure(DomainError.Transport.Unreachable)
             }
             database.connectionsQueries.disableRoutes(anchor.accountId)
@@ -82,14 +98,14 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
                 val old = previous[route.id]
                 // A changed address needs a new successful probe; tombstones are persistent.
                 val verified = route.id in verifiedRouteIds
-                val removed = old?.removed == true
+                val removed = old?.removed == true && route.id != explicitTarget?.id
                 database.connectionsQueries.putRoute(anchor.accountId, route.id, route.baseUrl, route.label,
                     route.role, route.priority.toLong(), if (verified && !removed) 1L else 0L,
                     if (removed) 1L else 0L, directory.revision, if (verified) verifiedWall else null)
             }
-            val selected = before.selectedRouteId?.takeIf { id ->
+            val selected = explicitTarget?.id ?: before.selectedRouteId?.takeIf { id ->
                 directory.routes.any { it.id == id && id in verifiedRouteIds && previous[id]?.removed != true }
-            } ?: source.id
+            } ?: source.id.takeIf { !before.enrolled }
             database.connectionsQueries.putEnrollment(anchor.accountId, normalizedAnchor, anchor.username,
                 anchor.serverIdentity, directory.principalId, directory.revision,
                 stored?.bootstrap_base ?: bootstrapBase, selected, (stored?.generation ?: 0) + 1, directory.json)
@@ -150,6 +166,17 @@ internal fun initializeFreshConnectionOwnership(database: DulcetDatabase, anchor
         initialized = true
     }
     return initialized
+}
+
+/** A later removal or refresh supersedes an earlier suspended Add/Verify intent. */
+internal data class ConnectionTransportFence(val generation: Long?) {
+    fun checkCurrent(database: DulcetDatabase, anchor: OwnershipAnchor) {
+        if (capture(database, anchor) != this) throw ConnectionEnrollmentFailure(DomainError.Transport.Cancelled)
+    }
+    companion object {
+        fun capture(database: DulcetDatabase, anchor: OwnershipAnchor): ConnectionTransportFence =
+            ConnectionTransportFence(database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull()?.generation)
+    }
 }
 
 /** Captured before any suspension and compared inside the route commit transaction. */

@@ -68,7 +68,7 @@ internal data class RouteSelectionSnapshot(val enrolled: Boolean, val lease: Rou
 /** Immutable atomic publications let native media workers consult the same route at dispatch. */
 @OptIn(ExperimentalAtomicApi::class)
 internal object ConnectionRouteRegistry {
-    private data class Entry(val accountId: String, val lease: RouteLease?)
+    private data class Entry(val accountId: String, val generation: Long, val lease: RouteLease?)
     private val entries = AtomicReference<Map<Pair<String, String>, Entry>>(emptyMap())
     private fun key(base: String, user: String): Pair<String, String> =
         (try { canonicalConnectionBase(base, allowHttp = true) } catch (_: ConnectionEnrollmentFailure) { base }) to user
@@ -78,8 +78,21 @@ internal object ConnectionRouteRegistry {
     }
     fun isEnrolled(anchorBaseUrl: String, username: String): Boolean = selectionFor(anchorBaseUrl, username).enrolled
     fun leaseFor(anchorBaseUrl: String, username: String): RouteLease? = selectionFor(anchorBaseUrl, username).lease
-    fun publish(anchor: OwnershipAnchor, lease: RouteLease?) {
-        change { it + (key(anchor.normalizedBaseUrl, anchor.username) to Entry(anchor.accountId, lease)) }
+    fun publish(anchor: OwnershipAnchor, lease: RouteLease?, generation: Long? = lease?.generation): Boolean {
+        val key = key(anchor.normalizedBaseUrl, anchor.username)
+        while (true) {
+            val before = entries.load()
+            val current = before[key]?.takeIf { it.accountId == anchor.accountId }
+            val epoch = generation ?: ((current?.generation ?: 0) + 1)
+            require(lease == null || lease.generation == epoch)
+            if (current != null && (epoch < current.generation ||
+                    epoch == current.generation && current.lease == null && lease != null)) return false
+            // Conflicting publications at one generation cannot confer credential authority.
+            val accepted = if (current != null && epoch == current.generation &&
+                current.lease != null && lease != null && current.lease != lease) null else lease
+            val after = before + (key to Entry(anchor.accountId, epoch, accepted))
+            if (entries.compareAndSet(before, after)) return accepted == lease
+        }
     }
     fun forget(accountId: String) { change { it.filterValues { entry -> entry.accountId != accountId } } }
     private fun change(block: (Map<Pair<String, String>, Entry>) -> Map<Pair<String, String>, Entry>) {
