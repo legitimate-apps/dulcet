@@ -53,7 +53,12 @@ from the backend HTTP connection or arbitrary forwarded headers. Unknown authori
 are rejected before authentication. An HTTP backend connection is accepted only from a numeric
 socket peer covered by `trusted-proxies`; list the actual proxy IP/CIDR explicitly. Configure the
 proxy to reject arbitrary public Host values too. A preserved Host must exactly match one configured
-route. `X-Forwarded-Host`, when supplied, must agree; `X-Forwarded-Proto` must be `https`;
+route. Each matched REST, discovery, OAuth and API mount is also checked against that receiving
+route's exact base prefix before its handlers run. A root route on one authority does not expose
+another authority's prefixed handlers. Nested prefixes remain separate mounts; the longest configured
+prefix for the receiving authority wins, and API credential-query, rate-limit and idempotency policies
+run once on every reachable API request. This behavior is independent of configuration ordering.
+`X-Forwarded-Host`, when supplied, must agree; `X-Forwarded-Proto` must be `https`;
 `X-Forwarded-Prefix` must match the configured prefix. Ambiguous multi-value assertions and generic
 `Forwarded` headers are rejected. These headers do not select a route.
 
@@ -90,4 +95,6 @@ Administrator-attested continuation needs a separately designed future trust con
 
 Server evidence is `ConnectionsConformanceTest` (MP-01/11): two configured bases, durable revision,
 body-only auth, HTTP backend socket trust, relative media bytes, route issuers, transaction pinning
-and cross-alias refresh/retry. This is server evidence, not proof of native selection or UI parity.
+and cross-alias refresh/retry. `ConnectionsMountConformanceTest` additionally checks cross-authority
+root/nested prefixes in both registration orders, query-credential rejection, single-row idempotent
+playlist retries and rate limiting. This is server evidence, not proof of native selection or UI parity.

@@ -65,6 +65,7 @@ fun parseLegacyAnchors(text: String?): List<String> = text?.let {
 } ?: emptyList()
 
 private val legacyDiscovery = AttributeKey<Boolean>("dulcet.legacy-discovery")
+private val receivingPrefix = AttributeKey<String>("dulcet.receiving-prefix")
 private val receivingRoute = AttributeKey<ClientRoute>("dulcet.receiving-route")
 fun ApplicationCall.configuredRoute(): ClientRoute? = attributes.getOrNull(receivingRoute)
 
@@ -89,6 +90,10 @@ class Connections(private val ctx: ServerContext) {
         val maximum = Envelope.root("ok").apply { put(directoryPayload(User("00000000-0000-0000-0000-000000000000", "principal", true), revision)) }
         require(Envelope.render(maximum, Format.JSON, null).text.toByteArray().size <= 60 * 1024) { "Configured directory exceeds response limit" }
     }
+    /** Each endpoint subtree is bound to the already checked authority/base, including legacy REST. */
+    fun matchesMount(call: ApplicationCall, prefix: String): Boolean =
+        routes.isEmpty() || call.attributes.getOrNull(receivingPrefix) == prefix
+
     /** Runs before REST/OAuth/API authentication, and never trusts forwarded authority. Proxies preserve Host and prefix. */
     fun receive(call: ApplicationCall) {
         if (routes.isEmpty()) return
@@ -100,14 +105,15 @@ class Connections(private val ctx: ServerContext) {
         val path = call.request.path()
         // Deliberate compatibility for previously configured single-origin HTTP REST clients.
         // This metadata never becomes a route in the authenticated directory.
-        if (call.request.local.scheme == "http" && path.substringAfterLast('/').removeSuffix(".view") != "getDulcetConnections" &&
-            ctx.config.legacyOwnershipAnchors.any { anchor ->
-                val legacy = checkedBase(anchor, false)
-                val prefix = legacy.rawPath.orEmpty().trimEnd('/')
-                legacy.scheme == "http" && legacy.host.equals(host.host, true) &&
-                    (if(legacy.port < 0) 80 else legacy.port) == (if(host.port < 0) 80 else host.port) &&
+        val legacy = if (call.request.local.scheme == "http" && path.substringAfterLast('/').removeSuffix(".view") != "getDulcetConnections")
+            ctx.config.legacyOwnershipAnchors.map { checkedLegacyAnchor(it) }.filter { anchor ->
+                val prefix = anchor.rawPath.orEmpty().trimEnd('/')
+                anchor.host.equals(host.host, true) &&
+                    (if(anchor.port < 0) 80 else anchor.port) == (if(host.port < 0) 80 else host.port) &&
                     (path.startsWith("$prefix/rest/") || path == "$prefix/.well-known/dulcet" || path == "/.well-known/dulcet")
-            }) {
+            }.maxByOrNull { it.rawPath.orEmpty().length } else null
+        if (legacy != null) {
+            call.attributes.put(receivingPrefix, legacy.rawPath.orEmpty().trimEnd('/'))
             if (path.endsWith("/.well-known/dulcet")) call.attributes.put(legacyDiscovery, true)
             return
         }
@@ -127,6 +133,7 @@ class Connections(private val ctx: ServerContext) {
             (it.prefix.isEmpty() || path == it.prefix || path.startsWith(it.prefix + "/")) }.maxByOrNull { it.prefix.length }
             ?: throw ApiProblem(421, "unrecognized-route")
         call.request.headers["X-Forwarded-Prefix"]?.let { if (it != route.prefix) throw ApiProblem(421, "unrecognized-route") }
+        call.attributes.put(receivingPrefix, route.prefix)
         call.attributes.put(receivingRoute, route)
     }
     fun legacyDiscoveryDocument(call: ApplicationCall): JsonObject? = if (call.attributes.getOrNull(legacyDiscovery) == true)

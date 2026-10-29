@@ -27,6 +27,10 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.response.respondText
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.response.respond
+import io.ktor.server.routing.intercept
+import io.ktor.server.routing.RouteSelector
+import io.ktor.server.routing.RouteSelectorEvaluation
+import io.ktor.server.routing.RoutingResolveContext
 import io.ktor.server.routing.route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -182,7 +186,7 @@ fun Application.dulcetModule(ctx: ServerContext) {
         }
     }
     val api = ctx.restApi()
-    intercept(ApplicationCallPipeline.Call) {
+    intercept(ApplicationCallPipeline.Plugins) {
         try {
             ctx.connections.receive(call)
             ctx.connections.legacyDiscoveryDocument(call)?.let { document ->
@@ -200,9 +204,21 @@ fun Application.dulcetModule(ctx: ServerContext) {
         get("/") { call.respondText("Dulcet Server $SERVER_VERSION\n", ContentType.Text.Plain) }
         val prefixes = if (ctx.config.routes.isEmpty()) listOf("") else (ctx.config.routes.map { it.prefix } + ctx.config.legacyOwnershipAnchors.map { java.net.URI(it).rawPath.orEmpty().trimEnd('/') }).distinct()
         prefixes.forEach { prefix ->
-            route(prefix.ifEmpty { "/" }) {
+            // Separate subtrees prevent Ktor from merging root/nested path nodes and
+            // running another mount's interceptors around this mount's handlers.
+            createChild(object : RouteSelector() {
+                override suspend fun evaluate(context: RoutingResolveContext, segmentIndex: Int) = RouteSelectorEvaluation.Transparent
+            }).route(prefix.ifEmpty { "/" }) {
+                intercept(ApplicationCallPipeline.Call) {
+                    if (!ctx.connections.matchesMount(call, prefix)) {
+                        call.response.headers.append("Cache-Control", "private, no-store")
+                        call.respond(io.ktor.http.HttpStatusCode.fromValue(421))
+                        finish(); return@intercept
+                    }
+                    proceed()
+                }
                 api.install(this)
-                ctx.dulcetApi.install(this)
+                ctx.dulcetApi.install(this, prefix)
             }
         }
     }

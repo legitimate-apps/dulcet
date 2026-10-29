@@ -115,10 +115,10 @@ class DulcetApi(private val ctx: ServerContext) {
     private val vault = PasswordVault.fromDataFolder(ctx.config.dataFolder)
     private val scans=ApiScans(ctx)
     init { ctx.db.write { execute("CREATE TABLE IF NOT EXISTS api_idempotency(user_id TEXT NOT NULL,key TEXT NOT NULL,fingerprint TEXT NOT NULL,status INTEGER NOT NULL,body TEXT NOT NULL,headers TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(user_id,key))") } }
-    fun install(route: Route) {
+    fun install(route: Route, mountPrefix: String) {
         route.intercept(ApplicationCallPipeline.Call) {
             call.attributes.put(contextKey,ctx)
-            val path = call.request.path().removePrefix(call.configuredRoute()?.prefix.orEmpty())
+            val path = call.request.path().removePrefix(mountPrefix)
             val isTest = path.startsWith("/dulcet/v1/admin/test/")
             val isApi = path=="/dulcet/v1" || path.startsWith("/dulcet/v1/")
             if (!isApi) {
