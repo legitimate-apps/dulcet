@@ -190,12 +190,18 @@ struct DulcetReaderAccountBanner: View {
 
     var body: some View {
         if store.librarySession?.mode == .deviceOnly {
-            DulcetDestinationStatus(title: DulcetStrings.offline) { store.submitAccountConnection() }
+            DulcetDestinationStatus(title: DulcetStrings.offline,
+                                   retryIdentifier: "dulcet.reader.reconnect",
+                                   retryEnabled: store.snapshot.accountConnection != .connecting) {
+                store.submitAccountConnection()
+            }
                 .padding(.horizontal, 16)
                 .background(.background, ignoresSafeAreaEdges: [])
                 .accessibilityIdentifier("dulcet.reader.deviceOnly")
         } else if store.librarySession?.connectionFailure != nil {
-            DulcetDestinationStatus(title: DulcetStrings.connectionFailed, symbol: "exclamationmark.circle") {
+            DulcetDestinationStatus(title: DulcetStrings.connectionFailed, symbol: "exclamationmark.circle",
+                                   retryIdentifier: "dulcet.reader.retry",
+                                   retryEnabled: store.snapshot.accountConnection != .connecting) {
                 dulcetReaderRetry(store)
             }
             .padding(.horizontal, 16)

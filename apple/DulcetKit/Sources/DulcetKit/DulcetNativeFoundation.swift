@@ -143,6 +143,8 @@ extension View {
 struct DulcetDestinationStatus: View {
     let title: String
     var symbol = "wifi.slash"
+    var retryIdentifier = "dulcet.destination.retry"
+    var retryEnabled = true
     var retry: (() -> Void)?
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -152,7 +154,10 @@ struct DulcetDestinationStatus: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             if let retry {
-                Button(DulcetStrings.tryAgain, action: retry).buttonStyle(.borderless)
+                Button(DulcetStrings.tryAgain, action: retry)
+                    .buttonStyle(.borderless)
+                    .disabled(!retryEnabled)
+                    .accessibilityIdentifier(retryIdentifier)
             }
         }
         .accessibilityElement(children: .contain)
