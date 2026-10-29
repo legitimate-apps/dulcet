@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Exercise the actual Remove receipt gate, including unsafe-retry mutants."""
+from pathlib import Path
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parents[1]
+source = (root / 'apple/DulcetDiscoverUITestSupport/DulcetDiscoverWishlistUITests.swift').read_text()
+parser = source.split('// BEGIN_REMOVE_INPUT_PROOF\n', 1)[1].split('// END_REMOVE_INPUT_PROOF', 1)[0]
+checks = r'''
+func check(_ condition: Bool, _ message: String) {
+    if !condition { print("FAIL: " + message); exit(1) }
+}
+let baseline = "dulcet-ui NAV|7|route|dest=x DETAIL|8|wishlist.remove|key=wish:A INPUT|9|touch=1|phase=ended"
+check(DulcetRemoveInputProof.sequence(baseline) == 9, "shared monotonic sequence")
+check(!DulcetRemoveInputProof.received(baseline, key: "wish:A", after: 8), "stale receipt")
+check(DulcetRemoveInputProof.received(baseline, key: "wish:A", after: 7), "exact fresh receipt")
+check(!DulcetRemoveInputProof.received(baseline, key: "wish:B", after: 7), "foreign generation")
+check(!DulcetRemoveInputProof.received(baseline, key: "wish:", after: 7), "key prefix")
+check(!DulcetRemoveInputProof.received("DETAIL|10|wishlist.remove.result|key=wish:A", key: "wish:A", after: 7), "wrong handler")
+check(DulcetRemoveInputProof.recovery(baseline, after: 9) == "no-touch", "no new contact")
+let began = "INPUT|10|touch=2|phase=began"
+let ended = "INPUT|11|touch=2|phase=ended"
+let cancelled = "INPUT|11|touch=2|phase=cancelled"
+check(DulcetRemoveInputProof.recovery(began + " " + ended, after: 9) == nil, "completed touch swallowed by app")
+check(DulcetRemoveInputProof.recovery(began + " " + cancelled, after: 9) == "cancelled-touch", "cancelled HID input")
+check(DulcetRemoveInputProof.recovery(began, after: 9) == nil, "still-down contact")
+check(DulcetRemoveInputProof.recovery(cancelled, after: 9) == nil, "missing down")
+check(DulcetRemoveInputProof.recovery(began + " INPUT|11|touch=3|phase=cancelled", after: 9) == nil, "wrong contact")
+check(DulcetRemoveInputProof.recovery(began + " " + cancelled + " " + ended, after: 9) == nil, "mixed normal/cancelled contacts")
+check(DulcetRemoveInputProof.recovery("INPUT|10|touch=2|phase=unknown", after: 9) == nil, "unknown phase")
+print("PASS: exact generation / fresh receipt / no touch / cancelled touch / normal and incomplete input rejected")
+'''
+mutants = {
+    'normal-ended-touch': parser.replace('$0[3] == "phase=cancelled"', '$0[3] == "phase=ended"'),
+    'wrong-generation': parser.replace('== "key=" + key', '.hasPrefix("key=")'),
+    'stale-handler': parser.replace('(Int(fields[1]) ?? -1) > baseline', '(Int(fields[1]) ?? -1) >= baseline'),
+}
+with tempfile.TemporaryDirectory(prefix='dulcet-remove-input-') as temporary:
+    path = Path(temporary)
+    for name, implementation in [('actual', parser), *mutants.items()]:
+        swift = path / (name + '.swift')
+        binary = path / name
+        swift.write_text('import Foundation\n' + implementation + checks)
+        subprocess.run(['swiftc', str(swift), '-o', str(binary)], check=True)
+        result = subprocess.run([str(binary)], capture_output=True, text=True)
+        if name == 'actual':
+            if result.returncode: raise SystemExit(result.stdout + result.stderr)
+            print(result.stdout.strip())
+        else:
+            if result.returncode == 0: raise SystemExit('unsafe mutant survived: ' + name)
+            print('CONTROL rejected ' + name + ': ' + result.stdout.strip())

@@ -53,6 +53,9 @@ import UIKit
         if !prepared { try prepare(); prepared = true }
         var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad { args.append("-dulcet-debug-input-receipts") }
+#endif
         if variant == "largest" { args.append("-dulcet-debug-largest-text") }
         if other { args += ["-dulcet-debug-add-account"] }
         if connect { args += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", try server ?? required("SERVER_URL"), "-dulcet-debug-account-username", try required(other ? "OTHER_USERNAME" : "USERNAME"), "-dulcet-debug-account-password", try required(other ? "OTHER_PASSWORD" : "PASSWORD")] }
@@ -450,18 +453,44 @@ import UIKit
         return row
     }
     private func removeWish(_ title: String) {
-        let row = wishRow(title)
-        let rowIdentifier = row.identifier
-        let button = row.buttons["wishlist.remove"].firstMatch
-        let initiallyReady = button.isEnabled && button.isHittable
-        // A retained row can have on-window geometry before its controls accept input.
-        // Wait on the actual row-scoped control, rather than treating that geometry as
-        // hit readiness. The server count and library-retention checks remain the oracle.
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: button)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed,
-                       "The requested wish's Remove button must accept input before activation")
-        print("DISCOVER_REMOVE_READY row=\(rowIdentifier) initiallyReady=\(initiallyReady) enabledAndHittable=true")
-        activate(button)
+        let rowIdentifier = wishRow(title).identifier
+        let key = String(rowIdentifier.dropFirst("wishlist.row.".count))
+        let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        XCTAssertTrue(markers.waitForExistence(timeout: 10))
+        let baseline = DulcetRemoveInputProof.sequence(markers.label)
+#if os(iOS)
+        let observesTouches = UIDevice.current.userInterfaceIdiom == .pad
+#else
+        let observesTouches = false
+#endif
+        if observesTouches { XCTAssertTrue(markers.label.contains("input-monitor-ready")) }
+        let maximumInputs = observesTouches ? 2 : 1
+        for attempt in 1...maximumInputs {
+            let before = markers.label
+            if DulcetRemoveInputProof.received(before, key: key, after: baseline) { return }
+            let inputBaseline = DulcetRemoveInputProof.sequence(before)
+            // Re-resolve the same durable identity; a removed row must never turn a
+            // second input into a tap on the next wish in the list.
+            let button = app.descendants(matching: .any)[rowIdentifier].firstMatch.buttons["wishlist.remove"].firstMatch
+            XCTAssertTrue(button.exists && button.isEnabled)
+            print("DISCOVER_REMOVE_INPUT row=\(rowIdentifier) attempt=\(attempt)")
+            activate(button)
+            let received = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                DulcetRemoveInputProof.received(markers.label, key: key, after: baseline)
+            }, object: nil)
+            if XCTWaiter.wait(for: [received], timeout: 5) == .completed {
+                print("DISCOVER_REMOVE_RECEIVED row=\(rowIdentifier) attempt=\(attempt)")
+                return
+            }
+            let after = markers.label
+            let classification = DulcetRemoveInputProof.recovery(after, after: inputBaseline)
+            guard observesTouches, attempt < maximumInputs,
+                  let reason = classification else {
+                XCTFail("Remove was not received; attempt=\(attempt)/\(maximumInputs) input=\(classification ?? "normal-or-incomplete") receipts=\(after)")
+                return
+            }
+            print("DISCOVER_REMOVE_RESYNTHESIZE row=\(rowIdentifier) reason=\(reason)")
+        }
     }
     func offlineWishRelaunchRemoveAndScanArrival() throws {
         let title = "Fixture Song 01"
@@ -718,3 +747,33 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     }
 }
 #endif
+
+
+// BEGIN_REMOVE_INPUT_PROOF
+/// Parses the fixture's monotonic handler and passive window-touch receipts.
+/// A normally ended touch without a handler is a product failure, never a retry.
+enum DulcetRemoveInputProof {
+    private static func records(_ text: String) -> [[Substring]] {
+        text.split(separator: " ").map { $0.split(separator: "|", omittingEmptySubsequences: false) }
+    }
+    static func sequence(_ text: String) -> Int {
+        records(text).compactMap { fields in
+            fields.count > 1 && ["NAV", "DETAIL", "INPUT"].contains(String(fields[0])) ? Int(fields[1]) : nil
+        }.max() ?? 0
+    }
+    static func received(_ text: String, key: String, after baseline: Int) -> Bool {
+        records(text).contains { fields in
+            fields.count >= 4 && fields[0] == "DETAIL" && (Int(fields[1]) ?? -1) > baseline
+                && fields[2] == "wishlist.remove" && fields.dropFirst(3).joined(separator: "|") == "key=" + key
+        }
+    }
+    static func recovery(_ text: String, after baseline: Int) -> String? {
+        let events = records(text).filter { $0.count >= 4 && $0[0] == "INPUT" && (Int($0[1]) ?? -1) > baseline }
+        if events.isEmpty { return "no-touch" }
+        guard events.allSatisfy({ $0[3] == "phase=began" || $0[3] == "phase=cancelled" }) else { return nil }
+        let began = Set(events.filter { $0[3] == "phase=began" }.map { String($0[2]) })
+        let cancelled = Set(events.filter { $0[3] == "phase=cancelled" }.map { String($0[2]) })
+        return !began.isEmpty && began == cancelled ? "cancelled-touch" : nil
+    }
+}
+// END_REMOVE_INPUT_PROOF
