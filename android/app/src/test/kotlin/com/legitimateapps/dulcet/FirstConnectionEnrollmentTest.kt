@@ -9,10 +9,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import kotlin.test.*
 
 /** Real secure-record composition and real Android SQLite; no preseeded media binding or network. */
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class FirstConnectionEnrollmentTest {
     private val context = RuntimeEnvironment.getApplication()
     private val cipher = HostCredentialCipher()

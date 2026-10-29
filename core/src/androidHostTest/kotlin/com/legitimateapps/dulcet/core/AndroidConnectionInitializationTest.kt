@@ -5,10 +5,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import java.util.UUID
 import kotlin.test.*
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class AndroidConnectionInitializationTest {
     @Test fun freshPlatformInitializationLetsTheStrictServiceAuthenticateBeforeAnyMediaControllerExists() = runBlocking {
         val context = RuntimeEnvironment.getApplication()
