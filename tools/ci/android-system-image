@@ -49,6 +49,55 @@ def load_emulator_pin(raw: str) -> EmulatorPin:
         raise RuntimeError(f'invalid-emulator-pin: {failure}') from None
 
 
+
+def emulator_version(path: Path, pin: EmulatorPin, timeout: float) -> str:
+    """Retain only fixed credential-free engine/loader command output, never generic SDK output."""
+    command = [str(path / 'emulator'), '-version']
+    receipt = {'command': 'emulator -version', 'pin': pin.__dict__}
+    try:
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, errors='replace', timeout=min(timeout, 30))
+        receipt.update(returncode=result.returncode, stdout=result.stdout[-4096:], stderr=result.stderr[-4096:])
+    except subprocess.TimeoutExpired as failure:
+        receipt.update(error='TimeoutExpired', stdout=(failure.stdout or b'')[-4096:].decode(errors='replace')
+                       if isinstance(failure.stdout, bytes) else (failure.stdout or '')[-4096:],
+                       stderr=(failure.stderr or b'')[-4096:].decode(errors='replace')
+                       if isinstance(failure.stderr, bytes) else (failure.stderr or '')[-4096:])
+        result = None
+    folder = os.environ.get('DULCET_EMULATOR_LOADER_RECEIPTS')
+    if folder:
+        destination = Path(folder)
+        destination.mkdir(parents=True, exist_ok=True)
+        if result is None or result.returncode:
+            diagnostics = []
+            missing = set()
+            for target in [path / 'emulator', path / 'qemu/linux-x86_64/qemu-system-x86_64']:
+                try:
+                    probe = subprocess.run(['ldd', str(target)], stdin=subprocess.DEVNULL, capture_output=True,
+                                           text=True, errors='replace', timeout=10)
+                    missing.update(re.findall(r'([^\s]+)\s+=>\s+not found', probe.stdout))
+                    diagnostics.append({'command': ['ldd', str(target.relative_to(path))],
+                        'returncode': probe.returncode, 'stdout': probe.stdout[-16384:], 'stderr': probe.stderr[-4096:]})
+                except (OSError, subprocess.TimeoutExpired) as failure:
+                    diagnostics.append({'command': ['ldd', str(target.relative_to(path))], 'error': type(failure).__name__})
+            try:
+                probe = subprocess.run(['ldconfig', '-p'], stdin=subprocess.DEVNULL, capture_output=True,
+                                       text=True, errors='replace', timeout=10)
+                diagnostics.append({'command': ['ldconfig', '-p'], 'returncode': probe.returncode,
+                    'missingLibraries': sorted(missing),
+                    'matchingLines': [line for line in probe.stdout.splitlines() if any(name in line for name in missing)][:100],
+                    'stderr': probe.stderr[-4096:]})
+            except (OSError, subprocess.TimeoutExpired) as failure:
+                diagnostics.append({'command': ['ldconfig', '-p'], 'error': type(failure).__name__})
+            receipt['loaderDiagnostics'] = diagnostics
+        (destination / f'version-{pin.build}.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    if result is None:
+        raise RuntimeError('emulator-version-timeout')
+    if result.returncode:
+        raise RuntimeError(f'emulator-version-exit-{result.returncode}; stdout={receipt["stdout"]!r}; stderr={receipt["stderr"]!r}')
+    return result.stdout + result.stderr
+
+
 def verify_pinned_emulator(path: Path, pin: EmulatorPin, timeout: float) -> str:
     if properties(path / 'source.properties').get('Pkg.Revision') != pin.version:
         raise RuntimeError('emulator-pin-revision-mismatch')
@@ -56,7 +105,7 @@ def verify_pinned_emulator(path: Path, pin: EmulatorPin, timeout: float) -> str:
         payload = path / name
         if not payload.is_file() or payload.stat().st_size == 0 or not os.access(payload, os.X_OK):
             raise RuntimeError(f'emulator-pin-payload-missing-{name}')
-    output = run([str(path / 'emulator'), '-version'], min(timeout, 30), capture=True).stdout
+    output = emulator_version(path, pin, timeout)
     version = re.search(r'Android emulator version ([0-9.]+).*?\(build_id ([0-9]+)\)', output)
     if version is None or version.group(1) not in {pin.version, pin.version + '.0'} or version.group(2) != pin.build:
         raise RuntimeError('emulator-pin-binary-version-or-build-mismatch')
@@ -88,6 +137,7 @@ def install_pinned_emulator(sdk: Path, pin: EmulatorPin, timeout: float) -> str:
                 output.write(chunk)
         if digest.hexdigest() != pin.sha256:
             raise RuntimeError('emulator-pin-digest-mismatch')
+        print(f'ANDROID EMULATOR ARCHIVE VERIFIED build={pin.build} sha256={pin.sha256} bytes={size}', flush=True)
         expanded = 0
         try:
             with zipfile.ZipFile(archive) as zipped:
@@ -306,7 +356,7 @@ def verify_booted(args, sdk: Path, package: str, image: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['install', 'verify-booted', 'verify-emulator', 'action-sdkmanager'])
+    parser.add_argument('operation', choices=['install', 'install-emulator', 'verify-booted', 'verify-emulator', 'action-sdkmanager'])
     parser.add_argument('--api-level', required=True)
     parser.add_argument('--target', required=True)
     parser.add_argument('--arch', required=True, choices=['x86', 'x86_64', 'arm64-v8a'])
@@ -333,7 +383,11 @@ def main() -> int:
         sdk = Path(os.environ['ANDROID_HOME']).resolve(strict=True)
         package = f'system-images;android-{args.api_level};{args.target};{args.arch}'
         image = sdk / 'system-images' / f'android-{args.api_level}' / args.target / args.arch
-        if args.operation == 'install':
+        if args.operation == 'install-emulator':
+            if not args.emulator_pin:
+                raise RuntimeError('install-emulator-requires-pin')
+            install_pinned_emulator(sdk, load_emulator_pin(args.emulator_pin), args.attempt_timeout_seconds)
+        elif args.operation == 'install':
             for dependency in dict.fromkeys(args.sdk_package):
                 install(args, sdk, dependency, sdk.joinpath(*dependency.split(';')))
             install(args, sdk, package, image)
