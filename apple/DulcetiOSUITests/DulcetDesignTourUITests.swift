@@ -252,6 +252,17 @@ final class DulcetDesignTourUITests: XCTestCase {
             return
         }
         let server = TourServer(url: proxyURL, username: username, password: password)
+        let requested = Set((environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "")
+            .split(whereSeparator: \.isWhitespace).map(String.init))
+        let transferRepair: Set<String> = ["downloads-failed", "downloads-downloading",
+            "downloads-queued", "listen-now-offline"]
+        let isolatedTransferRepair = environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation"
+            && !requested.isEmpty && requested.isSubset(of: transferRepair)
+        // Automatic offline music is enabled by default. A server playlist can start
+        // transfers during connection, before this test reaches any explicit Download menu.
+        if isolatedTransferRepair {
+            guard setTourRule(server.url, action: "fail", enabled: true, endpoint: "stream") else { return }
+        }
         if environment["DULCET_DESIGN_TOUR_PHASE"] != "foundation" { preparePlaylist(on: server) }
 
         if environment["DULCET_DESIGN_TOUR_REDUCE_TRANSPARENCY"] == "1" {
@@ -295,6 +306,14 @@ final class DulcetDesignTourUITests: XCTestCase {
         }
 
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation" {
+            if isolatedTransferRepair {
+                // Start real transfer requests before any player or streaming-cache activity.
+                // Screenshot filtering alone does not skip the full tour's navigation/actions.
+                transferScreens(app, server: server, compact: compact)
+                offlineScreens(app, server: server, compact: compact,
+                    textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
+                return
+            }
             step("listen-now-no-history", app) {
                 self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
                     && app.descendants(matching: .any)["dulcet.listenNow"].firstMatch.waitForExistence(timeout: 20)
@@ -311,6 +330,7 @@ final class DulcetDesignTourUITests: XCTestCase {
                 for flag in ["-dulcet-debug-account-fixture", "-dulcet-debug-download-handoff"] {
                     if let index = app.launchArguments.firstIndex(of: flag) { app.launchArguments[index + 1] = transferNamespace }
                 }
+                guard setTourRule(server.url, action: "fail", enabled: true, endpoint: "stream") else { return }
                 launchInInteractionScope(app)
                 guard awaitConnection(in: app, compact: compact) else { return }
                 transferScreens(app, server: server, compact: compact)
@@ -1180,7 +1200,9 @@ final class DulcetDesignTourUITests: XCTestCase {
         self.launchInInteractionScope(app)
         step("listen-now-offline", app) {
             self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
-                && app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 60) && self.settle(app)
+                && app.staticTexts["Offline"].firstMatch.waitForExistence(timeout: 60)
+                && app.buttons["Try Again"].firstMatch.exists
+                && app.buttons["dulcet.library.album"].firstMatch.exists && self.settle(app)
         }
         step("device-only-library", app) {
             self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact)
@@ -1204,6 +1226,13 @@ final class DulcetDesignTourUITests: XCTestCase {
         let tracks = app.buttons.matching(identifier: "dulcet.reader.track").allElementsBoundByIndex
             .filter { !$0.label.hasPrefix("More") }
         guard let first = tracks.first else { return }
+        guard tracks.allSatisfy({
+            let state = $0.value as? String ?? ""
+            return state.isEmpty || state.contains("Failed")
+        }) else {
+            XCTFail("Transfer proof requires tracks with no prior downloads or playback cache: " + app.debugDescription)
+            return
+        }
         func request(_ row: XCUIElement) -> Bool {
             guard scrollIntoView(row, in: app) else { return false }
             row.press(forDuration: 1.2)

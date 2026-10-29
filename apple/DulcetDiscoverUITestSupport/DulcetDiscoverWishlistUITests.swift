@@ -91,7 +91,10 @@ import UIKit
             // completed sheet before requiring the underlying catalog's positive control.
 #if os(iOS)
             let close = app.buttons["dulcet.account.close"].firstMatch
-            if close.exists && app.descendants(matching: .any)["dulcet.account.connected"].firstMatch.exists {
+            // Form may flatten its connected-summary container out of the AX tree.
+            // Sign Out is a concrete control published only by the connected summary.
+            let connected = app.buttons["dulcet.account.signOut"].firstMatch
+            if close.exists && connected.exists {
                 close.tap()
                 guard close.waitForNonExistence(timeout: 10) else { return false }
             }
