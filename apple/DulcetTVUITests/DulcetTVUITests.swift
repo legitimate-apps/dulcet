@@ -2349,6 +2349,8 @@ final class DulcetTVUITests: XCTestCase {
         let rootTitle = destination == "library" ? "Library" : "Browse"
         for _ in 0..<4 {
             if app.navigationBars.firstMatch.identifier == rootTitle { break }
+            // Back belongs to the pushed page, not the tab bar's exit action.
+            guard pressUntilFocus(app, .down, limit: 4, { !$0.id.hasPrefix("dulcet.tab.") }) else { return false }
             XCUIRemote.shared.press(.menu)
             guard app.state == .runningForeground else { return false }
         }
