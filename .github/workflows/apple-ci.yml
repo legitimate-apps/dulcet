@@ -995,21 +995,16 @@ jobs:
           :core:linkDebugFrameworkIosSimulatorArm64
           :core:linkDebugFrameworkTvosArm64
           :core:linkDebugFrameworkTvosSimulatorArm64
-      - name: Prove preserving connections on native Apple executors
-        timeout-minutes: 25
+      - name: Prove preserving connections on the native Mac executors
+        timeout-minutes: 15
         run: |
           set -euo pipefail
-          connections_sim="$(xcrun simctl create dulcet-connections-proof com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
-          trap 'xcrun simctl shutdown "$connections_sim" || true; xcrun simctl delete "$connections_sim" || true' EXIT
-          python3 tools/ci/isolate-simulator --phase connections --keep "$connections_sim"
-          export DULCET_CONNECTIONS_SIMULATOR_UDID="$connections_sim"
           ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
-          tools/conformance-env/multipath-fixture --root "$RUNNER_TEMP/dulcet-connections-fixture" \
+          tools/conformance-env/multipath-fixture --root "$RUNNER_TEMP/dulcet-connections-fixture-mac" \
             --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
               tools/conformance-env/multipath-fixture-check
               tools/ci/run-connection-apple-proofs core
               tools/ci/run-connection-apple-proofs mac
-              tools/ci/run-connection-apple-proofs ios "$DULCET_CONNECTIONS_SIMULATOR_UDID"
             '
       - name: Compile shared core tests for the iOS simulator
         timeout-minutes: 5
@@ -2018,6 +2013,21 @@ jobs:
           retention-days: 14
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
       # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
+      - name: Prove preserving connections on the native iOS executors
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" connections-proof
+          connections_sim="$(xcrun simctl create dulcet-connections-proof com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
+          trap 'xcrun simctl shutdown "$connections_sim" || true; xcrun simctl delete "$connections_sim" || true' EXIT
+          python3 tools/ci/isolate-simulator --phase connections --keep "$connections_sim"
+          export DULCET_CONNECTIONS_SIMULATOR_UDID="$connections_sim"
+          ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          tools/conformance-env/multipath-fixture --root "$RUNNER_TEMP/dulcet-connections-fixture-ios" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
+              tools/conformance-env/multipath-fixture-check
+              tools/ci/run-connection-apple-proofs ios "$DULCET_CONNECTIONS_SIMULATOR_UDID"
+            '
       - name: Stop host-pressure sampling and bound unfinished stack captures
         if: ${{ always() }}
         timeout-minutes: 1
@@ -2119,7 +2129,7 @@ jobs:
           path: |
             ${{ runner.temp }}/dulcet-connections-*/*.log
             ${{ runner.temp }}/dulcet-connections-*/junit/*.xml
-            ${{ runner.temp }}/dulcet-connections-fixture/requests.json
+            ${{ runner.temp }}/dulcet-connections-fixture*/requests.json
             core/build/test-results/macosArm64Test
           if-no-files-found: error
           retention-days: 14
