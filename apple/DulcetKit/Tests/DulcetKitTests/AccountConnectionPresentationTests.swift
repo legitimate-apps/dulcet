@@ -8,6 +8,30 @@ import Testing
 
 @MainActor
 @Test
+func openingAccountPreservesAnUnsubmittedDraftWithoutPublishingKeystrokes() {
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(connector: connector)
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "http://localhost:4533"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture"
+    store.accountAllowLocalHTTP = true
+    let draft = DulcetAccountConnectRequest(serverURL: store.accountServerURL,
+        username: store.accountUsername, password: store.accountPassword, allowLocalHTTP: true)
+    #expect(source.currentSnapshot.accountForm == draft)
+    // The store's last published snapshot is unchanged while typing.
+    #expect(store.snapshot.accountForm == .empty)
+    store.selectDestination(.listenNow)
+    store.selectDestination(.settings)
+    #expect(store.accountServerURL == draft.serverURL)
+    #expect(store.accountUsername == draft.username)
+    #expect(store.accountPassword == draft.password)
+    #expect(store.accountAllowLocalHTTP)
+    #expect(store.snapshot.accountForm == draft)
+}
+
+@MainActor
+@Test
 func authenticatedCanonicalUsernameIsSavedAndUsedWithoutClientCaseFolding() throws {
     for canonical in ["Canonical-Alice", nil] as [String?] {
         let connector = ControlledAccountConnector()
