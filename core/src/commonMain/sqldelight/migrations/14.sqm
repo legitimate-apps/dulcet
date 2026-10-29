@@ -1,0 +1,28 @@
+-- Transport configuration only. Ownership rows and their keys are never rewritten by enrollment.
+CREATE TABLE connection_enrollment (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  ownership_anchor TEXT NOT NULL,
+  username TEXT NOT NULL,
+  server_identity TEXT NOT NULL,
+  principal_id TEXT NOT NULL,
+  directory_revision INTEGER NOT NULL CHECK (directory_revision >= 0),
+  bootstrap_base TEXT NOT NULL,
+  selected_route_id TEXT,
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  directory_json TEXT NOT NULL
+);
+
+CREATE TABLE server_route (
+  server_id TEXT NOT NULL,
+  route_id TEXT NOT NULL,
+  normalized_base_url TEXT NOT NULL,
+  label TEXT,
+  role TEXT NOT NULL,
+  priority INTEGER NOT NULL,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  tombstoned INTEGER NOT NULL CHECK (tombstoned IN (0, 1)),
+  directory_revision INTEGER NOT NULL,
+  last_verified_wall INTEGER,
+  PRIMARY KEY (server_id, route_id)
+);
+

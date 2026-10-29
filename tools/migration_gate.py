@@ -21,6 +21,7 @@ RESERVATIONS = FIXTURES / "reserved-tables.json"
 SHIPPING_FOREIGN_KEYS = 1
 
 SCHEMA_INTENT_TABLES = {
+    "connection_enrollment", "server_route",
     "discover_read", "wishlist_snapshot", "wish_clock", "wish_intent", "wish_receipt",
     "server_account",
     "music_folder",
@@ -65,6 +66,7 @@ SCHEMA_INTENT_TABLES = {
     "cache_lyrics_line",
 }
 REQUIRED_IMPLEMENTED_TABLES = {
+    "connection_enrollment", "server_route",
     "discover_read", "wishlist_snapshot", "wish_clock", "wish_intent", "wish_receipt",
     "my_library_item",
     "my_library_state",
@@ -97,6 +99,8 @@ REQUIRED_IMPLEMENTED_TABLES = {
     "cache_album",
 }
 PROTECTED_COLUMNS = {
+    "connection_enrollment": ("server_id", "ownership_anchor", "username", "server_identity", "principal_id", "directory_revision", "bootstrap_base", "selected_route_id", "generation", "directory_json"),
+    "server_route": ("server_id", "route_id", "normalized_base_url", "label", "role", "priority", "enabled", "tombstoned", "directory_revision", "last_verified_wall"),
     "wish_clock": ("server_id", "last_action_time", "last_sequence"),
     "wish_intent": ("server_id", "operation_id", "row_key", "target_key", "payload", "status", "error", "ordinal"),
     "wish_receipt": ("server_id", "operation_id", "wish_id", "payload", "issue_seq"),

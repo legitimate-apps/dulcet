@@ -714,6 +714,8 @@ internal class DownloadPolicyEngine(
         }
         val queries = database.serverDataQueries
         database.transaction {
+            database.connectionsQueries.deleteRoutes(serverId)
+            database.connectionsQueries.deleteEnrollment(serverId)
             database.libraryDepthQueries.deleteEntriesForServer(serverId)
             database.offlineLibraryQueries.deleteSettings(serverId)
             database.offlineLibraryQueries.deleteSourceSnapshots(serverId)
@@ -740,6 +742,7 @@ internal class DownloadPolicyEngine(
             queries.deleteSyncGenerationsForServer(serverId)
             queries.deleteSeenCacheForServer(serverId)
         }
+        ConnectionRouteRegistry.forget(serverId)
         check(queries.countRowsForServer(serverId).executeAsOne().sum == 0L)
     }
 
