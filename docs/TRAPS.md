@@ -641,3 +641,13 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     before it is released to the pool. Explicit HTTP/1.0 keep-alive and ordinary HTTP/1.1
     retain pooling, with a positive single-connection control. Enabling retry would hide the
     stale connection while changing delivery semantics for state-changing requests.
+
+59. **Wire evidence must decode HTTP framing and negotiated content encoding before reading JSON.**
+    **OBSERVED 2026-10-29:** fresh disposable Navidrome returned a gzipped Subsonic error 40
+    when asked with `Accept-Encoding: gzip`; the same refusal was plain JSON with `identity`.
+    The account UI reached its authentication error, while the Android proof's literal scan of
+    raw tapped bytes missed the compressed refusal. `serverAnsweredErrorCode` now requires a
+    complete, bounded HTTP body, decodes chunking and gzip, then checks the actual Subsonic JSON
+    error code. Persistent connections can contain several responses. Truncated, conflicting,
+    corrupt or over-limit bodies cannot supply evidence; response headers cannot masquerade as
+    an error envelope. The production transport and exact error-40 requirement stay intact.
