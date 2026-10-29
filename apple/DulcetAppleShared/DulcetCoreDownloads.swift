@@ -869,6 +869,14 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                         guard let self, generation == reconciliationGeneration, remoteEligible, !identityRejected else { return }
                         for task in tasks where !removedTaskIdentifiers.contains(task.taskIdentifier)
                             && (task.taskDescription.map { self.client?.ownsDownloadTask(downloadIdentifier: $0) == true } ?? false) {
+                            let current: Bool
+                            if let base = routeBasesByTaskIdentifier[task.taskIdentifier] {
+                                current = client?.isPreparedRequestCurrent(routeBaseUrl: base,
+                                    routeGeneration: routeGenerationsByTaskIdentifier[task.taskIdentifier] ?? -1) == true
+                            } else if let url = task.originalRequest?.url {
+                                current = client?.allowsRestoredRequest(url: url.absoluteString) == true
+                            } else { current = false }
+                            guard current else { task.cancel(); continue }
                             if task.state == .suspended { task.resume() }
                         }
                         processSecuredDownloads()
