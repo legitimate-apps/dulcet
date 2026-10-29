@@ -41,7 +41,9 @@ internal data class ConnectionDirectory(
     val legacyOwnershipAnchors: List<String>,
     val authAliases: List<ConnectionAuthAlias>,
     val json: String,
-)
+) {
+    override fun toString(): String = "ConnectionDirectory(revision=$revision, routes=${routes.size})"
+}
 
 public data class ConnectionSnapshot(
     val anchor: OwnershipAnchor,
@@ -106,8 +108,8 @@ internal object ConnectionDirectoryParser {
         } catch (failure: LibraryRequestFailure) { throw ConnectionEnrollmentFailure(failure.error) }
         catch (_: Exception) { throw ConnectionEnrollmentFailure(DomainError.Protocol.MalformedEnvelope) }
         val value = payload["dulcetConnections"] as? JsonObject ?: bad()
-        if (value["version"]?.jsonPrimitive?.intOrNull != 1) bad()
-        val revision = (value["revision"] as? JsonPrimitive)?.longOrNull?.takeIf { it >= 0 } ?: bad()
+        if ((value["version"] as? JsonPrimitive)?.intOrNull != 1) bad()
+        val revision = (value["revision"] as? JsonPrimitive)?.longOrNull?.takeIf { it >= 1 } ?: bad()
         val instance = value.text("instanceId")
         val principal = value["principal"] as? JsonObject ?: bad()
         val username = principal.text("username")

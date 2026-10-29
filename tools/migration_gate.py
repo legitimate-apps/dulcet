@@ -170,6 +170,7 @@ PROTECTED_COLUMNS = {
 # A protected table that a released schema introduced is compared only from that version on; the
 # migration that introduces it is held to the pin-coverage contract instead.
 PROTECTED_SINCE_VERSION = {
+    "connection_enrollment": 15, "server_route": 15,
     "wish_clock": 14, "wish_intent": 14, "wish_receipt": 14,
     "cache_pin": 6,
     "offline_library_settings": 11,

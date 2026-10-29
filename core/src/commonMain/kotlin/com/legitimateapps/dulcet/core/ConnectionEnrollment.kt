@@ -8,6 +8,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.*
+import kotlin.time.Clock
 
 public data class ConnectionEnrollmentRequest(val anchor: OwnershipAnchor, val bootstrap: AccountConnectionRequest) {
     override fun toString(): String = "ConnectionEnrollmentRequest(<redacted>)"
@@ -36,25 +37,29 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
     }
 
     fun restore(anchor: OwnershipAnchor): ConnectionSnapshot {
-        if (database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull() != null) ConnectionRouteRegistry.publish(anchor, null)
+        if (database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull() != null) {
+            ConnectionRouteRegistry.publish(anchor, null)
+        }
         return snapshot(anchor).also { snapshot ->
-        if (!snapshot.enrolled) return@also
-        val row = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOne()
-        val route = snapshot.routes.singleOrNull { it.id == snapshot.selectedRouteId && it.enabled && !it.removed }
-        ConnectionRouteRegistry.publish(anchor, route?.let {
-            RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), snapshot.revision, row.generation)
-        })
-    }
-
+            if (!snapshot.enrolled) return@also
+            val row = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOne()
+            val route = snapshot.routes.singleOrNull { it.id == snapshot.selectedRouteId && it.enabled && !it.removed }
+            ConnectionRouteRegistry.publish(anchor, route?.let {
+                RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), snapshot.revision, row.generation)
+            })
+        }
     }
 
     fun commit(anchor: OwnershipAnchor, directory: ConnectionDirectory, bootstrapBase: String,
-        verifiedRouteIds: Set<String>, verifiedWall: Long,
+        verifiedRouteIds: Set<String>, verifiedWall: Long, expectedOwnership: ConnectionOwnershipFence? = null,
     ): ConnectionSnapshot {
         database.transaction {
+            expectedOwnership?.checkCurrent(database, anchor)
             val before = snapshot(anchor)
             val stored = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull()
-            if (directory.revision < before.revision || (stored != null && stored.principal_id != directory.principalId)) {
+            if (directory.revision < before.revision || (stored != null &&
+                    (stored.principal_id != directory.principalId ||
+                        directory.revision == stored.directory_revision && directory.json != stored.directory_json))) {
                 throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
             }
             val normalizedAnchor = canonicalConnectionBase(anchor.normalizedBaseUrl, true)
@@ -116,6 +121,29 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
     }
 }
 
+/** Captured before any suspension and compared inside the route commit transaction. */
+internal data class ConnectionOwnershipFence(
+    val cacheScope: Pair<String, String>?,
+    val mediaEpoch: String?,
+    val acceptedIdentity: String,
+) {
+    fun checkCurrent(database: DulcetDatabase, anchor: OwnershipAnchor) {
+        if (capture(database, anchor) != this) throw ConnectionEnrollmentFailure(DomainError.Transport.Cancelled)
+    }
+    companion object {
+        fun capture(database: DulcetDatabase, anchor: OwnershipAnchor): ConnectionOwnershipFence {
+            val cache = database.seenCacheQueries.selectBinding(anchor.accountId).executeAsOneOrNull()
+            val epoch = database.libraryDepthQueries.selectEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull()
+            val identity = ServerIdentityStore(database).read(anchor.accountId)
+            if (identity != anchor.serverIdentity || cache == null && epoch == null ||
+                cache != null && (!MediaBindingIdentity.sameEndpoint(cache.normalized_base_url, anchor.normalizedBaseUrl) || cache.username != anchor.username) ||
+                epoch != null && !matchesMediaBinding(epoch, DownloadMediaBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username))
+            ) throw ConnectionEnrollmentFailure(DomainError.Transport.Cancelled)
+            return ConnectionOwnershipFence(cache?.let { it.normalized_base_url to it.username }, epoch, identity)
+        }
+    }
+}
+
 /** A candidate check never has a credential argument, inherits no cookies, and follows no redirects. */
 internal fun interface ConnectionCandidateProbe {
     suspend fun verify(baseUrl: String, expectedInstance: String): DomainError?
@@ -159,7 +187,7 @@ internal class TlsConnectionCandidateProbe(
                 }
                 null
             }
-        } catch (_: CancellationException) { DomainError.Transport.Cancelled }
+        } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Throwable) { mapAccountConnectionFailure(failure) }
         finally { client.close() }
     }
@@ -167,10 +195,10 @@ internal class TlsConnectionCandidateProbe(
 
 internal class ConnectionEnrollmentService(
     private val database: DulcetDatabase,
-    private val connect: suspend (AccountConnectionRequest) -> AccountConnectionResult = { AccountConnector().connect(it) },
+    private val connect: suspend (AccountConnectionRequest) -> AccountConnectionResult = { AccountConnector().connectBootstrap(it) },
     private val probe: ConnectionCandidateProbe = TlsConnectionCandidateProbe(),
     private val fetch: (suspend (AccountConnectionRequest) -> AuthenticatedEndpointResponse)? = null,
-    private val nowEpochMilliseconds: () -> Long = { 0L },
+    private val nowEpochMilliseconds: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     private val store = ConnectionEnrollmentStore(database)
     fun restore(anchor: OwnershipAnchor): ConnectionSnapshot = store.restore(anchor)
@@ -179,6 +207,7 @@ internal class ConnectionEnrollmentService(
 
     suspend fun enroll(request: ConnectionEnrollmentRequest): ConnectionEnrollmentResult = try {
         val anchor = request.anchor
+        val ownership = ConnectionOwnershipFence.capture(database, anchor)
         val base = canonicalConnectionBase(request.bootstrap.serverUrl)
         val expectedInstance = ConnectionEnrollmentStore.lineage(anchor.serverIdentity)
         if (expectedInstance.isBlank()) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
@@ -191,7 +220,7 @@ internal class ConnectionEnrollmentService(
         ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
         val response = fetch?.invoke(request.bootstrap.copy(serverUrl = base, allowLocalHttp = false)) ?: run {
             val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(base, request.bootstrap.username,
-                request.bootstrap.password, false), "account.connections")
+                request.bootstrap.password, false), "account.connections", useEnrolledRoute = false)
             try {
                 client.requestRepeated("getDulcetConnections", emptyList(), formPost = true,
                     options = AuthenticatedEndpointRequestOptions(maxBodyBytes = ConnectionDirectoryParser.MAX_BYTES, rejectRedirects = true))
@@ -203,12 +232,13 @@ internal class ConnectionEnrollmentService(
         val directory = ConnectionDirectoryParser.parse(response.body, expectedInstance, anchor.username)
         val source = directory.routes.singleOrNull { it.baseUrl == base }
             ?: throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
-        // Authentication at bootstrap proves its principal; every additional candidate is probed without secrets.
+        // The authenticated connector checks lineage; this separate secret-free probe also checks API/base mapping.
+        probe.verify(base, expectedInstance)?.let { throw ConnectionEnrollmentFailure(it) }
         val verified = mutableSetOf(source.id)
         directory.routes.filter { it.id != source.id }.forEach { route ->
             if (probe.verify(route.baseUrl, expectedInstance) == null) verified += route.id
         }
-        ConnectionEnrollmentResult.Enrolled(store.commit(anchor, directory, base, verified, nowEpochMilliseconds()))
+        ConnectionEnrollmentResult.Enrolled(store.commit(anchor, directory, base, verified, nowEpochMilliseconds(), ownership))
     } catch (failure: ConnectionEnrollmentFailure) { ConnectionEnrollmentResult.Failed(failure.error) }
     catch (failure: LibraryRequestFailure) { ConnectionEnrollmentResult.Failed(failure.error) }
     catch (failure: AuthenticatedEndpointFailure) { ConnectionEnrollmentResult.Failed(failure.error) }
