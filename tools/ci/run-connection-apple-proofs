@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Run finite native connection proofs on an ephemeral GitHub-hosted macOS runner.
+
+Usage (inside multipath-fixture): run-connection-apple-proofs core|mac|ios [SIMULATOR_UDID]
+The fixture supplies DULCET_MULTIPATH_MANIFEST. Trust is installed only on the
+explicitly guarded hosted runner, removed in finally, and never uses trust-all TLS.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import plistlib
+import shlex
+import signal
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[2]
+CORE_CLASS = 'com.legitimateapps.dulcet.core.AppleConnectionOwnershipTest'
+CORE_METHODS = ['mp02HttpEnrollmentAndFactoryRouteChangePreserveAllOwnedRowsAndFiles',
+                'mp10RevokedPreparedRequestsAndRetiredHttpTasksStayClosed']
+APP_CLASS = 'DulcetAppleConnectionIntegrationTest'
+APP_METHOD = 'testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP'
+
+
+def run(command, *, env=None, log=None):
+    command = [str(value) for value in command]
+    print('+ ' + shlex.join(command), flush=True)
+    if log is None:
+        subprocess.run(command, cwd=ROOT, env=env, check=True)
+        return
+    with Path(log).open('w') as output:
+        process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True)
+        try:
+            for line in process.stdout:
+                print(line, end='', flush=True)
+                output.write(line)
+            if process.wait():
+                raise subprocess.CalledProcessError(process.returncode, command)
+        except BaseException:
+            process.terminate()
+            process.wait(timeout=20)
+            raise
+
+
+def capture(command):
+    return subprocess.check_output(command, text=True).strip()
+
+
+def inject_manifest(node, values):
+    count = 0
+    if isinstance(node, dict):
+        if 'TestBundlePath' in node:
+            for key in ('EnvironmentVariables', 'TestHostEnvironmentVariables'):
+                node.setdefault(key, {}).update(values)
+            count += 1
+        for value in node.values():
+            count += inject_manifest(value, values)
+    elif isinstance(node, list):
+        for value in node:
+            count += inject_manifest(value, values)
+    return count
+
+
+def execute(mode, simulator, env, work, manifest):
+    if mode == 'core':
+        run([ROOT/'gradlew', '--no-daemon', '--no-configuration-cache', ':core:macosArm64Test',
+             '--rerun-tasks'], env=env, log=work/'core.log')
+        run([sys.executable, ROOT/'tools/ci/verify-connection-results',
+             ROOT/'core/build/test-results/macosArm64Test', CORE_CLASS, *CORE_METHODS])
+        return
+    scheme = 'DulcetPlaybackIntegration' if mode == 'mac' else 'DulcetiOSDownloadIntegration'
+    target = 'DulcetPlaybackIntegrationTests' if mode == 'mac' else 'DulcetiOSDownloadIntegrationTests'
+    destination = 'platform=macOS' if mode == 'mac' else f'platform=iOS Simulator,id={simulator}'
+    derived = work/'DerivedData'
+    common = ['-configuration', 'Debug', '-destination', destination,
+              '-derivedDataPath', str(derived), '-parallel-testing-enabled', 'NO']
+    run(['xcodebuild', 'build-for-testing', '-project', ROOT/'apple/Dulcet.xcodeproj',
+         '-scheme', scheme, *common, 'CODE_SIGN_STYLE=Manual', 'CODE_SIGN_IDENTITY=-',
+         'CODE_SIGN_ENTITLEMENTS=', 'DEVELOPMENT_TEAM=', 'PROVISIONING_PROFILE_SPECIFIER='],
+        env=env, log=work/'build.log')
+    manifests = list((derived/'Build/Products').glob('*.xctestrun'))
+    if len(manifests) != 1:
+        raise RuntimeError(f'Expected one fresh native test manifest, found {len(manifests)}')
+    document = plistlib.loads(manifests[0].read_bytes())
+    values = {'DULCET_MULTIPATH_MANIFEST': env['DULCET_MULTIPATH_MANIFEST'],
+              'DULCET_MULTIPATH_MANIFEST_JSON': json.dumps(manifest, separators=(',', ':')),
+              'DULCET_CONNECTIONS_SEED': env['DULCET_CONNECTIONS_SEED']}
+    if inject_manifest(document, values) < 1:
+        raise RuntimeError('No app-hosted test target found for fixture environment injection')
+    # Keep it beside the original: xcodebuild resolves product paths relative to this file.
+    launch = manifests[0].with_name('ConnectionsFixture.xctestrun')
+    launch.write_bytes(plistlib.dumps(document))
+    result = work/'connections.xcresult'
+    run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
+         '-destination', destination, '-parallel-testing-enabled', 'NO',
+         '-resultBundlePath', result,
+         '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', '300',
+         '-maximum-test-execution-time-allowance', '300',
+         f'-only-testing:{target}/{APP_CLASS}/{APP_METHOD}'], env=env, log=work/'test.log')
+    run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
+         f'{target}.{APP_CLASS}', APP_METHOD])
+    run([sys.executable, ROOT/'tools/swift-testing-junit', result,
+         work/'junit/TEST-AppleConnections.xml', APP_CLASS])
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] not in ('core', 'mac', 'ios') or len(args) != (2 if args[0] == 'ios' else 1):
+        raise SystemExit('usage: run-connection-apple-proofs core|mac|ios [SIMULATOR_UDID]')
+    if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted' or sys.platform != 'darwin':
+        raise SystemExit('Fixture trust requires an ephemeral GitHub-hosted macOS runner; local/shared Mac execution is refused')
+    mode = args[0]
+    simulator = args[1] if mode == 'ios' else None
+    runner = Path(os.environ['RUNNER_TEMP']).resolve()
+    manifest_path = Path(os.environ['DULCET_MULTIPATH_MANIFEST']).resolve()
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get('standard') != 'dulcet-multipath-fixture' or manifest.get('disposable') is not True or not manifest.get('nonce'):
+        raise SystemExit('A validated disposable multipath fixture is required')
+    from urllib.parse import urlparse
+    for key in ('routeA', 'routeB'):
+        value = urlparse(manifest[key])
+        if value.scheme != 'https' or value.hostname != 'localhost':
+            raise SystemExit('Fixture routes must be HTTPS localhost listeners')
+    ca = Path(manifest['caPem']).resolve()
+    if not ca.is_relative_to(manifest_path.parent) or not manifest_path.is_relative_to(runner) or not ca.is_file():
+        raise SystemExit('The fresh fixture manifest and CA must live together under RUNNER_TEMP')
+    work = Path(tempfile.mkdtemp(prefix=f'dulcet-connections-{mode}-', dir=runner))
+    print(f'CONNECTIONS APPLE evidence={work}', flush=True)
+    env = dict(os.environ, DULCET_CONNECTIONS_SEED=str(ROOT/'tools/migration-fixtures/v15'))
+    keychain = work/'fixture.keychain-db'
+    original = shlex.split(capture(['security', 'list-keychains', '-d', 'user']))
+    password = os.urandom(24).hex()
+    trusted = False
+    try:
+        # Do not print the temporary keychain password. It is unrelated to any account.
+        subprocess.run(['security', 'create-keychain', '-p', password, str(keychain)], check=True)
+        subprocess.run(['security', 'unlock-keychain', '-p', password, str(keychain)], check=True)
+        run(['security', 'list-keychains', '-d', 'user', '-s', str(keychain), *original])
+        run(['security', 'add-trusted-cert', '-r', 'trustRoot', '-k', keychain, ca])
+        trusted = True
+        if simulator:
+            run(['xcrun', 'simctl', 'keychain', simulator, 'add-root-cert', ca])
+        execute(mode, simulator, env, work, manifest)
+    finally:
+        if simulator:
+            # This mode accepts only the caller's disposable CI simulator. Reset its fixture
+            # keychain after the finite proof; no operator simulator is admitted by the guard.
+            subprocess.run(['xcrun', 'simctl', 'keychain', simulator, 'reset'], check=False)
+        if trusted:
+            subprocess.run(['security', 'remove-trusted-cert', str(ca)], check=False)
+        subprocess.run(['security', 'list-keychains', '-d', 'user', '-s', *original], check=False)
+        subprocess.run(['security', 'delete-keychain', str(keychain)], check=False)
+
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(SystemExit(143)))
+    main()
