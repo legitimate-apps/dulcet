@@ -1238,8 +1238,10 @@ final class DulcetDesignTourUITests: XCTestCase {
             row.press(forDuration: 1.2)
             let action = app.buttons.matching(NSPredicate(format: "label == 'Download' OR label == 'Retry Download'")).firstMatch
             guard action.waitForExistence(timeout: 5) else { dismissOverlay(in: app); return false }
-            action.tap()
-            return true
+            // Retry Download can vanish after UIKit synthesizes input even when its AX
+            // activation point is invalid. Send one ordinary event at the published frame;
+            // the caller still requires the resulting real transfer state.
+            return tapVisibleFrame(action, in: app)
         }
         guard setTourRule(server.url, action: "fail", enabled: true, endpoint: "stream") else { return }
         defer {
