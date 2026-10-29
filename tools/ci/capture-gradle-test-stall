@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Forward a finite command unchanged; collect at most two JVM stacks on test inactivity.
+
+Usage: capture-gradle-test-stall --output DIRECTORY -- COMMAND [ARG ...]
+Gradle must load gradle-test-progress.init.gradle. Receipts are flushed outside worker
+result buffers. Only descendants of this invocation may be sampled. No retry, signal,
+test deadline or command exit status is changed.
+"""
+import argparse
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import time
+
+
+def descendants(entries, root):
+    owned = {root}
+    while True:
+        more = {pid for pid, parent, _ in entries if parent in owned}
+        if more <= owned:
+            return [entry for entry in entries if entry[0] in owned]
+        owned.update(more)
+
+
+def redact(value):
+    # JVM thread names can contain a request URL. Keep the entire query out of evidence.
+    value = re.sub(r'(https?://[^\s"<>?]+)\?[^\s"<>]*', r'\1?<redacted>', value)
+    return re.sub(r'(https?://)[^/@\s]+@', r'\1<redacted>@', value)
+
+
+def sample(root, output, sequence):
+    listing = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,comm='], text=True, timeout=5)
+    entries = []
+    for line in listing.splitlines():
+        fields = line.strip().split(None, 2)
+        if len(fields) == 3:
+            entries.append((int(fields[0]), int(fields[1]), fields[2]))
+    owned = descendants(entries, root)
+    pids = [pid for pid, _, _ in owned]
+    if not pids:
+        return
+    metrics = subprocess.check_output(
+        ['ps', '-p', ','.join(map(str, pids)), '-o', 'pid,ppid,state,%cpu,%mem,time,etime,comm'],
+        text=True, timeout=5)
+    (output / f'processes-{sequence}.log').write_text(redact(metrics))
+    jcmd = shutil.which('jcmd')
+    java = [pid for pid, _, command in owned if Path(command).name == 'java']
+    print(f'GRADLE TEST SAMPLE sequence={sequence} ownedJavaPids={java}', flush=True)
+    for pid in java:
+        path = output / f'threads-{sequence}-{pid}.log'
+        if not jcmd:
+            path.write_text('jcmd unavailable\n')
+            continue
+        try:
+            result = subprocess.run([jcmd, str(pid), 'Thread.print', '-l'], capture_output=True,
+                                    text=True, timeout=10)
+            path.write_text(redact(result.stdout + result.stderr) + f'\nexit={result.returncode}\n')
+        except subprocess.TimeoutExpired:
+            path.write_text('jcmd exceeded bounded ten-second capture\n')
+
+
+def monitor(command, output, stall_seconds=90, sample_gap=60):
+    output.mkdir(parents=True, exist_ok=False)
+    journal = output / 'test-progress.log'
+    env = dict(os.environ, DULCET_GRADLE_PROGRESS_FILE=str(journal.resolve()))
+    child = subprocess.Popen(command, env=env)
+    previous = None
+    last_progress = time.monotonic()
+    sampled = 0
+    while child.poll() is None:
+        try:
+            child.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        current = journal.stat().st_size if journal.exists() else None
+        if current != previous:
+            with journal.open('r') as source:
+                source.seek(previous or 0)
+                for line in source:
+                    print('GRADLE TEST PROGRESS ' + redact(line.rstrip()), flush=True)
+            previous = current
+            last_progress = time.monotonic()
+        if current is not None and sampled < 2 and time.monotonic() - last_progress >= stall_seconds:
+            sampled += 1
+            try:
+                sample(child.pid, output, sampled)
+            except (OSError, subprocess.SubprocessError) as failure:
+                (output / f'capture-error-{sampled}.log').write_text(type(failure).__name__ + '\n')
+            # At most two captures, separated by a full interval after the first completes.
+            last_progress = time.monotonic() + sample_gap - stall_seconds
+    result = child.returncode
+    with journal.open('a') as target:
+        target.write(f'{time.time_ns() // 1_000_000} COMMAND EXIT {result}\n')
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    command = args.command[1:] if args.command[:1] == ['--'] else args.command
+    if not command:
+        parser.error('a finite command is required after --')
+    return monitor(command, args.output)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -239,6 +239,8 @@ jobs:
         run: python3 tools/test-health-request-policy
       - name: Prove the playback phase parity gate rejects an unhandled phase
         run: python3 tools/test-verify-playback-phase-parity
+      - name: Prove bounded JVM stall diagnostics preserve test outcomes and isolate process ownership
+        run: python3 tools/test-capture-gradle-test-stall
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"
@@ -265,8 +267,13 @@ jobs:
             :core-conformance:testAndroidHostTest
           tools/conformance-env/linux-local --root "$ROOT" reset
           # Explicit live mode excludes fixture/unit controls and fails if the server is absent.
+          # Receipts survive cancellation even when Gradle's worker result buffers do not.
+          # Sample only this command's JVMs after 90s with no test progress, at most twice;
+          # the existing job deadline and every test assertion remain unchanged.
+          python3 tools/ci/capture-gradle-test-stall --output build/linux-conformance-diagnostics -- \
           tools/conformance-env/linux-local --root "$ROOT" run -- \
             ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 \
+            --init-script tools/ci/gradle-test-progress.init.gradle \
             -Pdulcet.productionSearchConformance \
             :android:app:testDevDebugUnitTest :android:tv:testDebugUnitTest
 
@@ -295,6 +302,7 @@ jobs:
             core-conformance/build/test-results/testAndroidHostTest
             android/app/build/test-results/testDevDebugUnitTest
             android/tv/build/test-results/testDebugUnitTest
+            build/linux-conformance-diagnostics
           if-no-files-found: error
           retention-days: 7
 
