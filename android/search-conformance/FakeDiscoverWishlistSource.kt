@@ -17,6 +17,29 @@ class FakeDiscoverWishlistSource:DiscoverWishlistSource {
     var shelfAnswer:(String,String?)->DiscoverResult<DiscoverShelfPage> = {_,_->DiscoverResult.Failed(DiscoverFailure("unsupported",null,false))}
     var playlistsAnswer:(String,String?)->DiscoverResult<DiscoverPlaylistList> = {_,_->DiscoverResult.Failed(DiscoverFailure("unsupported",null,false))}
     var playlistAnswer:(String,String?)->DiscoverResult<DiscoverPlaylist> = {_,_->DiscoverResult.Failed(DiscoverFailure("unsupported",null,false))}
+    var holdMutations = false
+    val durableMutations = mutableListOf<String>()
+    val heldMutations = mutableListOf<() -> Unit>()
+    var mutationCancellationCount = 0
+    private fun mutation(key: String, completion: (DiscoverResult<WishEnqueued>) -> Unit): DiscoverOperation {
+        if (!holdMutations) return operation.also { completion(DiscoverResult.Value(WishEnqueued(key, key))) }
+        var settled = false
+        heldMutations += {
+            if (!settled) {
+                settled = true
+                durableMutations += key
+                completion(DiscoverResult.Value(WishEnqueued(key, key)))
+            }
+        }
+        return object : DiscoverOperation {
+            override fun cancel() {
+                if (settled) return
+                settled = true
+                mutationCancellationCount++
+                completion(DiscoverResult.Failed(DiscoverFailure("cancelled", null, false)))
+            }
+        }
+    }
     var filter=WishFilter(); var removed:String?=null; var added=0;var rejected=0
     val operation=object:DiscoverOperation {override fun cancel(){}}
     fun publish(value:DiscoverPublication=state){state=value;listeners.toList().forEach{it(value)}}
@@ -35,8 +58,8 @@ class FakeDiscoverWishlistSource:DiscoverWishlistSource {
     override fun playlist(mbid:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylist>)->Unit)=operation.also {playlistReads+=mbid to cursor;completion(playlistAnswer(mbid,cursor))}
     override fun artwork(artworkId:String,completion:(DiscoverResult<ByteArray>)->Unit)=operation.also{completion(DiscoverResult.Failed(DiscoverFailure("missing-art",null,false)))}
     override fun refreshWishlist(filter:WishFilter){this.filter=filter;publish()}
-    override fun add(item:DiscoverItem,source:WishSource,completion:(DiscoverResult<WishEnqueued>)->Unit)=operation.also{added++;wishSources+=source;completion(DiscoverResult.Value(WishEnqueued("op","op")))}
-    override fun remove(rowKey:String,completion:(DiscoverResult<WishEnqueued>)->Unit)=operation.also{removed=rowKey;completion(DiscoverResult.Value(WishEnqueued("remove",rowKey)))}
-    override fun reject(item:DiscoverItem,libraryItem:DiscoverLibraryRef,wishId:String?,completion:(DiscoverResult<WishEnqueued>)->Unit)=operation.also{rejected++;completion(DiscoverResult.Value(WishEnqueued("reject","reject")))}
+    override fun add(item:DiscoverItem,source:WishSource,completion:(DiscoverResult<WishEnqueued>)->Unit): DiscoverOperation { added++; wishSources += source; return mutation("add:${item.id}", completion) }
+    override fun remove(rowKey:String,completion:(DiscoverResult<WishEnqueued>)->Unit): DiscoverOperation { removed = rowKey; return mutation("remove:$rowKey", completion) }
+    override fun reject(item:DiscoverItem,libraryItem:DiscoverLibraryRef,wishId:String?,completion:(DiscoverResult<WishEnqueued>)->Unit): DiscoverOperation { rejected++; return mutation("reject:$wishId", completion) }
     override fun close(){listeners.clear()}
 }

@@ -34,6 +34,47 @@ import Testing
         model.close(); source.emit(old)
         #expect(model.publication?.wishes.map(\.key) == ["B"])
     }
+    @Test func removingWishSurvivesViewCloseBeforeItsDurableReceipt() {
+        let reader = DiscoverProofReader()
+        reader.holdMutation = true
+        var model: DulcetDiscoverModel? = DulcetDiscoverModel(reader: reader)
+        weak let releasedModel = model
+        model?.open()
+        model?.remove("generation-B")
+        model?.close()
+        model = nil
+        #expect(releasedModel == nil)
+        reader.releaseMutation?()
+        #expect(reader.durableRemovals == ["generation-B"], "Leaving Wishlist must not discard an accepted Remove")
+        #expect(reader.mutationCancellationCount == 0)
+    }
+    @Test func addingWishSurvivesViewCloseBeforeItsDurableReceipt() {
+        let reader = DiscoverProofReader()
+        reader.holdMutation = true
+        var model: DulcetDiscoverModel? = DulcetDiscoverModel(reader: reader)
+        weak let releasedModel = model
+        model?.open()
+        let item = DulcetDiscoverItem(id: "song", kind: "song", target: .init(kind: "song", mbid: "mbid"), title: "Song", wishable: true, availability: .init(status: "notHeld", completeness: "unknown"))
+        model?.add(item, source: .init(type: "search"))
+        model?.close()
+        model = nil
+        #expect(releasedModel == nil)
+        reader.releaseMutation?()
+        #expect(reader.durableAdds == ["song"])
+        #expect(reader.mutationCancellationCount == 0)
+    }
+    @Test func aClosedWishlistDoesNotConsumeALateMutationFailure() {
+        let reader = DiscoverProofReader()
+        reader.holdMutation = true
+        reader.heldRemoveFailure = .init(code: "forbidden")
+        let model = DulcetDiscoverModel(reader: reader)
+        model.open()
+        model.remove("generation-B")
+        model.close()
+        reader.releaseMutation?()
+        #expect(reader.mutationCancellationCount == 0)
+        #expect(model.mutationError == nil)
+    }
     @Test func arrivalUsesServerLibraryItemAndRefreshesMyLibrary() {
         let ref = DulcetDiscoverLibraryRef(providerInstanceId: "account-a", type: "song", id: "opaque-local")
         let presentation = DulcetWishlistRowPresentation(row: .init(key: "row", wish: wish("fulfilled", item: ref)))
@@ -96,6 +137,12 @@ import Testing
     var addCompletion: (@MainActor (Result<DulcetWishEnqueued, DulcetDiscoverFailure>) -> Void)?
     var added: [(DulcetDiscoverItem, DulcetWishSource)] = []
     var removed: [String] = []
+    var holdMutation = false
+    var durableAdds: [String] = []
+    var heldRemoveFailure: DulcetDiscoverFailure?
+    var releaseMutation: (@MainActor () -> Void)?
+    var durableRemovals: [String] = []
+    var mutationCancellationCount = 0
     var rejected: [(DulcetDiscoverItem, DulcetDiscoverLibraryRef, String?)] = []
     var albumCompletions: [@MainActor (Result<DulcetDiscoverAlbum, DulcetDiscoverFailure>) -> Void] = []
     var shelfRequests: [(String, String?)] = []
@@ -133,8 +180,40 @@ import Testing
     func album(mbid: String, releaseId: String?, completion: @escaping @MainActor (Result<DulcetDiscoverAlbum, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { albumCompletions.append(completion); return DulcetDiscoverCancellation { self.albumCancellationCount += 1 } }
     func albumTracks(mbid: String, releaseId: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPage, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { token() }
     func artwork(artworkId: String, completion: @escaping @MainActor (Result<Data, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { token() }
-    func add(item: DulcetDiscoverItem, source: DulcetWishSource, completion: @escaping @MainActor (Result<DulcetWishEnqueued, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { added.append((item, source)); addCompletion = completion; return token() }
-    func remove(rowKey: String, completion: @escaping @MainActor (Result<DulcetWishEnqueued, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { removed.append(rowKey); return token() }
+    func add(item: DulcetDiscoverItem, source: DulcetWishSource, completion: @escaping @MainActor (Result<DulcetWishEnqueued, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
+        added.append((item, source)); addCompletion = completion
+        guard holdMutation else { return token() }
+        var cancelled = false
+        releaseMutation = {
+            guard !cancelled else { return }
+            self.durableAdds.append(item.id)
+            completion(.success(.init(operationId: "held-add", rowKey: item.id)))
+        }
+        return DulcetDiscoverCancellation {
+            cancelled = true
+            self.mutationCancellationCount += 1
+            completion(.failure(.init(code: "cancelled")))
+        }
+    }
+    func remove(rowKey: String, completion: @escaping @MainActor (Result<DulcetWishEnqueued, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
+        removed.append(rowKey)
+        guard holdMutation else { return token() }
+        var cancelled = false
+        releaseMutation = {
+            guard !cancelled else { return }
+            if let error = self.heldRemoveFailure {
+                completion(.failure(error))
+            } else {
+                self.durableRemovals.append(rowKey)
+                completion(.success(.init(operationId: "held-remove", rowKey: rowKey)))
+            }
+        }
+        return DulcetDiscoverCancellation {
+            cancelled = true
+            self.mutationCancellationCount += 1
+            completion(.failure(.init(code: "cancelled")))
+        }
+    }
     func reject(item: DulcetDiscoverItem, libraryItem: DulcetDiscoverLibraryRef, wishId: String?, completion: @escaping @MainActor (Result<DulcetWishEnqueued, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { rejected.append((item, libraryItem, wishId)); return token() }
     func refreshWishlist(_ filter: DulcetWishFilter) { filters.append(filter) }
     func close() {}
