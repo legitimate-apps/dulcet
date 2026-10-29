@@ -3062,7 +3062,7 @@ jobs:
         env:
           DULCET_DISCOVER_PROOF_UDID: ${{ steps.discover_ipad_destination.outputs.udid }}
           DULCET_DISCOVER_PREBUILT: "true"
-          DULCET_DISCOVER_ONLY_TEST: ${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || inputs.discover_only == true && inputs.discover_ipad_case == 'offline' && 'DulcetDiscoverWishlistIPadUITests/testOfflineWishRelaunchRemoveAndScanArrival' || 'DulcetDiscoverWishlistIPadUITests' }}
+          DULCET_DISCOVER_ONLY_TEST: ${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || inputs.discover_only == true && inputs.discover_ipad_case == 'offline' && 'DulcetDiscoverWishlistIPadUITests' || 'DulcetDiscoverWishlistIPadUITests' }}
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-ipad/fixture" -- tools/ci/run-discover-wishlist-proofs ipad
       - name: Stage finalized native parity results
         run: |

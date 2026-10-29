@@ -4,6 +4,9 @@ import SwiftUI
 public struct DulcetWishlistView: View {
     @State private var model: DulcetDiscoverModel
     @State private var filter = DulcetWishFilter()
+#if DEBUG && os(iOS)
+    @State private var controlRemovedOnce = false
+#endif
     private let openLibrary: (DulcetDiscoverLibraryRef) -> Void
     private let openMetadata: (DulcetDiscoverDestination) -> Void
     public init(reader: any DulcetDiscoverReading, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void, openMetadata: @escaping (DulcetDiscoverDestination) -> Void) {
@@ -135,7 +138,23 @@ public struct DulcetWishlistView: View {
     }
     private func remove(_ row: DulcetWishRow) -> some View {
         Button(DulcetStrings.discoverRemoveWish, systemImage: "bookmark.slash") {
+#if DEBUG && os(iOS)
+            if ProcessInfo.processInfo.arguments.contains("-dulcet-control-remove-swallowed"), row.wish?.target != nil {
+                DulcetUIProofMarkers.detail("wishlist.remove.control.swallowed", context: "key=\(row.key)")
+                return
+            }
+#endif
             DulcetUIProofMarkers.detail("wishlist.remove", context: "key=\(row.key)")
+#if DEBUG && os(iOS)
+            if ProcessInfo.processInfo.arguments.contains("-dulcet-control-remove-delivered"), row.wish?.target != nil {
+                if !controlRemovedOnce {
+                    controlRemovedOnce = true
+                    DulcetUIProofMarkers.detail("wishlist.remove.control.delivered-noop", context: "key=\(row.key)")
+                    return
+                }
+                DulcetUIProofMarkers.detail("wishlist.remove.control.SECOND-WOULD-WORK", context: "key=\(row.key)")
+            }
+#endif
             model.remove(row.key)
         }
             .disabled(model.publication?.access.canRemoveWish != true)

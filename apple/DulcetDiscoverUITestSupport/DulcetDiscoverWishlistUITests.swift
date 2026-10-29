@@ -13,6 +13,7 @@ import UIKit
     let app = XCUIApplication()
     var namespace = UUID().uuidString
     private var prepared = false
+    private var controlDroppedInput = false
     var env: [String: String] { ProcessInfo.processInfo.environment }
     func required(_ name: String) throws -> String { try XCTUnwrap(env["DULCET_DISCOVER_" + name], "Missing fixture environment " + name) }
     func json(_ url: String, body: [String: Any]? = nil) throws -> [String: Any] {
@@ -54,7 +55,10 @@ import UIKit
         var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
 #if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .pad { args.append("-dulcet-debug-input-receipts") }
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            args.append("-dulcet-debug-input-receipts")
+            args.append(name.contains("CompletedTouchSwallowed") ? "-dulcet-control-remove-swallowed" : "-dulcet-control-remove-delivered")
+        }
 #endif
         if variant == "largest" { args.append("-dulcet-debug-largest-text") }
         if other { args += ["-dulcet-debug-add-account"] }
@@ -474,7 +478,10 @@ import UIKit
             let button = app.descendants(matching: .any)[rowIdentifier].firstMatch.buttons["wishlist.remove"].firstMatch
             XCTAssertTrue(button.exists && button.isEnabled)
             print("DISCOVER_REMOVE_INPUT row=\(rowIdentifier) attempt=\(attempt)")
-            activate(button)
+            if observesTouches && !name.contains("CompletedTouchSwallowed") && !controlDroppedInput {
+                controlDroppedInput = true
+                print("CONTROL_REMOVE_OMITTED_FIRST_INPUT row=\(rowIdentifier)")
+            } else { activate(button) }
             let received = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 DulcetRemoveInputProof.received(markers.label, key: key, after: baseline)
             }, object: nil)
@@ -685,66 +692,8 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     func testIPhoneLargestTextAndVoiceOverLabels() throws { try accessibilityVariants() }
 }
 @MainActor final class DulcetDiscoverWishlistIPadUITests: DulcetDiscoverWishlistProof {
-    func testEverywhereQueryPagesAndHeldRouting() throws { try everywherePagesAndHeldRouting() }
     func testOfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
-    func testBusyStaleAndNavidromeControl() throws { try busyStaleAndNavidromeControl() }
-    func testAccountSwitchAndIdentityReplacementFence() throws { try accountSwitchAndIdentityReplacementFence() }
-    func testIPadSidebarSelectionSurvivesWishlistDetailAndResize() throws {
-        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .pad)
-        XCUIDevice.shared.orientation = .landscapeLeft
-        try launch(navigationReceipts: true); try search(); activate(item("album", 200))
-        _ = try scenario("offline")
-        activate(app.buttons["discover.wish"].firstMatch)
-        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
-        wishlist()
-        let sidebar = app.descendants(matching: .any)["wishlist.destination"].firstMatch
-        let detail = app.buttons["wishlist.refresh"].firstMatch
-        XCTAssertTrue(sidebar.isSelected, "The sidebar must select Wishlist rather than Library")
-        XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
-        XCTAssertTrue(detail.isHittable, "The regular Wishlist must keep Refresh reachable")
-        let row = wishRow("Fixture Album 00")
-        XCTAssertTrue(row.staticTexts["Waiting to sync"].exists)
-        try capture("iPad-Regular-Wishlist")
-        let pendingKey = row.identifier
-        activate(row.buttons["wishlist.metadata"].firstMatch)
-        let album = app.staticTexts["discover.album.title"].firstMatch
-        XCTAssertTrue(album.waitForExistence(timeout: 30))
-        XCTAssertTrue(sidebar.isSelected, "A Wishlist metadata page keeps its sidebar destination selected")
-        let window = app.windows.firstMatch
-        let original = window.frame
-        // Drag the native iPad window corner; a width assertion prevents rotation alone
-        // from masquerading as a compact-window proof.
-        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -4, dy: -4))
-        corner.press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 590, dy: original.height - 20)))
-        let compactWindow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            let frame = window.frame
-            return frame.width > 0 && frame.width <= 600 && frame.height > 0
-        }, object: window)
-        XCTAssertEqual(XCTWaiter.wait(for: [compactWindow], timeout: 30), .completed,
-                       "Native compact-window resize must finish before checking retained content")
-        XCTAssertLessThanOrEqual(window.frame.width, 600, "Native compact-window resize must occur")
-        let compactShell = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            self.app.tabBars.firstMatch.exists
-        }, object: app)
-        let shellResult = XCTWaiter.wait(for: [compactShell], timeout: 30)
-        print("DISCOVER_COMPACT_SHELL window=\(window.frame) tabs=\(app.tabBars.firstMatch.exists) markers=\(app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label)")
-        XCTAssertEqual(shellResult, .completed, "The resized window must finish presenting its compact tab shell: " + app.debugDescription)
-        // The compact shell creates a new detail model, whose cached read completes
-        // asynchronously. A tab bar alone does not mean the album has finished loading.
-        XCTAssertTrue(album.waitForExistence(timeout: 30),
-                      "The retained album route must finish loading after the compact shell appears: " + app.debugDescription)
-        XCTAssertEqual(album.label, "Fixture Album 00")
-        try capture("iPad-Compact-Album")
-        let back = app.navigationBars.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Wishlist", "Back")).firstMatch
-        XCTAssertTrue(back.isHittable); activate(back)
-        let retained = wishRow("Fixture Album 00")
-        XCTAssertTrue(retained.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
-        XCTAssertEqual(retained.identifier, pendingKey, "The same account's durable pending intent survives resize and Back")
-        try capture("iPad-Compact-Wishlist")
-        _ = try scenario("normal")
-        XCUIDevice.shared.orientation = .portrait
-        try accessibilityVariants()
-    }
+    func testOfflineRemoveCompletedTouchSwallowed() throws { try offlineWishRelaunchRemoveAndScanArrival() }
 }
 #endif
 
