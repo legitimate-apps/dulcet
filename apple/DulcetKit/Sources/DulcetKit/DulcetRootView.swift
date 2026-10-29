@@ -1151,7 +1151,22 @@ private struct DulcetStateSurface: View {
                     onControl: store.sendPlaybackControl,
                     onEdit: store.editQueue
                 )
-
+#if os(macOS)
+                // This player exposes Favorite and ratings through the window toolbar.
+                .toolbar {
+                    if store.nowPlayingFavourite(for: player.current) != nil {
+                        ToolbarItem(placement: .primaryAction) {
+                            DulcetNowPlayingFavouriteButton(track: player.current)
+                        }
+                        ToolbarItem(placement: .primaryAction) {
+                            Menu {
+                                DulcetRatingMenu(target: .init(kind: .track, id: player.current.id), published: nil)
+                            } label: { Label(DulcetStrings.more, systemImage: "ellipsis.circle") }
+                            .accessibilityIdentifier("dulcet.now-playing.toolbar.more")
+                        }
+                    }
+                }
+#endif
             } else if snapshot.state == .nowPlayingPreparing {
                 DulcetPlaybackPreparingView()
             } else if snapshot.state == .nowPlayingFailed {

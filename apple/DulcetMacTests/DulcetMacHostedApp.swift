@@ -313,9 +313,29 @@ final class HostedApp {
     func selectSidebarRow(identifiedBy identifier: String) async throws {
         if identifier.hasPrefix("dulcet.sidebar.myLibrary.") || identifier.hasPrefix("dulcet.sidebar.section.") {
             let personal = identifier.hasPrefix("dulcet.sidebar.myLibrary.")
-            try await selectSidebarRow(identifiedBy: personal ? "dulcet.sidebar.library" : "dulcet.sidebar.browse")
             let section = identifier.split(separator: ".").last.map(String.init) ?? ""
-            let link = try await element(identifiedBy: personal ? "dulcet.myLibrary.section.\(section)" : "dulcet.reader.section.\(section)", timeout: .seconds(10))
+            let owned = personal || section == "playlists" || section == "favourites"
+            try await selectSidebarRow(identifiedBy: owned ? "dulcet.sidebar.library" : "dulcet.sidebar.browse")
+            let linkIdentifier = personal ? "dulcet.myLibrary.section.\(section)" : "dulcet.reader.section.\(section)"
+            // A root destination retains its stack. Return through the actual native Back
+            // control before choosing a category; never mutate the store to reach the test target.
+            var pops = 0
+            while firstElement(where: { self.identifier($0) == linkIdentifier }) == nil,
+                  !store.readerPath.isEmpty, pops < 4 {
+                let back = try await element(timeout: .seconds(10), described: "the native Back button",
+                                             in: window.contentView?.superview) {
+                    guard self.value("accessibilityRole", of: $0) as? String == "AXButton" else { return false }
+                    let help = self.value("accessibilityHelp", of: $0) as? String ?? ""
+                    return self.identifier($0) == "BackButton" || self.label($0) == "Back" || help == "Back"
+                }
+                let depth = store.readerPath.count
+                try press(back, named: "Back")
+                try await waitUntil(timeout: .seconds(5), "Back must leave the current reader page") {
+                    self.store.readerPath.count < depth
+                }
+                pops += 1
+            }
+            let link = try await element(identifiedBy: linkIdentifier, timeout: .seconds(10))
             try press(link, named: section)
         } else {
             let row = try await element(identifiedBy: identifier, timeout: .seconds(10))
