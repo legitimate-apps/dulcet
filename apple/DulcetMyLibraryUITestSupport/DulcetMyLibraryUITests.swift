@@ -188,15 +188,21 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let pendingBeforeRelaunch = try serverContains(album.id)
         XCTAssertFalse(pendingBeforeRelaunch)
         app.terminate()
+#if os(iOS)
+        // Native compact rows now fit at default size. Largest text creates the real
+        // offscreen/reveal condition without depending on removed introductory content.
+        try launch(connect: false, variant: UIDevice.current.userInterfaceIdiom == .phone ? "largest-text" : "light")
+#else
         try launch(connect: false)
+#endif
         try select("library")
 #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .phone {
-            // Offline status and the category rows put Recently Added below the compact
-            // viewport. Prove the regression condition before driving the real scroll.
+            // Require an actual scroll at the largest text size, then require the durable
+            // album to publish and become actionable after that scroll.
             XCTAssertTrue(app.buttons["dulcet.myLibrary.section.recent"].waitForExistence(timeout: 20))
-            XCTAssertFalse(albumTile(album.title).exists,
-                           "The compact offline root must begin with its lazy album grid below the viewport")
+            XCTAssertFalse(albumTile(album.title).isHittable,
+                           "The largest-text offline root must begin with its album below the viewport")
             let scrolls = revealPhoneAlbumTile(albumTile(album.title))
             XCTAssertGreaterThan(scrolls, 0, "The offline relaunch proof must actually reveal the lazy grid")
             XCTAssertTrue(albumTile(album.title).isHittable)
@@ -313,8 +319,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try reveal(albums); activate(albums)
         XCTAssertTrue(options.waitForExistence(timeout: 10)); activate(options)
         XCTAssertTrue(sort.waitForExistence(timeout: 20))
-        XCTAssertTrue(sort.label.contains("Release Date") || (sort.value as? String)?.contains("Release Date") == true,
-            "The sort selection must survive relaunch")
+        // UIKit's native submenu exports Sort By without its SwiftUI accessibilityValue.
+        // Read the actual selected Picker action inside it after the saved launch.
+        activate(sort)
+        XCTAssertTrue(release.waitForExistence(timeout: 10))
+        XCTAssertTrue(release.isSelected, "The selected Release Date action must survive relaunch")
+        dismissToolbarMenu(options, action: release)
         dismissToolbarMenu(options, action: sort)
         // Return through a different tab and reselect Browse to reach its navigation root.
         try select("library"); try select("browse")
