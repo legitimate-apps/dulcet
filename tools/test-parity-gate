@@ -1411,30 +1411,25 @@ DISCOVER_EXECUTION_CASES = (
         "testBusyStaleAndNavidromeControl",
         "testOfflineWishRelaunchRemoveAndScanArrival",
         "testIPhoneDiscoverShelvesLargestTextPagesAndSources",
-        "testDiscoverShelvesEmptyCachedFailureAndNavidrome",
     )),
     ("apple-ci", "DulcetDiscoverWishlistIPadUITests", (
         "testEverywhereQueryPagesAndHeldRouting",
         "testBusyStaleAndNavidromeControl",
         "testOfflineWishRelaunchRemoveAndScanArrival",
         "testIPadDiscoverShelvesSidebarCompactResizeAndBack",
-        "testDiscoverShelvesEmptyCachedFailureAndNavidrome",
     )),
     ("apple-ci", "DulcetMacDiscoverWishlistAppTest", (
         "testEverywhereQueryPagesAndHeldRouting",
         "testBusyStaleAndNavidromeControl",
         "testOfflineWishRelaunchRemoveAndScanArrival",
         "testDiscoverShelvesMixedPagingAndShelfWish",
-        "testDiscoverShelvesEmptyFailureCachedVariantsAndNavidrome",
+        "testDiscoverPublicPlaylistPositionsWishKeyboardAndResize",
     )),
     ("core-ci", "com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest", (
         "everywherePagesAndHeldRoute",
         "busyStaleAndNavidromeControl",
         "offlineWishRelaunchRemoveRaceAndArrival",
         "shelvesRoutesAndSourceWishes",
-        "shelvesMixedAndCachedOffline",
-        "shelvesNavidromeControl",
-        "shelvesAccessibilityAndRestoration",
     )),
 )
 for workflow, alias, methods in DISCOVER_EXECUTION_CASES:
@@ -1603,12 +1598,12 @@ for label, (report, expected) in execution_rejections.items():
             )
 
 # Exercise each native claim in its actual executing workflow. Other core-ci claims
-# have separate fixtures; isolate the five Discover rows while retaining an explicit
+# have separate fixtures; isolate the six Discover rows while retaining an explicit
 # passing-case inventory rather than manufacturing XML from their citations.
 def invoke_discover_execution(root: Path, report: str, workflow: str) -> subprocess.CompletedProcess[str]:
     path = root / "FEATURES.yml"
     document = json.loads(path.read_text())
-    discover_ids = {"discover.search", "discover.pages", "wishlist.add", "wishlist.state", "wishlist.fulfil"}
+    discover_ids = {"discover.search", "discover.shelves", "discover.pages", "wishlist.add", "wishlist.state", "wishlist.fulfil"}
     document["features"] = [row for row in document["features"] if row["id"] in discover_ids]
     assert {row["id"] for row in document["features"]} == discover_ids
     path.write_text(json.dumps(document, indent=2) + "\n")
