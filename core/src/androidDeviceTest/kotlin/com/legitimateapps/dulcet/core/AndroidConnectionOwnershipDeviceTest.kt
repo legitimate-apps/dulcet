@@ -30,8 +30,8 @@ class AndroidConnectionOwnershipDeviceTest {
         val root = File(context.cacheDir, "connection-no-loss-${UUID.randomUUID()}").apply { mkdirs() }
         context.getDatabasePath(name).also { it.parentFile!!.mkdirs(); File(seed, "database.db").copyTo(it) }
         File(seed, "files").copyRecursively(root)
-        val anchor = OwnershipAnchor("server:fixture-alpha", fixture.routeA, fixture.username, fixture.identity)
-        val account = PlaybackEndpointAccount(anchor.accountId, anchor.normalizedBaseUrl, anchor.username, fixture.password, false)
+        val anchor = OwnershipAnchor("server:fixture-alpha", fixture.legacyHttp, fixture.username, fixture.identity)
+        val account = PlaybackEndpointAccount(anchor.accountId, anchor.normalizedBaseUrl, anchor.username, fixture.password, true)
         val store = DulcetDriverFactory(context, name).openDulcetDatabase()
         val files = DownloadFileStore(root.path, FileSystem.SYSTEM).also { it.ensureDirectories() }
         store.database.libraryDepthQueries.putEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY,
@@ -44,15 +44,19 @@ class AndroidConnectionOwnershipDeviceTest {
                 if (original.isFile) original.copyTo(File(root, ".tmp/${row.download_id}.partial"), overwrite = true)
             }
         }
-        val tasks = Tasks()
+        // Match this native adapter's existing credential generation before startup; a password
+        // refresh is separate from the route transition being measured. Unknown library detail
+        // cannot authorize dropping automatic retention during this offline-owned-state proof.
+        store.driver.execute(null, "UPDATE download_policy_state SET auth_generation = 1", 0)
+        store.driver.execute(null, "UPDATE my_library_state SET complete = 0", 0)
+        val partialIds = store.database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsList()
+            .filter { it.state !in setOf("complete", "stale") }.map { it.download_id }
+        val tasks = Tasks().also { it.started.addAll(partialIds) }
         val controller = controller(account, name, root, tasks)
         val calls = CopyOnWriteArrayList<String>()
         try {
             assertTrue(controller.awaitReconciled())
-            delay(300) // Let this adapter's finite startup reconciliation/scheduling settle.
-            val enrolled = assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
-                ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
-            val alternateId = enrolled.snapshot.routes.single { it.baseUrl == fixture.routeB }.id
+            controller.reconcileMyLibrary(allowExpansion = false)
             val before = store.driver.connectionOwnershipSnapshot()
             val byteWitness = fileWitness(root)
             assertTrue(before.getValue("mutation_outbox").isNotEmpty())
@@ -64,9 +68,14 @@ class AndroidConnectionOwnershipDeviceTest {
             assertTrue(File(root, ".tmp").listFiles().orEmpty().isNotEmpty(), "Partial bytes must exist at switch")
             val epoch = store.database.libraryDepthQueries.selectEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne()
             OwnershipBindingProbe.observe { calls += it }
+            val enrolled = assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
+                ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
+            assertEquals(before, store.driver.connectionOwnershipSnapshot(), "HTTP upgrade preserves every preexisting owned row")
+            assertEquals(byteWitness, fileWitness(root), "HTTP upgrade preserves completed and partial bytes")
+            val alternateId = enrolled.snapshot.routes.single { it.baseUrl == fixture.routeB }.id
             ConnectionEnrollmentStore(store.database).restore(anchor)
             val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(account.normalizedBaseUrl,
-                account.username, account.password, false), "connection.no-loss")
+                account.username, account.password, true), "connection.no-loss")
             try {
                 assertEquals(200, client.request("ping", emptyMap()).statusCode)
                 ConnectionEnrollmentStore(store.database).selectForFixture(anchor, alternateId)
@@ -76,14 +85,14 @@ class AndroidConnectionOwnershipDeviceTest {
             assertEquals(before, store.driver.connectionOwnershipSnapshot(), "Every owned row and operation identity must be unchanged")
             assertEquals(byteWitness, fileWitness(root), "Complete and partial file hashes must be unchanged")
             assertEquals(epoch, store.database.libraryDepthQueries.selectEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne())
-            assertEquals(fixture.routeA, account.normalizedBaseUrl)
+            assertEquals(fixture.legacyHttp, account.normalizedBaseUrl)
             OwnershipBindingProbe.observe(null)
             // Reopen the actual adapter using the original account, never the selected route URL.
             controller.close()
             assertEquals(alternateId, ConnectionEnrollmentStore(store.database).restore(anchor).selectedRouteId)
             val reopened = controller(account, name, root, tasks)
             try {
-                assertTrue(reopened.awaitReconciled()); delay(300)
+                assertTrue(reopened.awaitReconciled()); reopened.reconcileMyLibrary(allowExpansion = false)
                 assertEquals(byteWitness, fileWitness(root), "Relaunch keeps all completed and retained partial bytes")
                 assertEquals(before.getValue("mutation_outbox"), store.driver.connectionOwnershipSnapshot().getValue("mutation_outbox"))
                 assertEquals(before.getValue("wish_intent"), store.driver.connectionOwnershipSnapshot().getValue("wish_intent"))
@@ -115,7 +124,8 @@ class AndroidConnectionOwnershipDeviceTest {
                 account.username, account.password, true), "connection.player")
             try {
                 val request = resolveRequest(account.providerInstanceId, fixture.trackId)
-                val plan = assertIs<PlaybackResolutionResult.Resolved>(PlaybackWireClient(account).resolve(request)).plan
+                val wire = PlaybackWireClient(account)
+                val plan = try { assertIs<PlaybackResolutionResult.Resolved>(wire.resolve(request)).plan } finally { wire.close() }
                 val source = AndroidPlaybackDataSourceFactory(plan, AndroidHttpPlaybackResource(account, plan, client)).createDataSource()
                 val bytes = java.io.ByteArrayOutputStream()
                 try {
