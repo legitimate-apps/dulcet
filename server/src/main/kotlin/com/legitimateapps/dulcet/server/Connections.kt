@@ -55,9 +55,13 @@ fun parseClientRoutes(text: String?): List<ClientRoute> {
             text("audience") ?: "all", obj["authAlias"]?.jsonPrimitive?.boolean ?: true)
     }
 }
+private fun checkedLegacyAnchor(value: String): URI = checkedBase(value, false).also {
+    require(it.scheme == "http") { "Legacy ownership anchors must use HTTP" }
+}
+
 fun parseLegacyAnchors(text: String?): List<String> = text?.let {
     require(it.toByteArray().size <= 16384) { "Legacy anchors exceed limit" }
-    Json.parseToJsonElement(it).jsonArray.map { value -> checkedBase(value.jsonPrimitive.content, false).toASCIIString() }
+    Json.parseToJsonElement(it).jsonArray.map { value -> checkedLegacyAnchor(value.jsonPrimitive.content).toASCIIString() }
 } ?: emptyList()
 
 private val legacyDiscovery = AttributeKey<Boolean>("dulcet.legacy-discovery")
@@ -70,7 +74,7 @@ class Connections(private val ctx: ServerContext) {
     val revision: Long
     init {
         require(routes.size <= 8 && routes.map { it.id }.distinct().size == routes.size && routes.map { it.base }.distinct().size == routes.size) { "At most eight distinct routes are allowed" }
-        require(ctx.config.legacyOwnershipAnchors.map { checkedBase(it, false).toASCIIString() }.distinct().size == ctx.config.legacyOwnershipAnchors.size) { "Legacy anchors must be distinct" }
+        require(ctx.config.legacyOwnershipAnchors.map { checkedLegacyAnchor(it).toASCIIString() }.distinct().size == ctx.config.legacyOwnershipAnchors.size) { "Legacy anchors must be distinct" }
         require(ctx.config.legacyOwnershipAnchors.size <= 8) { "At most eight legacy anchors are allowed" }
         val fingerprint = hash(routes.sortedBy { it.id }.joinToString("\n") { it.toString() } + "\n" + ctx.config.legacyOwnershipAnchors.sorted().joinToString("\n"))
         revision = ctx.db.write {

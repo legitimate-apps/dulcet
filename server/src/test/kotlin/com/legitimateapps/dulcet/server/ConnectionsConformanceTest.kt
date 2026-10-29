@@ -243,6 +243,16 @@ class ConnectionsConformanceTest {
         for (url in listOf("http://home.example.test/music", "https://u:p@home.example.test/music", "https://home.example.test/music/../other", "https://home.example.test/music%2fother", "https://home.example.test/music?token=x")) {
             assertFailsWith<IllegalArgumentException> { ClientRoute("bad", url) }
         }
+        assertFailsWith<IllegalArgumentException> {
+            parseLegacyAnchors("""["https://old.example.test/music"]""")
+        }
+        assertEquals(listOf("http://legacy.example.test:4533/music"),
+            parseLegacyAnchors("""["http://LEGACY.example.test:4533/music/"]"""))
+        Db.inMemory().use { db ->
+            val settings = config(Files.createTempDirectory("connections-invalid-anchor"))
+                .copy(legacyOwnershipAnchors = listOf("https://old.example.test/music"))
+            assertFailsWith<IllegalArgumentException> { ServerContext(settings, db) }
+        }
         assertFailsWith<IllegalArgumentException> { context(listOf(home, home)) }
         assertFailsWith<IllegalArgumentException> { context((1..9).map { ClientRoute("r$it", "https://r$it.example.test") }) }
     }
