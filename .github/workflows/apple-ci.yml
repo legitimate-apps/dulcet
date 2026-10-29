@@ -995,7 +995,22 @@ jobs:
           :core:linkDebugFrameworkIosSimulatorArm64
           :core:linkDebugFrameworkTvosArm64
           :core:linkDebugFrameworkTvosSimulatorArm64
-          :core:macosArm64Test
+      - name: Prove preserving connections on native Apple executors
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          connections_sim="$(xcrun simctl create dulcet-connections-proof com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
+          trap 'xcrun simctl shutdown "$connections_sim" || true; xcrun simctl delete "$connections_sim" || true' EXIT
+          python3 tools/ci/isolate-simulator --phase connections --keep "$connections_sim"
+          export DULCET_CONNECTIONS_SIMULATOR_UDID="$connections_sim"
+          ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          tools/conformance-env/multipath-fixture --root "$RUNNER_TEMP/dulcet-connections-fixture" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
+              tools/conformance-env/multipath-fixture-check
+              tools/ci/run-connection-apple-proofs core
+              tools/ci/run-connection-apple-proofs mac
+              tools/ci/run-connection-apple-proofs ios "$DULCET_CONNECTIONS_SIMULATOR_UDID"
+            '
       - name: Compile shared core tests for the iOS simulator
         timeout-minutes: 5
         run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :core:compileTestKotlinIosSimulatorArm64
@@ -2094,6 +2109,18 @@ jobs:
             core/build/test-results/macosArm64Test
             core/build/test-results/iosSimulatorArm64Test
             core/build/test-results/tvosSimulatorArm64Test
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload native connection acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-connections-apple-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dulcet-connections-*/*.log
+            ${{ runner.temp }}/dulcet-connections-*/junit/*.xml
+            ${{ runner.temp }}/dulcet-connections-fixture/requests.json
+            core/build/test-results/macosArm64Test
           if-no-files-found: error
           retention-days: 14
       - name: Upload tvosSimulatorArm64 core-conformance JUnit results
