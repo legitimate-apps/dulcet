@@ -117,6 +117,11 @@ class AppleConnectionOwnershipTest {
         val store = DulcetDriverFactory(name).openDulcetDatabase()
         val anchor = OwnershipAnchor("server:fixture-alpha", value("legacyHttp"), value("username"), connected.account.serverIdentity)
         val account = PlaybackEndpointAccount(anchor.accountId, anchor.normalizedBaseUrl, anchor.username, value("password"), true)
+        // The released-schema fixture includes example route configuration for a different
+        // generic topology. Replace only that configuration before seeding this fresh fixture;
+        // every owned catalogue/library/mutation/download row remains the preexisting witness.
+        store.database.connectionsQueries.deleteRoutes(anchor.accountId)
+        store.database.connectionsQueries.deleteEnrollment(anchor.accountId)
         store.database.libraryDepthQueries.putEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY,
             encodeMediaBinding(DownloadMediaBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username)), 0)
         ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
