@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Mock every trust subprocess; exercise hosted guards and exact bounded CA cleanup."""
+from contextlib import redirect_stdout
 import hashlib
+import io
 import importlib.machinery
 import importlib.util
 import json
@@ -37,7 +39,7 @@ class TrustControls(unittest.TestCase):
     def expected(self):
         return [
             ['sudo', '-n', 'security', 'add-trusted-cert', '-d', '-r', 'trustRoot', '-k', proofs.SYSTEM_KEYCHAIN, str(self.ca)],
-            ['sudo', '-n', 'security', 'delete-certificate', '-Z', hashlib.sha1(DER).hexdigest().upper(), '-t', proofs.SYSTEM_KEYCHAIN],
+            ['sudo', '-n', 'security', 'delete-certificate', '-Z', hashlib.sha1(DER).hexdigest().upper(), proofs.SYSTEM_KEYCHAIN],
         ]
 
     def assert_exact_commands(self):
@@ -58,11 +60,13 @@ class TrustControls(unittest.TestCase):
         self.run.assert_not_called()
 
     def test_success_uses_admin_trust_and_only_exact_der_fingerprint_cleanup(self):
-        with proofs.fixture_trust(self.ca):
+        output = io.StringIO()
+        with redirect_stdout(output), proofs.fixture_trust(self.ca):
             self.assertEqual(self.run.call_count, 1)
+        self.assertIn('residual admin trust ends at GitHub VM decommission', output.getvalue())
         self.assert_exact_commands()
 
-    def test_partial_setup_failure_still_removes_trust_and_exact_certificate(self):
+    def test_partial_setup_failure_still_deletes_exact_certificate(self):
         failure = subprocess.CalledProcessError(1, 'mock add-trusted-cert')
         self.run.side_effect = [failure, None]
         with self.assertRaises(subprocess.CalledProcessError) as raised:
@@ -71,7 +75,7 @@ class TrustControls(unittest.TestCase):
         self.assertIs(raised.exception, failure)
         self.assert_exact_commands()
 
-    def test_setup_timeout_is_bounded_and_still_attempts_combined_cleanup(self):
+    def test_setup_timeout_is_bounded_and_still_attempts_exact_cleanup(self):
         self.run.side_effect = [subprocess.TimeoutExpired('mock security', 30), None]
         with self.assertRaises(subprocess.TimeoutExpired):
             with proofs.fixture_trust(self.ca):
@@ -93,19 +97,23 @@ class TrustControls(unittest.TestCase):
             execute.assert_called_once()
         self.assert_exact_commands()
 
-    def test_cancellation_still_removes_admin_trust_and_exact_certificate(self):
+    def test_cancellation_still_deletes_exact_certificate(self):
         with self.assertRaises(SystemExit) as raised:
             with proofs.fixture_trust(self.ca):
                 raise SystemExit(143)
         self.assertEqual(raised.exception.code, 143)
         self.assert_exact_commands()
 
-    def test_cleanup_timeout_fails_the_proof_without_broadening_deletion(self):
-        self.run.side_effect = [None, subprocess.TimeoutExpired('mock delete-certificate', 30)]
-        with self.assertRaisesRegex(RuntimeError, 'Fixture trust cleanup failed'):
-            with proofs.fixture_trust(self.ca):
-                pass
-        self.assert_exact_commands()
+    def test_cleanup_error_or_timeout_fails_without_broadening_deletion(self):
+        for failure in [subprocess.TimeoutExpired('mock delete-certificate', 30),
+                        subprocess.CalledProcessError(1, 'mock delete-certificate')]:
+            with self.subTest(failure=type(failure).__name__):
+                self.run.reset_mock()
+                self.run.side_effect = [None, failure]
+                with self.assertRaisesRegex(RuntimeError, 'Fixture trust cleanup failed'):
+                    with proofs.fixture_trust(self.ca):
+                        pass
+                self.assert_exact_commands()
 
     def test_simulator_trust_and_reset_are_bounded_before_admin_cleanup(self):
         with proofs.fixture_trust(self.ca, 'disposable-simulator'):
