@@ -12,6 +12,11 @@ func check(_ condition: Bool, _ message: String) {
     if !condition { print("FAIL: " + message); exit(1) }
 }
 let baseline = "dulcet-ui NAV|7|route|dest=x DETAIL|8|wishlist.remove|key=wish:A INPUT|9|touch=1|phase=ended"
+check(DulcetRemoveInputProof.observedCompletedContact("INPUT|1|touch=3|phase=began INPUT|2|touch=3|phase=ended"), "positive input monitor witness")
+check(!DulcetRemoveInputProof.observedCompletedContact("dulcet-input"), "installation alone is not input evidence")
+check(!DulcetRemoveInputProof.observedCompletedContact("INPUT|1|touch=3|phase=began INPUT|2|touch=4|phase=ended"), "mismatched input witness")
+check(!DulcetRemoveInputProof.observedCompletedContact("INPUT|1|touch=3|phase=began INPUT|2|touch=3|phase=cancelled"), "cancel alone is not positive delivery control")
+check(!DulcetRemoveInputProof.observedCompletedContact("INPUT|1|touch=-1|phase=began INPUT|2|touch=-1|phase=ended"), "unknown input witness")
 check(DulcetRemoveInputProof.sequence(baseline) == 9, "shared monotonic sequence")
 check(!DulcetRemoveInputProof.received(baseline, key: "wish:A", after: 8), "stale receipt")
 check(DulcetRemoveInputProof.received(baseline, key: "wish:A", after: 7), "exact fresh receipt")

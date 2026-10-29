@@ -457,16 +457,23 @@ import UIKit
         let key = String(rowIdentifier.dropFirst("wishlist.row.".count))
         let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
         XCTAssertTrue(markers.waitForExistence(timeout: 10))
-        let baseline = DulcetRemoveInputProof.sequence(markers.label)
 #if os(iOS)
         let observesTouches = UIDevice.current.userInterfaceIdiom == .pad
 #else
         let observesTouches = false
 #endif
-        if observesTouches { XCTAssertTrue(markers.label.contains("input-monitor-ready")) }
+        let inputMarkers = app.staticTexts["dulcet.debug.input-markers"].firstMatch
+        if observesTouches {
+            XCTAssertTrue(inputMarkers.waitForExistence(timeout: 10))
+            XCTAssertTrue(markers.label.contains("input-monitor-ready"))
+            XCTAssertTrue(DulcetRemoveInputProof.observedCompletedContact(inputMarkers.label),
+                          "The input ledger must witness a prior app interaction before a missing input can permit recovery")
+        }
+        let receipts = { markers.label + (observesTouches ? " " + inputMarkers.label : "") }
+        let baseline = DulcetRemoveInputProof.sequence(receipts())
         let maximumInputs = observesTouches ? 2 : 1
         for attempt in 1...maximumInputs {
-            let before = markers.label
+            let before = receipts()
             if DulcetRemoveInputProof.received(before, key: key, after: baseline) { return }
             let inputBaseline = DulcetRemoveInputProof.sequence(before)
             // Re-resolve the same durable identity; a removed row must never turn a
@@ -476,13 +483,13 @@ import UIKit
             print("DISCOVER_REMOVE_INPUT row=\(rowIdentifier) attempt=\(attempt)")
             activate(button)
             let received = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                DulcetRemoveInputProof.received(markers.label, key: key, after: baseline)
+                DulcetRemoveInputProof.received(receipts(), key: key, after: baseline)
             }, object: nil)
             if XCTWaiter.wait(for: [received], timeout: 5) == .completed {
                 print("DISCOVER_REMOVE_RECEIVED row=\(rowIdentifier) attempt=\(attempt)")
                 return
             }
-            let after = markers.label
+            let after = receipts()
             let classification = DulcetRemoveInputProof.recovery(after, after: inputBaseline)
             guard observesTouches, attempt < maximumInputs,
                   let reason = classification else {
@@ -751,7 +758,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
 
 // BEGIN_REMOVE_INPUT_PROOF
 /// Parses the fixture's monotonic handler and passive window-touch receipts.
-/// A normally ended touch without a handler is a product failure, never a retry.
+/// A normally ended touch without a handler remains a proof failure, never a retry.
 enum DulcetRemoveInputProof {
     private static func records(_ text: String) -> [[Substring]] {
         text.split(separator: " ").map { $0.split(separator: "|", omittingEmptySubsequences: false) }
@@ -760,6 +767,14 @@ enum DulcetRemoveInputProof {
         records(text).compactMap { fields in
             fields.count > 1 && ["NAV", "DETAIL", "INPUT"].contains(String(fields[0])) ? Int(fields[1]) : nil
         }.max() ?? 0
+    }
+    static func observedCompletedContact(_ text: String) -> Bool {
+        let events = records(text).filter { $0.count >= 4 && $0[0] == "INPUT" }
+        let began = Set(events.filter { $0[3] == "phase=began" }.map { String($0[2]) })
+        return events.contains { fields in
+            fields[3] == "phase=ended" && began.contains(String(fields[2]))
+                && fields[2].hasPrefix("touch=") && (Int(fields[2].dropFirst(6)) ?? -1) > 0
+        }
     }
     static func received(_ text: String, key: String, after baseline: Int) -> Bool {
         records(text).contains { fields in
