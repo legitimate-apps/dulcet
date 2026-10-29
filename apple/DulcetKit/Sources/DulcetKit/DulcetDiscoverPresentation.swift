@@ -93,16 +93,21 @@ public struct DulcetDiscoverStatus: Sendable {
     init(reader: any DulcetDiscoverReading) { self.reader = reader }
     func open() {
         guard !active else { return }; active = true
+        DulcetUIProofMarkers.detail("wishlist.model.open", context: "model=\(ObjectIdentifier(self)) reader=\(ObjectIdentifier(reader))")
         subscription = reader.observe { [weak self] publication in
             guard let self, self.active else { return }
             if let previous = self.publication {
                 guard previous.providerInstanceId == publication.providerInstanceId,
                       previous.generation <= publication.generation else { return }
             }
+            if self.publication?.access.canRemoveWish != publication.access.canRemoveWish {
+                DulcetUIProofMarkers.detail("wishlist.access", context: "model=\(ObjectIdentifier(self)) canRemove=\(publication.access.canRemoveWish) generation=\(publication.generation)")
+            }
             self.publication = publication
         }
     }
     func close() {
+        DulcetUIProofMarkers.detail("wishlist.model.close", context: "model=\(ObjectIdentifier(self)) active=\(active) retainedOperations=\(operations.count)")
         active = false; subscription?.cancel(); subscription = nil
         let pending = operations; operations = []
         pending.forEach { $0.cancel() }
@@ -119,10 +124,11 @@ public struct DulcetDiscoverStatus: Sendable {
         })
     }
     func remove(_ key: String) {
-        DulcetUIProofMarkers.detail("wishlist.model.remove", context: "key=\(key) active=\(active)")
+        let modelID = ObjectIdentifier(self)
+        DulcetUIProofMarkers.detail("wishlist.model.remove", context: "model=\(modelID) key=\(key) active=\(active)")
         mutationError = nil
         operations.append(reader.remove(rowKey: key) { [weak self] result in
-            DulcetUIProofMarkers.detail("wishlist.remove.result", context: "result=\(result)")
+            DulcetUIProofMarkers.detail("wishlist.remove.result", context: "model=\(modelID) result=\(result)")
             guard let self, self.active else { return }
             if case let .failure(error) = result, error.code != "cancelled" { self.mutationError = error }
         })

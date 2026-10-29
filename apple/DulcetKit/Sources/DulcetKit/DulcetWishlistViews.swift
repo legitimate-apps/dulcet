@@ -150,6 +150,9 @@ struct DulcetWishlistDestinationView: View {
         if let session = store.librarySession, let reader = session.discover, session.discoverPublication?.access.showsWishlistDestination == true {
             DulcetWishlistView(reader: reader, openLibrary: store.openDiscoverLibrary, openMetadata: { store.pushReaderPage(.discover($0)) })
                 .id(session.readerGeneration)
+                .onChange(of: session.readerGeneration) { old, new in
+                    DulcetUIProofMarkers.detail("wishlist.reader.generation", context: "old=\(old) new=\(new)")
+                }
         }
     }
 }

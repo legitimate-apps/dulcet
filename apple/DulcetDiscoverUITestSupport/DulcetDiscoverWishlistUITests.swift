@@ -449,20 +449,6 @@ import UIKit
         })
         return row
     }
-    private func removeWish(_ title: String) {
-        let row = wishRow(title)
-        let rowIdentifier = row.identifier
-        let button = row.buttons["wishlist.remove"].firstMatch
-        let initiallyReady = button.isEnabled && button.isHittable
-        // A retained row can have on-window geometry before its controls accept input.
-        // Wait on the actual row-scoped control, rather than treating that geometry as
-        // hit readiness. The server count and library-retention checks remain the oracle.
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: button)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed,
-                       "The requested wish's Remove button must accept input before activation")
-        print("DISCOVER_REMOVE_READY row=\(rowIdentifier) initiallyReady=\(initiallyReady) enabledAndHittable=true")
-        activate(button)
-    }
     func offlineWishRelaunchRemoveAndScanArrival() throws {
         let title = "Fixture Song 01"
         try launch(); try search()
@@ -476,7 +462,7 @@ import UIKit
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
         app.terminate(); _ = try scenario("normal"); try launch(); wishlist()
         try waitForWish(title, count: 1)
-        removeWish(title)
+        activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
         try waitForWish(title, count: 0)
         // Observe A's durable identity before sending it. Foundation may automatically retry
         // the GET after the fixture drops its first receipt; that recovery must not erase the
@@ -494,7 +480,7 @@ import UIKit
         try effect("lost-add-receipt", revision: lostRevision, flag: "delivered")
         let deliveredWish = try XCTUnwrap(wishes().first { ($0["snapshot"] as? [String: Any])?["title"] as? String == title })
         _ = try scenario("offline")
-        removeWish(title)
+        activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
         XCTAssertFalse(app.staticTexts[title].exists, "Durable remove hides A before reconnect")
         let scanRevision = try scenario("scan-arrival")
         try effect("scan-arrival", revision: scanRevision, flag: "completed")
@@ -534,7 +520,7 @@ import UIKit
         _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": ["scenario": "old-A-after-B", "lateA": lateA, "survivingB": survivingB]])
         print("DISCOVER_ROUTE arrivalServerId=\(localId) playbackVisible=true lateAReplayed=true generationBRetained=true")
         wishlist()
-        removeWish(title)
+        activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
         try waitForWish(title, count: 0)
         let retained = try XCTUnwrap(rest("getDulcetLibrary", params: ["type": "song", "size": "100"])["dulcetLibrary"] as? [String: Any])
         XCTAssertTrue((retained["song"] as? [[String: Any]])?.contains { $0["id"] as? String == localId } == true, "Removing the arrived wish must retain its exact library member without another scan")
