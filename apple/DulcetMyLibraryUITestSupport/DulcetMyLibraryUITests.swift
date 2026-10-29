@@ -200,7 +200,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         if UIDevice.current.userInterfaceIdiom == .phone {
             // Require an actual scroll at the largest text size, then require the durable
             // album to publish and become actionable after that scroll.
-            XCTAssertTrue(app.buttons["dulcet.myLibrary.section.recent"].waitForExistence(timeout: 20))
+            // The List may not publish the offscreen section header until it scrolls.
+            // Prove the visible category root first; the scroll below must reveal the album.
+            XCTAssertTrue(app.buttons["dulcet.myLibrary.section.playlists"].waitForExistence(timeout: 20),
+                          "The offline Library category root must paint before revealing its lazy album: " + app.debugDescription)
             XCTAssertFalse(albumTile(album.title).isHittable,
                            "The largest-text offline root must begin with its album below the viewport")
             let scrolls = revealPhoneAlbumTile(albumTile(album.title))
