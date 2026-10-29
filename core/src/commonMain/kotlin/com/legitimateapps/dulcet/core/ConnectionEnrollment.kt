@@ -97,10 +97,9 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
             val before = snapshot(anchor)
             if (!before.enrolled) return@transaction
             database.connectionsQueries.removeRoute(anchor.accountId, routeId)
-            if (before.selectedRouteId == routeId) {
-                // Phase 1 has no automatic selector, including no bootstrap fallback.
-                database.connectionsQueries.selectRoute(null, anchor.accountId)
-            }
+            // Phase 1 has no automatic selector, including no bootstrap fallback.
+            // Every removal advances transport generation so already prepared work is fenced.
+            database.connectionsQueries.selectRoute(before.selectedRouteId.takeUnless { it == routeId }, anchor.accountId)
         }
         return restore(anchor)
     }
@@ -135,7 +134,7 @@ internal data class ConnectionOwnershipFence(
             val cache = database.seenCacheQueries.selectBinding(anchor.accountId).executeAsOneOrNull()
             val epoch = database.libraryDepthQueries.selectEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull()
             val identity = ServerIdentityStore(database).read(anchor.accountId)
-            if (identity != anchor.serverIdentity || cache == null && epoch == null ||
+            if (identity != anchor.serverIdentity || epoch == null ||
                 cache != null && (!MediaBindingIdentity.sameEndpoint(cache.normalized_base_url, anchor.normalizedBaseUrl) || cache.username != anchor.username) ||
                 epoch != null && !matchesMediaBinding(epoch, DownloadMediaBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username))
             ) throw ConnectionEnrollmentFailure(DomainError.Transport.Cancelled)
@@ -159,8 +158,7 @@ internal class TlsConnectionCandidateProbe(
         }
         return try {
             val base = canonicalConnectionBase(baseUrl)
-            val origin = io.ktor.http.Url(base).let { "${it.protocol.name}://${if (':' in it.host) "[${it.host}]" else it.host}${if (it.port == it.protocol.defaultPort) "" else ":${it.port}"}" }
-            client.prepareGet("$origin/.well-known/dulcet").execute { response ->
+            client.prepareGet("$base/.well-known/dulcet").execute { response ->
                 if (response.status.value != 200) return@execute DomainError.Transport.Unreachable
                 val limit = ConnectionDirectoryParser.MAX_BYTES
                 if ((response.headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: 0) > limit) return@execute DomainError.Protocol.TooLarge
@@ -175,7 +173,7 @@ internal class TlsConnectionCandidateProbe(
                 val doc = Json.parseToJsonElement(bytes.copyOf(size).decodeToString(throwOnInvalidSequence = true)) as? JsonObject
                     ?: return@execute DomainError.Protocol.MalformedEnvelope
                 val server = doc["server"] as? JsonObject
-                val instance = (server?.get("instanceId") as? JsonPrimitive)?.content
+                val instance = (server?.get("instanceId") as? JsonPrimitive)?.takeIf { it.isString }?.content
                 if (doc["standard"] != JsonPrimitive("dulcet") || instance != expectedInstance) {
                     return@execute DomainError.Protocol.ServerIdentityChanged
                 }
@@ -188,6 +186,7 @@ internal class TlsConnectionCandidateProbe(
                 null
             }
         } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: IllegalArgumentException) { DomainError.Protocol.MalformedEnvelope }
         catch (failure: Throwable) { mapAccountConnectionFailure(failure) }
         finally { client.close() }
     }

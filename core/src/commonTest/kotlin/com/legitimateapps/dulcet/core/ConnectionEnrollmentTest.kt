@@ -99,6 +99,8 @@ class ConnectionEnrollmentTest {
     @Test fun removedOrReplacedOwnershipCannotCommitAnInFlightEnrollment() = withStore { store, env ->
         env.bind(CacheBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username))
         ServerIdentityStore(env.database).accept(anchor.accountId, anchor.serverIdentity)
+        env.database.libraryDepthQueries.putEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY,
+            encodeMediaBinding(DownloadMediaBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username)), 0)
         val fence = ConnectionOwnershipFence.capture(env.database, anchor)
         env.database.serverDataQueries.deleteSeenCacheForServer(anchor.accountId)
         assertFailsWith<ConnectionEnrollmentFailure> {

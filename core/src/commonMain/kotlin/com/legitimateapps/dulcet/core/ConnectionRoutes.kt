@@ -84,17 +84,19 @@ internal object ConnectionRouteRegistry {
 /** Strict exact-base canonicalization, shared by directory, legacy attestation and registry keys. */
 internal fun canonicalConnectionBase(value: String, allowHttp: Boolean = false): String {
     if (value.length > 2048 || value.isBlank() || value.any { it.isWhitespace() || it.isISOControl() } ||
-        '\\' in value || '?' in value || '#' in value || '@' in value || '%' in value
+        '\\' in value || '?' in value || '#' in value
     ) throw ConnectionEnrollmentFailure(DomainError.Protocol.MalformedEnvelope)
     val url = try { Url(value) } catch (_: IllegalArgumentException) { throw ConnectionEnrollmentFailure(DomainError.Protocol.MalformedEnvelope) }
     if (url.protocol.name !in (if (allowHttp) setOf("http", "https") else setOf("https")) ||
         !value.startsWith("${url.protocol.name}://", ignoreCase = true) || url.host.isBlank() ||
         url.host.any { it.code > 127 } || url.user != null || url.password != null || url.port !in 1..65535 ||
-        url.encodedPath.split('/').any { it == "." || it == ".." } || "//" in url.encodedPath
+        url.encodedPath.split('/').any { segment ->
+            val dots = segment.replace(Regex("%2e", RegexOption.IGNORE_CASE), ".")
+            dots == "." || dots == ".."
+        } || "//" in url.encodedPath || Regex("%(?:2f|5c|25)", RegexOption.IGNORE_CASE).containsMatchIn(url.encodedPath)
     ) throw ConnectionEnrollmentFailure(DomainError.Protocol.MalformedEnvelope)
-    val host = if (':' in url.host) "[${url.host.lowercase()}]" else url.host.lowercase()
-    val port = if (url.port == url.protocol.defaultPort) "" else ":${url.port}"
-    return "${url.protocol.name}://$host$port${url.encodedPath.trimEnd('/')}"
+    return MediaBindingIdentity.canonicalServerUrl(value)
+        ?: throw ConnectionEnrollmentFailure(DomainError.Protocol.MalformedEnvelope)
 }
 
 internal class ConnectionEnrollmentFailure(val error: DomainError) : Exception("Connection enrollment rejected")
