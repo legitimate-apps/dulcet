@@ -7,12 +7,15 @@ explicitly guarded hosted runner, removed in finally, and never uses trust-all T
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
 import plistlib
 import shlex
 import signal
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -47,8 +50,56 @@ def run(command, *, env=None, log=None):
             raise
 
 
-def capture(command):
-    return subprocess.check_output(command, text=True).strip()
+SYSTEM_KEYCHAIN = '/Library/Keychains/System.keychain'
+SECURITY_TIMEOUT_SECONDS = 30
+
+
+def require_hosted_runner():
+    if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted' or sys.platform != 'darwin':
+        raise SystemExit('Fixture trust requires an ephemeral GitHub-hosted macOS runner; local/shared Mac execution is refused')
+
+
+def security_command(*arguments):
+    command = ['sudo', '-n', 'security', *map(str, arguments)]
+    print('+ ' + shlex.join(command), flush=True)
+    return subprocess.run(command, check=True, timeout=SECURITY_TIMEOUT_SECONDS)
+
+
+@contextmanager
+def fixture_trust(ca, simulator=None):
+    require_hosted_runner()
+    # Hash the exact fresh certificate, never a common name shared with another fixture.
+    der = ssl.PEM_cert_to_DER_cert(ca.read_text())
+    fingerprint = hashlib.sha1(der).hexdigest().upper()
+    try:
+        # Installed security(1): -d selects the admin trust domain; -k selects certificate
+        # storage. Noninteractive sudo avoids the user-domain SecurityAgent prompt.
+        security_command('add-trusted-cert', '-d', '-r', 'trustRoot', '-k', SYSTEM_KEYCHAIN, ca)
+        if simulator:
+            subprocess.run(['xcrun', 'simctl', 'keychain', simulator, 'add-root-cert', str(ca)],
+                           check=True, timeout=SECURITY_TIMEOUT_SECONDS)
+        yield
+    finally:
+        active_failure = sys.exc_info()[0] is not None
+        failures = []
+        cleanup = []
+        if simulator:
+            cleanup.append(lambda: subprocess.run(['xcrun', 'simctl', 'keychain', simulator, 'reset'],
+                                                 check=True, timeout=SECURITY_TIMEOUT_SECONDS))
+        # Attempt both even if setup failed halfway or an earlier cleanup command failed.
+        # Remove admin trust first, then only this certificate from the explicit system keychain.
+        cleanup.extend([
+            lambda: security_command('remove-trusted-cert', '-d', ca),
+            lambda: security_command('delete-certificate', '-Z', fingerprint, SYSTEM_KEYCHAIN),
+        ])
+        for action in cleanup:
+            try:
+                action()
+            except (OSError, subprocess.SubprocessError) as failure:
+                failures.append(failure)
+                print('CONNECTIONS APPLE trust cleanup failed=' + type(failure).__name__, flush=True)
+        if failures and not active_failure:
+            raise RuntimeError('Fixture trust cleanup failed') from failures[0]
 
 
 def inject_manifest(node, values):
@@ -112,8 +163,7 @@ def main():
     args = sys.argv[1:]
     if not args or args[0] not in ('core', 'mac', 'ios') or len(args) != (2 if args[0] == 'ios' else 1):
         raise SystemExit('usage: run-connection-apple-proofs core|mac|ios [SIMULATOR_UDID]')
-    if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted' or sys.platform != 'darwin':
-        raise SystemExit('Fixture trust requires an ephemeral GitHub-hosted macOS runner; local/shared Mac execution is refused')
+    require_hosted_runner()
     mode = args[0]
     simulator = args[1] if mode == 'ios' else None
     runner = Path(os.environ['RUNNER_TEMP']).resolve()
@@ -132,29 +182,9 @@ def main():
     work = Path(tempfile.mkdtemp(prefix=f'dulcet-connections-{mode}-', dir=runner))
     print(f'CONNECTIONS APPLE evidence={work}', flush=True)
     env = dict(os.environ, DULCET_CONNECTIONS_SEED=str(ROOT/'tools/migration-fixtures/v15'))
-    keychain = work/'fixture.keychain-db'
-    original = shlex.split(capture(['security', 'list-keychains', '-d', 'user']))
-    password = os.urandom(24).hex()
-    trusted = False
-    try:
-        # Do not print the temporary keychain password. It is unrelated to any account.
-        subprocess.run(['security', 'create-keychain', '-p', password, str(keychain)], check=True)
-        subprocess.run(['security', 'unlock-keychain', '-p', password, str(keychain)], check=True)
-        run(['security', 'list-keychains', '-d', 'user', '-s', str(keychain), *original])
-        run(['security', 'add-trusted-cert', '-r', 'trustRoot', '-k', keychain, ca])
-        trusted = True
-        if simulator:
-            run(['xcrun', 'simctl', 'keychain', simulator, 'add-root-cert', ca])
+    with fixture_trust(ca, simulator):
         execute(mode, simulator, env, work, manifest)
-    finally:
-        if simulator:
-            # This mode accepts only the caller's disposable CI simulator. Reset its fixture
-            # keychain after the finite proof; no operator simulator is admitted by the guard.
-            subprocess.run(['xcrun', 'simctl', 'keychain', simulator, 'reset'], check=False)
-        if trusted:
-            subprocess.run(['security', 'remove-trusted-cert', str(ca)], check=False)
-        subprocess.run(['security', 'list-keychains', '-d', 'user', '-s', *original], check=False)
-        subprocess.run(['security', 'delete-keychain', str(keychain)], check=False)
+
 
 
 if __name__ == '__main__':

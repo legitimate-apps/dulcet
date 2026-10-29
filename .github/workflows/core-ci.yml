@@ -241,6 +241,8 @@ jobs:
         run: python3 tools/test-verify-playback-phase-parity
       - name: Prove bounded JVM stall diagnostics preserve test outcomes and isolate process ownership
         run: python3 tools/test-capture-gradle-test-stall
+      - name: Prove Apple fixture trust stays hosted, bounded and removes only its fresh CA
+        run: python3 tools/test-connection-apple-trust
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"
