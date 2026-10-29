@@ -25,4 +25,3 @@ CREATE TABLE server_route (
   last_verified_wall INTEGER,
   PRIMARY KEY (server_id, route_id)
 );
-
