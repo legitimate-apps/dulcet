@@ -442,7 +442,7 @@ POLICY = TOOLS / "verify_release_policy.py"
 # are left out for speed; the policy scans them, and a mutation that needs one writes it.
 POLICY_INPUTS = [
     ".github/workflows", "apple", "core/src/commonMain", "core/src/appleMain", "core/src/androidMain",
-    "core/src/jvmMain", "build.gradle.kts", "settings.gradle.kts", "core/build.gradle.kts",
+    "core/src/jvmMain", "core/src/androidDeviceTest", "build.gradle.kts", "settings.gradle.kts", "core/build.gradle.kts",
     "core-conformance/build.gradle.kts", "android/app/build.gradle.kts", "android/shared/build.gradle.kts",
     "android/tv/build.gradle.kts", "tools/release/archive-and-export", "tools/release/validate-app-bundle",
 ]
@@ -1001,6 +1001,8 @@ for label, mutation, constant in [
 # The sanctioned home for a DEV convenience server (spec §22.6): its DEV-only plist. The parity rule
 # exempts exactly that key, so this must pass, or the rule leaves DEV no place to put one.
 for label, mutate in [
+    ("an address confined to the Android instrumented test APK",
+     lambda root: (root / "core/src/androidDeviceTest/Endpoint.kt").write_text('val endpoint = "https://fixture.invalid"\n')),
     ("the server key in iOS DEV's partial plist", edit("apple/DulcetiOS/BackgroundAudio.plist", "<dict>\n",
                                                         "<dict>\n\t<key>DulcetPreconfiguredServer</key>\n\t<string>music.invalid</string>\n")),
     ("the server key in macOS DEV's plist", edit("apple/DulcetMacDev/Info.plist", "<dict>\n",

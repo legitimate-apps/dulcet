@@ -56,7 +56,9 @@ internal actual fun createAccountHttpClient(
         }
         proxy = Proxy.NO_PROXY
         if (transport is AccountClientTransport.ForwardProxy) {
-            proxy = ProxyBuilder.http(Url("http://${transport.proxy.host}:${transport.proxy.port}/"))
+            proxy = ProxyBuilder.http(
+                Url("http://${transport.proxy.host}:${transport.proxy.port}/"),
+            )
         }
     }
     installProxyChallengeMarker(transport)

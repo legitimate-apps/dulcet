@@ -278,7 +278,7 @@ SOURCE_TEST_DIRECTORIES = {
     Path("apple/DulcetAppleAppHostTests"), Path("apple/DulcetMacTests"), Path("apple/DulcetPlaybackIntegrationTests"),
     Path("apple/DulcetiOSUITests"), Path("apple/DulcetTVUITests"), Path("apple/DulcetKit/Tests"),
     Path("core/src/commonTest"), Path("core/src/appleTest"), Path("core/src/jvmTest"), Path("core/src/androidHostTest"),
-    Path("core/src/macosArm64Test"),
+    Path("core/src/macosArm64Test"), Path("core/src/androidDeviceTest"),
 }
 BUILD_OUTPUTS = {".build", "build", "DerivedData", ".swiftpm", ".gradle", ".kotlin", ".git", "xcuserdata"}
 # Hosts that appear only in source comments, as references: none is a music server.
