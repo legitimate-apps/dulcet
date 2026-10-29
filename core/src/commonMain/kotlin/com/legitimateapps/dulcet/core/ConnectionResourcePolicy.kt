@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.core
 
+import io.ktor.http.URLBuilder
 import io.ktor.http.Url
 import io.ktor.http.encodedPath
 
@@ -37,7 +38,7 @@ public object ConnectionResourcePolicy {
         val root = base.encodedPath.trimEnd('/')
         val path = target.encodedPath
         if (root.isNotEmpty() && path != root && !path.startsWith("$root/")) return null
-        return target.toString()
+        return URLBuilder(target).apply { host = target.host.lowercase() }.buildString()
     }
 
     private fun unsafePath(value: String): Boolean {

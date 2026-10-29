@@ -104,6 +104,8 @@ internal class AuthenticatedEndpointClient(
     logSink: LogSink? = null,
     hostResolver: HostResolver = systemHostResolver(),
     private val clientTransport: AccountClientTransport = AccountClientTransport.Default(),
+    /** Explicit user-chosen enrollment bootstrap must not consult a previous route selection. */
+    private val useEnrolledRoute: Boolean = true,
 ) {
     private val saltSource = saltSource ?: AccountConnectionContract.secureSaltSource()
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
@@ -306,6 +308,7 @@ internal class AuthenticatedEndpointClient(
     }
 
     private fun requestRouteBase(): String {
+        if (!useEnrolledRoute) return credentials.normalizedBaseUrl
         val lease = ConnectionRouteRegistry.leaseFor(credentials.normalizedBaseUrl, credentials.username)
         if (lease != null) return lease.baseUrl
         if (ConnectionRouteRegistry.isEnrolled(credentials.normalizedBaseUrl, credentials.username)) {

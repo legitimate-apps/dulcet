@@ -480,12 +480,34 @@ public class AccountConnector private constructor(
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
 
     public suspend fun connect(request: AccountConnectionRequest): AccountConnectionResult =
-        logSink.accountPhase("connect") { connectObserved(request) }
+        logSink.accountPhase("connect") { connectThroughSavedRoute(request, false, "") }
 
     /** Authenticated identity-only probe for reconnects; permissions and canonical spelling are
      * negotiated on the account form, never needed to decide whether old opaque IDs can be sent. */
     internal suspend fun identify(request: AccountConnectionRequest, expectedIdentity: String = ""): AccountConnectionResult =
-        connectObserved(request, identityOnly = true, expectedIdentity = expectedIdentity)
+        connectThroughSavedRoute(request, true, expectedIdentity)
+
+    /** An explicitly entered enrollment origin is authenticated there, never at an old selection. */
+    internal suspend fun connectBootstrap(request: AccountConnectionRequest): AccountConnectionResult =
+        connectObserved(request)
+
+    private suspend fun connectThroughSavedRoute(request: AccountConnectionRequest,
+        identityOnly: Boolean, expectedIdentity: String): AccountConnectionResult {
+        val enrolled = ConnectionRouteRegistry.isEnrolled(request.serverUrl, request.username)
+        if (!enrolled) return connectObserved(request, identityOnly, expectedIdentity)
+        val lease = ConnectionRouteRegistry.leaseFor(request.serverUrl, request.username)
+            ?: return AccountConnectionResult.Failed(DomainError.Transport.Unreachable)
+        val result = connectObserved(request.copy(serverUrl = lease.baseUrl, allowLocalHttp = false),
+            identityOnly, expectedIdentity)
+        if (ConnectionRouteRegistry.leaseFor(request.serverUrl, request.username) != lease) {
+            return AccountConnectionResult.Failed(DomainError.Transport.Cancelled)
+        }
+        return when (result) {
+            is AccountConnectionResult.Failed -> result
+            is AccountConnectionResult.Connected -> AccountConnectionResult.Connected(result.account.copy(
+                normalizedBaseUrl = request.serverUrl, allowsLocalHttp = request.allowLocalHttp))
+        }
+    }
 
     private suspend fun connectObserved(request: AccountConnectionRequest,
         identityOnly: Boolean = false, expectedIdentity: String = ""): AccountConnectionResult {
