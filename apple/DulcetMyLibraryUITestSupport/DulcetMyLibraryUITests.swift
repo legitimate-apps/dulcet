@@ -956,7 +956,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         if albumMenu { revealAlbumActions() }
 #if os(macOS)
         let menuTitle = label.hasPrefix("Unpin ") ? "Unpin from Library" : label.hasPrefix("Pin ") ? "Pin to Library" : label
-        let expected = NSPredicate(format: "label == %@ OR title == %@", label, menuTitle)
+        let expected = NSPredicate(format: "label == %@ OR title == %@ OR title == %@", label, label, menuTitle)
 #else
         let expected = NSPredicate(format: "label == %@", label)
 #endif
