@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""One fresh-CA trust cycle on a guarded ephemeral hosted Mac; no server or native build."""
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader('apple_proofs', str(Path(__file__).with_name('run-connection-apple-proofs')))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+proofs = importlib.util.module_from_spec(spec)
+loader.exec_module(proofs)
+
+
+def owned_processes(root):
+    table = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,comm='], text=True, timeout=5)
+    entries = [line.strip().split(None, 2) for line in table.splitlines() if line.strip()]
+    owned = {root}
+    while True:
+        more = {int(pid) for pid, parent, _ in entries if int(parent) in owned}
+        if more <= owned:
+            return [(int(pid), int(parent), name) for pid, parent, name in entries if int(pid) in owned]
+        owned.update(more)
+
+
+def record(command, path, timeout=8):
+    with path.open('w') as output:
+        try:
+            result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
+            output.write(f'\nexit={result.returncode}\n')
+        except subprocess.TimeoutExpired:
+            output.write('\nread-only diagnostic exceeded bound\n')
+
+
+def main():
+    proofs.require_hosted_runner()
+    output = Path(tempfile.mkdtemp(prefix='dulcet-trust-diagnostic-', dir=os.environ['RUNNER_TEMP']))
+    print(f'TRUST DIAGNOSTIC evidence={output}', flush=True)
+    # Installed policy, not any certificate store, account or unrelated process command line.
+    for right in ('com.apple.trust-settings.admin', 'com.apple.trust-settings.user', 'config.modify.trust-settings'):
+        record(['security', 'authorizationdb', 'read', right], output / (right + '.log'))
+    record(['csrutil', 'status'], output / 'system-integrity.log')
+    ca = output / 'ca.pem'
+    key = output / 'ca.key'
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                    '-subj', '/CN=Dulcet disposable trust diagnostic', '-keyout', str(key), '-out', str(ca)],
+                   check=True, timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    original = proofs.security_command
+
+    def measured(*arguments):
+        started = time.monotonic()
+        print('TRUST DIAGNOSTIC begin ' + shlex.join(map(str, arguments)), flush=True)
+        if arguments[0] != 'delete-certificate':
+            result = original(*arguments)
+            print(f'TRUST DIAGNOSTIC end duration={time.monotonic()-started:.3f}', flush=True)
+            return result
+        command = ['sudo', '-n', 'security', *map(str, arguments)]
+        child = subprocess.Popen(command)
+        security_pids = []
+        try:
+            try:
+                child.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                entries = owned_processes(child.pid)
+                (output / 'owned-processes.json').write_text(json.dumps(entries))
+                security_pids = [pid for pid, _, name in entries if Path(name).name == 'security']
+                if entries:
+                    record(['ps', '-p', ','.join(str(pid) for pid, _, _ in entries),
+                            '-o', 'pid,ppid,uid,state,%cpu,time,etime,comm'], output / 'cleanup-processes.log')
+                for pid in security_pids:
+                    # Read-only sampling is restricted to this invocation's exact descendants.
+                    record(['sudo', '-n', '/usr/bin/sample', str(pid), '1', '10', '-file',
+                            str(output / f'cleanup-sample-{pid}.log')], output / f'sample-command-{pid}.log')
+                child.wait(timeout=max(.1, 30 - (time.monotonic()-started)))
+            if child.returncode:
+                raise subprocess.CalledProcessError(child.returncode, command)
+            print(f'TRUST DIAGNOSTIC end duration={time.monotonic()-started:.3f}', flush=True)
+            return subprocess.CompletedProcess(command, child.returncode)
+        except subprocess.TimeoutExpired:
+            print(f'TRUST DIAGNOSTIC cleanup timed out duration={time.monotonic()-started:.3f}', flush=True)
+            # Stop only the sampled command's still-attributed security children.
+            current = {pid for pid, _, _ in owned_processes(child.pid)}
+            for pid in security_pids:
+                if pid in current:
+                    subprocess.run(['sudo', '-n', 'kill', '-TERM', str(pid)], timeout=5, check=False)
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+            raise
+
+    proofs.security_command = measured
+    try:
+        with proofs.fixture_trust(ca):
+            print('TRUST DIAGNOSTIC fresh CA installed; no other work before cleanup', flush=True)
+    finally:
+        key.unlink(missing_ok=True)
+
+
+if __name__ == '__main__':
+    main()
