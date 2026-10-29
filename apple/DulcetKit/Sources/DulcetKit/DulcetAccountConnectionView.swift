@@ -173,7 +173,6 @@ struct DulcetAccountConnectionView: View {
     }
 
     @ViewBuilder
-    @ViewBuilder
     private var connectionsSection: some View {
         if let manager = store.connectionsManager {
             VStack(alignment: .leading, spacing: 12) {

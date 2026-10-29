@@ -52,6 +52,38 @@ class ConnectionDispatchFenceTest {
         } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
     }
 
+    @Test fun legacySameOriginRedirectKeepsItsExistingBehaviorWhileAnEnrolledBaseIsConfined() {
+        for (enrolled in listOf(false, true)) {
+            val hits = AtomicInteger()
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext("/") { call ->
+                hits.incrementAndGet()
+                if (call.requestURI.path == "/music/rest/ping.view") {
+                    call.responseHeaders.add("Location", "/media/file")
+                    call.sendResponseHeaders(302, -1); call.close()
+                } else {
+                    val bytes = "fixture-bytes".toByteArray()
+                    call.sendResponseHeaders(200, bytes.size.toLong()); call.responseBody.use { it.write(bytes) }
+                }
+            }
+            server.start()
+            val base = "http://127.0.0.1:${server.address.port}/music"
+            val anchor = OwnershipAnchor("redirect-base-fixture", base, "listener", "fixture")
+            if (enrolled) ConnectionRouteRegistry.publish(anchor, RouteLease(base, "test-only", "fixture", 1, 1))
+            val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(base, "listener", "canary", true), "fixture.redirect")
+            try {
+                if (enrolled) {
+                    val failure = assertFailsWith<AuthenticatedEndpointFailure> { runBlocking { client.request("ping", emptyMap()) } }
+                    assertEquals(DomainError.Security.ResourceOutsideRoute, failure.error)
+                    assertEquals(1, hits.get(), "The enrolled route rejects the out-of-base Location before dispatch")
+                } else {
+                    assertEquals("fixture-bytes", runBlocking { client.request("ping", emptyMap()) }.body.decodeToString())
+                    assertEquals(2, hits.get(), "The unchanged legacy single-origin policy follows its existing redirect")
+                }
+            } finally { client.close(); ConnectionRouteRegistry.forget(anchor.accountId); server.stop(0) }
+        }
+    }
+
     private fun fixture(check: (String, AtomicInteger) -> Unit) {
         val hits = AtomicInteger()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)

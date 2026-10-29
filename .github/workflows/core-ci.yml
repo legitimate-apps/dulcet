@@ -431,8 +431,8 @@ jobs:
             python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
             adb reverse tcp:4533 tcp:4533
             ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
-            adb push tools/migration-fixtures/v15 /data/local/tmp/dulcet-connections-seed
-            ./gradlew --no-daemon --max-workers=2 :core:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.class=com.legitimateapps.dulcet.core.AndroidConnectionOwnershipDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONNECTIONS_SEED=/data/local/tmp/dulcet-connections-seed
+            tools/ci/run-connection-android-proofs --root "$RUNNER_TEMP/dulcet-connections-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-android-evidence"
+            adb reverse tcp:4533 tcp:4533
             tools/ci/run-android-rest-proofs '${{ matrix.task }}' '${{ matrix.surface }}'
             mkdir -p "$RUNNER_TEMP/my-library-fallback"
             cp -R ${{ matrix.results }} "$RUNNER_TEMP/my-library-fallback/"
@@ -448,6 +448,8 @@ jobs:
         with:
           name: dulcet-android-emulator-${{ matrix.surface }}${{ matrix.rep != 1 && format('-rep{0}', matrix.rep) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/dulcet-connections-android-evidence/results
+            ${{ runner.temp }}/dulcet-connections-fixture/requests.json
             ${{ runner.temp }}/android-system-image-install.log
             ${{ runner.temp }}/android-sdk-action-install.log
             ${{ matrix.results }}

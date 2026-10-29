@@ -66,6 +66,7 @@ def inside(args):
         device_manifest = dict(manifest); device_manifest['caPem'] = device_root+'/ca.pem'
         local_manifest = evidence/'manifest-device.json'; local_manifest.write_text(json.dumps(device_manifest)); local_manifest.chmod(0o600)
         run(adb+['push',str(local_manifest),device_root+'/manifest.json'], stdout=subprocess.PIPE)
+        run(adb+['shell','chmod','644',device_root+'/manifest.json'])
         run(adb+['push',str(ca),device_root+'/ca.pem'], stdout=subprocess.PIPE)
         run(adb+['push',str(seed),device_root+'/seed'], stdout=subprocess.PIPE)
         hash_value = subprocess.check_output(['openssl','x509','-subject_hash_old','-in',str(ca),'-noout'], text=True).strip()

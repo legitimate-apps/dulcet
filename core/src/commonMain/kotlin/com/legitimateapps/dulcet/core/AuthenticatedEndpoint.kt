@@ -292,7 +292,7 @@ internal class AuthenticatedEndpointClient(
                 ?: throw AuthenticatedEndpointFailure(
                     DomainError.Security.RedirectRejected(RedirectRejectionReason.InvalidLocation),
                 )
-            if (ConnectionRouteRegistry.isEnrolled(credentials.normalizedBaseUrl, credentials.username) &&
+            if (scope.enrolled &&
                 (ConnectionResourcePolicy.resolve(routeBase, location) == null ||
                     ConnectionResourcePolicy.resolve(routeBase, nextUrl) == null)) {
                 throw AuthenticatedEndpointFailure(DomainError.Security.ResourceOutsideRoute)
@@ -317,9 +317,6 @@ internal class AuthenticatedEndpointClient(
                         DomainError.Security.RedirectRejected(decision.reason)
                     },
                 )
-            }
-            if (ConnectionResourcePolicy.resolve(routeBase, nextUrl) == null) {
-                throw AuthenticatedEndpointFailure(DomainError.Security.ResourceOutsideRoute)
             }
             currentUrl = nextUrl.withoutQuery()
             redirects += 1
