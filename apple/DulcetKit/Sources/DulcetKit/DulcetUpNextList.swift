@@ -117,12 +117,14 @@ public struct DulcetUpNextSection: View {
                     } label: { Image(systemName: "arrow.up") }
                     .accessibilityLabel(DulcetQueueStrings.moveUp)
                     .disabled(offset == 0)
+                    .opacity(offset == 0 ? 0.35 : 1)
                     .accessibilityIdentifier("dulcet.upNext.move-up.\(offset)")
                     Button {
                         move(entry, offset: offset, upward: false)
                     } label: { Image(systemName: "arrow.down") }
                     .accessibilityLabel(DulcetQueueStrings.moveDown)
                     .disabled(offset + 1 == model.upcoming.count)
+                    .opacity(offset + 1 == model.upcoming.count ? 0.35 : 1)
                     .accessibilityIdentifier("dulcet.upNext.move-down.\(offset)")
                 }
                 .font(.subheadline)
@@ -246,15 +248,14 @@ private struct DulcetQueueHeader: View {
 #endif
             }
             if let autoplay {
-                Toggle(isOn: Binding(get: { autoplay.isOn }, set: autoplay.set)) {
+                Button { autoplay.set(!autoplay.isOn) } label: {
                     Image(systemName: "infinity")
                         .frame(minWidth: 36, minHeight: 36)
                         .background(autoplay.isOn ? Color.primary.opacity(0.12) : .clear,
                                     in: RoundedRectangle(cornerRadius: 12))
                 }
-#if !os(tvOS)
-                .toggleStyle(.button)
-#endif
+                .dulcetMediaButtonStyle()
+                .accessibilityAddTraits(autoplay.isOn ? .isSelected : [])
 #if os(iOS)
                 // Keep the native Switch semantics and 0/1 value used by VoiceOver and the
                 // existing AutoPlay proofs while drawing the compact infinity control.

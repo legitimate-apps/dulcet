@@ -104,7 +104,7 @@ struct DulcetLyricsPanel: View {
                 }
                 .padding(.vertical, DulcetSpacing.md)
             }
-            .scrollIndicators(.hidden)
+            .scrollIndicators(.never)
         case .none:
             ContentUnavailableView {
                 Label(DulcetStrings.lyricsNone, systemImage: "quote.bubble")
@@ -342,7 +342,7 @@ private struct DulcetSyncedLyrics: View {
                                     }
                                 }
                                 .modifier(DulcetLyricsEdgeFade(
-                                    isCurrent: cursor.contains(index), viewportHeight: geometry.size.height
+                                    isCurrent: cursor.contains(index), viewport: geometry.frame(in: .global)
                                 ))
                                 .id(index)
                         }
@@ -352,7 +352,7 @@ private struct DulcetSyncedLyrics: View {
                     .padding(.bottom, geometry.size.height)
                 }
                 .coordinateSpace(name: "dulcet.lyrics.viewport")
-                .scrollIndicators(.hidden)
+                .scrollIndicators(.never)
                 // A drag on the sheet is a hand scroll, on the platforms with touch or a pointer.
                 // A television scrolls by moving the remote's focus, which pauses the follow
                 // through `focusedLine` below.
@@ -462,7 +462,7 @@ private struct DulcetSyncedLyrics: View {
 /// Feather past/upcoming lines at the viewport edges. The sung line is never masked.
 private struct DulcetLyricsEdgeFade: ViewModifier {
     let isCurrent: Bool
-    let viewportHeight: CGFloat
+    let viewport: CGRect
 
     func body(content: Content) -> some View {
         if isCurrent {
@@ -470,11 +470,15 @@ private struct DulcetLyricsEdgeFade: ViewModifier {
         } else {
             content.mask {
                 GeometryReader { geometry in
-                    let frame = geometry.frame(in: .named("dulcet.lyrics.viewport"))
-                    let positions = [frame.minY, frame.maxY, 0, 40, viewportHeight - 40, viewportHeight]
+                    let frame = geometry.frame(in: .global)
+                    // Reach zero before the scroll clip, then dissolve across 40 points of
+                    // viewport space. Global frames avoid the scroll content's translated origin.
+                    let top = viewport.minY + 8
+                    let bottom = viewport.maxY - 8
+                    let positions = [frame.minY, frame.maxY, top, top + 40, bottom - 40, bottom]
                         .filter { $0 >= frame.minY && $0 <= frame.maxY }.sorted()
                     LinearGradient(stops: positions.map { y in
-                        Gradient.Stop(color: .black.opacity(Double(max(0, min(1, y / 40, (viewportHeight - y) / 40)))),
+                        Gradient.Stop(color: .black.opacity(Double(max(0, min(1, (y - top) / 40, (bottom - y) / 40)))),
                                       location: (y - frame.minY) / max(1, frame.height))
                     }, startPoint: .top, endPoint: .bottom)
                 }

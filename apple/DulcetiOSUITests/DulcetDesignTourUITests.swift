@@ -383,7 +383,9 @@ final class DulcetDesignTourUITests: XCTestCase {
                         let remove = app.buttons["dulcet.upNext.remove.0"].firstMatch
                         let move = app.buttons["dulcet.upNext.move-down.0"].firstMatch
                         guard remove.waitForExistence(timeout: 5), remove.isHittable, move.isHittable else { return false }
-                        print("DULCET PLAYER AX edit remove=visible move-down=visible full-width-row=true")
+                        let moveUp = app.buttons["dulcet.upNext.move-up.0"].firstMatch
+                        guard moveUp.exists, !moveUp.isEnabled else { return false }
+                        print("DULCET PLAYER AX edit remove=visible move-down=visible move-up=disabled full-width-row=true")
                     }
                     return self.settle(app)
                 }

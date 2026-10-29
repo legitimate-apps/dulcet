@@ -70,10 +70,6 @@ struct DulcetNowPlayingView: View {
             let width = geometry.size.width
             let padding = horizontalPadding(for: width)
             if sideBySide(width: width) {
-#if os(macOS)
-                // Window geometry owns the cover size; status and title changes cannot resize it.
-                let artworkSize = min(520, max(Self.sideBySideMinimumArtwork, geometry.size.height - 420))
-#else
                 let artworkSize = Self.fittedArtworkSize(
                     widthLimit: 520,
                     availableHeight: geometry.size.height - 2 * DulcetSpacing.xl,
@@ -81,7 +77,6 @@ struct DulcetNowPlayingView: View {
                     minimum: Self.sideBySideMinimumArtwork,
                     unmeasured: Self.sideBySideArtworkSize(height: geometry.size.height)
                 )
-#endif
                 // Centred together: the queue sits beside the cover and controls it belongs to,
                 // not pinned to the window's top with the space under it empty.
                 HStack(alignment: .center, spacing: Self.playerToQueueSpacing) {
@@ -658,9 +653,6 @@ struct DulcetNowPlayingView: View {
     private func stackedArtworkSize(innerWidth: CGFloat, availableHeight: CGFloat) -> CGFloat {
         let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 220 : 360
         let widthLimit = max(Self.stackedMinimumArtwork, min(innerWidth, cap))
-#if os(macOS)
-        return min(widthLimit, max(Self.stackedMinimumArtwork, availableHeight - 420))
-#else
         return Self.fittedArtworkSize(
             widthLimit: widthLimit,
             availableHeight: availableHeight,
@@ -668,7 +660,6 @@ struct DulcetNowPlayingView: View {
             minimum: Self.stackedMinimumArtwork,
             unmeasured: widthLimit
         )
-#endif
     }
 
     private func playerPanel(
@@ -729,6 +720,10 @@ struct DulcetNowPlayingView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(player.current.title)
                 .font(.title2.weight(.bold))
+#if os(macOS)
+                .lineLimit(1)
+                .truncationMode(.tail)
+#endif
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("dulcet.now-playing.title")
             DulcetPlayerArtistLink(
@@ -736,6 +731,9 @@ struct DulcetNowPlayingView: View {
                 font: .title3,
                 onNavigate: onNavigate
             )
+#if os(macOS)
+            .lineLimit(1)
+#endif
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -997,6 +995,7 @@ struct DulcetNowPlayingView: View {
 
     private var playbackProgress: some View {
         VStack(spacing: DulcetSpacing.xxs) {
+#if !os(macOS)
             if player.phase == .buffering {
                 HStack(spacing: DulcetSpacing.xs) {
                     ProgressView().controlSize(.small)
@@ -1004,6 +1003,7 @@ struct DulcetNowPlayingView: View {
                 }
                 .accessibilityIdentifier("dulcet.now-playing.buffering")
             }
+#endif
             if Self.showsProgressIndicator(progressBegan: player.progressBegan, phase: player.phase) {
                 VStack(spacing: 0) {
                     playbackProgressIndicator
@@ -1023,6 +1023,17 @@ struct DulcetNowPlayingView: View {
                     }
                     .font(.caption.monospacedDigit())
                     .dulcetForeground(.primaryTextOnWindow)
+#if os(macOS)
+                    .overlay {
+                        if player.phase == .buffering {
+                            HStack(spacing: DulcetSpacing.xs) {
+                                ProgressView().controlSize(.mini)
+                                Text(DulcetStrings.buffering).font(.caption)
+                            }
+                            .accessibilityIdentifier("dulcet.now-playing.buffering")
+                        }
+                    }
+#endif
                 }
             } else if player.phase != .buffering {
                 Text(playbackPhaseLabel)
@@ -1346,6 +1357,7 @@ struct DulcetNowPlayingSheet: View {
                     }
                     .accessibilityLabel(DulcetStrings.closeNowPlaying)
                     .accessibilityIdentifier("dulcet.now-playing.close")
+                    .offset(y: 10)
                 }
             }
         }
