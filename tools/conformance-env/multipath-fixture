@@ -117,7 +117,8 @@ class Fixture:
                 query = urllib.parse.parse_qs(path.query)
                 form = urllib.parse.parse_qs(body.decode('utf-8', errors='replace')) if self.headers.get('Content-Type', '').startswith('application/x-www-form-urlencoded') else {}
                 with fixture.lock:
-                    fixture.requests.append({'routeId': route_id, 'method': self.command, 'endpoint': path.path.split('/')[-1].removesuffix('.view'),
+                    fixture.requests.append({'routeId': route_id, 'method': self.command, 'path': path.path,
+                        'endpoint': path.path.split('/')[-1].removesuffix('.view'),
                         'queryAuth': bool(set(query) & {'u', 't', 's', 'p'}), 'bodyAuth': bool(set(form) & {'u', 't', 's', 'p'}),
                         'authorization': bool(self.headers.get('Authorization')), 'requestBytes': len(body)})
                     outage = route_id in fixture.outages
