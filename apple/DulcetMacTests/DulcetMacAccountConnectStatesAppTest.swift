@@ -81,7 +81,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         XCTAssertEqual(store.snapshot.state, .accountConnectIdle)
         _ = try await shipping.element(identifiedBy: "dulcet.account-connect.title")
         let primary = try await shipping.element(identifiedBy: "dulcet.account-connect.primary-action")
-        XCTAssertEqual(shipping.label(primary), "Connect", "Idle offers Connect")
+        XCTAssertEqual(shipping.label(primary), "Sign In", "Idle offers Sign In")
         XCTAssertNil(shipping.firstElement(labelled: "Sign Out"), "Idle is not connected")
         XCTAssertNil(shipping.firstElement(labelled: "Try Again"), "Idle shows no failure")
         print("DULCET MAC ACCOUNT STATE reached=idle state=\(store.snapshot.state.rawValue)")
