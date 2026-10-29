@@ -187,6 +187,9 @@ public class AndroidAccountCredentialStore public constructor(
             }
             if (account.serverIdentity.isNotEmpty()) com.legitimateapps.dulcet.core.AndroidServerIdentity.accept(
                 applicationContext, account.id, account.serverIdentity)
+            if (account.serverIdentity.isNotEmpty()) com.legitimateapps.dulcet.core.AndroidConnections(applicationContext)
+                .initializeFreshOwnership(com.legitimateapps.dulcet.core.OwnershipAnchor(
+                    account.id, account.serverUrl, account.username, account.serverIdentity))
             account
         } catch (failure: Exception) {
             // A failed secure write must not leave the new account selected, even if a

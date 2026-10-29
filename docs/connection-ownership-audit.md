@@ -9,7 +9,7 @@ call a binding method, account replacement, account removal or namespace purge.
 
 `tools/verify_connection_ownership.py --self-test` checks a reviewed expression
 inventory (`tools/connection_ownership_inventory.json`) against production Kotlin
-and Swift sources. The inventory contains **28 ownership constructions, 22
+and Swift sources. The inventory contains **29 ownership constructions, 22
 transport snapshots and 16 equality call sites (the original 15 plus the enrollment ownership fence)**. It scans declarations,
 constructor arguments, named Swift/Kotlin arguments and URL-changing `copy` calls;
 comments and string literals are excluded. The one reviewed connected-result
@@ -47,6 +47,7 @@ calls in one file. These groups describe the provenance of each URL expression:
 | --- | --- |
 | Android account DTO → playback account (5 calls) | Credential-store `StoredAccount.serverUrl`, sign-out's stored account, downloads' stored account, playback service's stored account and artwork's reader account `normalizedBaseUrl`. |
 | Apple account DTO → playback account (4 calls) | Download controller's `DulcetPlaybackAccount.normalizedServerURL` (mapping and configure), playback controller's confirmed saved-principal continuation and presentation account. |
+| Fresh Android UUID ownership nonce (1 call) | Credential saving supplies the immutable `OwnershipAnchor.normalizedBaseUrl` after accepted identity. Initialization refuses any existing owned rows and never binds, replaces or purges a namespace. |
 | Android cache/media bindings (3 calls) | Reader and download controller `account.normalizedBaseUrl`; download media initialization uses the same immutable account. |
 | Apple cache/media bindings (4 calls) | Reader and download client anchor; download initialization and confirmed principal continuation take anchor-based account values. |
 | Core stored binding comparisons (5 calls) | Existing persisted URL, requested `CacheBinding` URL, and previous/first/second anchored media accounts. |

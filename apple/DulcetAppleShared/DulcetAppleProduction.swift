@@ -1570,15 +1570,21 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
     func enroll(ownership expected: DulcetConnectionOwnership, httpsURL: String?, completion: @escaping @MainActor (DulcetConnectionsState?) -> Void) {
         guard operation == nil, let (id, request, identity) = saved(),
               ownership((id, request, identity)) == expected else { completion(restore()); return }
-        let bootstrap = httpsURL ?? request.serverURL
-        operation = client.startEnroll(accountId: id, anchorUrl: request.serverURL,
-            username: request.username, serverIdentity: identity, bootstrapUrl: bootstrap, password: request.password) { [weak self] value in
+        guard let bootstrap = httpsURL ?? restore()?.verificationAddress else { completion(restore()); return }
+        let receive: (AppleConnectionsOutcomeDto) -> Void = { [weak self] value in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.operation = nil
                 guard self.currentOwnership == expected else { completion(self.restore()); return }
                 completion(self.state(value, ownership: expected, request: request))
             }
+        }
+        if httpsURL != nil {
+            operation = client.startAdd(accountId: id, anchorUrl: request.serverURL,
+                username: request.username, serverIdentity: identity, bootstrapUrl: bootstrap, password: request.password, completion: receive)
+        } else {
+            operation = client.startEnroll(accountId: id, anchorUrl: request.serverURL,
+                username: request.username, serverIdentity: identity, bootstrapUrl: bootstrap, password: request.password, completion: receive)
         }
     }
     func remove(ownership expected: DulcetConnectionOwnership, routeID: String) -> DulcetConnectionsState? {

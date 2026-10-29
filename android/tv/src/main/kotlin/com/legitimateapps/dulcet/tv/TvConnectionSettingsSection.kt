@@ -36,15 +36,14 @@ internal fun TvConnectionSettingsSection() {
             Button(onClick = { settings.remove(owner, route.id) }, enabled = !state.busy,
                 modifier = Modifier.testTag("connections.remove.${route.id}")) { Text("Remove connection") }
         }
-        if (state.canUpgrade && state.snapshot?.enrolled != true) {
-            Text("HTTPS server address")
-            BasicTextField(value = httpsAddress, onValueChange = { httpsAddress = it }, singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-                modifier = Modifier.testTag("connections.https-address").semantics { contentDescription = "HTTPS server address" })
-            Button(onClick = { settings.enroll(owner, httpsAddress) },
-                enabled = !state.busy && httpsAddress.startsWith("https://"),
-                modifier = Modifier.testTag("connections.upgrade")) { Text("Upgrade connection to HTTPS") }
-        } else {
+        Text("HTTPS server address")
+        BasicTextField(value = httpsAddress, onValueChange = { httpsAddress = it }, singleLine = true,
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+            modifier = Modifier.testTag("connections.https-address").semantics { contentDescription = "HTTPS server address" })
+        Button(onClick = { settings.enroll(owner, httpsAddress) },
+            enabled = !state.busy && httpsAddress.startsWith("https://"),
+            modifier = Modifier.testTag(if (state.canUpgrade && state.snapshot?.enrolled != true) "connections.upgrade" else "connections.add")) { Text(if (state.canUpgrade && state.snapshot?.enrolled != true) "Upgrade connection to HTTPS" else "Add HTTPS connection") }
+        if (!state.canUpgrade || state.snapshot?.enrolled == true) {
             Button(onClick = { settings.enroll(owner) }, enabled = !state.busy,
                 modifier = Modifier.testTag("connections.verify")) { Text("Verify connections") }
         }

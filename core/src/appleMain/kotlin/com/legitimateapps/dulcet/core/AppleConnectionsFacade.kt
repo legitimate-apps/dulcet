@@ -37,13 +37,26 @@ public class AppleConnectionsClient(private val databaseName: String) {
         bootstrapUrl: String, password: String,
         completion: (AppleConnectionsOutcomeDto) -> Unit,
     ): ApplePlaybackWireOperation {
+        return startEnrollment(accountId, anchorUrl, username, serverIdentity, bootstrapUrl, password, false, completion)
+    }
+
+    public fun startAdd(
+        accountId: String, anchorUrl: String, username: String, serverIdentity: String,
+        bootstrapUrl: String, password: String, completion: (AppleConnectionsOutcomeDto) -> Unit,
+    ): ApplePlaybackWireOperation = startEnrollment(accountId, anchorUrl, username, serverIdentity,
+        bootstrapUrl, password, true, completion)
+
+    private fun startEnrollment(
+        accountId: String, anchorUrl: String, username: String, serverIdentity: String,
+        bootstrapUrl: String, password: String, explicitAdd: Boolean, completion: (AppleConnectionsOutcomeDto) -> Unit,
+    ): ApplePlaybackWireOperation {
         val job = scope.launch {
             val store = try { DulcetDriverFactory(databaseName).openDulcetDatabase() }
             catch (_: Throwable) { completion(AppleConnectionsOutcomeDto(emptyList(), false, "persistence")); return@launch }
             val result = try {
                 when (val enrolled = service(store).enroll(ConnectionEnrollmentRequest(
                     OwnershipAnchor(accountId, anchorUrl, username, serverIdentity),
-                    AccountConnectionRequest(bootstrapUrl, username, password, false),
+                    AccountConnectionRequest(bootstrapUrl, username, password, false), explicitAdd,
                 ))) {
                     is ConnectionEnrollmentResult.Enrolled -> enrolled.snapshot.toDto()
                     is ConnectionEnrollmentResult.Failed -> AppleConnectionsOutcomeDto(emptyList(), false, enrolled.error.applePlaybackErrorKind())
