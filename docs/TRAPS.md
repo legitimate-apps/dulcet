@@ -675,3 +675,14 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     otherwise joins its screen revalidation after identity has finished. The playback proof
     still requires the exact held ping, suspended validation, refused ping and recovery without
     another press. Production pooling and retry policy are unchanged.
+
+62. **A stream-cache writer factory can need playback Main; creation cannot hold the resource monitor.**
+    **OBSERVED 2026-10-29:** durable Linux conformance receipts and two JVM captures found
+    playback-service teardown waiting in `AndroidCachingPlaybackResource.close()`, while
+    Media3’s loader held that resource monitor in `open()` and waited for
+    `AndroidDownloads.controller()` to admit the writer on Main. Reserve the one creation
+    attempt under the monitor, invoke the factory outside it, and publish only if the resource
+    is still current. If teardown or an invalid range retires it while creation runs, abort
+    the late writer exactly once without attaching it or promoting cache bytes. Regression
+    controls require teardown to finish before the blocked factory is released and reject
+    late writers after both reentrant teardown and range invalidation.
