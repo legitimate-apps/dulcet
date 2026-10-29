@@ -686,3 +686,20 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     the late writer exactly once without attaching it or promoting cache bytes. Regression
     controls require teardown to finish before the blocked factory is released and reject
     late writers after both reentrant teardown and range invalidation.
+
+
+63. **Fixture admin trust lasts for the disposable hosted job VM.** **OBSERVED 2026-10-29:**
+    hosted macOS successfully installed the fresh fixture CA with noninteractive root admin
+    trust and executed the three native connection proofs. Both `remove-trusted-cert -d`
+    and exact `delete-certificate -t` then exceeded their thirty-second bounds; plain
+    exact-fingerprint certificate deletion completed. Apple hardcodes the admin trust
+    authorization right, so changing the authorization database is not a cleanup strategy.
+    The runner deletes only its exact fresh certificate from System.keychain in finally,
+    without `-t`, and fails on command error or timeout. The residual admin trust record
+    remains until GitHub decommissions the job VM; the helper does not claim earlier untrust.
+    [GitHub documents a fresh VM per job and automatic decommission at job completion](https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners).
+    The unchanged guard requires macOS, `GITHUB_ACTIONS=true` and
+    `RUNNER_ENVIRONMENT=github-hosted`; local/shared execution is refused before any trust
+    command. The enclosing multipath fixture stops its listeners and deletes every fresh
+    private key in finally. Mock controls exercise success, partial setup, timeout,
+    cancellation, simulator reset and failed certificate cleanup without local trust writes.

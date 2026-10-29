@@ -3,7 +3,8 @@
 
 Usage (inside multipath-fixture): run-connection-apple-proofs core|mac|ios [SIMULATOR_UDID]
 The fixture supplies DULCET_MULTIPATH_MANIFEST. Trust is installed only on the
-explicitly guarded hosted runner, removed in finally, and never uses trust-all TLS.
+explicitly guarded hosted runner. Finally deletes the exact fresh certificate; its
+admin trust record expires when GitHub decommissions this job VM. No trust-all TLS.
 """
 from __future__ import annotations
 
@@ -86,12 +87,15 @@ def fixture_trust(ca, simulator=None):
         if simulator:
             cleanup.append(lambda: subprocess.run(['xcrun', 'simctl', 'keychain', simulator, 'reset'],
                                                  check=True, timeout=SECURITY_TIMEOUT_SECONDS))
-        # Apple SecurityTool keychain_delete.c removes both user AND admin trust with -t
-        # when effective uid is root, then deletes the uniquely matched certificate only
-        # if trust removal succeeded. Use the keychain reference, avoiding the separate
-        # file-based remove-trusted-cert command that stalled on the hosted runner.
-        # https://github.com/apple-oss-distributions/Security/blob/main/SecurityTool/macOS/keychain_delete.c
-        cleanup.append(lambda: security_command('delete-certificate', '-Z', fingerprint, '-t', SYSTEM_KEYCHAIN))
+        # Removing the last admin trust entry requires interactive authorization even
+        # as root. Do not alter that protected macOS policy. Delete only this exact fresh
+        # certificate here; the residual admin trust record lasts until job VM teardown.
+        # GitHub provisions a fresh VM per hosted job and automatically decommissions it:
+        # https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners
+        # The enclosing multipath-fixture finally stops its servers and deletes all of
+        # its fresh signing keys. This helper must never run on a local/shared runner.
+        print('CONNECTIONS APPLE trust lifecycle=job-vm; residual admin trust ends at GitHub VM decommission', flush=True)
+        cleanup.append(lambda: security_command('delete-certificate', '-Z', fingerprint, SYSTEM_KEYCHAIN))
         for action in cleanup:
             try:
                 action()
