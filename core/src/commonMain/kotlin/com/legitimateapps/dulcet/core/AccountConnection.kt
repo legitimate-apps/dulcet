@@ -498,7 +498,7 @@ public class AccountConnector private constructor(
         val lease = ConnectionRouteRegistry.leaseFor(request.serverUrl, request.username)
             ?: return AccountConnectionResult.Failed(DomainError.Transport.Unreachable)
         val result = connectObserved(request.copy(serverUrl = lease.baseUrl, allowLocalHttp = false),
-            identityOnly, expectedIdentity)
+            identityOnly, expectedIdentity, SavedRouteScope(request.serverUrl, request.username, lease))
         if (ConnectionRouteRegistry.leaseFor(request.serverUrl, request.username) != lease) {
             return AccountConnectionResult.Failed(DomainError.Transport.Cancelled)
         }
@@ -509,8 +509,23 @@ public class AccountConnector private constructor(
         }
     }
 
+    private data class SavedRouteScope(val anchorBase: String, val username: String, val lease: RouteLease) {
+        fun checkCurrent() {
+            if (ConnectionRouteRegistry.leaseFor(anchorBase, username) != lease) {
+                throw RedirectPolicyFailure(DomainError.Transport.Cancelled)
+            }
+        }
+        fun checkResource(resource: String) {
+            checkCurrent()
+            if (ConnectionResourcePolicy.resolve(lease.baseUrl, resource) == null) {
+                throw RedirectPolicyFailure(DomainError.Security.ResourceOutsideRoute)
+            }
+        }
+    }
+
     private suspend fun connectObserved(request: AccountConnectionRequest,
-        identityOnly: Boolean = false, expectedIdentity: String = ""): AccountConnectionResult {
+        identityOnly: Boolean = false, expectedIdentity: String = "",
+        routeScope: SavedRouteScope? = null): AccountConnectionResult {
         val normalized = normalizeServerUrl(request.serverUrl, request.allowLocalHttp)
         if (normalized is NormalizedServerUrl.Invalid) {
             return AccountConnectionResult.Failed(normalized.error)
@@ -525,6 +540,7 @@ public class AccountConnector private constructor(
                 install(RequestTracePlugin) {
                     observe = { request, content ->
                         (logSink as? AccountConnectionDiagnostics)?.observeRequest(request.executionContext)
+                        routeScope?.checkResource(request.url.toString())
                         traceRecorder.observe(request, content)
                     }
                 }
@@ -541,7 +557,7 @@ public class AccountConnector private constructor(
             normalized.candidates.forEachIndexed { index, baseUrl ->
                 traceRecorder.clear()
                 val result = try {
-                    connectNormalized(client, baseUrl, request, traceRecorder, identityOnly, expectedIdentity)
+                    connectNormalized(client, baseUrl, request, traceRecorder, identityOnly, expectedIdentity, routeScope)
                 } catch (_: UnsupportedAuthenticationChallengeFailure) {
                     AccountConnectionResult.Failed(
                         DomainError.Auth.UnsupportedAuthenticationChallenge,
@@ -584,6 +600,7 @@ public class AccountConnector private constructor(
         traceRecorder: RequestTraceRecorder,
         identityOnly: Boolean = false,
         expectedIdentity: String = "",
+        routeScope: SavedRouteScope? = null,
     ): AccountConnectionResult {
         val extensionResponse = if (identityOnly) WireResponse(404, "", "") else request(
             client = client,
@@ -594,6 +611,7 @@ public class AccountConnector private constructor(
             formPost = false,
             allowLocalHttp = request.allowLocalHttp,
             traceRecorder = traceRecorder,
+            routeScope = routeScope,
         )
         val extensionEnvelope = parseEnvelope(extensionResponse.body)
         val extensionListUnavailable = extensionResponse.statusCode == 404 || extensionEnvelope == null
@@ -613,6 +631,7 @@ public class AccountConnector private constructor(
             credentials = request,
             formPost = formPost,
             traceRecorder = traceRecorder,
+            routeScope = routeScope,
         )
         if (identityOnly) {
             // Reconnect previously used the library transport. Keep its status-first busy and
@@ -666,7 +685,7 @@ public class AccountConnector private constructor(
         // other implementations may advertise the explicit extension. Plain REST stays unchanged.
         val instanceId = if (serverType.trim().lowercase() in setOf("dulcet", "dulcet server") ||
             1 in extensions["dulcetDiscovery"].orEmpty() || ServerIdentityPolicy.requiresDiscovery(expectedIdentity, serverType)
-        ) discoverInstanceId(client, baseUrl, request.allowLocalHttp) else ""
+        ) discoverInstanceId(client, baseUrl, request.allowLocalHttp, routeScope) else ""
         if (identityOnly) return AccountConnectionResult.Connected(ConnectedAccount(
             normalizedBaseUrl = baseUrl, allowsLocalHttp = request.allowLocalHttp,
             protocolVersion = serverProtocolVersion, openSubsonic = pingEnvelope.boolean("openSubsonic") ?: false,
@@ -683,6 +702,7 @@ public class AccountConnector private constructor(
             credentials = request,
             formPost = formPost,
             traceRecorder = traceRecorder,
+            routeScope = routeScope,
         )
         val userEnvelope = parseEnvelope(userResponse.body)
             ?: return AccountConnectionResult.Failed(DomainError.Protocol.MalformedEnvelope)
@@ -729,12 +749,14 @@ public class AccountConnector private constructor(
 
     /** Same-origin, unauthenticated, no redirects: discovery cannot forward credentials or trust
      * another host's lineage. TLS/local-network policy is the account connection's own policy. */
-    private suspend fun discoverInstanceId(client: HttpClient, baseUrl: String, allowLocalHttp: Boolean): String {
-        val origin = URLBuilder(baseUrl).apply { encodedPath = "/.well-known/dulcet"; parameters.clear() }.buildString()
+    private suspend fun discoverInstanceId(client: HttpClient, baseUrl: String, allowLocalHttp: Boolean,
+        routeScope: SavedRouteScope? = null): String {
+        val origin = "${baseUrl.trimEnd('/')}/.well-known/dulcet"
         val response = sendRequest(client, origin, Parameters.Empty, Parameters.Empty, false, allowLocalHttp)
         if (response.status.value != 200) throw RedirectPolicyFailure(DomainError.Protocol.MalformedEnvelope)
         val body = response.bodyAsText()
         if (body.length > 65_536) throw RedirectPolicyFailure(DomainError.Protocol.TooLarge)
+        routeScope?.checkCurrent()
         val document = try { Json.parseToJsonElement(body) as? JsonObject } catch (_: Exception) { null }
         val server = document?.get("server") as? JsonObject
         val instance = server?.get("instanceId") as? JsonPrimitive
@@ -752,6 +774,7 @@ public class AccountConnector private constructor(
         credentials: AccountConnectionRequest,
         formPost: Boolean,
         traceRecorder: RequestTraceRecorder,
+        routeScope: SavedRouteScope? = null,
     ): WireResponse {
         val source = saltSource ?: AccountConnectionContract.secureSaltSource()
         val salt = source.nextSalt()
@@ -770,6 +793,7 @@ public class AccountConnector private constructor(
             formPost = formPost,
             allowLocalHttp = credentials.allowLocalHttp,
             traceRecorder = traceRecorder,
+            routeScope = routeScope,
         )
     }
 
@@ -782,6 +806,7 @@ public class AccountConnector private constructor(
         formPost: Boolean,
         allowLocalHttp: Boolean,
         traceRecorder: RequestTraceRecorder,
+        routeScope: SavedRouteScope? = null,
     ): WireResponse {
         val endpointUrl = "$baseUrl/rest/$endpoint.view"
         val commonParameters = linkedMapOf(
@@ -819,6 +844,7 @@ public class AccountConnector private constructor(
                     allowLocalHttp = allowLocalHttp,
                 )
             }
+            routeScope?.checkCurrent()
             if (response.status.value == 407) {
                 logSink.accountPhase("$endpoint.body") { response.bodyAsText() }
                 throw UnsupportedAuthenticationChallengeFailure()
@@ -839,6 +865,12 @@ public class AccountConnector private constructor(
                     logicalRequestUrl = traceRecorder.latestRedactedUrl(),
                 )
             logSink.accountPhase("$endpoint.body") { response.bodyAsText() }
+            if (routeScope != null) {
+                if (endpoint == "getOpenSubsonicExtensions") {
+                    throw RedirectPolicyFailure(DomainError.Security.ResourceOutsideRoute)
+                }
+                routeScope.checkResource(location)
+            }
             val nextUrl = resolveRedirectUrl(currentUrl, location)
                 ?: throw RedirectPolicyFailure(
                     DomainError.Security.RedirectRejected(

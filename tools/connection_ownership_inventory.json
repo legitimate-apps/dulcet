@@ -391,6 +391,18 @@
       "kind": "transport_snapshot",
       "type": "AuthenticatedEndpointCredentials",
       "source": "base"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ConnectionEnrollment.kt",
+      "kind": "equality",
+      "type": "sameEndpoint",
+      "source": "cache.normalized_base_url, anchor.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ConnectionEnrollment.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "anchor.normalizedBaseUrl"
     }
   ]
 }

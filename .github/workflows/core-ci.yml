@@ -329,7 +329,7 @@ jobs:
             target: google_apis
             arch: x86_64
             profile: pixel_6
-            build: :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest :core-conformance:assembleAndroidDeviceTest
+            build: :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest :core-conformance:assembleAndroidDeviceTest :core:assembleAndroidDeviceTest
             task: :android:app:connectedDevDebugAndroidTest
             conformance: com.legitimateapps.dulcet.conformance.PlaybackScrobbleAndroidPhoneConformanceTest
             my_library: com.legitimateapps.dulcet.AndroidEmulatorMyLibraryProofTest
@@ -338,7 +338,7 @@ jobs:
             target: android-tv
             arch: x86
             profile: tv_1080p
-            build: :android:tv:assembleDebug :android:tv:assembleDebugAndroidTest :core-conformance:assembleAndroidDeviceTest
+            build: :android:tv:assembleDebug :android:tv:assembleDebugAndroidTest :core-conformance:assembleAndroidDeviceTest :core:assembleAndroidDeviceTest
             task: :android:tv:connectedDebugAndroidTest
             conformance: com.legitimateapps.dulcet.conformance.PlaybackScrobbleAndroidTvConformanceTest
             my_library: com.legitimateapps.dulcet.tv.AndroidTvMyLibraryProofTest
@@ -431,6 +431,8 @@ jobs:
             python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
             adb reverse tcp:4533 tcp:4533
             ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
+            adb push tools/migration-fixtures/v15 /data/local/tmp/dulcet-connections-seed
+            ./gradlew --no-daemon --max-workers=2 :core:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.class=com.legitimateapps.dulcet.core.AndroidConnectionOwnershipDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONNECTIONS_SEED=/data/local/tmp/dulcet-connections-seed
             tools/ci/run-android-rest-proofs '${{ matrix.task }}' '${{ matrix.surface }}'
             mkdir -p "$RUNNER_TEMP/my-library-fallback"
             cp -R ${{ matrix.results }} "$RUNNER_TEMP/my-library-fallback/"
@@ -454,6 +456,7 @@ jobs:
             ${{ runner.temp }}/listen-now-dulcet
             ${{ steps.root.outputs.path }}/my-library/*.log
             core-conformance/build/outputs/androidTest-results/connected
+            core/build/outputs/androidTest-results/connected
           if-no-files-found: error
           retention-days: 7
 

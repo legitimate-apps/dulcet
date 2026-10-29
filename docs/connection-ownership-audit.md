@@ -84,3 +84,14 @@ request path, resume path, redirect or relaunch may fall back to it when every
 HTTPS route is unavailable. Legacy accounts without enrollment retain their
 existing explicit local-HTTP behavior. Runtime evidence is recorded separately;
 this audit by itself is not MP-02 or native MP-10 completion evidence.
+
+## Enrollment fence additions
+
+The phase-1 enrollment commit adds one `DownloadMediaBinding` construction from
+`anchor.normalizedBaseUrl` and one strict `sameEndpoint` comparison of the stored
+cache URL with that same frozen anchor. These validate the durable owner captured
+before authentication/probing, then recheck it inside the commit transaction. They
+never take the bootstrap or selected route URL. The post-integration inventory
+therefore includes these additions alongside the original 15 equality guards; the
+original guards remain strict. The explicit-bootstrap endpoint credential snapshot
+is transport only and is not used to construct a binding or account.

@@ -88,6 +88,7 @@ internal data class AuthenticatedEndpointPreparedRequest(
     val rangeHeader: String?,
     /** Lease captured at preparation, used for every native redirect. Never an ownership URL. */
     val routeBaseUrl: String = "",
+    val routeGeneration: Long? = null,
 ) {
     override fun toString(): String = "AuthenticatedEndpointPreparedRequest(<redacted>)"
 }
@@ -173,13 +174,15 @@ internal class AuthenticatedEndpointClient(
         options: AuthenticatedEndpointRequestOptions = AuthenticatedEndpointRequestOptions(),
     ): AuthenticatedEndpointPreparedRequest {
         val common = authenticatedParameters(parameters)
-        val routeBase = requestRouteBase()
+        val scope = requestRouteScope()
+        val routeBase = scope.baseUrl
         val logicalUrl = "${routeBase}/rest/$endpoint.view"
         val target = localHttpPolicy.targetFor(logicalUrl, credentials.allowLocalHttp)
         val url = URLBuilder(target.url).apply {
             common.forEach { (name, value) -> this.parameters.append(name, value) }
         }.buildString()
-        return AuthenticatedEndpointPreparedRequest(url, target.hostHeader, options.range, routeBase)
+        requireCurrent(scope)
+        return AuthenticatedEndpointPreparedRequest(url, target.hostHeader, options.range, routeBase, scope.lease?.generation)
     }
 
     private suspend fun execute(
@@ -195,11 +198,14 @@ internal class AuthenticatedEndpointClient(
         // existing transport and retry/status behavior. Redirects keep using this same client.
         val client = if (jsonBody == null && !formPost && endpoint in MEDIA_ENDPOINTS) mediaClient.value else client
         val common = authenticatedParameters(parameters)
-        val routeBase = requestRouteBase()
+        val scope = requestRouteScope()
+        val routeBase = scope.baseUrl
         var currentUrl = "${routeBase}/rest/$endpoint.view"
         var redirects = 0
         while (true) {
+            requireCurrent(scope)
             val target = localHttpPolicy.targetFor(currentUrl, credentials.allowLocalHttp)
+            requireCurrent(scope)
             val snapshot = try {
                 val maxBodyBytes = options.maxBodyBytes
                 if (jsonBody == null && maxBodyBytes != null) {
@@ -249,6 +255,7 @@ internal class AuthenticatedEndpointClient(
                 }
                 throw failure
             }
+            requireCurrent(scope)
             val redactedUrl = traceRecorder.latestRedactedUrl()
             if (snapshot.statusCode !in REDIRECT_STATUS_CODES) {
                 return AuthenticatedEndpointResponse(
@@ -275,7 +282,8 @@ internal class AuthenticatedEndpointClient(
                     DomainError.Security.RedirectRejected(RedirectRejectionReason.InvalidLocation),
                 )
             if (ConnectionRouteRegistry.isEnrolled(credentials.normalizedBaseUrl, credentials.username) &&
-                ConnectionResourcePolicy.resolve(routeBase, nextUrl) == null) {
+                (ConnectionResourcePolicy.resolve(routeBase, location) == null ||
+                    ConnectionResourcePolicy.resolve(routeBase, nextUrl) == null)) {
                 throw AuthenticatedEndpointFailure(DomainError.Security.ResourceOutsideRoute)
             }
             if (localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)) {
@@ -307,14 +315,22 @@ internal class AuthenticatedEndpointClient(
         }
     }
 
-    private fun requestRouteBase(): String {
-        if (!useEnrolledRoute) return credentials.normalizedBaseUrl
+    private data class RequestRouteScope(val baseUrl: String, val lease: RouteLease?, val enrolled: Boolean)
+
+    private fun requestRouteScope(): RequestRouteScope {
+        if (!useEnrolledRoute) return RequestRouteScope(credentials.normalizedBaseUrl, null, false)
         val lease = ConnectionRouteRegistry.leaseFor(credentials.normalizedBaseUrl, credentials.username)
-        if (lease != null) return lease.baseUrl
-        if (ConnectionRouteRegistry.isEnrolled(credentials.normalizedBaseUrl, credentials.username)) {
-            throw AuthenticatedEndpointFailure(DomainError.Transport.Unreachable)
+        val enrolled = ConnectionRouteRegistry.isEnrolled(credentials.normalizedBaseUrl, credentials.username)
+        if (lease == null && enrolled) throw AuthenticatedEndpointFailure(DomainError.Transport.Unreachable)
+        return RequestRouteScope(lease?.baseUrl ?: credentials.normalizedBaseUrl, lease, enrolled)
+    }
+
+    private fun requireCurrent(scope: RequestRouteScope) {
+        if (!useEnrolledRoute) return
+        if (scope.enrolled != ConnectionRouteRegistry.isEnrolled(credentials.normalizedBaseUrl, credentials.username) ||
+            scope.lease != ConnectionRouteRegistry.leaseFor(credentials.normalizedBaseUrl, credentials.username)) {
+            throw AuthenticatedEndpointFailure(DomainError.Transport.Cancelled)
         }
-        return credentials.normalizedBaseUrl
     }
 
     private fun io.ktor.client.statement.HttpResponse.toSnapshot(
