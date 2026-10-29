@@ -183,7 +183,14 @@ fun Application.dulcetModule(ctx: ServerContext) {
     }
     val api = ctx.restApi()
     intercept(ApplicationCallPipeline.Call) {
-        try { ctx.connections.receive(call) } catch (error: com.legitimateapps.dulcet.server.v1.ApiProblem) {
+        try {
+            ctx.connections.receive(call)
+            ctx.connections.legacyDiscoveryDocument(call)?.let { document ->
+                call.response.headers.append("Cache-Control", "no-store")
+                call.respondText(document.toString(), ContentType.Application.Json)
+                finish(); return@intercept
+            }
+        } catch (error: com.legitimateapps.dulcet.server.v1.ApiProblem) {
             call.response.headers.append("Cache-Control", "private, no-store")
             call.respond(io.ktor.http.HttpStatusCode.fromValue(error.status))
             finish(); return@intercept

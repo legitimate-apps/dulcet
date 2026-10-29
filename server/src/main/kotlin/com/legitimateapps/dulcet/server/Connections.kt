@@ -60,6 +60,7 @@ fun parseLegacyAnchors(text: String?): List<String> = text?.let {
     Json.parseToJsonElement(it).jsonArray.map { value -> checkedBase(value.jsonPrimitive.content, false).toASCIIString() }
 } ?: emptyList()
 
+private val legacyDiscovery = AttributeKey<Boolean>("dulcet.legacy-discovery")
 private val receivingRoute = AttributeKey<ClientRoute>("dulcet.receiving-route")
 fun ApplicationCall.configuredRoute(): ClientRoute? = attributes.getOrNull(receivingRoute)
 
@@ -101,8 +102,9 @@ class Connections(private val ctx: ServerContext) {
                 val prefix = legacy.rawPath.orEmpty().trimEnd('/')
                 legacy.scheme == "http" && legacy.host.equals(host.host, true) &&
                     (if(legacy.port < 0) 80 else legacy.port) == (if(host.port < 0) 80 else host.port) &&
-                    path.startsWith("$prefix/rest/")
+                    (path.startsWith("$prefix/rest/") || path == "$prefix/.well-known/dulcet" || path == "/.well-known/dulcet")
             }) {
+            if (path.endsWith("/.well-known/dulcet")) call.attributes.put(legacyDiscovery, true)
             return
         }
         // The numeric socket peer is the only authority allowed to carry an HTTP backend hop.
@@ -123,6 +125,10 @@ class Connections(private val ctx: ServerContext) {
         call.request.headers["X-Forwarded-Prefix"]?.let { if (it != route.prefix) throw ApiProblem(421, "unrecognized-route") }
         call.attributes.put(receivingRoute, route)
     }
+    fun legacyDiscoveryDocument(call: ApplicationCall): JsonObject? = if (call.attributes.getOrNull(legacyDiscovery) == true)
+        com.legitimateapps.dulcet.server.v1.j("standard" to "dulcet", "apis" to emptyList<String>(),
+            "server" to com.legitimateapps.dulcet.server.v1.j("name" to "Dulcet Server", "version" to SERVER_VERSION, "instanceId" to ctx.journal.instanceId)) else null
+
     fun directory(user: User): Node = Node("dulcetConnections").apply {
         this["version"] = 1; this["revision"] = revision; this["instanceId"] = ctx.journal.instanceId
         child("principal") { this["id"] = user.id; this["username"] = user.name }

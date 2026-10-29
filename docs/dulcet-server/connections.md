@@ -29,7 +29,8 @@ exact previous addresses, for example `["http://legacy.example.test:4533/music"]
 client upgrade. These are historical ownership metadata, never enabled client routes or permission for a
 client to disclose credentials to HTTP. The server continues serving ordinary REST on these exact
 configured HTTP authorities/base prefixes for existing legacy clients, while refusing directory,
-discovery, OAuth and v1 requests there. Configure the precise legacy address before enabling routes
+OAuth and v1 requests there. A topology-minimal public discovery document retains only
+lineage/server metadata (with no API or directory routes) for existing REST identity checks. Configure the precise legacy address before enabling routes
 if old single-address HTTP clients must remain usable. Only an explicitly chosen authenticated HTTPS connection,
 matching known lineage and confirmed principal can adopt the old namespace. Never list another
 installation or infer continuity from equal usernames. A client binary predating enrollment can

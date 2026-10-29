@@ -186,11 +186,12 @@ class ConnectionsConformanceTest {
         val server = io.ktor.server.engine.embeddedServer(io.ktor.server.cio.CIO, host = "127.0.0.1", port = 0) { dulcetModule(ctx) }.start(wait = false)
         try {
             val port = kotlinx.coroutines.runBlocking { server.engine.resolvedConnectors().single().port }
-            fun request(host: String, method: String = "getDulcetConnections.view", prefix: String = "/music"): String = java.net.Socket("127.0.0.1", port).use { socket ->
+            fun request(host: String, method: String = "getDulcetConnections.view", prefix: String = "/music", discovery: Boolean = false): String = java.net.Socket("127.0.0.1", port).use { socket ->
                 socket.soTimeout = 5000
                 val salt = "fixture-salt"; val token = MessageDigest.getInstance("MD5").digest(("fixture-secret" + salt).toByteArray()).joinToString("") { "%02x".format(it) }
                 val body = "u=member&t=$token&s=$salt&v=1.16.1&c=fixture&f=json"
-                val wire = "POST $prefix/rest/$method HTTP/1.0\r\nHost: $host\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body"
+                val path = if(discovery) "$prefix/.well-known/dulcet" else "$prefix/rest/$method"
+                val wire = "POST $path HTTP/1.0\r\nHost: $host\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body"
                 socket.getOutputStream().write(wire.toByteArray()); socket.getOutputStream().flush()
                 socket.getInputStream().readBytes().toString(Charsets.UTF_8)
             }
@@ -199,6 +200,10 @@ class ConnectionsConformanceTest {
             assertTrue(valid.contains("dulcetConnections")); assertTrue(valid.contains("private, no-store"))
             val legacy = request("legacy.example.test:4533", "ping.view")
             assertTrue(legacy.contains("\"status\":\"ok\""), legacy.substringBefore("\r\n"))
+            val legacyIdentity = request("legacy.example.test:4533", discovery = true)
+            assertTrue(legacyIdentity.contains(ctx.journal.instanceId))
+            assertFalse(legacyIdentity.contains("remote.example.test"))
+            assertFalse(legacyIdentity.contains("routeDirectory"))
             val legacyDirectory = request("legacy.example.test:4533")
             assertTrue(legacyDirectory.substringBefore("\r\n").contains("421"))
             val rejected = request("foreign.example.test")
