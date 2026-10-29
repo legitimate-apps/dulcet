@@ -651,3 +651,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     error code. Persistent connections can contain several responses. Truncated, conflicting,
     corrupt or over-limit bodies cannot supply evidence; response headers cannot masquerade as
     an error envelope. The production transport and exact error-40 requirement stay intact.
+
+60. **Restored cached rows do not prove that a replacement reader has finished reconnecting.**
+    **OBSERVED 2026-10-29:** the Android Discover activity-recreation proof saw the restored
+    query, cached first-page artists and a search request before the new reader finished its
+    epoch/surface revalidation. Its subsequent pagination assertion timed out with only the
+    first twenty artists present. Join the current reader's reconnect completion, wait for
+    the cached-page notice to clear, and require the pagination action enabled before clicking.
+    Reconnect schedules search revalidation; its completion alone need not await those responses.
+    The proof then requires a new artist
+    request with a cursor and scrolls the lazy list to artist twenty before checking its
+    positive title. A row outside the lazy viewport need not exist in semantics. The disposable
+    proxy records only the allowed kind and cursor presence, never query or cursor contents.
