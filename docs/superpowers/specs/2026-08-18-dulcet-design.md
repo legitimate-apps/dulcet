@@ -2377,8 +2377,9 @@ It now keeps the whole contract, as the Apple shell does:
   never a seek or replay target: Previous moves to a prior entry, or does nothing if there is none,
   as Android does after clearing its active plan. Apple publishes that core decision to both the
   button and the retained system Now Playing capabilities; a remote Previous with no action is
-  refused. With no session, Previous still replays the selected entry from zero. While an Apple
-  restart seek is pending, a second press uses the intended zero position to move back, without
+  refused. On Apple with no session, Previous still replays the selected entry from zero. While an Apple
+  restart seek is pending, a second press uses the intended zero position to move back when a prior
+  entry exists, without
   changing the observed core position until SeekCompleted. Rejection or SeekFailed clears the
   intent; a failed native seek retains the last observed position. A seek restart keeps the
   session's accumulated listening and once-per-session submission (§15.2).
@@ -7981,10 +7982,10 @@ the pass and the accumulator's once-per-session submission (§15.2). A live unse
 entry reports the press and uses replayCurrent to clear the saved position and start from zero
 with new session/attempt identities. Failed, Stopped and TornDown attempts, including natural ends
 held for preload, move to a prior entry regardless of retained position/seekability; with no prior
-entry they do nothing, matching Android's cleared active plan. With no session the selected entry
+entry they do nothing, matching Android's cleared active plan. On Apple with no session the selected entry
 can still replay. The core decision also controls system Previous availability and remote refusal.
-An outstanding restart seek makes a second Previous move without prematurely changing the core
-position. SeekFailed or command rejection clears the pending intent, and unsuccessful native seeks
+An outstanding restart seek makes a second Previous move when a prior entry exists, without
+prematurely changing the core position. SeekFailed or command rejection clears the pending intent, and unsuccessful native seeks
 retain their prior observed position. Controller regressions cover terminal navigation, held ends,
 remote availability/refusal, rapid presses, failed seeks, exact threshold boundaries, persistent
 resume clearing and completed-seek accounting; a native-engine test covers false and superseded
