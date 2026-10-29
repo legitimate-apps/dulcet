@@ -253,6 +253,8 @@ public sealed interface DomainError {
     public sealed interface Security : DomainError {
         public data class TlsUntrusted(val reason: TlsTrustFailure) : Security
         public data object LocalExceptionViolated : Security
+        /** A returned resource/redirect escaped the request route. Contains no raw URL. */
+        public data object ResourceOutsideRoute : Security
         public data class RedirectRejected(
             val reason: RedirectRejectionReason,
             val redactedUrl: SuppressedRedirectUrl = SuppressedRedirectUrl,
@@ -363,6 +365,7 @@ private val DomainError.diagnosticKind: String
         DomainError.Transport.Cancelled -> "Transport.Cancelled"
         is DomainError.Security.TlsUntrusted -> "Security.TlsUntrusted"
         DomainError.Security.LocalExceptionViolated -> "Security.LocalExceptionViolated"
+        DomainError.Security.ResourceOutsideRoute -> "Security.ResourceOutsideRoute"
         is DomainError.Security.RedirectRejected -> "Security.RedirectRejected"
         DomainError.Protocol.MalformedEnvelope -> "Protocol.MalformedEnvelope"
         is DomainError.Protocol.UnexpectedContentType -> "Protocol.UnexpectedContentType"
@@ -410,6 +413,7 @@ public fun DomainError.toDiagnosticJson(): String {
             DomainError.Transport.Timeout,
             DomainError.Transport.Cancelled,
             DomainError.Security.LocalExceptionViolated,
+            DomainError.Security.ResourceOutsideRoute,
             DomainError.Protocol.MalformedEnvelope,
             is DomainError.Protocol.UnexpectedContentType,
             DomainError.Protocol.UnexpectedBinary,
