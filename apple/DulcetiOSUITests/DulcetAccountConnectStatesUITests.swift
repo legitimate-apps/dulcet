@@ -1141,7 +1141,16 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 if hide.waitForExistence(timeout: 2) {
                     hide.tap()
                 } else {
-                    keyboard.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.95)).tap()
+                    // Return submits the native form. Dismiss through its scroll gesture
+                    // so the next explicit Sign In tap starts, rather than cancels, a request.
+                    let form = app.collectionViews["dulcet.account.settingsForm"].firstMatch
+                    guard form.exists else {
+                        XCTFail("The account form must support keyboard dismissal")
+                        return false
+                    }
+                    form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+                        .press(forDuration: 0.05, thenDragTo:
+                            form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7)))
                 }
             }
             let deadline = Date().addingTimeInterval(10)
