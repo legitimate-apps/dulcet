@@ -532,3 +532,14 @@
 "discover.wishlistAdded" = "Added";
 "discover.wishlistUpdated" = "Updated";
 "discover.wishlistNoteUpdated" = "Note updated";
+
+"account.connections.title" = "Connections";
+"account.connections.current" = "Current HTTPS connection";
+"account.connections.verified" = "Verified HTTPS connection";
+"account.connections.unavailable" = "Unavailable";
+"account.connections.remove" = "Remove connection";
+"account.connections.httpsAddress" = "HTTPS server address";
+"account.connections.upgrade" = "Upgrade connection to HTTPS";
+"account.connections.verify" = "Verify connections";
+"account.connections.offline" = "Offline · Your downloads are available";
+"account.connections.privacy" = "Connections use HTTPS. A remote connection may terminate encryption at your server administrator's proxy, which can read authentication and content.";
