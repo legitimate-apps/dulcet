@@ -84,6 +84,13 @@ refresh tokens may rotate at a directory-listed authorized alias, with the exist
 window and revocation rules. Removing a configured route removes its network/refresh access without
 changing historical ownership or grant issuance provenance.
 
+A client may explicitly re-add a previously listed HTTPS address when the other recorded
+connections are unreachable, without first removing those records. It must check that chosen
+bootstrap's TLS and lineage before credentials, then validate the authenticated directory and
+principal; the chosen address must still be listed. This preserves the account's ownership
+address and files. Ordinary directory refresh cannot clear a person's removal or select an
+alternate connection automatically.
+
 ## Data lineage and moves
 
 `instanceId` identifies the data timeline, not an installation key. Moving/recreating a database

@@ -764,9 +764,10 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     removed, verification can refresh metadata but does not select an alternate automatically.
     The Connections surfaces keep HTTPS Add/re-add available. An explicit Add authenticates an
     admitted directory source, checks that the chosen target is listed, then performs secret-free
-    TLS/lineage admission before sending credentials there. If all routes were removed, only an
-    explicitly chosen historical HTTPS route may bootstrap recovery, with the same TLS and
-    principal checks. The transaction clears only that chosen tombstone; refresh preserves all
+    TLS/lineage admission before sending credentials there. When no admitted source is available,
+    only an explicitly chosen historical HTTPS route may bootstrap recovery, with the same TLS
+    and principal checks. An unreachable admitted record is not an available source and need not
+    be removed first; Verify and unknown-address Add never gain that exception. The transaction clears only that chosen tombstone; refresh preserves all
     removals. Neither action changes the saved anchor, media epoch or owned rows.
     A fresh Android credential save establishes its initial anchored nonce before automatic
     enrollment, only when accepted identity is the namespace's sole row. It refuses existing

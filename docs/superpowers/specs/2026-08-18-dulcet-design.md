@@ -7973,8 +7973,11 @@ anchor. It retains tombstones and does not select a route for an offline account
 Connections controls retain a HTTPS address field and explicit Add/re-add action after
 enrollment. Authenticated directory authorization and credential-free TLS/lineage/API-base
 checks precede credentials at the chosen target; only that explicit target may clear its own
-tombstone and become selected. With no admitted source, only a previously listed chosen HTTPS
-bootstrap can initiate preserving recovery. Unlisted targets receive no credentials. Fresh
+tombstone and become selected. With no available admitted source, only a previously listed chosen
+HTTPS bootstrap can initiate preserving recovery after its own credential-free TLS/lineage check;
+unreachable route records need not first be removed. This explicit recovery does not turn Verify
+into failover or override cancellation or principal/lineage failure. Unlisted targets receive no
+credentials. Fresh
 Android account saving initializes an empty anchored media nonce before automatic enrollment;
 it never replaces or purges existing ownership. See the normative
 [connection contract](../../dulcet-api/connections.md) and

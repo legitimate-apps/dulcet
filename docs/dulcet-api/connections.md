@@ -119,9 +119,13 @@ Add/re-add is an explicit HTTPS action available after enrollment as well as bef
 an available admitted route, fetch the authenticated directory and require the chosen address
 to be listed and to pass credential-free OS TLS, lineage and API-base checks before sending
 credentials there. On success, only the chosen route's tombstone may be cleared, and the chosen
-route becomes selected. Other removals remain intact. If no admitted route remains, explicit
-recovery may authenticate a previously listed chosen HTTPS bootstrap only after those same
-credential-free checks and then validate its authenticated directory/principal continuity.
+route becomes selected. Other removals remain intact. When no admitted source is available,
+including when a recorded source is unreachable, explicit recovery may authenticate a previously
+listed chosen HTTPS bootstrap after those same credential-free checks and then validate its
+authenticated directory/principal continuity. Unreachable route records do not have to be removed
+first. This exception belongs only to the person's explicit known-address action; Verify cannot
+fall back to a removed route, and cancellation or failed identity/principal continuity cannot
+be converted into recovery.
 An unknown unlisted origin receives zero credentials. Failure leaves the existing account,
 its offline files and every tombstone intact. Account replacement is a separate operation.
 
