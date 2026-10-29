@@ -274,6 +274,7 @@ jobs:
           tools/conformance-env/linux-local --root "$ROOT" run -- \
             ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 \
             --init-script tools/ci/gradle-test-progress.init.gradle \
+            -Pdulcet.testProgressFile="$PWD/build/linux-conformance-diagnostics/test-progress.log" \
             -Pdulcet.productionSearchConformance \
             :android:app:testDevDebugUnitTest :android:tv:testDebugUnitTest
 

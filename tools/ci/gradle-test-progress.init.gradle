@@ -1,6 +1,6 @@
 // The daemon writes each receipt directly: a cancelled worker may leave Gradle's binary
 // result buffers incomplete. Only task/test identities and terminal state are recorded.
-def destination = System.getenv('DULCET_GRADLE_PROGRESS_FILE')
+def destination = gradle.startParameter.projectProperties['dulcet.testProgressFile']
 if (destination) {
     def journal = { String event ->
         def file = new File(destination)

@@ -32,12 +32,12 @@ class CaptureControls(unittest.TestCase):
     def test_stall_is_sampled_twice_without_killing_or_retrying_command(self):
         with tempfile.TemporaryDirectory() as root:
             output = Path(root) / 'evidence'
-            script = ('import os,time; from pathlib import Path; '
-                      'p=Path(os.environ["DULCET_GRADLE_PROGRESS_FILE"]); '
+            script = ('import os,sys,time; from pathlib import Path; '
+                      'p=Path(sys.argv[1]); '
                       'p.write_text(str(os.getpid())+" TEST START fixture\\n"); '
                       'time.sleep(3.5); raise SystemExit(7)')
             with patch.object(monitor, 'sample') as capture:
-                result = monitor.monitor([sys.executable, '-c', script], output, .01, .01)
+                result = monitor.monitor([sys.executable, '-c', script, str(output / 'test-progress.log')], output, .01, .01)
             self.assertEqual(result, 7)
             self.assertEqual(capture.call_count, 2)
             worker = int((output / 'test-progress.log').read_text().split()[0])
