@@ -232,23 +232,75 @@ import UIKit
         field.typeText("\n")
 #endif
     }
-    func reveal(_ element: XCUIElement) {
-        if element.waitForExistence(timeout: 2) && element.isHittable { return }
-        for direction in [true, false] {
-            for _ in 0..<10 {
-                if element.exists && element.isHittable { return }
-#if os(macOS)
-                app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: direction ? -500 : 500)
-#else
-                // SwiftUI List is a CollectionView; metadata pages use a ScrollView.
-                // Exclude the split-view sidebar so scrolling stays in the presented content.
-                let scroll = app.scrollViews.firstMatch
-                let body = scroll.exists ? scroll : app.collectionViews.matching(NSPredicate(format: "label != %@", "Sidebar")).firstMatch
-                guard body.exists else { return }
-                if direction { body.swipeUp() } else { body.swipeDown() }
-#endif
-            }
+    private func descendants(_ root: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+        var nodes: [XCUIElementSnapshot] = []
+        var pending = [root]
+        while let node = pending.popLast() {
+            nodes.append(node)
+            pending.append(contentsOf: node.children)
         }
+        return nodes
+    }
+    private func presented(_ node: XCUIElementSnapshot, in root: XCUIElementSnapshot) -> Bool {
+        let frame = node.frame
+        return !frame.isEmpty && frame.origin.x.isFinite && frame.origin.y.isFinite
+            && frame.width.isFinite && frame.height.isFinite
+            && root.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+    }
+    func reveal(_ element: XCUIElement) {
+        let started = ProcessInfo.processInfo.systemUptime
+        var scrolls = 0
+        var searchPage = false
+        repeat {
+            if searchPage {
+                if let root = try? app.snapshot() {
+                    scrollContent(up: scrolls % 20 < 10, nodes: descendants(root))
+                    scrolls += 1
+                }
+                searchPage = false
+            } else if let target = try? element.snapshot() {
+                reveal(matching: { node, _ in
+                    node.elementType == target.elementType && node.identifier == target.identifier
+                        && (target.identifier.isEmpty ? node.label == target.label : true) && node.isEnabled
+                }, description: "Control " + target.identifier, started: started)
+                return
+            } else {
+                searchPage = ProcessInfo.processInfo.systemUptime - started >= 5
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while ProcessInfo.processInfo.systemUptime - started < 180
+        XCTFail("Control must become reachable; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s")
+    }
+    private func scrollContent(up: Bool, nodes: [XCUIElementSnapshot]) {
+#if os(macOS)
+        app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: up ? -500 : 500)
+#else
+        let hasScroll = nodes.contains { $0.elementType == .scrollView }
+        let hasList = nodes.contains { $0.elementType == .collectionView && $0.label != "Sidebar" }
+        let body = hasScroll ? app.scrollViews.firstMatch : app.collectionViews.matching(NSPredicate(format: "label != %@", "Sidebar")).firstMatch
+        if hasScroll || hasList {
+            if up { body.swipeUp() } else { body.swipeDown() }
+        }
+#endif
+    }
+    private func reveal(matching match: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool, description: String,
+                        ready: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool = { _, _ in true },
+                        started: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        var scrolls = 0
+        repeat {
+            // Inspect one immutable tree so presence, row contents and geometry agree.
+            if let root = try? app.snapshot() {
+                let nodes = descendants(root)
+                if nodes.contains(where: { match($0, root) && presented($0, in: root) && ready($0, root) }) { return }
+                // Allow publication before searching beyond the currently materialized page.
+                if ProcessInfo.processInfo.systemUptime - started >= 5 {
+                    scrollContent(up: scrolls % 20 < 10, nodes: nodes)
+                    scrolls += 1
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while ProcessInfo.processInfo.systemUptime - started < 180
+        XCTFail("\(description) must become reachable; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s")
     }
     func item(_ kind: String, _ number: Int) -> XCUIElement {
         let title: String
@@ -258,16 +310,35 @@ import UIKit
         default: title = String(format: "Fixture Song %02d", number)
         }
         let result = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "discover.item.", title)).firstMatch
-        reveal(result)
+        reveal(matching: { node, _ in node.elementType == .button && node.identifier.hasPrefix("discover.item.")
+            && node.label.hasPrefix(title) && node.isEnabled }, description: title)
         return result
     }
     func wishlist() {
-        select("library")
-        if app.buttons["wishlist.refresh"].exists { return }
-        let link = app.descendants(matching: .any)["wishlist.destination"].firstMatch
-        XCTAssertTrue(link.waitForExistence(timeout: 15), "Missing Library Wishlist destination: " + app.debugDescription)
-        activate(link)
-        XCTAssertTrue(app.buttons["wishlist.refresh"].waitForExistence(timeout: 15), "Wishlist activation must present content: " + app.debugDescription)
+        let started = ProcessInfo.processInfo.systemUptime
+        var requestedLibrary = false
+        repeat {
+            if let root = try? app.snapshot() {
+                let nodes = descendants(root)
+                let sidebarSelected = nodes.contains { $0.identifier == "wishlist.destination" && $0.isSelected }
+                let libraryTabSelected = nodes.filter { $0.elementType == .tabBar }.contains { tab in
+                    descendants(tab).contains { $0.elementType == .button && $0.isSelected
+                        && ($0.identifier == "dulcet.tab.library" || $0.label == "Library") }
+                }
+                if sidebarSelected || libraryTabSelected, nodes.contains(where: {
+                    $0.identifier == "wishlist.refresh" && $0.isEnabled && presented($0, in: root)
+                }) { return }
+                // Activate Wishlist directly so a delayed Library reset cannot dismiss its content.
+                if nodes.contains(where: { $0.identifier == "wishlist.destination" && presented($0, in: root) }) {
+                    activate(app.descendants(matching: .any)["wishlist.destination"].firstMatch)
+                } else if !requestedLibrary, nodes.contains(where: { $0.elementType == .tabBar && presented($0, in: root) }) {
+                    select("library")
+                    requestedLibrary = true
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while ProcessInfo.processInfo.systemUptime - started < 180
+        XCTFail("Wishlist activation must present content; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s")
     }
     func capture(_ name: String) throws {
 #if os(macOS)
@@ -516,7 +587,15 @@ import UIKit
         // Artist and album titles can open metadata; a song title is plain text.
         // Both identify their own row without requiring that optional action.
         let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "wishlist.row.")).containing(NSPredicate(format: "label == %@", title)).firstMatch
-        reveal(row)
+        reveal(matching: { node, _ in
+            guard node.identifier.hasPrefix("wishlist.row.") else { return false }
+            let children = self.descendants(node)
+            return children.contains { $0.label == title }
+                && children.contains { $0.identifier == "wishlist.remove" && $0.elementType == .button
+                    && $0.isEnabled }
+        }, description: "Wishlist row and remove button for " + title, ready: { node, root in
+            self.descendants(node).contains { $0.identifier == "wishlist.remove" && self.presented($0, in: root) }
+        })
         return row
     }
     func offlineWishRelaunchRemoveAndScanArrival() throws {
