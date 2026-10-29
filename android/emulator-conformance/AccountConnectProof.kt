@@ -54,11 +54,16 @@ fun loseSavedAccountKey(context: Context): String {
 
 /**
  * Whether any connection forwarded by [relay] carried a Subsonic error envelope with [code] in the
- * server's answer: what the server itself said, read from the wire.
+ * server's answer: what the server itself said, read from the wire. Decode each complete HTTP
+ * body first: the production engine may negotiate gzip, and one socket may carry several replies.
  */
 fun ServerRelay.serverAnsweredErrorCode(code: Int): Boolean = connections().any { tapped ->
-    val answer = String(tapped.answered(), Charsets.ISO_8859_1)
-    "\"status\":\"failed\"" in answer && Regex("\"code\"\\s*:\\s*$code\\b").containsMatchIn(answer)
+    httpResponseBodiesForProof(tapped.answered()).any { body ->
+        runCatching {
+            val envelope = org.json.JSONObject(body.toString(Charsets.UTF_8)).getJSONObject("subsonic-response")
+            envelope.getString("status") == "failed" && envelope.getJSONObject("error").get("code") == code
+        }.getOrDefault(false)
+    }
 }
 
 /** Whether the app's saved account was removed, so the next proof starts from an empty install. */
