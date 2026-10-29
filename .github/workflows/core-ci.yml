@@ -55,6 +55,8 @@ jobs:
         run: python3 tools/test-gradle-schema-scheduler
       - name: Verify protected-data migration semantics
         run: python3 tools/migration_gate.py
+      - name: Enforce frozen connection ownership sources and negative fixtures
+        run: python3 tools/verify_connection_ownership.py --self-test
       - name: Verify Apple presents every playback phase the core can send
         run: python3 tools/verify-playback-phase-parity
       - name: Prove the hang watchdog dumps a stuck JVM and stops it

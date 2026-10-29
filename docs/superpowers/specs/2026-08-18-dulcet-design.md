@@ -7960,6 +7960,35 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+
+**2026-10-28 — Enroll verified HTTPS connections without changing ownership (phase 1).**
+
+The compatibility-stage public contract is `dulcetRoutes:1` (form-only authenticated REST
+`getDulcetConnections`) and the shared `dulcet.routes:1` schema. See
+[`connections.md`](../../dulcet-api/connections.md) for the normative bounds, directory revision,
+private-address authorization, candidate TLS/lineage admission, receiving-route resource/issuer
+rules and refresh aliases. Native clients retain REST during this stage; full native Dulcet API
+adoption remains a separate workstream and the final product line is unchanged.
+
+The saved normalized URL is a frozen ownership anchor. Additive route/enrollment records never
+rewrite owned namespaces. Only request factories substitute admitted HTTPS routes, with one
+selected route in normal phase-1 use and no automatic switching. Existing strict endpoint/user
+comparisons remain; enrollment/selection cannot invoke media binding, cache binding/purge or
+account replacement. Preserving HTTP adoption requires an explicitly authenticated HTTPS base,
+matching previously accepted lineage and exact principal continuity, plus exact legacy-anchor
+attestation; commit disables every HTTP request path while keeping the old anchor, row/file IDs
+and media epoch. Existing non-enrolled HTTP accounts retain single-origin behavior.
+
+The [complete ownership audit](../../connection-ownership-audit.md) and its negative structural
+fixture cover construction/snapshot sources in addition to all 15 equality sites. MP-01/02/10
+and server conformance require disposable fixtures; native MP-02 seeds explicit and automatic
+completed/partial downloads before controlled factory substitution. MP-10 names Apple
+AVPlayer/resource loader, URLSession downloads/artwork and Android player/download worker/artwork.
+Server proof never substitutes for native executor proof. New connection feature rows stay
+planned until their individual platform acceptance is observed. Automatic selection, media
+handoff, cross-address byte continuation, native OAuth and application-key trust are deferred.
+
+
 **2026-10-25 - Integrate Discover and Wishlist native clients and finite proof jobs.**
 
 Step 2 composes the existing REST extension reader and durable wish outbox with Search Everywhere,

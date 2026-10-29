@@ -350,3 +350,27 @@ zero new calls. Server JUnit evidence does not establish core or native app beha
 The existing runnable MCP profile does filter optional tool definitions by advertised capability
 version as well as scope. This preserves scope-only checks for all existing tools and prevents
 optional Discover/Wishlist tools from becoming mandatory on other Dulcet API servers.
+
+## Verified connections phase 1
+
+The route contract is [connections.md](connections.md); OpenAPI carries the directory schema.
+Connection feature rows remain planned until platform-specific proof is retained. Run only on
+fresh disposable local fixtures. A configured public endpoint or personal server is never a
+fallback fixture.
+
+| Acceptance | Required observation and evidence boundary |
+|---|---|
+| MP-01 | HTTPS REST sign-in followed by bounded, form-body salted-auth directory; normal and identity-only enrollment use POST explicitly. Declared/streamed >64 KiB, no member, denied auth, same-origin redirect, rollback, foreign origin/base, downgraded resource, copied discovery with wrong TLS name and valid TLS/wrong lineage all fail closed. Positive admitted alternate serves authenticated data. Advertised HTTP plus consent receives zero credential bytes. A TLS failure is unavailable, not replacement. |
+| MP-02 | Actual Android and Apple executors seed completed/partial explicit and automatic downloads plus library/source/queue/art/outbox state. Controlled factory route substitution and relaunch preserve account/anchor/row/DownloadId/media epoch/file hashes/intent. Spies observe zero switch-caused `bindMedia`, `SeenCacheStore.bind`, `purgeNamespace` or removal. Constructor inventory and deliberately injected route-to-ownership negative fixtures are additional structural evidence. |
+| MP-10 | Preserving HTTP adoption authenticates chosen HTTPS, matches previously known lineage/exact principal and exact legacy-anchor attestation. Pre/post-commit failures preserve a complete old/new mode. After commit Apple AVPlayer/resource loader, URLSession downloads and artwork, Android player, download worker and artwork send no HTTP bytes, even with all HTTPS unavailable. Inspect opaque Apple resume data/restored tasks and captured framing requests. Positive disposable Navidrome compatibility, local HTTP numeric pin and strict replacement remain. |
+| MP-11 server | Two configured TLS routes share lineage/user/database; each returns its own API/base/issuer metadata even with publicUrl set or an HTTP proxy backend. Refresh through an authorized alias preserves rotation/retry/revocation semantics. Unlisted authority/forwarded authority/base is refused before authentication. Removing sources preserves historical anchor; no enabled route means offline. Data-directory movement changes lineage and never purges client ownership. |
+| MP-12 | Disposable trusted proxy can observe REST URL auth by synthetic assertion only; logs contain no canary query/body/header/grant and credentialed replies are not cached. The form-only directory does not establish header-only native media auth or validate a commercial CDN's retention. |
+
+`ConnectionResourcePolicyTest` covers relative directory resolution, origin/downgrade/segment
+escapes and redacted errors. `ConnectionDirectoryRequestProfileTest` drives actual sockets for
+POST auth placement, declared/streamed caps, redirect refusal and error status preservation;
+its HTTP loopback fixture tests the profile, not HTTPS enrollment. Native/server suites and
+sanitized fixture receipts supply the remaining proof. Test counts, workflow/job identities and
+limitations are recorded with the PR; no build-only result or common-core-only test promotes a
+native executor claim. Automatic failure/topology selection and transfer handoff are phase 2;
+strong-validator cross-address byte continuation is phase 3B.
