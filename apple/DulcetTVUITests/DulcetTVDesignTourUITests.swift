@@ -309,9 +309,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             .split(separator: " ").map(String.init) ?? []
         if reached, requested.contains(screen),
            ["connection-filled", "connection-connected"].contains(screen) {
-            // Selected account photos use consistent first-field focus after remote entry,
-            // keeping the address legible without lifting the selected tab icon.
-            reached = focusByRemote(app.textFields["dulcet.account-connect.server-address"].firstMatch, in: app)
+            // The connected summary replaces credential fields with settings links.
+            // Focus its real Playback row; only entry forms retain first-field focus.
+            let target = screen == "connection-filled"
+                ? app.textFields["dulcet.account-connect.server-address"].firstMatch
+                : app.buttons["dulcet.account.playback"].firstMatch
+            reached = focusByRemote(target, in: app)
         }
         _ = settle(0.6)
         shoot(reached ? screen : screen + "-UNREACHED")
@@ -1107,6 +1110,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     /// Walks remote focus to `target` by direction presses toward its frame, at most `bound`.
     @MainActor
     private func focusByRemote(_ target: XCUIElement, in app: XCUIApplication, bound: Int = 16) -> Bool {
+        guard target.waitForExistence(timeout: 10) else { return false }
         func focusedFrame() -> CGRect? {
             let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
             return focused.exists ? focused.frame : nil
