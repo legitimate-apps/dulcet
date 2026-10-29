@@ -777,7 +777,7 @@ final class DulcetiOSUITests: XCTestCase {
     /// Opens a named server album through Browse and its Albums collection.
     @MainActor
     private func openLibraryAlbum(_ album: String, in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openSidebarLibrarySection("albums", in: app) else { return false }
+        guard openSidebarLibrarySection("albums", in: app, compact: compact) else { return false }
         let tile = app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch
         // A phone's Recently Added grid is extended as it scrolls, newest first, so an older album
@@ -935,13 +935,25 @@ final class DulcetiOSUITests: XCTestCase {
         return false
     }
 
-    /// Server categories live in Browse on both compact and regular-width shells.
+    /// Server categories live in Browse; personal playlists live in Library. A tab retains
+    /// its stack, including an album restored after reconnect, so return through native Back
+    /// controls before requiring the destination's category row.
     @MainActor
-    private func openSidebarLibrarySection(_ section: String, in app: XCUIApplication) -> Bool {
-        guard openDestination("Browse", sidebarIdentifier: "dulcet.sidebar.browse", in: app, compact: false) else { return false }
+    private func openSidebarLibrarySection(
+        _ section: String, in app: XCUIApplication, compact: Bool = false
+    ) -> Bool {
+        let destination = section == "playlists" ? "Library" : "Browse"
+        let sidebar = section == "playlists" ? "dulcet.sidebar.library" : "dulcet.sidebar.browse"
+        guard openDestination(destination, sidebarIdentifier: sidebar, in: app, compact: compact) else { return false }
         let row = app.buttons["dulcet.reader.section.\(section)"].firstMatch
-        guard row.waitForExistence(timeout: 10), row.isHittable else {
-            XCTFail("Browse must offer its \(section) section: " + app.debugDescription)
+        let back = app.navigationBars.buttons["BackButton"].firstMatch
+        var pops = 0
+        while !row.exists, back.exists, back.isHittable, pops < 4 {
+            back.tap()
+            pops += 1
+        }
+        guard row.waitForExistence(timeout: 10), scrollIntoView(row, in: app) else {
+            XCTFail("\(destination) must offer its \(section) section: " + app.debugDescription)
             return false
         }
         row.tap()
@@ -1303,7 +1315,7 @@ final class DulcetiOSUITests: XCTestCase {
 
     /// Through the production reader on the named destination:
     /// 1. A favourite made on an album page shows at once and reaches the server (CONF-84).
-    /// 2. A fresh launch with only the saved account opens Library, reconnects without a tap,
+    /// 2. A fresh launch with only the saved account opens Listen Now, reconnects without a tap,
     ///    and still shows that favourite (CONF-76, CONF-10b).
     /// 3. Search finds the album after reconnect and clears the device-only scope.
     /// 4. Removing the favourite reaches the server, leaving the fixture as it started.
@@ -1361,13 +1373,13 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: true, timeout: 20), true,
             "The favorite must reach the server")
 
-        // 2. Relaunch with nothing but the saved account.
+        // 2. Relaunch with nothing but the saved account at the default Listen Now destination.
         app.terminate()
         app.launchArguments = liveAccountFixtureArguments(serverURL: configuration.serverURL)
         app.launch()
-        let libraryRoot = app.navigationBars["Library"].firstMatch
-        XCTAssertTrue(libraryRoot.waitForExistence(timeout: 15),
-            "A saved account must open straight into its library: " + app.debugDescription)
+        let landing = app.navigationBars["Listen Now"].firstMatch
+        XCTAssertTrue(landing.waitForExistence(timeout: 15),
+            "A saved account must open Listen Now without an account prompt: " + app.debugDescription)
         guard openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: compact),
               app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
             XCTFail("The saved account must reconnect without a tap: " + app.debugDescription)
@@ -5295,17 +5307,7 @@ final class DulcetiOSUITests: XCTestCase {
     /// Library > Playlists: a row of the phone's Library, a sidebar section on a regular width.
     @MainActor
     private func openLibraryPlaylists(in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
-            return false
-        }
-        if !compact { return openSidebarLibrarySection("playlists", in: app) }
-        let link = app.buttons["dulcet.reader.section.playlists"].firstMatch
-        guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else {
-            XCTFail("The phone's Library must list Playlists: " + app.debugDescription)
-            return false
-        }
-        link.tap()
-        return true
+        openSidebarLibrarySection("playlists", in: app, compact: compact)
     }
 
     /// Presses an album's Play once the page lets it be pressed. A disabled button takes the tap

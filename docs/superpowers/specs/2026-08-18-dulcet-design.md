@@ -7963,7 +7963,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 **2026-10-29 - TV streaming-quality network labels**
 
-TV uses Standard Networks and Limited Networks for the existing unmetered and metered streaming
+TV uses On Most Networks and On Limited Networks for the existing unmetered and metered streaming
 preferences, as Mac does. TV presents each network preference as a native link to its quality
 choices. The preference values and network classification policy are unchanged.
 
