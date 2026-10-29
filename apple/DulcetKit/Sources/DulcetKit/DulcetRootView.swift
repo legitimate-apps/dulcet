@@ -683,7 +683,7 @@ struct DulcetDestinationStack: View {
                 store.navigationBindingReceipt("DulcetDestinationStack.wrote[\(stackDestination)]",
                     oldPath: String(describing: readerPresentation.request?.path), newPath: String(describing: routes),
                     outcome: "accepted=\(accepted);presented=\(readerPresentation.presentedRoutes);replay=\(String(describing: readerPresentation.pendingReplay))")
-                store.popReaderFromStack(to: routes, presentedRoutes: readerPresentation.presentedRoutes)
+                store.receiveReaderPathFromStack(to: routes, presentedRoutes: readerPresentation.presentedRoutes)
             }
         )
     }

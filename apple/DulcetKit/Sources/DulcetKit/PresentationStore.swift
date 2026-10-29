@@ -675,6 +675,17 @@ public final class DulcetPresentationStore {
         readerPath.append(route)
     }
 
+    /// Native value links append one route; Back writes a prefix. Both update the same
+    /// stored path so a publication or tab return cannot discard a displayed native push.
+    func receiveReaderPathFromStack(to path: [DulcetReaderRoute], presentedRoutes: Set<DulcetReaderRoute>) {
+        if path.count == readerPath.count + 1,
+           Array(path.dropLast()) == readerPath, let route = path.last {
+            pushReaderPage(route)
+            return
+        }
+        popReaderFromStack(to: path, presentedRoutes: presentedRoutes)
+    }
+
     /// A stack can report its initial empty path before it has displayed a pushed page.
     /// The binding supplies the routes that this particular stack has actually presented.
     func popReaderFromStack(to path: [DulcetReaderRoute], presentedRoutes: Set<DulcetReaderRoute>) {

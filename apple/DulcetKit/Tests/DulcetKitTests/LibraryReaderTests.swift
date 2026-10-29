@@ -2628,3 +2628,30 @@ func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
     store.popReaderFromStack(to: [section], presentedRoutes: presentation.presentedRoutes)
     #expect(store.readerPath == [section])
 }
+
+
+@Test @MainActor func nativeReaderLinksCommitTheirPushBeforeRefreshAndTabReturn() throws {
+    let factory = RecordingReaderFactory()
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
+    let reader = try #require(factory.made.first)
+    store.selectDestination(.library)
+    let section = DulcetReaderRoute.section(.albums)
+    let album = DulcetReaderRoute.album(.init(providerInstanceID: "provider-reader", rawID: "native-link-album"))
+    store.receiveReaderPathFromStack(to: [section], presentedRoutes: [])
+    #expect(store.readerPath == [section], "A value NavigationLink must commit its push, not only draw it")
+    store.receiveReaderPathFromStack(to: [section, album], presentedRoutes: [section])
+    reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
+    #expect(store.readerPath == [section, album], "A reader publication preserves the native link's route")
+    store.selectDestination(.search)
+    store.selectDestination(.library)
+    #expect(store.readerPath == [section, album], "Returning to the tab preserves its real Back stack")
+    store.receiveReaderPathFromStack(to: [.section(.artists)], presentedRoutes: [album])
+    #expect(store.readerPath == [section, album], "A replacement is neither a one-step push nor native Back")
+    store.receiveReaderPathFromStack(to: [section], presentedRoutes: [])
+    #expect(store.readerPath == [section, album], "An unpresented stack reset cannot masquerade as Back")
+    store.receiveReaderPathFromStack(to: [section], presentedRoutes: [album])
+    #expect(store.readerPath == [section])
+    store.receiveReaderPathFromStack(to: [], presentedRoutes: [section])
+    #expect(store.readerPath.isEmpty)
+}
