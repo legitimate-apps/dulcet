@@ -293,7 +293,7 @@ private struct DulcetTVSectionNavigation: View {
                     get: { store.readerPath(for: destination) },
                     set: { path in
                         if store.selectedDestination == destination, [.listenNow, .library, .browse].contains(destination) {
-                            store.popReader(to: path)
+                            store.receiveReaderPathFromStack(to: path)
                         }
                     }
                 )) {

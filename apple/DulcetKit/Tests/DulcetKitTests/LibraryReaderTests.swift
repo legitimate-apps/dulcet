@@ -2655,3 +2655,25 @@ func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
     store.receiveReaderPathFromStack(to: [], presentedRoutes: [section])
     #expect(store.readerPath.isEmpty)
 }
+
+@Test @MainActor func nativeTVReaderLinksCommitBeforeTabReturnAndKeepNativeBack() throws {
+    let factory = RecordingReaderFactory()
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
+    store.selectDestination(.browse)
+    let section = DulcetReaderRoute.section(.albums)
+    let album = DulcetReaderRoute.album(.init(providerInstanceID: "provider-reader", rawID: "tv-native-link"))
+    store.receiveReaderPathFromStack(to: [section])
+    store.receiveReaderPathFromStack(to: [section, album])
+    #expect(store.readerPath == [section, album])
+    store.selectDestination(.nowPlaying)
+    #expect(store.readerPath(for: .nowPlaying).isEmpty)
+    store.selectDestination(.browse)
+    #expect(store.readerPath == [section, album])
+    store.receiveReaderPathFromStack(to: [.section(.artists)])
+    #expect(store.readerPath == [section, album], "Unrelated replacements are rejected")
+    store.receiveReaderPathFromStack(to: [section])
+    #expect(store.readerPath == [section])
+    store.receiveReaderPathFromStack(to: [])
+    #expect(store.readerPath.isEmpty)
+}
