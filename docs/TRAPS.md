@@ -620,7 +620,7 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     its evidence; no further unchanged dispatch or permanent suspension is proposed. #395
     stays measurement-only. Full coverage and matched operations are in the investigation.
 
-44. **A trusted certificate still needs an exact hostname/SAN check, including numeric hosts.**
+57. **A trusted certificate still needs an exact hostname/SAN check, including numeric hosts.**
     **OBSERVED 2026-10-28:** the production JVM CIO path with Ktor 3.5.2 sent a public discovery
     request to `127.0.0.1` when the disposable trusted certificate had only `DNS:localhost` in
     its SAN. The same certificate/context passed a `localhost` positive control and failed

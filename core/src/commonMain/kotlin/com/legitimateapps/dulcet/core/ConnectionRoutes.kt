@@ -63,6 +63,8 @@ internal data class RouteLease(
     override fun toString(): String = "RouteLease(routeId=$routeId, revision=$revision, generation=$generation)"
 }
 
+internal data class RouteSelectionSnapshot(val enrolled: Boolean, val lease: RouteLease?)
+
 /** Immutable atomic publications let native media workers consult the same route at dispatch. */
 @OptIn(ExperimentalAtomicApi::class)
 internal object ConnectionRouteRegistry {
@@ -70,8 +72,12 @@ internal object ConnectionRouteRegistry {
     private val entries = AtomicReference<Map<Pair<String, String>, Entry>>(emptyMap())
     private fun key(base: String, user: String): Pair<String, String> =
         (try { canonicalConnectionBase(base, allowHttp = true) } catch (_: ConnectionEnrollmentFailure) { base }) to user
-    fun isEnrolled(anchorBaseUrl: String, username: String): Boolean = entries.load().containsKey(key(anchorBaseUrl, username))
-    fun leaseFor(anchorBaseUrl: String, username: String): RouteLease? = entries.load()[key(anchorBaseUrl, username)]?.lease
+    fun selectionFor(anchorBaseUrl: String, username: String): RouteSelectionSnapshot {
+        val entry = entries.load()[key(anchorBaseUrl, username)]
+        return RouteSelectionSnapshot(entry != null, entry?.lease)
+    }
+    fun isEnrolled(anchorBaseUrl: String, username: String): Boolean = selectionFor(anchorBaseUrl, username).enrolled
+    fun leaseFor(anchorBaseUrl: String, username: String): RouteLease? = selectionFor(anchorBaseUrl, username).lease
     fun publish(anchor: OwnershipAnchor, lease: RouteLease?) {
         change { it + (key(anchor.normalizedBaseUrl, anchor.username) to Entry(anchor.accountId, lease)) }
     }
