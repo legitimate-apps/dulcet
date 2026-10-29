@@ -407,7 +407,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         closePlayer(in: app)
         // Paused, from the now-playing bar, for the rest of the tour: the simulator's audio is the host's.
         let pause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
-        if pause.waitForExistence(timeout: 3), pause.label == "Pause", pause.isHittable { pause.tap() }
+        if pause.waitForExistence(timeout: 3), pause.label == "Pause", playerElementIsHittable(pause) { pause.tap() }
 
         step("playlists", app) {
             self.openPlaylists(in: app, compact: compact)

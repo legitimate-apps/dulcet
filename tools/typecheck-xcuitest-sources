@@ -18,9 +18,9 @@ under the project's own Swift language version; it makes no claim about anything
 
 XCTest's global assertion functions do not resolve in a standalone ``-typecheck`` invocation
 against the framework search path, and neither a plugin path nor a language-mode change resolves
-them. ``SHIM`` declares stand-ins for the ones these sources call -- ``XCTFail``, ``XCTUnwrap`` and
-the ``XCTAssert*`` family -- so a real name or type error is not buried under hundreds of spurious
-ones. A call the shim does not cover is reported as ``SHIM GAP``, a fault in this tool.
+them. ``SHIM`` declares stand-ins for the ones these sources call -- ``XCTFail``, ``XCTUnwrap``,
+the ``XCTAssert*`` family and ``XCTExpectFailure`` -- so a real name or type error is not buried
+under hundreds of spurious ones. A call the shim does not cover is reported as ``SHIM GAP``, a fault in this tool.
 
 If a future toolchain does resolve XCTest's functions here, NOTHING here fails. A declaration in
 the files being checked shadows an imported one with the same signature, with no ambiguity error
@@ -58,6 +58,11 @@ SWIFT_VERSION = re.compile(r"SWIFT_VERSION = ([0-9]+)(?:\.[0-9]+)*;")
 IMPORT = re.compile(r"^\s*(?:@testable\s+)?import\s+([A-Za-z_][A-Za-z0-9_]*)", re.M)
 
 SHIM = """import Foundation
+import XCTest
+// Without the Swift overlay, XCTIssue is exposed under its Objective-C name.
+func XCTExpectFailure<R>(_ failureReason: String? = nil, enabled: Bool? = nil, strict: Bool? = nil,
+                         failingBlock: () throws -> R,
+                         issueMatcher: ((XCTIssueReference) -> Bool)? = nil) rethrows -> R { try failingBlock() }
 func XCTFail(_ m: String = "", file: StaticString = #filePath, line: UInt = #line) {}
 func XCTAssertTrue(_ e: @autoclosure () throws -> Bool, _ m: @autoclosure () -> String = "",
                    file: StaticString = #filePath, line: UInt = #line) {}
@@ -212,7 +217,7 @@ def errors(output: str) -> list[str]:
 # Only XCTest's GLOBAL FUNCTIONS fail to resolve standalone and therefore need shimming. Its
 # TYPES -- XCTestCase, XCTestExpectation, XCTNSPredicateExpectation, XCTWaiter, XCTAttachment --
 # resolve from the real framework, so gating on them would report a gap that does not exist.
-XCT_CALL = re.compile(r"\b(XCT(?:Assert|Fail|Unwrap|Skip)[A-Za-z0-9_]*)\s*\(")
+XCT_CALL = re.compile(r"\b(XCT(?:Assert|Fail|Unwrap|Skip|ExpectFailure)[A-Za-z0-9_]*)\s*\(")
 SHIM_DECLARATION = re.compile(r"^func\s+(XCT[A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\(", re.M)
 
 
