@@ -1,4 +1,4 @@
-name: Apple trust cleanup diagnostic
+name: Apple disposable trust lifetime diagnostic
 
 # Branch-only one-shot instrument; reuses a registered dispatch workflow without merging it.
 on:
@@ -33,6 +33,7 @@ jobs:
           path: |
             ${{ runner.temp }}/dulcet-trust-diagnostic-*/*.log
             ${{ runner.temp }}/dulcet-trust-diagnostic-*/owned-processes.json
+            ${{ runner.temp }}/dulcet-trust-diagnostic-*/lifecycle-receipt.json
             ${{ runner.temp }}/dulcet-trust-diagnostic-*/ca.pem
           if-no-files-found: error
           retention-days: 7

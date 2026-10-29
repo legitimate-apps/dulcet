@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """One fresh-CA trust cycle on a guarded ephemeral hosted Mac; no server or native build."""
+import hashlib
 import importlib.machinery
 import importlib.util
 import json
 import os
 from pathlib import Path
 import shlex
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -52,14 +54,20 @@ def main():
                     '-subj', '/CN=Dulcet disposable trust diagnostic', '-keyout', str(key), '-out', str(ca)],
                    check=True, timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     original = proofs.security_command
+    fingerprint = hashlib.sha1(ssl.PEM_cert_to_DER_cert(ca.read_text())).hexdigest().upper()
+    certificate_deleted = False
 
     def measured(*arguments):
+        nonlocal certificate_deleted
         started = time.monotonic()
         print('TRUST DIAGNOSTIC begin ' + shlex.join(map(str, arguments)), flush=True)
         if arguments[0] != 'delete-certificate':
             result = original(*arguments)
             print(f'TRUST DIAGNOSTIC end duration={time.monotonic()-started:.3f}', flush=True)
             return result
+        expected = ('delete-certificate', '-Z', fingerprint, proofs.SYSTEM_KEYCHAIN)
+        if tuple(map(str, arguments)) != expected:
+            raise RuntimeError('Diagnostic requires exact fresh fingerprint deletion without trust removal')
         command = ['sudo', '-n', 'security', *map(str, arguments)]
         child = subprocess.Popen(command)
         security_pids = []
@@ -80,7 +88,8 @@ def main():
                 child.wait(timeout=max(.1, 30 - (time.monotonic()-started)))
             if child.returncode:
                 raise subprocess.CalledProcessError(child.returncode, command)
-            print(f'TRUST DIAGNOSTIC end duration={time.monotonic()-started:.3f}', flush=True)
+            certificate_deleted = True
+            print(f'TRUST DIAGNOSTIC exact certificate deletion PASS duration={time.monotonic()-started:.3f}', flush=True)
             return subprocess.CompletedProcess(command, child.returncode)
         except subprocess.TimeoutExpired:
             print(f'TRUST DIAGNOSTIC cleanup timed out duration={time.monotonic()-started:.3f}', flush=True)
@@ -100,6 +109,13 @@ def main():
             print('TRUST DIAGNOSTIC fresh CA installed; no other work before cleanup', flush=True)
     finally:
         key.unlink(missing_ok=True)
+        receipt = {'exactCertificateDeletionPassed': certificate_deleted,
+                   'freshPrivateKeyDeleted': not key.exists(), 'fingerprint': fingerprint,
+                   'residualAdminTrustLifetime': 'GitHub job VM decommission'}
+        (output / 'lifecycle-receipt.json').write_text(json.dumps(receipt, indent=2)+'\n')
+        print('TRUST DIAGNOSTIC lifecycle receipt=' + json.dumps(receipt), flush=True)
+    if not certificate_deleted:
+        raise RuntimeError('Exact certificate deletion was not observed')
 
 
 if __name__ == '__main__':
