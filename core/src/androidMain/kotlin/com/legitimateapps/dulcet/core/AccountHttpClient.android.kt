@@ -3,7 +3,6 @@ package com.legitimateapps.dulcet.core
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.ProxyBuilder
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.engine.okhttp.OkHttp
 import okhttp3.Authenticator
 import okhttp3.CookieJar
@@ -25,41 +24,26 @@ internal actual fun createAccountHttpClient(
     transport: AccountClientTransport,
     strictMediaFraming: Boolean,
     configure: HttpClientConfig<*>.() -> Unit,
-): HttpClient = (if (strictMediaFraming) {
-    HttpClient(OkHttp) {
-        engine {
-            // Media GETs need strict chunk framing. Connection-recovery retries, ambient
-            // authentication, cookies and redirects stay disabled in this transport.
-            config {
-                retryOnConnectionFailure(false)
-                followRedirects(false)
-                followSslRedirects(false)
-                authenticator(Authenticator.NONE)
-                proxyAuthenticator(Authenticator.NONE)
-                cookieJar(CookieJar.NO_COOKIES)
-            }
-            proxy = Proxy.NO_PROXY
-            if (transport is AccountClientTransport.ForwardProxy) {
-                proxy = ProxyBuilder.http(
-                    Url("http://${transport.proxy.host}:${transport.proxy.port}/"),
-                )
-            }
-        }
-        installProxyChallengeMarker(transport)
-        configure()
-    }
-} else HttpClient(CIO) {
+): HttpClient = HttpClient(OkHttp) {
     engine {
+        // Use one hostname-validating transport for account and media requests.
+        // Ambient authentication, cookies, retries and redirects remain disabled.
+        config {
+            retryOnConnectionFailure(false)
+            followRedirects(false)
+            followSslRedirects(false)
+            authenticator(Authenticator.NONE)
+            proxyAuthenticator(Authenticator.NONE)
+            cookieJar(CookieJar.NO_COOKIES)
+        }
+        proxy = Proxy.NO_PROXY
         if (transport is AccountClientTransport.ForwardProxy) {
-            // ProxyBuilder.http takes a Url on this Ktor version, not a String.
-            proxy = ProxyBuilder.http(
-                Url("http://${transport.proxy.host}:${transport.proxy.port}/"),
-            )
+            proxy = ProxyBuilder.http(Url("http://${transport.proxy.host}:${transport.proxy.port}/"))
         }
     }
     installProxyChallengeMarker(transport)
     configure()
-}).also { client ->
+}.also { client ->
     if (transport is AccountClientTransport.ForwardProxy) {
         // An HTTPS request through the proxy starts with CONNECT. Both engines can fail that
         // tunnel with an IOException before exposing its status, so the response observer
