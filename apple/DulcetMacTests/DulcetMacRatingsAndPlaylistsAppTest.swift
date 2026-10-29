@@ -92,20 +92,22 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
             app.identifier($0) == "dulcet.library.album" && (app.label($0) ?? "").hasPrefix(album)
         }
         try app.press(tile, named: "the \(album) tile")
-        let row = try await app.element(timeout: .seconds(15), described: "the \(track) row") {
-            app.identifier($0) == "dulcet.reader.track" && (app.label($0) ?? "").hasPrefix(track)
-        }
-        let rowFrame = try app.frame(row)
-        let rowMenus = app.windowElements { app.identifier($0) == "dulcet.track.more" }
-            .filter { (try? app.frame($0)).map { $0.midY > rowFrame.minY && $0.midY < rowFrame.maxY } ?? false }
-        XCTAssertEqual(rowMenus.count, 1, "Exactly one More menu must sit beside \(track)'s row; row=\(rowFrame)")
-        let rowMenu = try XCTUnwrap(rowMenus.first, "No More menu beside \(track)'s row")
-        // The menu button must lie wholly inside the content a person can see.
-        let menuFrame = try app.frame(rowMenu)
         let content = app.contentScreenFrame
-        XCTAssertTrue(content.contains(menuFrame), "\(track)'s row More button \(menuFrame) must lie inside the window \(content)")
+        var menuFrame = NSRect.zero
         for expected in [true, false] {
             try await app.chooseMenuItem(expected ? "Favorite" : "Remove Favorite", described: "the track More menu") {
+                // Favorite changes the row's status and replaces its accessibility nodes.
+                // Resolve the drawn control again after each mutation, as for playlist More.
+                let row = try await app.element(timeout: .seconds(15), described: "the \(track) row") {
+                    app.identifier($0) == "dulcet.reader.track" && (app.label($0) ?? "").hasPrefix(track)
+                }
+                let rowFrame = try app.frame(row)
+                let rowMenus = app.windowElements { app.identifier($0) == "dulcet.track.more" }
+                    .filter { (try? app.frame($0)).map { $0.midY > rowFrame.minY && $0.midY < rowFrame.maxY } ?? false }
+                XCTAssertEqual(rowMenus.count, 1, "Exactly one More menu must sit beside \(track)'s row; row=\(rowFrame)")
+                let rowMenu = try XCTUnwrap(rowMenus.first, "No More menu beside \(track)'s row")
+                menuFrame = try app.frame(rowMenu)
+                XCTAssertTrue(content.contains(menuFrame), "\(track)'s row More button \(menuFrame) must lie inside the window \(content)")
                 try app.press(rowMenu, named: "the track More button")
             }
             let deadline = ContinuousClock.now.advanced(by: .seconds(30))

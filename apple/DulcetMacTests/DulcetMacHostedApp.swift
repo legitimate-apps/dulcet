@@ -382,6 +382,7 @@ final class HostedApp {
             var offered: [String] = []
             var performed = false
             var opened = false
+            var ended = false
             var menu: NSMenu?
         }
         let tracking = Tracking()
@@ -418,7 +419,15 @@ final class HostedApp {
                 }
             }
         }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        let endObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil
+        ) { notification in
+            if tracking.menu != nil, notification.object as? NSMenu === tracking.menu { tracking.ended = true }
+        }
+        defer {
+            NotificationCenter.default.removeObserver(observer)
+            NotificationCenter.default.removeObserver(endObserver)
+        }
         do {
             for attempt in 1..<attempts {
                 try await open()
@@ -436,6 +445,7 @@ final class HostedApp {
         try await waitUntil(timeout: .seconds(5), "\(description) performs \(title.debugDescription); offers \(tracking.offered)") {
             tracking.performed
         }
+        try await waitUntil(timeout: .seconds(5), "\(description) ends native menu tracking") { tracking.ended }
         return tracking.offered
     }
 
