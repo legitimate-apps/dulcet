@@ -734,3 +734,25 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     ten- then thirty-second readiness budgets. It still requires the real Sign Out control,
     preserves visible failure actions and adds no authentication retry. The independent host
     controls extract this actual helper; simulator conformance remains the runtime evidence.
+
+
+66. **Route generations must describe the rows actually restored.** **OBSERVED 2026-10-29:**
+    a paused completed route query overlapped removal through another database handle. The old
+    restore combined its pre-removal routes with the newer enrollment generation and authorized
+    the removed address. `ConnectionRestoreRaceTest` retains this schedule and failed before the
+    fix. Restore now reads both in one SQL statement; registry publication rejects older
+    generations and retains the generation of an offline selection. Consistent reads alone do
+    not prevent an older publisher winning afterward. Suspended Add/Verify also compares its
+    captured transport generation inside the commit transaction, so a later removal wins.
+
+
+67. **Distinct authorities and nested base prefixes need distinct handler mounts.**
+    **OBSERVED 2026-10-29:** mounting all configured prefixes on a shared Ktor routing tree
+    exposed another authority's prefixed API handlers while receiving-route classification
+    skipped API policy. Same-key playlist POSTs created two durable rows, and query credentials
+    were accepted. Nested mounts could also run the idempotency middleware twice around one
+    request. Keep each mount in a distinct transparent subtree, reject a mismatch with the
+    validated receiving authority/base before any handler, and classify API policy relative to
+    that matched mount. `ConnectionsMountConformanceTest` covers both registration orders,
+    nested/root bases, correct-authority controls, query credentials, limiter execution and
+    identical idempotent POST replay with exactly one durable row.

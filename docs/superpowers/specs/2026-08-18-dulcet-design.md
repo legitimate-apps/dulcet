@@ -7960,6 +7960,28 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-29 — Fence connection publications and provide explicit preserving recovery.**
+
+Route restoration reads route rows and their exact transport generation in one statement;
+monotonic publication retains offline generations so older restores cannot revive removals.
+A later route change supersedes suspended Add/Verify work. Handler mounts match the validated
+receiving authority and base; every API handler traverses credential-query rejection, rate
+limiting and idempotency exactly once, including nested-prefix deployments.
+
+Verify uses an admitted nonremoved HTTPS source separately from the immutable ownership
+anchor. It retains tombstones and does not select a route for an offline account. The native
+Connections controls retain a HTTPS address field and explicit Add/re-add action after
+enrollment. Authenticated directory authorization and credential-free TLS/lineage/API-base
+checks precede credentials at the chosen target; only that explicit target may clear its own
+tombstone and become selected. With no admitted source, only a previously listed chosen HTTPS
+bootstrap can initiate preserving recovery. Unlisted targets receive no credentials. Fresh
+Android account saving initializes an empty anchored media nonce before automatic enrollment;
+it never replaces or purges existing ownership. See the normative
+[connection contract](../../dulcet-api/connections.md) and
+[server deployment contract](../../dulcet-server/connections.md). Automatic switching remains
+deferred; ownership, completed files, pending intents and strict equality guards stay fixed.
+
+
 
 **2026-10-28 — Enroll verified HTTPS connections without changing ownership (phase 1).**
 

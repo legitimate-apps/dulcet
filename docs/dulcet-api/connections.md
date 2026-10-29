@@ -59,7 +59,11 @@ offline content remains. HTTP aliases are ignored even with consent and receive 
 The receiving listener, configured external authority and base select a route before
 authentication. Neither arbitrary Host/forwarded headers nor the backend's HTTP scheme can
 choose the externally advertised scheme or issuer. A legacy `publicUrl` is only a single-route
-default; it cannot override a configured receiving route.
+default; it cannot override a configured receiving route. A handler mount must match that
+validated authority and exact receiving base prefix. A prefix belonging to another authority,
+or a different nested mount on the same authority, cannot expose handlers through that route.
+Every reachable API handler traverses credential-query rejection, rate limiting and idempotency
+processing exactly once; a mismatched mount is rejected before authentication or writes.
 
 Media grants are relative to the route base as a directory: `dulcet/v1/media/<opaque>` under
 `https://home.example.test/music/`. An absolute resource is allowed only at that exact origin
@@ -97,6 +101,33 @@ is disclosed rather than claimed controllable by the new binary.
 Existing HTTP/Navidrome single-origin accounts retain their explicit local-network opt-in,
 per-request local numeric dial pin and strict replacement behavior. Independently saved alias
 accounts are not automatically merged.
+
+## Explicit recovery and removal
+
+Route rows and their transport generation are restored from one database snapshot. Publication
+is monotonic per account, including offline selections: a delayed restore cannot replace a
+newer removal or certify old route rows with a later generation. A configuration change also
+cancels an earlier suspended Add/Verify intent before commit. These transport generations do
+not change the ownership anchor, media epoch or owned rows/files.
+
+Verify reads through the selected admitted HTTPS route, or another enabled nonremoved HTTPS
+route when the account is offline. It never uses a frozen HTTP anchor after adoption. A
+refresh retains local tombstones and an offline selection; it does not select an alternate
+automatically. Removing the selected route leaves the account offline until an explicit action.
+
+Add/re-add is an explicit HTTPS action available after enrollment as well as before it. Through
+an available admitted route, fetch the authenticated directory and require the chosen address
+to be listed and to pass credential-free OS TLS, lineage and API-base checks before sending
+credentials there. On success, only the chosen route's tombstone may be cleared, and the chosen
+route becomes selected. Other removals remain intact. If no admitted route remains, explicit
+recovery may authenticate a previously listed chosen HTTPS bootstrap only after those same
+credential-free checks and then validate its authenticated directory/principal continuity.
+An unknown unlisted origin receives zero credentials. Failure leaves the existing account,
+its offline files and every tombstone intact. Account replacement is a separate operation.
+
+A fresh Android account establishes its anchored media nonce non-destructively when its new
+account ID and accepted identity are saved, before automatic enrollment. This initialization
+refuses an existing namespace; enrollment never replaces a media binding to acquire readiness.
 
 ## Deployment and continuity
 
