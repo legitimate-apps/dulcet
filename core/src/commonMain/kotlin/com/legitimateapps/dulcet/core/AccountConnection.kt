@@ -12,10 +12,13 @@ import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.utils.io.readAvailable
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import io.ktor.http.URLBuilder
@@ -493,9 +496,10 @@ public class AccountConnector private constructor(
 
     private suspend fun connectThroughSavedRoute(request: AccountConnectionRequest,
         identityOnly: Boolean, expectedIdentity: String): AccountConnectionResult {
-        val enrolled = ConnectionRouteRegistry.isEnrolled(request.serverUrl, request.username)
-        if (!enrolled) return connectObserved(request, identityOnly, expectedIdentity)
-        val lease = ConnectionRouteRegistry.leaseFor(request.serverUrl, request.username)
+        val (enrolled, savedLease) = ConnectionRouteRegistry.selectionFor(request.serverUrl, request.username)
+        if (!enrolled) return connectObserved(request, identityOnly, expectedIdentity,
+            SavedRouteScope(request.serverUrl, request.username, null))
+        val lease = savedLease
             ?: return AccountConnectionResult.Failed(DomainError.Transport.Unreachable)
         val result = connectObserved(request.copy(serverUrl = lease.baseUrl, allowLocalHttp = false),
             identityOnly, expectedIdentity, SavedRouteScope(request.serverUrl, request.username, lease))
@@ -509,15 +513,16 @@ public class AccountConnector private constructor(
         }
     }
 
-    private data class SavedRouteScope(val anchorBase: String, val username: String, val lease: RouteLease) {
+    private data class SavedRouteScope(val anchorBase: String, val username: String, val lease: RouteLease?) {
         fun checkCurrent() {
-            if (ConnectionRouteRegistry.leaseFor(anchorBase, username) != lease) {
+            val current = ConnectionRouteRegistry.selectionFor(anchorBase, username)
+            if (current.enrolled != (lease != null) || current.lease != lease) {
                 throw RedirectPolicyFailure(DomainError.Transport.Cancelled)
             }
         }
         fun checkResource(resource: String) {
             checkCurrent()
-            if (ConnectionResourcePolicy.resolve(lease.baseUrl, resource) == null) {
+            if (lease != null && ConnectionResourcePolicy.resolve(lease.baseUrl, resource) == null) {
                 throw RedirectPolicyFailure(DomainError.Security.ResourceOutsideRoute)
             }
         }
@@ -752,10 +757,26 @@ public class AccountConnector private constructor(
     private suspend fun discoverInstanceId(client: HttpClient, baseUrl: String, allowLocalHttp: Boolean,
         routeScope: SavedRouteScope? = null): String {
         val origin = "${baseUrl.trimEnd('/')}/.well-known/dulcet"
-        val response = sendRequest(client, origin, Parameters.Empty, Parameters.Empty, false, allowLocalHttp)
-        if (response.status.value != 200) throw RedirectPolicyFailure(DomainError.Protocol.MalformedEnvelope)
-        val body = response.bodyAsText()
-        if (body.length > 65_536) throw RedirectPolicyFailure(DomainError.Protocol.TooLarge)
+        val target = localHttpPolicy.targetFor(origin, allowLocalHttp)
+        val body = client.prepareGet(target.url) {
+            target.hostHeader?.let { header(HttpHeaders.Host, it) }
+        }.execute { response ->
+            if (response.status.value != 200) throw RedirectPolicyFailure(DomainError.Protocol.MalformedEnvelope)
+            if ((response.headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: 0) > 65_536) {
+                throw RedirectPolicyFailure(DomainError.Protocol.TooLarge)
+            }
+            val bytes = ByteArray(65_537)
+            var size = 0
+            val channel = response.bodyAsChannel()
+            while (true) {
+                val count = channel.readAvailable(bytes, size, bytes.size - size)
+                if (count < 0) break
+                size += count
+                if (size > 65_536) throw RedirectPolicyFailure(DomainError.Protocol.TooLarge)
+            }
+            try { bytes.decodeToString(0, size, throwOnInvalidSequence = true) }
+            catch (_: Exception) { throw RedirectPolicyFailure(DomainError.Protocol.MalformedEnvelope) }
+        }
         routeScope?.checkCurrent()
         val document = try { Json.parseToJsonElement(body) as? JsonObject } catch (_: Exception) { null }
         val server = document?.get("server") as? JsonObject
@@ -865,7 +886,7 @@ public class AccountConnector private constructor(
                     logicalRequestUrl = traceRecorder.latestRedactedUrl(),
                 )
             logSink.accountPhase("$endpoint.body") { response.bodyAsText() }
-            if (routeScope != null) {
+            if (routeScope?.lease != null) {
                 if (endpoint == "getOpenSubsonicExtensions") {
                     throw RedirectPolicyFailure(DomainError.Security.ResourceOutsideRoute)
                 }

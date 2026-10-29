@@ -5,9 +5,9 @@ package com.legitimateapps.dulcet.core
  */
 public object ConnectionRequestAuthorization {
     public fun isCurrent(anchorBaseUrl: String, username: String, routeBaseUrl: String, generation: Long?): Boolean {
-        val lease = ConnectionRouteRegistry.leaseFor(anchorBaseUrl, username)
+        val (enrolled, lease) = ConnectionRouteRegistry.selectionFor(anchorBaseUrl, username)
         return if (generation == null) {
-            !ConnectionRouteRegistry.isEnrolled(anchorBaseUrl, username) &&
+            !enrolled &&
                 ConnectionResourcePolicy.resolve(anchorBaseUrl, routeBaseUrl) != null
         } else {
             lease != null && lease.generation == generation && lease.baseUrl == routeBaseUrl

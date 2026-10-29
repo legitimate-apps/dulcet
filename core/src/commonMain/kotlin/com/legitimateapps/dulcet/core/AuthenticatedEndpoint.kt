@@ -18,6 +18,7 @@ import io.ktor.http.Parameters
 import io.ktor.http.URLBuilder
 import io.ktor.http.contentType
 import io.ktor.utils.io.readAvailable
+import io.ktor.util.AttributeKey
 
 internal data class AuthenticatedEndpointCredentials(
     val normalizedBaseUrl: String,
@@ -118,7 +119,12 @@ internal class AuthenticatedEndpointClient(
         createAccountHttpClient(clientTransport, strictMediaFraming) {
             expectSuccess = false
             followRedirects = false
-            install(RequestTracePlugin) { observe = traceRecorder::observe }
+            install(RequestTracePlugin) {
+                observe = { request, content ->
+                    request.attributes.getOrNull(ROUTE_SCOPE_ATTRIBUTE)?.let(::requireCurrent)
+                    traceRecorder.observe(request, content)
+                }
+            }
             install(HttpTimeout) {
                 connectTimeoutMillis = REQUEST_TIMEOUT_MILLIS
                 requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
@@ -210,12 +216,14 @@ internal class AuthenticatedEndpointClient(
                 val maxBodyBytes = options.maxBodyBytes
                 if (jsonBody == null && maxBodyBytes != null) {
                     val statement = if (formPost) client.preparePost(target.url) {
+                        attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
                         target.hostHeader?.let { header(HttpHeaders.Host, it) }
                         setBody(FormDataContent(Parameters.build {
                             common.forEach { (name, value) -> append(name, value) }
                             repeated.forEach { (name, value) -> append(name, value) }
                         }))
                     } else client.prepareGet(target.url) {
+                        attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
                         applyRequestParts(target.hostHeader, common, options, repeated)
                     }
                     statement.execute { response ->
@@ -224,6 +232,7 @@ internal class AuthenticatedEndpointClient(
                 } else {
                     val response = if (formPost) {
                         client.post(target.url) {
+                            attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
                             target.hostHeader?.let { header(HttpHeaders.Host, it) }
                             setBody(
                                 FormDataContent(
@@ -236,10 +245,12 @@ internal class AuthenticatedEndpointClient(
                         }
                     } else if (jsonBody == null) {
                         client.get(target.url) {
+                            attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
                             applyRequestParts(target.hostHeader, common, options, repeated)
                         }
                     } else {
                         client.post(target.url) {
+                            attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
                             applyRequestParts(target.hostHeader, common, options)
                             contentType(ContentType.Application.Json)
                             setBody(jsonBody)
@@ -319,16 +330,15 @@ internal class AuthenticatedEndpointClient(
 
     private fun requestRouteScope(): RequestRouteScope {
         if (!useEnrolledRoute) return RequestRouteScope(credentials.normalizedBaseUrl, null, false)
-        val lease = ConnectionRouteRegistry.leaseFor(credentials.normalizedBaseUrl, credentials.username)
-        val enrolled = ConnectionRouteRegistry.isEnrolled(credentials.normalizedBaseUrl, credentials.username)
+        val (enrolled, lease) = ConnectionRouteRegistry.selectionFor(credentials.normalizedBaseUrl, credentials.username)
         if (lease == null && enrolled) throw AuthenticatedEndpointFailure(DomainError.Transport.Unreachable)
         return RequestRouteScope(lease?.baseUrl ?: credentials.normalizedBaseUrl, lease, enrolled)
     }
 
     private fun requireCurrent(scope: RequestRouteScope) {
         if (!useEnrolledRoute) return
-        if (scope.enrolled != ConnectionRouteRegistry.isEnrolled(credentials.normalizedBaseUrl, credentials.username) ||
-            scope.lease != ConnectionRouteRegistry.leaseFor(credentials.normalizedBaseUrl, credentials.username)) {
+        val current = ConnectionRouteRegistry.selectionFor(credentials.normalizedBaseUrl, credentials.username)
+        if (scope.enrolled != current.enrolled || scope.lease != current.lease) {
             throw AuthenticatedEndpointFailure(DomainError.Transport.Cancelled)
         }
     }
@@ -420,6 +430,7 @@ internal class AuthenticatedEndpointClient(
     }
 
     private companion object {
+        val ROUTE_SCOPE_ATTRIBUTE = AttributeKey<RequestRouteScope>("dulcet.connection.route-scope")
         const val CLIENT_NAME = "Dulcet"
         val MEDIA_ENDPOINTS = setOf("stream", "download", "getTranscodeStream")
         const val REQUEST_TIMEOUT_MILLIS = 30_000L
