@@ -2,6 +2,7 @@ import SwiftUI
 import OSLog
 #if DEBUG && os(iOS)
 import UIKit
+import ObjectiveC.runtime
 #endif
 
 /// Evidence a UI proof reads to learn that a HANDLER ran, not merely that the screen ended up
@@ -106,59 +107,47 @@ extension View {
 }
 
 #if DEBUG && os(iOS)
-/// A fixture-only listener on each app window. It never recognizes or prevents a gesture,
-/// and never delays or cancels delivery to views. App-swallowed touches therefore still end
-/// here; a cancelled HID contact does not become a normal touch-up in this ledger.
-private final class DulcetUIProofInputObserver: UIGestureRecognizer {
-    private var nextTouch = 0
-    private var touches: [ObjectIdentifier: Int] = [:]
-    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-    override func shouldRequireFailure(of otherGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-    override func shouldBeRequiredToFail(by otherGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        for touch in touches {
-            nextTouch += 1
-            self.touches[ObjectIdentifier(touch)] = nextTouch
-            DulcetUIProofMarkers.input("began", touch: nextTouch, point: touch.location(in: view))
+/// Observe dispatch without joining UIKit's gesture arena. Even a recognizer that cannot
+/// prevent another recognizer still participates in control/SwiftUI gesture dependencies.
+/// This DEBUG-only hook calls the original implementation exactly once, without changing
+/// the event, its delivery, or any recognizer state.
+@MainActor private enum DulcetUIProofInputWindows {
+    private static var installed = false
+    private static var nextTouch = 0
+    private static var touches: [ObjectIdentifier: Int] = [:]
+    static func start(in window: UIWindow) {
+        guard !installed else { return }
+        guard let original = class_getInstanceMethod(UIWindow.self, #selector(UIWindow.sendEvent(_:))),
+              let observed = class_getInstanceMethod(UIWindow.self, #selector(UIWindow.dulcetProofSendEvent(_:))) else {
+            return // The proof's input-monitor-ready assertion fails if installation is unavailable.
+        }
+        method_exchangeImplementations(original, observed)
+        installed = true
+        DulcetUIProofMarkers.record("input-monitor-ready")
+    }
+    static func receive(_ event: UIEvent, in window: UIWindow) {
+        guard event.type == .touches else { return }
+        for touch in event.allTouches ?? [] where touch.window === window {
+            let key = ObjectIdentifier(touch)
+            switch touch.phase {
+            case .began:
+                nextTouch += 1
+                touches[key] = nextTouch
+                DulcetUIProofMarkers.input("began", touch: nextTouch, point: touch.location(in: window))
+            case .ended, .cancelled:
+                let id = touches.removeValue(forKey: key) ?? -1
+                DulcetUIProofMarkers.input(touch.phase == .ended ? "ended" : "cancelled", touch: id, point: touch.location(in: window))
+            default: break
+            }
         }
     }
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {}
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { finish(touches, phase: "ended") }
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { finish(touches, phase: "cancelled") }
-    private func finish(_ touches: Set<UITouch>, phase: String) {
-        for touch in touches {
-            let id = self.touches.removeValue(forKey: ObjectIdentifier(touch)) ?? -1
-            DulcetUIProofMarkers.input(phase, touch: id, point: touch.location(in: view))
-        }
-        if self.touches.isEmpty { state = .failed }
-    }
-    override func reset() { super.reset(); touches.removeAll() }
 }
 
-@MainActor private enum DulcetUIProofInputWindows {
-    private static var visibilityObserver: NSObjectProtocol?
-    static func start(in window: UIWindow) {
-        install(in: window)
-        installVisibleWindows()
-        guard visibilityObserver == nil else { return }
-        visibilityObserver = NotificationCenter.default.addObserver(forName: UIWindow.didBecomeVisibleNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { installVisibleWindows() }
-        }
-    }
-    private static func installVisibleWindows() {
-        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
-            for window in scene.windows { install(in: window) }
-        }
-    }
-    private static func install(in window: UIWindow) {
-        guard window.gestureRecognizers?.contains(where: { $0 is DulcetUIProofInputObserver }) != true else { return }
-        let observer = DulcetUIProofInputObserver(target: nil, action: nil)
-        observer.cancelsTouchesInView = false
-        observer.delaysTouchesBegan = false
-        observer.delaysTouchesEnded = false
-        window.addGestureRecognizer(observer)
-        DulcetUIProofMarkers.record("input-monitor-ready")
+extension UIWindow {
+    @objc fileprivate func dulcetProofSendEvent(_ event: UIEvent) {
+        // After exchange this invokes UIKit's original sendEvent implementation.
+        dulcetProofSendEvent(event)
+        DulcetUIProofInputWindows.receive(event, in: self)
     }
 }
 private struct DulcetUIProofInputMonitor: UIViewRepresentable {
