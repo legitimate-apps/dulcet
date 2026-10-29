@@ -89,6 +89,35 @@ class LibraryStatusTransportTest {
         }
     }
 
+    @Test
+    fun explicit503And407AndActual599PreserveBodyAndHeadersWithoutEngineReplay() {
+        for (code in listOf(503, 407, 599)) {
+            StatusServer("$code Fixture", listOf("Retry-After: 0", "X-Total-Count: 17"), "fixture-status-$code").use { server ->
+                val transport = KtorLibraryEndpointTransport(server.request(), null, null, systemHostResolver())
+                try {
+                    runBlocking {
+                        val responses = listOf(
+                            transport.request("star", mapOf("id" to "album-1")),
+                            transport.requestRepeated("updatePlaylist", listOf("songIdToAdd" to "a", "songIdToAdd" to "b"), false),
+                            transport.requestRepeated("updatePlaylist", listOf("songIdToAdd" to "a", "songIdToAdd" to "b"), true),
+                        )
+                        responses.forEach { response ->
+                            assertEquals(code, response.statusCode)
+                            assertEquals("fixture-status-$code", response.body)
+                            assertEquals("0", response.retryAfter)
+                        }
+                        val binary = transport.requestBinary("getCoverArt", mapOf("id" to "fixture"), 1024)
+                        assertEquals(code, binary.statusCode)
+                        assertEquals("17", binary.headers.totalCount)
+                        assertEquals("0", binary.headers.retryAfter)
+                        kotlin.test.assertContentEquals("fixture-status-$code".encodeToByteArray(), binary.body)
+                    }
+                } finally { transport.close() }
+                assertEquals(4, server.requestLines.size, "the engine replayed status $code")
+            }
+        }
+    }
+
     /** Answers every request with one fixed status, headers and body, then closes the connection. */
     private class StatusServer(private val status: String, private val headers: List<String>, private val body: String) : Closeable {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))

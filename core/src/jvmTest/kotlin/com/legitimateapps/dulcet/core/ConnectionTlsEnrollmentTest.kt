@@ -13,12 +13,29 @@ import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLHandshakeException
 import java.net.URI
+import java.net.URLClassLoader
+import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 
 /** The production connector/factory/probe over real TLS, trusting only this disposable test root. */
 class ConnectionTlsEnrollmentTest {
     @Test fun authenticatedTlsEnrollmentAdmitsOnlyExpectedLineageAndTlsNamesWithoutChangingOwnership() {
+        if (!java.lang.Boolean.getBoolean("dulcet.fixture.tls.isolated")) {
+            // JSSE/OkHttp may cache default trust before this class runs. A fresh test process
+            // admits only this generated root before its first production client is constructed.
+            val locations = generateSequence(javaClass.classLoader) { it.parent }.filterIsInstance<URLClassLoader>()
+                .flatMap { it.getURLs().asSequence() }.map { File(it.toURI()).path }.toList()
+            val classpath = (locations + System.getProperty("java.class.path").split(File.pathSeparator)).distinct().joinToString(File.pathSeparator)
+            val process = ProcessBuilder(File(System.getProperty("java.home"), "bin/java").path,
+                "-Ddulcet.fixture.tls.isolated=true", "-cp", classpath,
+                "com.legitimateapps.dulcet.core.ConnectionTlsEnrollmentProcess").redirectErrorStream(true).start()
+            if (!process.waitFor(60, TimeUnit.SECONDS)) { process.destroyForcibly(); fail("isolated TLS fixture deadline") }
+            val output = process.inputStream.bufferedReader().readText()
+            assertEquals(0, process.exitValue(), "isolated TLS fixture failed: $output")
+            return
+        }
         TlsFixture().use { fixture ->
             fixture.assertTlsNameControl()
             val previousStore = System.getProperty("javax.net.ssl.trustStore")
@@ -38,7 +55,7 @@ class ConnectionTlsEnrollmentTest {
                             ConnectionEnrollmentService(env.database).enroll(ConnectionEnrollmentRequest(anchor,
                                 AccountConnectionRequest(anchor.normalizedBaseUrl, "listener", "fixture-password")))
                         }
-                        val snapshot = assertIs<ConnectionEnrollmentResult.Enrolled>(result).snapshot
+                        val snapshot = assertIs<ConnectionEnrollmentResult.Enrolled>(result, "enrollment=$result").snapshot
                         assertEquals(setOf("home", "remote"), snapshot.routes.filter { it.enabled }.map { it.id }.toSet())
                         assertFalse(snapshot.routes.single { it.id == "different" }.enabled)
                         assertFalse(snapshot.routes.single { it.id == "bad-name" }.enabled)
@@ -133,5 +150,11 @@ class ConnectionTlsEnrollmentTest {
     companion object {
         private const val PASSWORD = "fixture-keystore-password"
         private fun restoreProperty(name: String, value: String?) { if (value == null) System.clearProperty(name) else System.setProperty(name, value) }
+    }
+}
+
+internal object ConnectionTlsEnrollmentProcess {
+    @JvmStatic fun main(args: Array<String>) {
+        ConnectionTlsEnrollmentTest().authenticatedTlsEnrollmentAdmitsOnlyExpectedLineageAndTlsNamesWithoutChangingOwnership()
     }
 }
