@@ -97,7 +97,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
 
         // 3. Security error: plain HTTP to the server without the local-HTTP consent.
         enter(server.baseURL, password: server.password, allowLocalHTTP: false, into: store)
-        try shipping.press(try await shipping.element(labelled: "Try Again"), named: "Try Again")
+        try shipping.press(try await shipping.element(identifiedBy: "dulcet.account-connect.primary-action"), named: "Sign In")
         try await waitUntil(timeout: .seconds(15), "security error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorSecurity
         }
@@ -107,7 +107,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
 
         // 4. Transport error: the system refuses the connection.
         enter(refusedURL, password: server.password, into: store)
-        try shipping.press(try await shipping.element(labelled: "Try Again"), named: "Try Again")
+        try shipping.press(try await shipping.element(identifiedBy: "dulcet.account-connect.primary-action"), named: "Sign In")
         try await waitUntil(timeout: .seconds(45), "transport error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorTransport
         }
@@ -116,7 +116,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
 
         // 5. Authentication error: the server's own answer to a wrong password.
         enter(server.baseURL, password: server.password + "-wrong", into: store)
-        try shipping.press(try await shipping.element(labelled: "Try Again"), named: "Try Again")
+        try shipping.press(try await shipping.element(identifiedBy: "dulcet.account-connect.primary-action"), named: "Sign In")
         try await waitUntil(timeout: .seconds(45), "authentication error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorAuthentication
         }
@@ -126,7 +126,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
 
         // 6. Protocol error: the server's web-player address answers, but not as OpenSubsonic.
         enter(server.baseURL + "/app", password: server.password, into: store)
-        try shipping.press(try await shipping.element(labelled: "Try Again"), named: "Try Again")
+        try shipping.press(try await shipping.element(identifiedBy: "dulcet.account-connect.primary-action"), named: "Sign In")
         try await waitUntil(timeout: .seconds(45), "protocol error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorProtocol
         }
@@ -137,7 +137,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         try await proxy.armServerError()
         defer { proxy.disarmServerError() }
         enter(proxy.url, password: server.password, into: store)
-        try shipping.press(try await shipping.element(labelled: "Try Again"), named: "Try Again")
+        try shipping.press(try await shipping.element(identifiedBy: "dulcet.account-connect.primary-action"), named: "Sign In")
         try await waitUntil(timeout: .seconds(45), "server error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorServer
         }
@@ -149,7 +149,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
 
         // 8. In progress, then Cancel: a server that accepts the connection and never answers.
         enter(silentURL, password: server.password, into: store)
-        try shipping.press(try await shipping.element(labelled: "Try Again"), named: "Try Again")
+        try shipping.press(try await shipping.element(identifiedBy: "dulcet.account-connect.primary-action"), named: "Sign In")
         try await waitUntil(timeout: .seconds(10), "in progress: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountConnecting
         }
