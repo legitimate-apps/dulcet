@@ -46,12 +46,24 @@ evidence after the finite command ends. Fixture signing keys are removed; all ow
 listeners stop even on command failure or a signal. An existing root directory is refused and is
 never cleaned up or modified.
 
-Native engines use their production hostname checks and OS trust. Install only this run's CA in
-the disposable runner/device's isolated trust store before launching the proof. For a newly leased
-Apple simulator, `xcrun simctl keychain <UDID> add-root-cert <ca.pem>` scopes the root to that device;
-dispose of the owned simulator afterward. A macOS host proof uses a temporary keychain on an
-isolated CI runner and removes that root/keychain in a finalizer. On a disposable rooted Android
-emulator, install the exact CA in its system trust store using the image's supported mechanism;
-never add a release network-security exception or trust-all branch. Reverse each manifest port
-with `adb reverse tcp:<port> tcp:<port>` so the app retains the authenticated `localhost` name.
-The wrapper does not change a shared host trust store, VPN, DNS, proxy settings or a real device.
+Native engines retain their production hostname checks. Apple proofs trust only this run's CA
+in the disposable runner/device's isolated trust store. A leased Apple simulator uses
+`xcrun simctl keychain <UDID> add-root-cert <ca.pem>`; dispose of the owned simulator afterward.
+The macOS helper uses a temporary keychain on a hosted CI runner and removes its root/keychain
+in a finalizer.
+
+For Android phone and TV, use the finite proof runner on an already-owned disposable emulator:
+
+```sh
+tools/ci/run-connection-android-proofs --serial emulator-<owned-port> \
+  --root /tmp/new-native-multipath-run --evidence /tmp/new-native-multipath-evidence
+```
+
+The Android helper temporarily copies the fresh CA into a generated test-APK raw resource and
+replaces the test-only network security configuration's user-root entry with that exact resource.
+It restores the original configuration and removes the generated certificate in a finalizer,
+including when instrumentation fails. It requires no `adb root` and changes neither device trust
+stores nor production network security configuration. Wrong-hostname certificates remain rejected.
+The helper reverses each manifest port with `adb reverse tcp:<port> tcp:<port>` so native requests
+retain the authenticated `localhost` name, then removes its forwards and disposable device files.
+No shared host trust store, VPN, DNS, proxy settings or real device is changed.
