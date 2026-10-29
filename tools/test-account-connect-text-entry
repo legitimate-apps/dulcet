@@ -308,6 +308,7 @@ struct XCUIElementSnapshot {
         set { snapshotFrame = newValue }
     }
     var taps = 0
+    var dragEvents = 0
     var closeOnTap = 1
     var keyboard: XCUIElement?
     init(_ frame: CGRect) { self.snapshotFrame = frame }
@@ -338,7 +339,12 @@ struct XCUIElementSnapshot {
     }
     @MainActor struct Coordinate {
         var element: XCUIElement
-        func tap() { element.hide!.tap() }
+        func tap() { preconditionFailure("Return submits the form and cannot be used to dismiss the keyboard") }
+        func press(forDuration: Double, thenDragTo: Coordinate) {
+            guard let keyboard = element.keyboard else { preconditionFailure("Only the native Form dismisses by scrolling") }
+            keyboard.dragEvents += 1
+            keyboard.hide!.tap()
+        }
     }
     func coordinate(withNormalizedOffset: CGVector) -> Coordinate { Coordinate(element: self) }
 }
@@ -367,6 +373,11 @@ struct XCUIElementSnapshot {
         hide.keyboard = keyboard
         keyboard.hide = hide
     }
+    var collectionViews: XCUIElement.Query {
+        let form = XCUIElement(window.snapshotFrame)
+        form.keyboard = keyboard
+        return .init(firstMatch: form)
+    }
     var keyboards: XCUIElement.Query { .init(firstMatch: keyboard) }
     var windows: XCUIElement.Query { .init(firstMatch: window) }
     var debugDescription: String { "keyboard dismissal collaborator" }
@@ -384,7 +395,8 @@ keyboard_controls = r'''
             ("visible-dismissal-retains-AX", CGRect(x: 0, y: 1031, width: 1032, height: 345), 1, true, true, true, 1),
             ("floating-visible-keyboard", CGRect(x: 400, y: 600, width: 400, height: 345), 1, true, true, true, 1),
             ("first-dismissal-tap-dropped", CGRect(x: 0, y: 1031, width: 1032, height: 345), 2, true, true, true, 2),
-            ("coordinate-dismissal", CGRect(x: 0, y: 1031, width: 1032, height: 345), 1, true, false, true, 1),
+            ("native-form-scroll-dismissal", CGRect(x: 0, y: 1031, width: 1032, height: 345), 1, true, false, true, 1),
+            ("stuck-native-form-scroll", CGRect(x: 0, y: 1031, width: 1032, height: 345), 0, true, false, false, 3),
             ("visible-stuck-keyboard", CGRect(x: 0, y: 1031, width: 1032, height: 345), 0, true, true, false, 3),
             ("absent-keyboard", CGRect.zero, 1, false, false, true, 0)
         ] {
@@ -393,6 +405,7 @@ keyboard_controls = r'''
             let app = XCUIApplication(frame: frame, closeOnTap: closes, exists: exists, hideAvailable: hideAvailable)
             precondition(proof.dismissKeyboardIfPresent(in: app) == expectedResult, name)
             precondition(app.keyboard.taps == expectedTaps, name)
+            precondition(app.keyboard.dragEvents == (hideAvailable ? 0 : expectedTaps), name)
             precondition(recordedFailures.count == (expectedResult ? 0 : 1), name)
             if !expectedResult {
                 precondition(KeyboardClock.now.timeIntervalSince1970 >= 30, "A stuck visible keyboard must retain the full retry budget")
