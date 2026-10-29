@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""Finite, hosted-CI-only engine core diagnostics. Binary cores never enter artifacts."""
+from __future__ import annotations
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import resource
+import re
+import shutil
+import subprocess
+import time
+
+CORE_BYTES = 8 * 1024**3
+TEXT_BYTES = 2 * 1024**2
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def save(path, value):
+    path.write_text(json.dumps(value, indent=2) + '\n')
+
+
+def read(path, limit=65536):
+    try:
+        with path.open('rb') as stream:
+            return stream.read(limit).decode(errors='replace')
+    except OSError as failure:
+        return {'unavailable': type(failure).__name__}
+
+
+def identity(pid, sdk, proc=Path('/proc')):
+    process = proc / str(pid)
+    try:
+        executable = (process / 'exe').resolve(strict=True)
+        if not executable.is_relative_to(sdk.resolve() / 'emulator') or not executable.name.startswith('qemu-system'):
+            return None
+        raw = (process / 'stat').read_text()
+        fields = raw[raw.rindex(')') + 2:].split()
+        return {'pid': pid, 'executable': str(executable), 'starttime': fields[19],
+                'flags': int(fields[6]), 'exitCode': int(fields[49])}
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def same_process(expected, actual):
+    return actual is not None and all(expected[key] == actual[key] for key in ('pid', 'executable', 'starttime'))
+
+
+def fatal(process):
+    return bool(process['flags'] & 0x400) or process['exitCode'] != 0
+
+
+def hosted():
+    if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted' or os.uname().sysname != 'Linux':
+        raise RuntimeError('core policy changes require an ephemeral GitHub-hosted Linux job')
+
+
+def set_pattern(pattern):
+    subprocess.run(['sudo', '-n', 'sysctl', '-w', 'kernel.core_pattern=' + pattern],
+                   check=True, capture_output=True, timeout=10)
+
+
+def prepare(args):
+    hosted()
+    private, output = args.private.resolve(), args.output.resolve()
+    if private == output or private.is_relative_to(output) or output.is_relative_to(private):
+        raise RuntimeError('private core directory and artifact output must be disjoint')
+    if shutil.which('gdb') is None or shutil.disk_usage(private.parent).free < CORE_BYTES + 2 * 1024**3:
+        raise RuntimeError('gdb and at least10GiB free private-core space are required before proofs')
+    private.mkdir(mode=0o700)  # Exclusive ownership; never reuse another job's core directory.
+    output.mkdir(parents=True, exist_ok=True)
+    pattern = str(private / 'core.%p')
+    if len(pattern.encode()) >= 128:
+        raise RuntimeError('private core pattern exceeds kernel limit')
+    original = Path('/proc/sys/kernel/core_pattern').read_text().rstrip('\n')
+    state = {'originalPattern': original, 'temporaryPattern': pattern, 'private': str(private),
+             'output': str(output), 'uid': os.getuid(), 'prepared': now(), 'coreBytes': CORE_BYTES,
+             'uname': list(os.uname()), 'originalOwnCoreLimit': list(resource.getrlimit(resource.RLIMIT_CORE))}
+    save(private / 'state.json', state)
+    try:
+        set_pattern(pattern)
+        if Path('/proc/sys/kernel/core_pattern').read_text().rstrip('\n') != pattern:
+            raise RuntimeError('kernel core pattern verification failed')
+        save(output / 'core-policy.json', state)
+    except BaseException:
+        set_pattern(original)
+        shutil.rmtree(private)
+        raise
+    return 0
+
+
+def enable_core(process, sdk):
+    if not same_process(process, identity(process['pid'], sdk)):
+        raise RuntimeError('engine identity changed before core-limit mutation')
+    before = resource.prlimit(process['pid'], resource.RLIMIT_CORE)
+    if before[1] != resource.RLIM_INFINITY and before[1] < CORE_BYTES:
+        raise RuntimeError('owned engine hard core limit cannot support finite8GiB diagnostic')
+    resource.prlimit(process['pid'], resource.RLIMIT_CORE, (CORE_BYTES, before[1]))
+    after = resource.prlimit(process['pid'], resource.RLIMIT_CORE)
+    if not same_process(process, identity(process['pid'], sdk)) or after[0] != CORE_BYTES:
+        raise RuntimeError('owned engine identity/core limit verification failed')
+    return {'engine': process, 'before': list(before), 'after': list(after), 'verified': now()}
+
+
+def thread_snapshot(pid, deadline, proc=Path('/proc')):
+    result = []
+    for task in sorted((proc / str(pid) / 'task').glob('[0-9]*'))[:256]:
+        if time.monotonic() >= deadline:
+            break
+        result.append({'tid': int(task.name), **{name: read(task / name, 8192) for name in ('status', 'stat', 'wchan', 'stack')}})
+    return result
+
+
+def snapshot(process, sdk, output, proc=Path('/proc')):
+    deadline = time.monotonic() + 5
+    record = {'timestamp': now(), 'engine': identity(process['pid'], sdk), 'threads': thread_snapshot(process['pid'], deadline, proc),
+              'corePattern': read(proc / 'sys/kernel/core_pattern'), 'adb': [], 'collectors': [], 'socketFds': []}
+    for path in proc.glob('[0-9]*'):
+        if time.monotonic() >= deadline:
+            break
+        try:
+            executable = (path / 'exe').resolve(strict=True)
+            if executable == sdk.resolve() / 'platform-tools/adb' and len(record['adb']) < 8:
+                record['adb'].append({'pid': int(path.name), 'threads': thread_snapshot(int(path.name), deadline, proc)})
+            if executable.name in ('systemd-coredump', 'apport', 'crashpad_handler') and len(record['collectors']) < 8:
+                record['collectors'].append({'pid': int(path.name), 'executable': str(executable), 'status': read(path / 'status')})
+        except OSError:
+            pass
+    for index, fd in enumerate((proc / str(process['pid']) / 'fd').glob('*')):
+        if index >= 1024 or time.monotonic() >= deadline:
+            break
+        try:
+            target = os.readlink(fd)
+            if target.startswith('socket:'):
+                record['socketFds'].append({'fd': fd.name, 'target': target})
+        except OSError:
+            pass
+    tcp = read(proc / 'net/tcp')
+    record['tcp5554_5555'] = [line for line in tcp.splitlines() if len(line.split()) > 3 and
+                            line.split()[1].rsplit(':', 1)[-1].upper() in ('15B2', '15B3')] if isinstance(tcp, str) else tcp
+    # Keep snapshot text finite even with unusually large thread status files.
+    record['truncated'] = False
+    while len(json.dumps(record).encode()) > TEXT_BYTES and (record['threads'] or record['adb']):
+        record['truncated'] = True
+        if record['adb']:
+            record['adb'].pop()
+        else:
+            record['threads'].pop()
+    save(output / 'fatal-process.json', record)
+
+
+def backtrace_command(executable, core):
+    fault_mapping = ('python pc=int(gdb.parse_and_eval("$pc")); '
+                     'print("fault-pc:", hex(pc)); '
+                     'print("fault-module:", gdb.solib_name(pc)); '
+                     'print("fault-mapping:", "\\n".join(line for line in gdb.execute("info proc mappings", to_string=True).splitlines() '
+                     'if len(line.split()) >= 2 and line.split()[0].startswith("0x") and '
+                     'int(line.split()[0],16) <= pc < int(line.split()[1],16)))')
+    return ['gdb', '-nx', '-nh', '--batch', '-iex', 'set auto-load off', '-iex', 'set debuginfod enabled off',
+            '-ex', 'set pagination off', '-ex', 'set print frame-arguments none', '-ex', 'set print entry-values no',
+            '-ex', 'info threads', '-ex', 'p $_siginfo', '-ex', 'info symbol $pc', '-ex', fault_mapping,
+            '-ex', 'thread apply all bt 32', str(executable), str(core)]
+
+
+def fault_mapping_from_text(backtrace, mappings):
+    match = re.search(r'^fault-pc: (0x[0-9a-f]+)$', backtrace, re.M)
+    if match:
+        pc = int(match[1], 16)
+        for line in mappings.splitlines():
+            address_range = line.split()[0].split('-') if line.split() else []
+            if len(address_range) == 2 and int(address_range[0], 16) <= pc < int(address_range[1], 16):
+                return {'faultPc': match[1], 'mapping': line}
+    return {'unavailable': 'no fault PC or matching private process mapping'}
+
+
+def collect(process, args):
+    # Private maps can identify anonymous JIT ranges missing from core NT_FILE notes.
+    # Retain only the fault-PC matching line in artifacts after offline extraction.
+    mappings = read(Path('/proc') / str(process['pid']) / 'maps', TEXT_BYTES)
+    if isinstance(mappings, str):
+        (args.private / 'engine-maps.txt').write_text(mappings)
+    snapshot(process, args.sdk, args.output)
+    core = args.private / ('core.' + str(process['pid']))
+    deadline = time.monotonic() + 60
+    # A live writer is never fed to gdb. PID disappearance is only a completion condition here.
+    while same_process(process, identity(process['pid'], args.sdk)) and time.monotonic() < deadline:
+        time.sleep(1)
+    receipt = {'engine': process, 'started': now(), 'coreBytes': core.stat().st_size if core.exists() else None}
+    if same_process(process, identity(process['pid'], args.sdk)) or not core.is_file():
+        receipt['unavailable'] = 'core writer still present or no completed owned-engine core'
+    else:
+        text = args.output / 'engine-backtrace.txt'
+        # RLIMIT_FSIZE bounds debugger output at the file boundary; never capture an unbounded pipe.
+        def bounded_child():
+            resource.setrlimit(resource.RLIMIT_FSIZE, (TEXT_BYTES, TEXT_BYTES))
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        with text.open('wb') as stream:
+            try:
+                result = subprocess.run(backtrace_command(process['executable'], core), stdout=stream, stderr=subprocess.STDOUT,
+                                        timeout=30, preexec_fn=bounded_child)
+                receipt['returncode'] = result.returncode
+                if result.returncode != 0:
+                    receipt['unavailable'] = 'offline backtrace command did not complete successfully'
+            except subprocess.TimeoutExpired:
+                receipt['unavailable'] = 'offline backtrace exceeded30seconds'
+        receipt['textBytes'] = text.stat().st_size
+        if receipt['textBytes'] >= TEXT_BYTES:
+            receipt['unavailable'] = 'offline backtrace reached2MiB text cap'
+        if isinstance(mappings, str):
+            save(args.output / 'fault-pc-mapping.json', fault_mapping_from_text(text.read_text(errors='replace'), mappings))
+    receipt['finished'] = now()
+    save(args.output / 'core-extraction.json', receipt)
+
+
+def watch(args):
+    hosted()
+    save(args.private / 'watcher.json', {'pid': os.getpid(), 'started': now()})
+    deadline = time.monotonic() + 1800
+    processes = {}
+    try:
+        while time.monotonic() < deadline and not (args.private / 'stop').exists():
+            for path in Path('/proc').glob('[0-9]*'):
+                process = identity(int(path.name), args.sdk)
+                if process is None:
+                    continue
+                key = (process['pid'], process['starttime'])
+                if key not in processes:
+                    ready = enable_core(process, args.sdk)
+                    processes[key] = process
+                    save(args.output / 'core-ready.json', ready)
+                if fatal(process) or (args.output / 'proof-failed').exists():
+                    save(args.output / 'core-trigger.json', {'timestamp': now(), 'reason': 'fatal-state' if fatal(process) else 'established-proof-failure', 'engine': process})
+                    collect(process, args)
+                    return 0
+            time.sleep(1)
+        return 0
+    except BaseException as failure:
+        save(args.output / 'core-unavailable.json', {'timestamp': now(), 'error': type(failure).__name__, 'detail': str(failure)[:1000]})
+        return 1
+    finally:
+        save(args.private / 'finished.json', {'timestamp': now()})
+
+
+def ready(args):
+    if (args.output / 'core-unavailable.json').exists():
+        raise RuntimeError('core collector setup failed; inspect core-unavailable.json before proofs')
+    value = json.loads((args.output / 'core-ready.json').read_text())
+    current = identity(value['engine']['pid'], args.sdk)
+    if not same_process(value['engine'], current) or fatal(current):
+        raise RuntimeError('verified owned engine no longer present before proofs')
+    if resource.prlimit(value['engine']['pid'], resource.RLIMIT_CORE)[0] != CORE_BYTES:
+        raise RuntimeError('core limit changed before proofs')
+    return 0
+
+
+def finish(args):
+    hosted()
+    state_path = args.private / 'state.json'
+    if not state_path.exists():
+        return 0  # Preparation never changed policy.
+    state = json.loads(state_path.read_text())
+    if state['private'] != str(args.private) or state['output'] != str(args.output) or state['uid'] != os.getuid():
+        raise RuntimeError('private core cleanup ownership does not match this job')
+    receipt = {'started': now(), 'restored': False, 'privateCoresDeleted': False}
+    try:
+        (args.private / 'stop').touch()
+        deadline = time.monotonic() + 100
+        while (args.private / 'watcher.json').exists() and not (args.private / 'finished.json').exists() and time.monotonic() < deadline:
+            time.sleep(1)
+        if (args.private / 'watcher.json').exists() and not (args.private / 'finished.json').exists():
+            raise RuntimeError('finite core watcher did not finish within100seconds')
+    finally:
+        try:
+            set_pattern(state['originalPattern'])
+            receipt['restored'] = Path('/proc/sys/kernel/core_pattern').read_text().rstrip('\n') == state['originalPattern']
+            if not receipt['restored']:
+                raise RuntimeError('original core pattern was not restored')
+        finally:
+            shutil.rmtree(args.private)
+            receipt['privateCoresDeleted'] = not args.private.exists()
+            receipt['finished'] = now()
+            save(args.output / 'core-cleanup.json', receipt)
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('operation', choices=['prepare', 'watch', 'ready', 'finish'])
+    parser.add_argument('--private', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--sdk', type=Path, required=True)
+    args = parser.parse_args()
+    args.private, args.output, args.sdk = args.private.resolve(), args.output.resolve(), args.sdk.resolve()
+    os.umask(0o077)
+    hosted()
+    runner_temp = Path(os.environ['RUNNER_TEMP']).resolve()
+    if args.private != runner_temp / 'engine-private-cores' or args.output != runner_temp / 'engine-diagnostic/core-text':
+        parser.error('use this job runner temp/engine-private-cores and engine-diagnostic/core-text only')
+    return globals()[args.operation](args)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
