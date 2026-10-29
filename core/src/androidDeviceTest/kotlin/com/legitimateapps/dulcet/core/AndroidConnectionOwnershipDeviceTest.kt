@@ -124,7 +124,29 @@ class AndroidConnectionOwnershipDeviceTest {
             fixture.control("reset", "POST")
             val result = ConnectionEnrollmentService(store.database).enroll(ConnectionEnrollmentRequest(anchor,
                 AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password)))
-            assertIs<ConnectionEnrollmentResult.Enrolled>(result)
+            val enrolled = assertIs<ConnectionEnrollmentResult.Enrolled>(result).snapshot
+            assertTrue(enrolled.routes.single { it.id == "home" }.enabled)
+            assertTrue(enrolled.routes.single { it.id == "remote" }.enabled)
+            for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.enabled,
+                "An unverified candidate must remain disabled: $id")
+            assertTrue(enrolled.routes.none { it.id == "unlisted" }, "Discovery cannot enroll an unlisted listener")
+            val admission = fixture.control("state")
+            val admissionCounts = admission.getValue("counts").jsonObject
+            assertEquals(0, admissionCounts.getValue("bad-name").jsonPrimitive.int, "Wrong TLS name must prevent all HTTP dispatch")
+            assertEquals(0, admissionCounts.getValue("unlisted").jsonPrimitive.int)
+            val admissionRequests = admission.getValue("requests").jsonArray.map { it.jsonObject }
+            assertTrue(admissionRequests.any { it.getValue("routeId").jsonPrimitive.content == "different" },
+                "The different-lineage negative probe must actually execute")
+            admissionRequests.forEach { row ->
+                val routeId = row.getValue("routeId").jsonPrimitive.content
+                assertFalse(row.getValue("path").jsonPrimitive.content.contains("/dulcet/v1"),
+                    "Native enrollment must remain on the bridge instead of direct API bootstrap")
+                if (routeId in setOf("different", "bad-name", "unlisted")) {
+                    assertFalse(row.getValue("queryAuth").jsonPrimitive.boolean)
+                    assertFalse(row.getValue("bodyAuth").jsonPrimitive.boolean)
+                    assertFalse(row.getValue("authorization").jsonPrimitive.boolean)
+                }
+            }
             val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(account.normalizedBaseUrl,
                 account.username, account.password, true), "connection.player")
             try {

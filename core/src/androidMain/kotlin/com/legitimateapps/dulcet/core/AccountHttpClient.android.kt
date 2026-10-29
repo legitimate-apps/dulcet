@@ -35,6 +35,24 @@ internal actual fun createAccountHttpClient(
             authenticator(Authenticator.NONE)
             proxyAuthenticator(Authenticator.NONE)
             cookieJar(CookieJar.NO_COOKIES)
+            // OkHttp otherwise retries 503 + Retry-After: 0 even with connection retries
+            // disabled, and consumes a direct 407 as an impossible proxy challenge. Shared
+            // status/retry policy owns both. The typed per-call tag keeps the original status
+            // out of headers and restores it before Ktor can observe the response.
+            addInterceptor { chain ->
+                val status = ExplicitStatusPolicy()
+                val request = chain.request().newBuilder().tag(ExplicitStatusPolicy::class.java, status).build()
+                val response = chain.proceed(request)
+                status.original?.let { response.newBuilder().code(it).build() } ?: response
+            }
+            addNetworkInterceptor { chain ->
+                val response = chain.proceed(chain.request())
+                if (response.code == 503 || response.code == 407) {
+                    val status = requireNotNull(chain.request().tag(ExplicitStatusPolicy::class.java))
+                    status.original = response.code
+                    response.newBuilder().code(599).build()
+                } else response
+            }
         }
         proxy = Proxy.NO_PROXY
         if (transport is AccountClientTransport.ForwardProxy) {
@@ -145,3 +163,5 @@ public class AndroidForwardProxyAccountConnector(
     public suspend fun connect(request: AccountConnectionRequest): AccountConnectionResult =
         connector.connect(request)
 }
+
+private class ExplicitStatusPolicy(var original: Int? = null)
