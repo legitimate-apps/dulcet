@@ -56,8 +56,8 @@ import UIKit
         if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
 #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .pad {
-            args.append("-dulcet-debug-input-receipts")
-            args.append(name.contains("CompletedTouchSwallowed") ? "-dulcet-control-remove-swallowed" : "-dulcet-control-remove-delivered")
+            args += DulcetRemoveControl.arguments(for: name)
+            print("CONTROL_CONFIGURATION method=\(name) observable=\(args.contains("-dulcet-control-publish-input")) swallowed=\(args.contains("-dulcet-control-remove-swallowed")) delivered=\(args.contains("-dulcet-control-remove-delivered"))")
         }
 #endif
         if variant == "largest" { args.append("-dulcet-debug-largest-text") }
@@ -470,6 +470,8 @@ import UIKit
         if observesTouches {
             XCTAssertTrue(inputMarkers.waitForExistence(timeout: 10))
             XCTAssertTrue(markers.label.contains("input-monitor-ready"))
+            XCTAssertTrue(DulcetRemoveInputProof.observedCompletedContact(inputMarkers.label),
+                          "The input ledger must witness a prior app interaction before a missing input can permit recovery")
         }
         let receipts = { markers.label + (observesTouches ? " " + inputMarkers.label : "") }
         let baseline = DulcetRemoveInputProof.sequence(receipts())
@@ -697,18 +699,18 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     func testIPhoneLargestTextAndVoiceOverLabels() throws { try accessibilityVariants() }
 }
 @MainActor final class DulcetDiscoverWishlistIPadUITests: DulcetDiscoverWishlistProof {
-    func test01SearchWithoutInputMonitor() throws { try launch(); try search() }
-    func test02SearchWithObservableInputReceipts() throws { try launch(); try search() }
-    func test03SearchWithReadOnlyInputReceipts() throws { try launch(); try search() }
-    func test04OfflineRemoveCompletedTouchSwallowed() throws { try offlineWishRelaunchRemoveAndScanArrival() }
-    func test05OfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
+    func testOfflineRemoveCompletedTouchSwallowed() throws { try offlineWishRelaunchRemoveAndScanArrival() }
+    func testOfflineRemoveDeliveredNoop() throws { try offlineWishRelaunchRemoveAndScanArrival() }
+    func testOfflineRemoveRecoveryOnly() throws { try offlineWishRelaunchRemoveAndScanArrival() }
+    func testSearchObservableInputReceipts() throws { try launch(); try search() }
+    func testSearchReadOnlyInputReceipts() throws { try launch(); try search() }
 }
 #endif
 
 
 // BEGIN_REMOVE_INPUT_PROOF
 /// Parses the fixture's monotonic handler and passive window-touch receipts.
-/// A normally ended touch without a handler is a product failure, never a retry.
+/// A normally ended touch without a handler remains a proof failure, never a retry.
 enum DulcetRemoveInputProof {
     private static func records(_ text: String) -> [[Substring]] {
         text.split(separator: " ").map { $0.split(separator: "|", omittingEmptySubsequences: false) }
@@ -717,6 +719,14 @@ enum DulcetRemoveInputProof {
         records(text).compactMap { fields in
             fields.count > 1 && ["NAV", "DETAIL", "INPUT"].contains(String(fields[0])) ? Int(fields[1]) : nil
         }.max() ?? 0
+    }
+    static func observedCompletedContact(_ text: String) -> Bool {
+        let events = records(text).filter { $0.count >= 4 && $0[0] == "INPUT" }
+        let began = Set(events.filter { $0[3] == "phase=began" }.map { String($0[2]) })
+        return events.contains { fields in
+            fields[3] == "phase=ended" && began.contains(String(fields[2]))
+                && fields[2].hasPrefix("touch=") && (Int(fields[2].dropFirst(6)) ?? -1) > 0
+        }
     }
     static func received(_ text: String, key: String, after baseline: Int) -> Bool {
         records(text).contains { fields in
@@ -734,3 +744,16 @@ enum DulcetRemoveInputProof {
     }
 }
 // END_REMOVE_INPUT_PROOF
+
+// BEGIN_CONTROL_CONFIGURATION
+enum DulcetRemoveControl {
+    static func arguments(for name: String) -> [String] {
+        var args = ["-dulcet-debug-input-receipts"]
+        if name.contains("ObservableInputReceipts") { args.append("-dulcet-control-publish-input") }
+        if !name.contains("RecoveryOnly") && !name.contains("Search") {
+            args.append(name.contains("CompletedTouchSwallowed") ? "-dulcet-control-remove-swallowed" : "-dulcet-control-remove-delivered")
+        }
+        return args
+    }
+}
+// END_CONTROL_CONFIGURATION

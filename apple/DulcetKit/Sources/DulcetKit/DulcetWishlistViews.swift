@@ -139,14 +139,14 @@ public struct DulcetWishlistView: View {
     private func remove(_ row: DulcetWishRow) -> some View {
         Button(DulcetStrings.discoverRemoveWish, systemImage: "bookmark.slash") {
 #if DEBUG && os(iOS)
-            if ProcessInfo.processInfo.arguments.contains("-dulcet-control-remove-swallowed"), row.wish?.target != nil {
+            if ProcessInfo.processInfo.arguments.contains("-dulcet-control-remove-swallowed"), row.wish?.state == "fulfilled" && row.wish?.libraryItem != nil {
                 DulcetUIProofMarkers.detail("wishlist.remove.control.swallowed", context: "key=\(row.key)")
                 return
             }
 #endif
             DulcetUIProofMarkers.detail("wishlist.remove", context: "key=\(row.key)")
 #if DEBUG && os(iOS)
-            if ProcessInfo.processInfo.arguments.contains("-dulcet-control-remove-delivered"), row.wish?.target != nil {
+            if ProcessInfo.processInfo.arguments.contains("-dulcet-control-remove-delivered"), row.wish?.state == "fulfilled" && row.wish?.libraryItem != nil {
                 if !controlRemovedOnce {
                     controlRemovedOnce = true
                     DulcetUIProofMarkers.detail("wishlist.remove.control.delivered-noop", context: "key=\(row.key)")
