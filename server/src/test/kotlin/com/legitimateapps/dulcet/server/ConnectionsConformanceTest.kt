@@ -239,6 +239,41 @@ class ConnectionsConformanceTest {
         val c = open(settings.copy(routes = listOf(remote))); assertEquals(rev + 1, c.connections.revision); assertEquals(lineage, c.journal.instanceId); c.close(); c.db.close()
     }
 
+    @Test fun `MP11 principal directory revision advances on role changes and persists stable output`() {
+        val root = Files.createTempDirectory("connections-principal-revision")
+        val adminRoute = ClientRoute("admin", "https://admin.example.test/music", audience = "admin")
+        val settings = config(root, listOf(home, adminRoute))
+        val file = root.resolve("data/server.db")
+        val member = com.legitimateapps.dulcet.server.auth.User("principal", "member", false)
+        val admin = member.copy(isAdmin = true)
+        fun open() = ServerContext(settings, Db.open(file))
+        fun revision(node: JsonObject) = node["revision"]!!.jsonPrimitive.long
+        val first = open()
+        val ordinary: JsonObject
+        val demoted: JsonObject
+        try {
+            ordinary = first.connections.directory(member).toJson()
+            assertEquals(listOf("home"), ordinary["routes"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content })
+            assertEquals(ordinary, first.connections.directory(member).toJson())
+            val promoted = first.connections.directory(admin).toJson()
+            assertEquals(revision(ordinary) + 1, revision(promoted))
+            assertEquals(2, promoted["routes"]!!.jsonArray.size)
+            assertEquals(2, promoted["authAliases"]!!.jsonArray.size)
+            assertEquals(promoted, first.connections.directory(admin).toJson())
+            demoted = first.connections.directory(member).toJson()
+            assertEquals(revision(promoted) + 1, revision(demoted))
+            assertEquals(1, demoted["routes"]!!.jsonArray.size)
+            assertEquals(1, demoted["authAliases"]!!.jsonArray.size)
+        } finally { first.close(); first.db.close() }
+        val restarted = open()
+        try {
+            assertEquals(demoted, restarted.connections.directory(member).toJson())
+            val other = restarted.connections.directory(member.copy(id = "other-principal")).toJson()
+            assertEquals(restarted.connections.revision, revision(other), "Another principal has an independent revision scope")
+            assertEquals(demoted, restarted.connections.directory(member).toJson())
+        } finally { restarted.close(); restarted.db.close() }
+    }
+
     @Test fun `MP01 invalid plaintext and ambiguous routes fail at configuration`() {
         for (url in listOf("http://home.example.test/music", "https://u:p@home.example.test/music", "https://home.example.test/music/../other", "https://home.example.test/music%2fother", "https://home.example.test/music?token=x")) {
             assertFailsWith<IllegalArgumentException> { ClientRoute("bad", url) }

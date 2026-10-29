@@ -37,7 +37,10 @@ installation or infer continuity from equal usernames. A client binary predating
 still use its old HTTP address; upgrading a client cannot control an older binary.
 
 The directory revision is stored in the server database and increases transactionally when the
-configured directory changes. Restarting with identical settings keeps the revision. All routes
+configured directory changes. Each principal also has a durable effective-directory fingerprint and revision. Changing that
+principal's role so it gains or loses published addresses advances its revision without requiring a
+server restart; repeated identical responses retain it. Restarting with identical settings and
+publication keeps the revision. All routes
 share the same database, users, lineage, grants, refresh rotation, receipts and revocations. Do not
 point separate server databases at the addresses and expect them to become one server.
 

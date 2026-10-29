@@ -86,7 +86,7 @@ class Connections(private val ctx: ServerContext) {
             next
         }
         // Reserve room for the response envelope and authenticated principal at startup.
-        val maximum = Envelope.root("ok").apply { put(directory(User("00000000-0000-0000-0000-000000000000", "principal", true))) }
+        val maximum = Envelope.root("ok").apply { put(directoryPayload(User("00000000-0000-0000-0000-000000000000", "principal", true), revision)) }
         require(Envelope.render(maximum, Format.JSON, null).text.toByteArray().size <= 60 * 1024) { "Configured directory exceeds response limit" }
     }
     /** Runs before REST/OAuth/API authentication, and never trusts forwarded authority. Proxies preserve Host and prefix. */
@@ -133,8 +133,27 @@ class Connections(private val ctx: ServerContext) {
         com.legitimateapps.dulcet.server.v1.j("standard" to "dulcet", "apis" to emptyList<String>(),
             "server" to com.legitimateapps.dulcet.server.v1.j("name" to "Dulcet Server", "version" to SERVER_VERSION, "instanceId" to ctx.journal.instanceId)) else null
 
-    fun directory(user: User): Node = Node("dulcetConnections").apply {
-        this["version"] = 1; this["revision"] = revision; this["instanceId"] = ctx.journal.instanceId
+    /** A role change can alter one principal's publication without changing server configuration.
+     * Persist the effective payload fingerprint and revision together before replying. */
+    fun directory(user: User): Node {
+        val payload = directoryPayload(user, 0)
+        val fingerprint = hash(payload.toJson().toString())
+        val principal = hash(user.id)
+        val effectiveRevision = ctx.db.write {
+            val fingerprintKey = "routes_principal_fingerprint:$principal"
+            val revisionKey = "routes_principal_revision:$principal"
+            val previousFingerprint = string("SELECT value FROM meta WHERE key=?", fingerprintKey)
+            val previousRevision = string("SELECT value FROM meta WHERE key=?", revisionKey)?.toLong() ?: 0
+            val next = maxOf(revision, if (previousFingerprint == fingerprint) previousRevision else Math.addExact(previousRevision, 1))
+            execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", fingerprintKey, fingerprint)
+            execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", revisionKey, next.toString())
+            next
+        }
+        payload["revision"] = effectiveRevision
+        return payload
+    }
+    private fun directoryPayload(user: User, effectiveRevision: Long): Node = Node("dulcetConnections").apply {
+        this["version"] = 1; this["revision"] = effectiveRevision; this["instanceId"] = ctx.journal.instanceId
         child("principal") { this["id"] = user.id; this["username"] = user.name }
         emptyList("routes"); emptyList("authAliases")
         routes.filter { it.visible(user) }.forEach { route ->
