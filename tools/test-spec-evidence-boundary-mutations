@@ -29,6 +29,8 @@ def materialize(root: Path) -> None:
         # The macOS account.connect promotion target must resolve in the copy too.
         ".github/workflows/signed-mac-account-connect.yml",
         "apple/DulcetSignedMacTests/DulcetSignedMacAccountConnectTests.swift",
+        # Shelf promotion targets live in the shared phone/tablet UI test declarations.
+        "apple/DulcetDiscoverUITestSupport/DulcetDiscoverWishlistUITests.swift",
     ):
         source = REPOSITORY / relative
         target = root / relative
