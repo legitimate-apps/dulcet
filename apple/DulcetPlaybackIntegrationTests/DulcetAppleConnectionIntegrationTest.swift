@@ -111,6 +111,9 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
             throw error
         }
         _ = await execute(engine, .release(commandID: .init("connections-release")))
+        let afterPlayer = try await fixture.state()
+        let playerStreamCount = afterPlayer.endpointCounts["home"]?["stream"] ?? 0
+        XCTAssertGreaterThan(playerStreamCount, 0, "The actual AVPlayer must issue HTTPS media requests")
 
         // The real URLSession downloader and Darwin artwork transport still receive the frozen
         // HTTP ownership account; the shared request factory is the only place that substitutes HTTPS.
@@ -130,8 +133,10 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         XCTAssertGreaterThan(artwork?.count ?? 0, 0)
         let successful = try await fixture.state()
         XCTAssertEqual(successful.counts["legacy", default: 0], 0)
-        XCTAssertGreaterThan(successful.endpointCounts["home"]?["stream"] ?? 0, 0)
-        XCTAssertGreaterThan(successful.endpointCounts["home"]?["download"] ?? 0, 0)
+        // Original-file URLSession downloads use stream?format=raw. Require a new HTTPS
+        // request after the released player's boundary, independently of its positive count.
+        XCTAssertGreaterThan(successful.endpointCounts["home"]?["stream"] ?? 0, playerStreamCount,
+            "The completed URLSession download must add its own HTTPS media request")
         XCTAssertGreaterThan(successful.endpointCounts["home"]?["getCoverArt"] ?? 0, 0)
 
         // All admitted HTTPS routes can fail while HTTP remains reachable. Neither a fresh media
@@ -159,7 +164,7 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         XCTAssertEqual(try digest(URL(fileURLWithPath: oldFile.filePath)), oldHash)
         XCTAssertEqual(try digest(URL(fileURLWithPath: newFile.filePath)), fixture.tracks[2].sourceSha256)
         _ = try await fixture.control("outage", method: "POST", query: ["routeId": "allHttps", "state": "off"])
-        print("DULCET MP-10 APPLE PASS paths=AVPlayer-resource-loader,URLSession-download,artwork ownership=http-anchor transport=https http-after-adoption=0 completed-files=preserved")
+        print("DULCET MP-10 APPLE COMPLETED paths=AVPlayer-resource-loader,URLSession-download,artwork assertions=xcresult")
     }
 
     private func enroll(_ client: AppleConnectionsClient, fixture: ConnectionProofFixture,
