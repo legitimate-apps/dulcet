@@ -53,6 +53,9 @@ import UIKit
         if !prepared { try prepare(); prepared = true }
         var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad { args.append("-dulcet-debug-input-receipts") }
+#endif
         if variant == "largest" { args.append("-dulcet-debug-largest-text") }
         if other { args += ["-dulcet-debug-add-account"] }
         if connect { args += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", try server ?? required("SERVER_URL"), "-dulcet-debug-account-username", try required(other ? "OTHER_USERNAME" : "USERNAME"), "-dulcet-debug-account-password", try required(other ? "OTHER_PASSWORD" : "PASSWORD")] }
@@ -206,23 +209,75 @@ import UIKit
         field.typeText("\n")
 #endif
     }
-    func reveal(_ element: XCUIElement) {
-        if element.waitForExistence(timeout: 2) && element.isHittable { return }
-        for direction in [true, false] {
-            for _ in 0..<10 {
-                if element.exists && element.isHittable { return }
-#if os(macOS)
-                app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: direction ? -500 : 500)
-#else
-                // SwiftUI List is a CollectionView; metadata pages use a ScrollView.
-                // Exclude the split-view sidebar so scrolling stays in the presented content.
-                let scroll = app.scrollViews.firstMatch
-                let body = scroll.exists ? scroll : app.collectionViews.matching(NSPredicate(format: "label != %@", "Sidebar")).firstMatch
-                guard body.exists else { return }
-                if direction { body.swipeUp() } else { body.swipeDown() }
-#endif
-            }
+    private func descendants(_ root: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+        var nodes: [XCUIElementSnapshot] = []
+        var pending = [root]
+        while let node = pending.popLast() {
+            nodes.append(node)
+            pending.append(contentsOf: node.children)
         }
+        return nodes
+    }
+    private func presented(_ node: XCUIElementSnapshot, in root: XCUIElementSnapshot) -> Bool {
+        let frame = node.frame
+        return !frame.isEmpty && frame.origin.x.isFinite && frame.origin.y.isFinite
+            && frame.width.isFinite && frame.height.isFinite
+            && root.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+    }
+    func reveal(_ element: XCUIElement) {
+        let started = ProcessInfo.processInfo.systemUptime
+        var scrolls = 0
+        var searchPage = false
+        repeat {
+            if searchPage {
+                if let root = try? app.snapshot() {
+                    scrollContent(up: scrolls % 20 < 10, nodes: descendants(root))
+                    scrolls += 1
+                }
+                searchPage = false
+            } else if let target = try? element.snapshot() {
+                reveal(matching: { node, _ in
+                    node.elementType == target.elementType && node.identifier == target.identifier
+                        && (target.identifier.isEmpty ? node.label == target.label : true) && node.isEnabled
+                }, description: "Control " + target.identifier, started: started)
+                return
+            } else {
+                searchPage = ProcessInfo.processInfo.systemUptime - started >= 5
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while ProcessInfo.processInfo.systemUptime - started < 180
+        XCTFail("Control must become reachable; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s")
+    }
+    private func scrollContent(up: Bool, nodes: [XCUIElementSnapshot]) {
+#if os(macOS)
+        app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: up ? -500 : 500)
+#else
+        let hasScroll = nodes.contains { $0.elementType == .scrollView }
+        let hasList = nodes.contains { $0.elementType == .collectionView && $0.label != "Sidebar" }
+        let body = hasScroll ? app.scrollViews.firstMatch : app.collectionViews.matching(NSPredicate(format: "label != %@", "Sidebar")).firstMatch
+        if hasScroll || hasList {
+            if up { body.swipeUp() } else { body.swipeDown() }
+        }
+#endif
+    }
+    private func reveal(matching match: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool, description: String,
+                        ready: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool = { _, _ in true },
+                        started: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        var scrolls = 0
+        repeat {
+            // Inspect one immutable tree so presence, row contents and geometry agree.
+            if let root = try? app.snapshot() {
+                let nodes = descendants(root)
+                if nodes.contains(where: { match($0, root) && presented($0, in: root) && ready($0, root) }) { return }
+                // Allow publication before searching beyond the currently materialized page.
+                if ProcessInfo.processInfo.systemUptime - started >= 5 {
+                    scrollContent(up: scrolls % 20 < 10, nodes: nodes)
+                    scrolls += 1
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while ProcessInfo.processInfo.systemUptime - started < 180
+        XCTFail("\(description) must become reachable; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s")
     }
     func item(_ kind: String, _ number: Int) -> XCUIElement {
         let title: String
@@ -232,16 +287,35 @@ import UIKit
         default: title = String(format: "Fixture Song %02d", number)
         }
         let result = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "discover.item.", title)).firstMatch
-        reveal(result)
+        reveal(matching: { node, _ in node.elementType == .button && node.identifier.hasPrefix("discover.item.")
+            && node.label.hasPrefix(title) && node.isEnabled }, description: title)
         return result
     }
     func wishlist() {
-        select("library")
-        if app.buttons["wishlist.refresh"].exists { return }
-        let link = app.descendants(matching: .any)["wishlist.destination"].firstMatch
-        XCTAssertTrue(link.waitForExistence(timeout: 15), "Missing Library Wishlist destination: " + app.debugDescription)
-        activate(link)
-        XCTAssertTrue(app.buttons["wishlist.refresh"].waitForExistence(timeout: 15), "Wishlist activation must present content: " + app.debugDescription)
+        let started = ProcessInfo.processInfo.systemUptime
+        var requestedLibrary = false
+        repeat {
+            if let root = try? app.snapshot() {
+                let nodes = descendants(root)
+                let sidebarSelected = nodes.contains { $0.identifier == "wishlist.destination" && $0.isSelected }
+                let libraryTabSelected = nodes.filter { $0.elementType == .tabBar }.contains { tab in
+                    descendants(tab).contains { $0.elementType == .button && $0.isSelected
+                        && ($0.identifier == "dulcet.tab.library" || $0.label == "Library") }
+                }
+                if sidebarSelected || libraryTabSelected, nodes.contains(where: {
+                    $0.identifier == "wishlist.refresh" && $0.isEnabled && presented($0, in: root)
+                }) { return }
+                // Activate Wishlist directly so a delayed Library reset cannot dismiss its content.
+                if nodes.contains(where: { $0.identifier == "wishlist.destination" && presented($0, in: root) }) {
+                    activate(app.descendants(matching: .any)["wishlist.destination"].firstMatch)
+                } else if !requestedLibrary, nodes.contains(where: { $0.elementType == .tabBar && presented($0, in: root) }) {
+                    select("library")
+                    requestedLibrary = true
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while ProcessInfo.processInfo.systemUptime - started < 180
+        XCTFail("Wishlist activation must present content; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s")
     }
     func capture(_ name: String) throws {
 #if os(macOS)
@@ -367,8 +441,63 @@ import UIKit
         // Artist and album titles can open metadata; a song title is plain text.
         // Both identify their own row without requiring that optional action.
         let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "wishlist.row.")).containing(NSPredicate(format: "label == %@", title)).firstMatch
-        reveal(row)
+        reveal(matching: { node, _ in
+            guard node.identifier.hasPrefix("wishlist.row.") else { return false }
+            let children = self.descendants(node)
+            return children.contains { $0.label == title }
+                && children.contains { $0.identifier == "wishlist.remove" && $0.elementType == .button
+                    && $0.isEnabled }
+        }, description: "Wishlist row and remove button for " + title, ready: { node, root in
+            self.descendants(node).contains { $0.identifier == "wishlist.remove" && self.presented($0, in: root) }
+        })
         return row
+    }
+    private func removeWish(_ title: String) {
+        let rowIdentifier = wishRow(title).identifier
+        let key = String(rowIdentifier.dropFirst("wishlist.row.".count))
+        let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        XCTAssertTrue(markers.waitForExistence(timeout: 10))
+#if os(iOS)
+        let observesTouches = UIDevice.current.userInterfaceIdiom == .pad
+#else
+        let observesTouches = false
+#endif
+        let inputMarkers = app.staticTexts["dulcet.debug.input-markers"].firstMatch
+        if observesTouches {
+            XCTAssertTrue(inputMarkers.waitForExistence(timeout: 10))
+            XCTAssertTrue(markers.label.contains("input-monitor-ready"))
+            XCTAssertTrue(DulcetRemoveInputProof.observedCompletedContact(inputMarkers.label),
+                          "The input ledger must witness a prior app interaction before a missing input can permit recovery")
+        }
+        let receipts = { markers.label + (observesTouches ? " " + inputMarkers.label : "") }
+        let baseline = DulcetRemoveInputProof.sequence(receipts())
+        let maximumInputs = observesTouches ? 2 : 1
+        for attempt in 1...maximumInputs {
+            let before = receipts()
+            if DulcetRemoveInputProof.received(before, key: key, after: baseline) { return }
+            let inputBaseline = DulcetRemoveInputProof.sequence(before)
+            // Re-resolve the same durable identity; a removed row must never turn a
+            // second input into a tap on the next wish in the list.
+            let button = app.descendants(matching: .any)[rowIdentifier].firstMatch.buttons["wishlist.remove"].firstMatch
+            XCTAssertTrue(button.exists && button.isEnabled)
+            print("DISCOVER_REMOVE_INPUT row=\(rowIdentifier) attempt=\(attempt)")
+            activate(button)
+            let received = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                DulcetRemoveInputProof.received(receipts(), key: key, after: baseline)
+            }, object: nil)
+            if XCTWaiter.wait(for: [received], timeout: 5) == .completed {
+                print("DISCOVER_REMOVE_RECEIVED row=\(rowIdentifier) attempt=\(attempt)")
+                return
+            }
+            let after = receipts()
+            let classification = DulcetRemoveInputProof.recovery(after, after: inputBaseline)
+            guard observesTouches, attempt < maximumInputs,
+                  let reason = classification else {
+                XCTFail("Remove was not received; attempt=\(attempt)/\(maximumInputs) input=\(classification ?? "normal-or-incomplete") receipts=\(after)")
+                return
+            }
+            print("DISCOVER_REMOVE_RESYNTHESIZE row=\(rowIdentifier) reason=\(reason)")
+        }
     }
     func offlineWishRelaunchRemoveAndScanArrival() throws {
         let title = "Fixture Song 01"
@@ -383,7 +512,7 @@ import UIKit
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
         app.terminate(); _ = try scenario("normal"); try launch(); wishlist()
         try waitForWish(title, count: 1)
-        activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
+        removeWish(title)
         try waitForWish(title, count: 0)
         // Observe A's durable identity before sending it. Foundation may automatically retry
         // the GET after the fixture drops its first receipt; that recovery must not erase the
@@ -401,7 +530,7 @@ import UIKit
         try effect("lost-add-receipt", revision: lostRevision, flag: "delivered")
         let deliveredWish = try XCTUnwrap(wishes().first { ($0["snapshot"] as? [String: Any])?["title"] as? String == title })
         _ = try scenario("offline")
-        activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
+        removeWish(title)
         XCTAssertFalse(app.staticTexts[title].exists, "Durable remove hides A before reconnect")
         let scanRevision = try scenario("scan-arrival")
         try effect("scan-arrival", revision: scanRevision, flag: "completed")
@@ -441,7 +570,7 @@ import UIKit
         _ = try json(required("CAPTURE_UPLOAD_URL"), body: ["ack": ["scenario": "old-A-after-B", "lateA": lateA, "survivingB": survivingB]])
         print("DISCOVER_ROUTE arrivalServerId=\(localId) playbackVisible=true lateAReplayed=true generationBRetained=true")
         wishlist()
-        activate(wishRow(title).buttons["wishlist.remove"].firstMatch)
+        removeWish(title)
         try waitForWish(title, count: 0)
         let retained = try XCTUnwrap(rest("getDulcetLibrary", params: ["type": "song", "size": "100"])["dulcetLibrary"] as? [String: Any])
         XCTAssertTrue((retained["song"] as? [[String: Any]])?.contains { $0["id"] as? String == localId } == true, "Removing the arrived wish must retain its exact library member without another scan")
@@ -643,3 +772,41 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     }
 }
 #endif
+
+
+// BEGIN_REMOVE_INPUT_PROOF
+/// Parses the fixture's monotonic handler and passive window-touch receipts.
+/// A normally ended touch without a handler remains a proof failure, never a retry.
+enum DulcetRemoveInputProof {
+    private static func records(_ text: String) -> [[Substring]] {
+        text.split(separator: " ").map { $0.split(separator: "|", omittingEmptySubsequences: false) }
+    }
+    static func sequence(_ text: String) -> Int {
+        records(text).compactMap { fields in
+            fields.count > 1 && ["NAV", "DETAIL", "INPUT"].contains(String(fields[0])) ? Int(fields[1]) : nil
+        }.max() ?? 0
+    }
+    static func observedCompletedContact(_ text: String) -> Bool {
+        let events = records(text).filter { $0.count >= 4 && $0[0] == "INPUT" }
+        let began = Set(events.filter { $0[3] == "phase=began" }.map { String($0[2]) })
+        return events.contains { fields in
+            fields[3] == "phase=ended" && began.contains(String(fields[2]))
+                && fields[2].hasPrefix("touch=") && (Int(fields[2].dropFirst(6)) ?? -1) > 0
+        }
+    }
+    static func received(_ text: String, key: String, after baseline: Int) -> Bool {
+        records(text).contains { fields in
+            fields.count >= 4 && fields[0] == "DETAIL" && (Int(fields[1]) ?? -1) > baseline
+                && fields[2] == "wishlist.remove" && fields.dropFirst(3).joined(separator: "|") == "key=" + key
+        }
+    }
+    static func recovery(_ text: String, after baseline: Int) -> String? {
+        let events = records(text).filter { $0.count >= 4 && $0[0] == "INPUT" && (Int($0[1]) ?? -1) > baseline }
+        if events.isEmpty { return "no-touch" }
+        guard events.allSatisfy({ $0[3] == "phase=began" || $0[3] == "phase=cancelled" }) else { return nil }
+        let began = Set(events.filter { $0[3] == "phase=began" }.map { String($0[2]) })
+        let cancelled = Set(events.filter { $0[3] == "phase=cancelled" }.map { String($0[2]) })
+        return !began.isEmpty && began == cancelled ? "cancelled-touch" : nil
+    }
+}
+// END_REMOVE_INPUT_PROOF
