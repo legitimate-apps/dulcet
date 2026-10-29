@@ -267,47 +267,76 @@ internal class ConnectionEnrollmentService(
         val anchor = request.anchor
         val ownership = ConnectionOwnershipFence.capture(database, anchor)
         val transport = ConnectionTransportFence.capture(database, anchor)
+        fun checkCurrent() {
+            ownership.checkCurrent(database, anchor)
+            transport.checkCurrent(database, anchor)
+        }
         val before = store.snapshot(anchor)
         val chosen = if (request.explicitAdd || !before.enrolled) canonicalConnectionBase(request.bootstrap.serverUrl) else null
-        // Refresh only through an already admitted nonremoved route. With none left, a person's
-        // explicit recovery can authenticate only a previously known chosen HTTPS route.
+        // Refresh only through an admitted nonremoved route. An explicit Add can recover
+        // through its previously listed chosen HTTPS bootstrap if that source is unavailable.
         val chosenAdmitted = chosen?.takeIf { target -> before.routes.any {
             it.baseUrl == target && it.enabled && !it.removed
         } }
-        val base = if (!before.enrolled) requireNotNull(chosen) else
+        var base = if (!before.enrolled) requireNotNull(chosen) else
             chosenAdmitted ?: ConnectionEnrollmentSources.verification(before) ?: chosen?.takeIf { target ->
                 before.routes.any { it.baseUrl == target }
             } ?: throw ConnectionEnrollmentFailure(DomainError.Transport.Unreachable)
         val expectedInstance = ConnectionEnrollmentStore.lineage(anchor.serverIdentity)
         if (expectedInstance.isBlank()) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
-        // In recovery this probe precedes every credential byte, including a tombstoned source.
-        if (before.enrolled) probe.verify(base, expectedInstance)?.let { throw ConnectionEnrollmentFailure(it) }
-        transport.checkCurrent(database, anchor)
-        val connected = when (val result = connect(request.bootstrap.copy(serverUrl = base, allowLocalHttp = false))) {
-            is AccountConnectionResult.Failed -> throw ConnectionEnrollmentFailure(result.error)
-            is AccountConnectionResult.Connected -> result.account
+        // Keep the whole source attempt together: public reachability alone does not prove
+        // that its authenticated connection and bounded directory can be read.
+        suspend fun loadSource(base: String): ConnectionDirectory {
+            if (before.enrolled) probe.verify(base, expectedInstance)?.let { throw ConnectionEnrollmentFailure(it) }
+            checkCurrent()
+            val connected = when (val result = connect(request.bootstrap.copy(serverUrl = base, allowLocalHttp = false))) {
+                is AccountConnectionResult.Failed -> throw ConnectionEnrollmentFailure(result.error)
+                is AccountConnectionResult.Connected -> result.account
+            }
+            if (connected.normalizedBaseUrl != base || connected.canonicalUsername != anchor.username ||
+                connected.serverIdentity != anchor.serverIdentity || 1 !in connected.capabilities.extensions["dulcetRoutes"].orEmpty()
+            ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
+            checkCurrent()
+            val response = fetch?.invoke(request.bootstrap.copy(serverUrl = base, allowLocalHttp = false)) ?: run {
+                val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(base, request.bootstrap.username,
+                    request.bootstrap.password, false), "account.connections", useEnrolledRoute = false)
+                try {
+                    client.requestRepeated("getDulcetConnections", emptyList(), formPost = true,
+                        options = AuthenticatedEndpointRequestOptions(maxBodyBytes = ConnectionDirectoryParser.MAX_BYTES, rejectRedirects = true))
+                } finally { client.close() }
+            }
+            checkCurrent()
+            LibraryEndpointResponse(response.statusCode, response.body.decodeToString(), response.redactedUrl,
+                retryAfter = response.headers.retryAfter).okPayload()
+            if (response.statusCode !in 200..299) throw ConnectionEnrollmentFailure(DomainError.Server.HttpStatus(response.statusCode))
+            val directory = ConnectionDirectoryParser.parse(response.body, expectedInstance, anchor.username)
+            if (directory.routes.none { it.baseUrl == base })
+                throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
+            // Authenticated continuity and the separate secret-free API/base check are both required.
+            probe.verify(base, expectedInstance)?.let { throw ConnectionEnrollmentFailure(it) }
+            return directory
         }
-        if (connected.normalizedBaseUrl != base || connected.canonicalUsername != anchor.username ||
-            connected.serverIdentity != anchor.serverIdentity || 1 !in connected.capabilities.extensions["dulcetRoutes"].orEmpty()
-        ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
-        transport.checkCurrent(database, anchor)
-        val response = fetch?.invoke(request.bootstrap.copy(serverUrl = base, allowLocalHttp = false)) ?: run {
-            val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(base, request.bootstrap.username,
-                request.bootstrap.password, false), "account.connections", useEnrolledRoute = false)
-            try {
-                client.requestRepeated("getDulcetConnections", emptyList(), formPost = true,
-                    options = AuthenticatedEndpointRequestOptions(maxBodyBytes = ConnectionDirectoryParser.MAX_BYTES, rejectRedirects = true))
-            } finally { client.close() }
+        val directory = try { loadSource(base) } catch (failure: Throwable) {
+            val error = when (failure) {
+                is ConnectionEnrollmentFailure -> failure.error
+                is AuthenticatedEndpointFailure -> failure.error
+                is LibraryRequestFailure -> failure.error
+                else -> null
+            }
+            val unavailable = error == DomainError.Transport.Unreachable || error == DomainError.Transport.Timeout ||
+                error is DomainError.Security.TlsUntrusted
+            val recovery = chosen?.takeIf { target ->
+                unavailable && before.enrolled && request.explicitAdd && target != base &&
+                    before.routes.any { it.baseUrl == target }
+            } ?: throw failure
+            checkCurrent()
+            base = recovery
+            // Exactly one explicit known bootstrap attempt, with its own TLS/lineage checks.
+            // Target authentication and commit stay outside this source-only recovery boundary.
+            loadSource(base)
         }
-        transport.checkCurrent(database, anchor)
-        LibraryEndpointResponse(response.statusCode, response.body.decodeToString(), response.redactedUrl,
-            retryAfter = response.headers.retryAfter).okPayload()
-        if (response.statusCode !in 200..299) throw ConnectionEnrollmentFailure(DomainError.Server.HttpStatus(response.statusCode))
-        val directory = ConnectionDirectoryParser.parse(response.body, expectedInstance, anchor.username)
         val source = directory.routes.singleOrNull { it.baseUrl == base }
             ?: throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
-        // The authenticated connector checks lineage; this separate secret-free probe also checks API/base mapping.
-        probe.verify(base, expectedInstance)?.let { throw ConnectionEnrollmentFailure(it) }
         val verified = mutableSetOf(source.id)
         directory.routes.filter { it.id != source.id }.forEach { route ->
             if (probe.verify(route.baseUrl, expectedInstance) == null) verified += route.id
@@ -317,7 +346,7 @@ internal class ConnectionEnrollmentService(
                 ?: throw ConnectionEnrollmentFailure(DomainError.Transport.Unreachable)
             // Directory authorization and TLS/lineage admission precede authentication at Add's target.
             if (target.baseUrl != base) {
-                transport.checkCurrent(database, anchor)
+                checkCurrent()
                 val confirmation = connect(request.bootstrap.copy(serverUrl = target.baseUrl, allowLocalHttp = false))
                 val account = (confirmation as? AccountConnectionResult.Connected)?.account
                     ?: throw ConnectionEnrollmentFailure((confirmation as AccountConnectionResult.Failed).error)
