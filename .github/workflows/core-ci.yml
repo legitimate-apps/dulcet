@@ -30,7 +30,10 @@ jobs:
     # (https://github.com/actions/runner-images/issues/14748). On that image the release check
     # fails before any test runs. ubuntu-24.04 is a standard hosted label, free on this public repo.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # OBSERVED 2026-10-29: run 40811257597 passed the cold core, Android and server
+    # stages in 22 minutes, then the 25-minute envelope cut off API self-tests.
+    # Leave room for that final stage's existing 480-second watchdog and cleanup.
+    timeout-minutes: 35
     # The required job downloads this job's evidence by the attempt that PRODUCED it. See there.
     outputs:
       attempt: ${{ github.run_attempt }}
