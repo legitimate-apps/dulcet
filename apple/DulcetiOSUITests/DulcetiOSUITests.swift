@@ -143,7 +143,8 @@ final class DulcetiOSUITests: XCTestCase {
         )
 
         // A full-size empty window is not evidence that the account interface rendered.
-        // Scope both semantic queries to this window, then require visible, contained frames.
+        // Scope the account section's text and server field to this window, then require visible,
+        // contained frames. The legacy title identifier now marks the native form's footer.
         let content: [(String, XCUIElement)] = [
             ("dulcet.account-connect.title",
              window.staticTexts["dulcet.account-connect.title"].firstMatch),

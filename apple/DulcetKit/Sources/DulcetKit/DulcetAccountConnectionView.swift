@@ -342,6 +342,7 @@ struct DulcetAccountConnectionView: View {
                 Section {
                     Label(account.serverName, systemImage: "server.rack")
                         .font(.headline)
+                        .accessibilityIdentifier("dulcet.account-connect.title")
                     if let user = account.canonicalUsername, !user.isEmpty {
                         LabeledContent(DulcetStrings.username, value: user)
                     }
@@ -359,7 +360,6 @@ struct DulcetAccountConnectionView: View {
                     .accessibilityLabel(DulcetStrings.connectedTo(account.serverName))
                     .accessibilityIdentifier("dulcet.account.connected")
                 }
-                .accessibilityIdentifier("dulcet.account-connect.title")
                 .accessibilityHint(store.librarySession?.serverReportsNoEpoch == true ? DulcetStrings.readerNoEpoch : String())
 #if !os(macOS)
                 // A Mac reaches these as its Settings window's own panes, never as links here.
@@ -399,9 +399,9 @@ struct DulcetAccountConnectionView: View {
                     VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                         if showsLocalHTTPConsent { Text(DulcetStrings.allowLocalHTTPHint) }
                         Text(DulcetStrings.accountShortFooter)
+                            .accessibilityIdentifier("dulcet.account-connect.title")
                     }
                 }
-                .accessibilityIdentifier("dulcet.account-connect.title")
                 if case let .failed(failure) = store.snapshot.accountConnection,
                    failure.kind != .invalidServerURL && failure.kind != .invalidCredentials {
                     Section {
