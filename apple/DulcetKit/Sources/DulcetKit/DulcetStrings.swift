@@ -199,6 +199,7 @@ enum DulcetStrings {
     static let removeConnection = text("account.connections.remove", "Remove connection")
     static let connectionHTTPSAddress = text("account.connections.httpsAddress", "HTTPS server address")
     static let upgradeConnectionHTTPS = text("account.connections.upgrade", "Upgrade connection to HTTPS")
+    static let addHTTPSConnection = text("account.connections.add_https", "Add HTTPS connection")
     static let verifyConnections = text("account.connections.verify", "Verify connections")
     static let connectionsOfflineDownloads = text("account.connections.offline", "Offline · Your downloads are available")
     static let connectionsPrivacy = text("account.connections.privacy", "Connections use HTTPS. A remote connection may terminate encryption at your server administrator's proxy, which can read authentication and content.")

@@ -3185,6 +3185,12 @@ public struct DulcetConnectionsState: Sendable {
     public let enrolled: Bool
     public let canUpgrade: Bool
     public let error: String?
+    /// Verification uses admitted HTTPS transport, separately from the immutable saved address.
+    public var verificationAddress: String? {
+        guard enrolled else { return ownership.anchorURL.lowercased().hasPrefix("https://") ? ownership.anchorURL : nil }
+        let admitted = routes.filter { $0.enabled && !$0.removed && $0.address.lowercased().hasPrefix("https://") }
+        return (admitted.first { $0.selected } ?? admitted.first)?.address
+    }
     public init(ownership: DulcetConnectionOwnership, routes: [DulcetConnectionRow], enrolled: Bool, canUpgrade: Bool, error: String? = nil) {
         self.ownership = ownership
         self.routes = routes; self.enrolled = enrolled; self.canUpgrade = canUpgrade; self.error = error

@@ -403,6 +403,12 @@
       "kind": "ownership",
       "type": "DownloadMediaBinding",
       "source": "anchor.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ConnectionEnrollment.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "anchor.normalizedBaseUrl"
     }
   ]
 }

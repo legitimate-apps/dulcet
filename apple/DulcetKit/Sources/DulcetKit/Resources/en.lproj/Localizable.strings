@@ -540,6 +540,7 @@
 "account.connections.remove" = "Remove connection";
 "account.connections.httpsAddress" = "HTTPS server address";
 "account.connections.upgrade" = "Upgrade connection to HTTPS";
+"account.connections.add_https" = "Add HTTPS connection";
 "account.connections.verify" = "Verify connections";
 "account.connections.offline" = "Offline · Your downloads are available";
 "account.connections.privacy" = "Connections use HTTPS. A remote connection may terminate encryption at your server administrator's proxy, which can read authentication and content.";

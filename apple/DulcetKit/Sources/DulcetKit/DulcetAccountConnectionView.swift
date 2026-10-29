@@ -192,14 +192,13 @@ struct DulcetAccountConnectionView: View {
                         }
                     }
                     if let error = connectionState.error { Text(error) }
-                    if connectionState.canUpgrade && !connectionState.enrolled {
-                        TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
-                            .dulcetCredentialInput(.serverAddress)
-                            .accessibilityIdentifier("dulcet.connections.https-address")
-                        Button(DulcetStrings.upgradeConnectionHTTPS) { enrollConnections(manager, url: connectionHTTPSAddress) }
-                            .disabled(enrollingConnections || !connectionHTTPSAddress.lowercased().hasPrefix("https://"))
-                            .accessibilityIdentifier("dulcet.connections.upgrade")
-                    } else {
+                    TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
+                        .dulcetCredentialInput(.serverAddress)
+                        .accessibilityIdentifier("dulcet.connections.https-address")
+                    Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
+                        .disabled(enrollingConnections || !connectionHTTPSAddress.lowercased().hasPrefix("https://"))
+                        .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
+                    if connectionState.verificationAddress != nil {
                         Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
                             .disabled(enrollingConnections)
                             .accessibilityIdentifier("dulcet.connections.verify")

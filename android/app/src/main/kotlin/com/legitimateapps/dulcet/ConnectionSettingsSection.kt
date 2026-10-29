@@ -32,14 +32,13 @@ internal fun ConnectionSettingsSection() {
             TextButton(onClick = { settings.remove(owner, route.id) }, enabled = !state.busy,
                 modifier = Modifier.testTag("connections.remove.${route.id}")) { Text("Remove connection") }
         }
-        if (state.canUpgrade && state.snapshot?.enrolled != true) {
-            OutlinedTextField(value = httpsAddress, onValueChange = { httpsAddress = it },
-                label = { Text("HTTPS server address") }, singleLine = true,
-                modifier = Modifier.testTag("connections.https-address"))
-            TextButton(onClick = { settings.enroll(owner, httpsAddress) },
-                enabled = !state.busy && httpsAddress.startsWith("https://"),
-                modifier = Modifier.testTag("connections.upgrade")) { Text("Upgrade connection to HTTPS") }
-        } else {
+        OutlinedTextField(value = httpsAddress, onValueChange = { httpsAddress = it },
+            label = { Text("HTTPS server address") }, singleLine = true,
+            modifier = Modifier.testTag("connections.https-address"))
+        TextButton(onClick = { settings.enroll(owner, httpsAddress) },
+            enabled = !state.busy && httpsAddress.startsWith("https://"),
+            modifier = Modifier.testTag(if (state.canUpgrade && state.snapshot?.enrolled != true) "connections.upgrade" else "connections.add")) { Text(if (state.canUpgrade && state.snapshot?.enrolled != true) "Upgrade connection to HTTPS" else "Add HTTPS connection") }
+        if (!state.canUpgrade || state.snapshot?.enrolled == true) {
             TextButton(onClick = { settings.enroll(owner) }, enabled = !state.busy,
                 modifier = Modifier.testTag("connections.verify")) { Text("Verify connections") }
         }

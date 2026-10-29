@@ -756,3 +756,19 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     that matched mount. `ConnectionsMountConformanceTest` covers both registration orders,
     nested/root bases, correct-authority controls, query credentials, limiter execution and
     identical idempotent POST replay with exactly one durable row.
+
+
+68. **Connection verification, explicit recovery and ownership initialization are different actions.**
+    A saved HTTP address remains the ownership anchor after HTTPS adoption; Verify reads the
+    authenticated directory through an admitted, nonremoved HTTPS route. With the selected route
+    removed, verification can refresh metadata but does not select an alternate automatically.
+    The Connections surfaces keep HTTPS Add/re-add available. An explicit Add authenticates an
+    admitted directory source, checks that the chosen target is listed, then performs secret-free
+    TLS/lineage admission before sending credentials there. If all routes were removed, only an
+    explicitly chosen historical HTTPS route may bootstrap recovery, with the same TLS and
+    principal checks. The transaction clears only that chosen tombstone; refresh preserves all
+    removals. Neither action changes the saved anchor, media epoch or owned rows.
+    A fresh Android credential save establishes its initial anchored nonce before automatic
+    enrollment, only when accepted identity is the namespace's sole row. It refuses existing
+    ownership instead of rotating an epoch or invoking destructive binding. First-sign-in tests
+    use the real credential store and SQLite without a preseeded epoch or media controller.

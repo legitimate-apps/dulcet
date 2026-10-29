@@ -54,10 +54,43 @@ class ConnectionSettingsTest {
         settings.close()
     }
 
+    @Test fun verifyAfterHttpAdoptionUsesAdmittedHttpsWithoutChangingTheSavedAnchor() = runBlocking {
+        val backend = Backend()
+        backend.current = backend.current.copy(serverUrl = "http://legacy.example.test/music", allowLocalHttp = true)
+        val settings = ConnectionSettings(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined), backend)
+        settings.restore()
+        val owner = backend.anchor(backend.current)
+        settings.enroll(owner)
+        val request = backend.requests.single()
+        assertEquals("https://route.example.test", request.bootstrap.serverUrl)
+        assertEquals(owner, request.anchor)
+        assertFalse(request.explicitAdd)
+        assertFalse(request.bootstrap.allowLocalHttp)
+        backend.pending.single().complete(ConnectionEnrollmentResult.Enrolled(backend.snapshot(owner)))
+        yield()
+        assertEquals("http://legacy.example.test/music", settings.state.value.snapshot?.anchor?.normalizedBaseUrl)
+        settings.close()
+    }
+
+    @Test fun explicitRecoveryCarriesPersonChosenHttpsAndAddIntentWithTheSameOwner() = runBlocking {
+        val backend = Backend()
+        val settings = ConnectionSettings(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined), backend)
+        settings.restore()
+        val owner = backend.anchor(backend.current)
+        settings.enroll(owner, "https://chosen.example.test/music")
+        assertEquals("https://chosen.example.test/music", backend.requests.single().bootstrap.serverUrl)
+        assertTrue(backend.requests.single().explicitAdd)
+        assertEquals(owner, backend.requests.single().anchor)
+        backend.pending.single().complete(ConnectionEnrollmentResult.Enrolled(backend.snapshot(owner)))
+        yield()
+        settings.close()
+    }
+
     private class Backend : ConnectionSettingsBackend {
         var current = StoredAccount("first", "First", "https://first.example.test", "listener", "fixture", false, "lineage-a")
         val second = StoredAccount("second", "Second", "https://second.example.test", "listener", "fixture", false, "lineage-b")
         val pending = mutableListOf<CompletableDeferred<ConnectionEnrollmentResult>>()
+        val requests = mutableListOf<ConnectionEnrollmentRequest>()
         val removals = mutableListOf<Pair<OwnershipAnchor, String>>()
         override fun account() = current
         override fun anchor(account: StoredAccount) = OwnershipAnchor(account.id, account.serverUrl, account.username, account.serverIdentity)
@@ -65,7 +98,7 @@ class ConnectionSettingsTest {
             listOf(ConnectionRoute("home", "https://route.example.test", "Home", "private", 0, true, false)), "home", 1, true)
         override fun restore(anchor: OwnershipAnchor) = snapshot(anchor)
         override suspend fun enroll(request: ConnectionEnrollmentRequest): ConnectionEnrollmentResult =
-            CompletableDeferred<ConnectionEnrollmentResult>().also { pending += it }.await()
+            CompletableDeferred<ConnectionEnrollmentResult>().also { requests += request; pending += it }.await()
         override fun remove(anchor: OwnershipAnchor, routeId: String): ConnectionSnapshot {
             removals += anchor to routeId
             return snapshot(anchor)
