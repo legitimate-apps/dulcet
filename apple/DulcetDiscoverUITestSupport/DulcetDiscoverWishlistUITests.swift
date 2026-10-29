@@ -321,17 +321,21 @@ import UIKit
             if let root = try? app.snapshot() {
                 let nodes = descendants(root)
                 let sidebarSelected = nodes.contains { $0.identifier == "wishlist.destination" && $0.isSelected }
-                let libraryTabSelected = nodes.filter { $0.elementType == .tabBar }.contains { tab in
-                    descendants(tab).contains { $0.elementType == .button && $0.isSelected
-                        && ($0.identifier == "dulcet.tab.library" || $0.label == "Library") }
-                }
+                // sidebarAdaptable uses toolbar buttons on iPad, outside a tabBar node.
+                let libraryTabSelected = nodes.contains { $0.elementType == .button && $0.isSelected
+                    && $0.identifier == "dulcet.tab.library" }
+                    || nodes.filter { $0.elementType == .tabBar }.contains { tab in
+                        descendants(tab).contains { $0.elementType == .button && $0.isSelected && $0.label == "Library" }
+                    }
                 if sidebarSelected || libraryTabSelected, nodes.contains(where: {
                     $0.identifier == "wishlist.refresh" && $0.isEnabled && presented($0, in: root)
                 }) { return }
                 // Activate Wishlist directly so a delayed Library reset cannot dismiss its content.
                 if nodes.contains(where: { $0.identifier == "wishlist.destination" && presented($0, in: root) }) {
                     activate(app.descendants(matching: .any)["wishlist.destination"].firstMatch)
-                } else if !requestedLibrary, nodes.contains(where: { $0.elementType == .tabBar && presented($0, in: root) }) {
+                } else if !requestedLibrary, nodes.contains(where: {
+                    ($0.identifier == "dulcet.tab.library" || $0.elementType == .tabBar) && presented($0, in: root)
+                }) {
                     select("library")
                     requestedLibrary = true
                 }
@@ -805,8 +809,16 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         wishlist()
         let sidebar = app.descendants(matching: .any)["wishlist.destination"].firstMatch
         let detail = app.buttons["wishlist.refresh"].firstMatch
-        XCTAssertTrue(sidebar.isSelected, "The sidebar must select Wishlist rather than Library")
-        XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
+        if sidebar.exists, sidebar.isSelected {
+            // Older split-view shells put Wishlist directly in the sidebar.
+            XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
+        } else {
+            // Native adaptable tabs retain Library while its Wishlist page is pushed.
+            let library = app.buttons["dulcet.tab.library"].firstMatch
+            XCTAssertTrue(library.isSelected, "Wishlist must retain the selected native Library destination")
+            XCTAssertTrue(app.navigationBars["Wishlist"].firstMatch.exists,
+                          "The Library stack must present the Wishlist page")
+        }
         XCTAssertTrue(detail.isHittable, "The regular Wishlist must keep Refresh reachable")
         let row = wishRow("Fixture Album 00")
         XCTAssertTrue(row.staticTexts["Waiting to sync"].exists)
@@ -815,7 +827,9 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         activate(row.buttons["wishlist.metadata"].firstMatch)
         let album = app.staticTexts["discover.album.title"].firstMatch
         XCTAssertTrue(album.waitForExistence(timeout: 30))
-        XCTAssertTrue(sidebar.isSelected, "A Wishlist metadata page keeps its sidebar destination selected")
+        let library = app.buttons["dulcet.tab.library"].firstMatch
+        XCTAssertTrue(sidebar.exists && sidebar.isSelected || library.exists && library.isSelected,
+                      "A Wishlist metadata page keeps its native destination selected")
         let window = app.windows.firstMatch
         let original = window.frame
         // Drag the native iPad window corner; a width assertion prevents rotation alone
