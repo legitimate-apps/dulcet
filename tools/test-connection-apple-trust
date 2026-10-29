@@ -37,8 +37,7 @@ class TrustControls(unittest.TestCase):
     def expected(self):
         return [
             ['sudo', '-n', 'security', 'add-trusted-cert', '-d', '-r', 'trustRoot', '-k', proofs.SYSTEM_KEYCHAIN, str(self.ca)],
-            ['sudo', '-n', 'security', 'remove-trusted-cert', '-d', str(self.ca)],
-            ['sudo', '-n', 'security', 'delete-certificate', '-Z', hashlib.sha1(DER).hexdigest().upper(), proofs.SYSTEM_KEYCHAIN],
+            ['sudo', '-n', 'security', 'delete-certificate', '-Z', hashlib.sha1(DER).hexdigest().upper(), '-t', proofs.SYSTEM_KEYCHAIN],
         ]
 
     def assert_exact_commands(self):
@@ -65,15 +64,15 @@ class TrustControls(unittest.TestCase):
 
     def test_partial_setup_failure_still_removes_trust_and_exact_certificate(self):
         failure = subprocess.CalledProcessError(1, 'mock add-trusted-cert')
-        self.run.side_effect = [failure, None, None]
+        self.run.side_effect = [failure, None]
         with self.assertRaises(subprocess.CalledProcessError) as raised:
             with proofs.fixture_trust(self.ca):
                 self.fail('Failed setup must not execute the proof')
         self.assertIs(raised.exception, failure)
         self.assert_exact_commands()
 
-    def test_setup_timeout_is_bounded_and_still_attempts_both_cleanup_steps(self):
-        self.run.side_effect = [subprocess.TimeoutExpired('mock security', 30), None, None]
+    def test_setup_timeout_is_bounded_and_still_attempts_combined_cleanup(self):
+        self.run.side_effect = [subprocess.TimeoutExpired('mock security', 30), None]
         with self.assertRaises(subprocess.TimeoutExpired):
             with proofs.fixture_trust(self.ca):
                 self.fail('Timed out setup must not execute the proof')
@@ -101,8 +100,8 @@ class TrustControls(unittest.TestCase):
         self.assertEqual(raised.exception.code, 143)
         self.assert_exact_commands()
 
-    def test_cleanup_failure_does_not_skip_exact_certificate_deletion(self):
-        self.run.side_effect = [None, subprocess.TimeoutExpired('mock remove-trusted-cert', 30), None]
+    def test_cleanup_timeout_fails_the_proof_without_broadening_deletion(self):
+        self.run.side_effect = [None, subprocess.TimeoutExpired('mock delete-certificate', 30)]
         with self.assertRaisesRegex(RuntimeError, 'Fixture trust cleanup failed'):
             with proofs.fixture_trust(self.ca):
                 pass

@@ -86,12 +86,12 @@ def fixture_trust(ca, simulator=None):
         if simulator:
             cleanup.append(lambda: subprocess.run(['xcrun', 'simctl', 'keychain', simulator, 'reset'],
                                                  check=True, timeout=SECURITY_TIMEOUT_SECONDS))
-        # Attempt both even if setup failed halfway or an earlier cleanup command failed.
-        # Remove admin trust first, then only this certificate from the explicit system keychain.
-        cleanup.extend([
-            lambda: security_command('remove-trusted-cert', '-d', ca),
-            lambda: security_command('delete-certificate', '-Z', fingerprint, SYSTEM_KEYCHAIN),
-        ])
+        # Apple SecurityTool keychain_delete.c removes both user AND admin trust with -t
+        # when effective uid is root, then deletes the uniquely matched certificate only
+        # if trust removal succeeded. Use the keychain reference, avoiding the separate
+        # file-based remove-trusted-cert command that stalled on the hosted runner.
+        # https://github.com/apple-oss-distributions/Security/blob/main/SecurityTool/macOS/keychain_delete.c
+        cleanup.append(lambda: security_command('delete-certificate', '-Z', fingerprint, '-t', SYSTEM_KEYCHAIN))
         for action in cleanup:
             try:
                 action()
