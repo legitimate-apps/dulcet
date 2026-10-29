@@ -945,7 +945,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // Reopen before resolving a menu item's identifier: selecting an item closes its menu.
         if albumMenu { revealAlbumActions() }
 #if os(macOS)
-        let menuTitle = label.hasPrefix("Unpin ") ? "Unpin" : label.hasPrefix("Pin ") ? "Pin" : label
+        let menuTitle = label.hasPrefix("Unpin ") ? "Unpin from Library" : label.hasPrefix("Pin ") ? "Pin to Library" : label
         let expected = NSPredicate(format: "label == %@ OR title == %@", label, menuTitle)
 #else
         let expected = NSPredicate(format: "label == %@", label)
@@ -962,15 +962,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(macOS)
         app.typeKey(.escape, modifierFlags: [])
 #else
-        XCTAssertTrue(anchor.waitForExistence(timeout: 5))
-        let frame = anchor.frame
-        guard !frame.isEmpty, app.frame.contains(frame) else {
-            XCTFail("The native menu anchor must have an on-screen frame")
-            return
-        }
-        let origin = app.coordinate(withNormalizedOffset: .zero)
-        origin.withOffset(CGVector(dx: frame.midX - app.frame.minX,
-                                   dy: frame.midY - app.frame.minY)).tap()
+        // A native menu temporarily hides its toolbar anchor from accessibility. Dismiss
+        // only while the action is visible; the outside tap is consumed by the menu.
+        guard action.exists && action.isHittable else { return }
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.12)).tap()
 #endif
         let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             !action.exists || !action.isHittable

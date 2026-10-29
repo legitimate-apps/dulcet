@@ -239,6 +239,7 @@ enum DulcetStrings {
     }
     static let playNext = text("action.playNext", "Play Next")
     static let addToQueue = text("action.addToQueue", "Add to Queue")
+    static let goToLibrary = text("action.goToLibrary", "Go to Library")
     static let goToAlbum = text("action.goToAlbum", "Go to Album")
     static let goToArtist = text("action.goToArtist", "Go to Artist")
     static let upNext = text("player.upNext", "Up Next")

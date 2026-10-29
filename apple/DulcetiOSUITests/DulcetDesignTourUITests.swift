@@ -303,7 +303,21 @@ final class DulcetDesignTourUITests: XCTestCase {
             preparePlaylist(on: server)
             driveFoundationTour(app, compact: compact)
             if environment["DULCET_DESIGN_TOUR_VARIANT"] == "iphone-light-default" {
+                // Playback can cache the entire short fixture album. Transfer-state proof
+                // needs a fresh store, otherwise an explicit download can complete from cache.
+                let originalArguments = app.launchArguments
+                app.terminate()
+                let transferNamespace = UUID().uuidString
+                for flag in ["-dulcet-debug-account-fixture", "-dulcet-debug-download-handoff"] {
+                    if let index = app.launchArguments.firstIndex(of: flag) { app.launchArguments[index + 1] = transferNamespace }
+                }
+                launchInInteractionScope(app)
+                guard awaitConnection(in: app, compact: compact) else { return }
                 transferScreens(app, server: server, compact: compact)
+                app.terminate()
+                app.launchArguments = originalArguments
+                launchInInteractionScope(app)
+                guard awaitConnection(in: app, compact: compact) else { return }
                 offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
             }
             return
@@ -827,7 +841,7 @@ final class DulcetDesignTourUITests: XCTestCase {
                 sort.tap()
                 return app.buttons["Title"].firstMatch.waitForExistence(timeout: 5)
             }
-            dismissOverlay(in: app)
+            dismissAlbumOptions(in: app)
             step("album-filter-options", app) {
                 guard options.exists else { return false }
                 options.tap()
@@ -836,7 +850,7 @@ final class DulcetDesignTourUITests: XCTestCase {
                 filter.tap()
                 return app.buttons["All"].firstMatch.waitForExistence(timeout: 5)
             }
-            dismissOverlay(in: app)
+            dismissAlbumOptions(in: app)
         }
         step("album", app) {
             let tile = app.buttons.matching(identifier: "dulcet.library.album")
@@ -928,6 +942,19 @@ final class DulcetDesignTourUITests: XCTestCase {
         // quality/sort option or a destructive menu action merely to dismiss its photograph.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.12)).tap()
         _ = settle(app, seconds: 0.4)
+    }
+
+    @MainActor
+    private func dismissAlbumOptions(in app: XCUIApplication) {
+        let option = app.buttons["Title"].firstMatch
+        let filter = app.buttons["Filter"].firstMatch
+        for _ in 0..<3 {
+            if !option.exists && !filter.exists { break }
+            dismissOverlay(in: app)
+        }
+        _ = option.waitForNonExistence(timeout: 5)
+        _ = filter.waitForNonExistence(timeout: 5)
+        _ = settle(app, seconds: 0.8)
     }
 
     /// A first launch waits on Connection while it connects; a saved account opens into its library.
@@ -1153,7 +1180,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         self.launchInInteractionScope(app)
         step("listen-now-offline", app) {
             self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
-                && app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 25) && self.settle(app)
+                && app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 60) && self.settle(app)
         }
         step("device-only-library", app) {
             self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact)

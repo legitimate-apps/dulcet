@@ -216,7 +216,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     /// horizontal catalog section bar. Every image witnesses its destination before capture.
     @MainActor
     private func foundationTour(_ app: XCUIApplication, server: Server) {
-        app.launchArguments = ["-dulcet-debug-account-fixture", UUID().uuidString,
+        let namespace = UUID().uuidString
+        app.launchArguments = ["-dulcet-debug-account-fixture", namespace,
+            "-dulcet-debug-download-handoff", namespace, "-dulcet-debug-capture-hide-diagnostics",
             "-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server.url,
             "-dulcet-debug-account-username", server.username,
             "-dulcet-debug-account-password", server.password]
@@ -1111,7 +1113,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var presses = 0
         var visited: [CGRect] = []
         var swapAxes = false
-        while !(target.exists && target.hasFocus), presses < bound {
+        while !(target.exists && isFocused(app, target)), presses < bound {
             guard let from = focusedFrame() else {
                 XCUIRemote.shared.press(.down)
                 presses += 1
@@ -1138,8 +1140,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             }
         }
         print("DULCET TV TOUR ACCOUNT FOCUS target=\(target.identifier.isEmpty ? target.label : target.identifier)"
-              + " presses=\(presses) reached=\(target.hasFocus)")
-        return target.exists && target.hasFocus
+              + " presses=\(presses) reached=\(isFocused(app, target))")
+        return target.exists && isFocused(app, target)
     }
 
     /// System menu rows take focus on their enclosing cell rather than the named child.

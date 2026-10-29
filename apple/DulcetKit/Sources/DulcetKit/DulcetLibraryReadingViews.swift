@@ -1339,6 +1339,7 @@ struct DulcetReaderShelf: View {
 
     var body: some View {
         DulcetReaderScreen(query: .homeRow(row)) { model in
+            VStack(alignment: .leading, spacing: 0) {
             if let window = model.window, window.hasContent {
                 VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                     DulcetShelfHeader(title: row.title,
@@ -1369,6 +1370,7 @@ struct DulcetReaderShelf: View {
             } else if model.window == nil {
                 ProgressView()
                     .frame(maxWidth: .infinity, minHeight: 60)
+            }
             }
         }
     }

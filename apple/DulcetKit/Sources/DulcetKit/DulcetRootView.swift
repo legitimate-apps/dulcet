@@ -1166,7 +1166,7 @@ private struct DulcetStateSurface: View {
                 } description: {
                     Text(DulcetStrings.nowPlayingUnavailableBody)
                 } actions: {
-                    Button(DulcetStrings.library) { store.navigate(to: .library) }
+                    Button(DulcetStrings.goToLibrary) { store.navigate(to: .library) }
                         .accessibilityIdentifier("dulcet.now-playing.empty.library")
                 }
                 .dulcetNavigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)

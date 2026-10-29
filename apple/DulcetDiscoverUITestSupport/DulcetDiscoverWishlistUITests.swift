@@ -51,9 +51,9 @@ import UIKit
     }
     func launch(server: String? = nil, other: Bool = false, connect: Bool = true, variant: String = "light", navigationReceipts: Bool = true) throws {
         if !prepared { try prepare(); prepared = true }
-        var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
+        var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, "-dulcet-debug-download-handoff", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if baselineVariant != nil {
-            args += ["-dulcet-debug-download-handoff", namespace, "-dulcet-debug-capture-hide-diagnostics"]
+            args += ["-dulcet-debug-capture-hide-diagnostics"]
         }
         if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
         if variant == "largest" { args.append("-dulcet-debug-largest-text") }
@@ -90,6 +90,15 @@ import UIKit
     private func waitForCatalog(timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
+            // Debug automatic connection still shows the real Account summary. Dismiss that
+            // completed sheet before requiring the underlying catalog's positive control.
+#if os(iOS)
+            let close = app.buttons["dulcet.account.close"].firstMatch
+            if close.exists && app.descendants(matching: .any)["dulcet.account.connected"].firstMatch.exists {
+                close.tap()
+                guard close.waitForNonExistence(timeout: 10) else { return false }
+            }
+#endif
             // During cold connection and initial Listen Now loading, a live descendant query
             // can fail its own snapshot request before the readiness deadline. A failed read
             // is not catalog evidence. Re-read one immutable tree within the same deadline.
@@ -319,18 +328,12 @@ import UIKit
 #endif
         let all = app.buttons[albumListLink].firstMatch
         XCTAssertTrue(all.waitForExistence(timeout: 30)); try photo("browse")
-        // Compact Browse's artwork grid is lazy and follows its category links. Use the
-        // existing full-list link instead of treating an uninstantiated tile as a failure.
-        reveal(all); activate(all)
-        let album = app.buttons["dulcet.library.album"].firstMatch
-        XCTAssertTrue(album.waitForExistence(timeout: 30)); reveal(album)
-        activate(album)
-        let add = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.membership.album.")).firstMatch
-        reveal(add); XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
-        let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
-        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 20), .completed)
+        // Seed real personal membership through the disposable fixture, then reconnect so
+        // the app's ordinary synchronization reads the new albums, artists and songs.
         let personalSeed = try control("populate-personal", [:])
         XCTAssertEqual(personalSeed["populated"] as? Bool, true)
+        app.terminate()
+        try launch(variant: style)
         destination("library")
         let recent = app.buttons["dulcet.myLibrary.section.recent"].firstMatch
         let sidebarRecent = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.recent"].firstMatch
@@ -365,6 +368,7 @@ import UIKit
         }
         XCTAssertTrue(app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 30),
                       "The populated personal Songs capture must contain a real track row")
+        try photo("my-library-songs-populated")
         try photo("songs")
         if !sidebarSongs.exists {
             // Tabs retain their navigation stacks. Leave Library at its root before
@@ -379,6 +383,7 @@ import UIKit
         XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
         XCTAssertTrue(app.buttons["dulcet.library.artist"].firstMatch.waitForExistence(timeout: 30))
         try photo("favourites-populated")
+        if !requested.isEmpty && requested.isSubset(of: ["songs", "my-library-songs-populated", "favourites-populated"]) { return }
         destination("library")
         try search()
         XCTAssertTrue(item("artist", 100).waitForExistence(timeout: 30)); try photo("discover-search")

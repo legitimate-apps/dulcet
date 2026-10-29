@@ -551,3 +551,5 @@
 "offline.clear.bodySized" = "This removes %@ of cached music. Downloaded music stays on this device.";
 
 "reader.freshness" = "Last Updated";
+
+"action.goToLibrary" = "Go to Library";

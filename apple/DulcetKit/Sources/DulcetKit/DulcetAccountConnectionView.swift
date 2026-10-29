@@ -257,41 +257,41 @@ struct DulcetAccountConnectionView: View {
     @ViewBuilder
     private var accountSurface: some View {
 #if os(tvOS)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 32) {
-                if store.snapshot.accountRemoval == .removing {
-                    accountRemovalProgress
-                } else {
-                    if case let .connected(account) = store.snapshot.accountConnection {
-                        Form {
-                            Section {
-                                Label(account.serverName, systemImage: "person.crop.circle")
-                                if let user = account.canonicalUsername { LabeledContent(DulcetStrings.username, value: user) }
-                            }
-                            Section {
-                                NavigationLink { DulcetPlaybackSettingsPage(store: store) }
-                                label: { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
-                                    .accessibilityIdentifier("dulcet.account.playback")
-                                NavigationLink { DulcetDownloadsStoragePage(store: store) }
-                                label: { Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle") }
-                                    .accessibilityIdentifier("dulcet.account.downloadsStorage")
-                            }
-                            Section { savedServers }
-                            Section {
-                                Button(DulcetStrings.signOut, role: .destructive) { showingSignOutConfirmation = true }
-                            }
-                        }
-                    } else {
+        if case let .connected(account) = store.snapshot.accountConnection, store.snapshot.accountRemoval != .removing {
+            Form {
+                Section {
+                    LabeledContent(DulcetStrings.serverAddress, value: DulcetServerAddressDisplay.text(account.normalizedServerURL))
+                    if let user = account.canonicalUsername { LabeledContent(DulcetStrings.username, value: user) }
+                }
+                Section {
+                    NavigationLink { DulcetPlaybackSettingsPage(store: store) }
+                    label: { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
+                        .accessibilityIdentifier("dulcet.account.playback")
+                    NavigationLink { DulcetDownloadsStoragePage(store: store) }
+                    label: { Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle") }
+                        .accessibilityIdentifier("dulcet.account.downloadsStorage")
+                }
+                Section { savedServers }
+                Section {
+                    Button(DulcetStrings.signOut, role: .destructive) { showingSignOutConfirmation = true }
+                }
+            }
+            .focusScope(accountFocusScope)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 32) {
+                    if store.snapshot.accountRemoval == .removing { accountRemovalProgress }
+                    else {
                         savedServers
                         tvConnectionForm
                         statusPanel
                     }
                 }
+                .padding(40)
+                .frame(maxWidth: 1600)
+                .frame(maxWidth: .infinity)
+                .focusScope(accountFocusScope)
             }
-            .padding(40)
-            .frame(maxWidth: 1600)
-            .frame(maxWidth: .infinity)
-            .focusScope(accountFocusScope)
         }
 #elseif os(macOS)
         // A Mac form submits from a default push button at its bottom trailing edge, as the

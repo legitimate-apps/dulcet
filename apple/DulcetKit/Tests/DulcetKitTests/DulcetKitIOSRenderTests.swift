@@ -17,7 +17,9 @@ func accountConnectRootLoadsForIOS() {
     controller.view.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
     controller.view.layoutIfNeeded()
 
-    #expect(store.snapshot.state == .accountConnectIdle)
+    // Account is now a sheet over Listen Now, rather than a selected content tab.
+    #expect(store.selectedDestination == .listenNow)
+    #expect(store.snapshot.state == .libraryBrowse)
     #expect(controller.view.bounds.size == CGSize(width: 393, height: 852))
     #expect(controller.view.window === window)
     #expect(window.rootViewController === controller)
