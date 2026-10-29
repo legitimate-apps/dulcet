@@ -72,10 +72,17 @@ public class ConnectionSettings internal constructor(
         mutable.value = mutable.value.copy(busy = true, error = false)
         scope.launch {
             try {
+                if (closed || operation != generation) return@launch
+                if (currentAnchor() != owner) { restore(); return@launch }
                 val snapshot = backend.restore(owner)
                 val bootstrap = httpsUrl ?: if (snapshot.enrolled) ConnectionEnrollmentSources.verification(snapshot)
                     else account.serverUrl
-                if (bootstrap == null) { mutable.value = mutable.value.copy(busy = false, error = true); return@launch }
+                if (bootstrap == null) {
+                    if (!closed && operation == generation) {
+                        if (currentAnchor() != owner) restore() else mutable.value = mutable.value.copy(busy = false, error = true)
+                    }
+                    return@launch
+                }
                 val result = backend.enroll(ConnectionEnrollmentRequest(owner,
                     AccountConnectionRequest(bootstrap, account.username, account.password, false), explicitAdd = httpsUrl != null))
                 if (closed || operation != generation) return@launch

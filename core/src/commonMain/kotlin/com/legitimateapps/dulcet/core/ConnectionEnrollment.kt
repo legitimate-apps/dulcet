@@ -159,7 +159,7 @@ internal fun initializeFreshConnectionOwnership(database: DulcetDatabase, anchor
             database.seenCacheQueries.selectBinding(anchor.accountId).executeAsOneOrNull() != null ||
             database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull() != null ||
             database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsList().isNotEmpty() ||
-            database.serverDataQueries.countRowsForServer(anchor.accountId).executeAsOne() != 1L
+            database.serverDataQueries.countRowsForServer(anchor.accountId).executeAsOne().sum != 1L
         ) return@transaction
         database.libraryDepthQueries.putEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY,
             encodeMediaBinding(DownloadMediaBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username)), 0)
@@ -266,18 +266,23 @@ internal class ConnectionEnrollmentService(
     suspend fun enroll(request: ConnectionEnrollmentRequest): ConnectionEnrollmentResult = try {
         val anchor = request.anchor
         val ownership = ConnectionOwnershipFence.capture(database, anchor)
+        val transport = ConnectionTransportFence.capture(database, anchor)
         val before = store.snapshot(anchor)
         val chosen = if (request.explicitAdd || !before.enrolled) canonicalConnectionBase(request.bootstrap.serverUrl) else null
         // Refresh only through an already admitted nonremoved route. With none left, a person's
         // explicit recovery can authenticate only a previously known chosen HTTPS route.
+        val chosenAdmitted = chosen?.takeIf { target -> before.routes.any {
+            it.baseUrl == target && it.enabled && !it.removed
+        } }
         val base = if (!before.enrolled) requireNotNull(chosen) else
-            ConnectionEnrollmentSources.verification(before) ?: chosen?.takeIf { target ->
+            chosenAdmitted ?: ConnectionEnrollmentSources.verification(before) ?: chosen?.takeIf { target ->
                 before.routes.any { it.baseUrl == target }
             } ?: throw ConnectionEnrollmentFailure(DomainError.Transport.Unreachable)
         val expectedInstance = ConnectionEnrollmentStore.lineage(anchor.serverIdentity)
         if (expectedInstance.isBlank()) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
         // In recovery this probe precedes every credential byte, including a tombstoned source.
         if (before.enrolled) probe.verify(base, expectedInstance)?.let { throw ConnectionEnrollmentFailure(it) }
+        transport.checkCurrent(database, anchor)
         val connected = when (val result = connect(request.bootstrap.copy(serverUrl = base, allowLocalHttp = false))) {
             is AccountConnectionResult.Failed -> throw ConnectionEnrollmentFailure(result.error)
             is AccountConnectionResult.Connected -> result.account
@@ -285,6 +290,7 @@ internal class ConnectionEnrollmentService(
         if (connected.normalizedBaseUrl != base || connected.canonicalUsername != anchor.username ||
             connected.serverIdentity != anchor.serverIdentity || 1 !in connected.capabilities.extensions["dulcetRoutes"].orEmpty()
         ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
+        transport.checkCurrent(database, anchor)
         val response = fetch?.invoke(request.bootstrap.copy(serverUrl = base, allowLocalHttp = false)) ?: run {
             val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(base, request.bootstrap.username,
                 request.bootstrap.password, false), "account.connections", useEnrolledRoute = false)
@@ -293,6 +299,7 @@ internal class ConnectionEnrollmentService(
                     options = AuthenticatedEndpointRequestOptions(maxBodyBytes = ConnectionDirectoryParser.MAX_BYTES, rejectRedirects = true))
             } finally { client.close() }
         }
+        transport.checkCurrent(database, anchor)
         LibraryEndpointResponse(response.statusCode, response.body.decodeToString(), response.redactedUrl,
             retryAfter = response.headers.retryAfter).okPayload()
         if (response.statusCode !in 200..299) throw ConnectionEnrollmentFailure(DomainError.Server.HttpStatus(response.statusCode))
@@ -310,6 +317,7 @@ internal class ConnectionEnrollmentService(
                 ?: throw ConnectionEnrollmentFailure(DomainError.Transport.Unreachable)
             // Directory authorization and TLS/lineage admission precede authentication at Add's target.
             if (target.baseUrl != base) {
+                transport.checkCurrent(database, anchor)
                 val confirmation = connect(request.bootstrap.copy(serverUrl = target.baseUrl, allowLocalHttp = false))
                 val account = (confirmation as? AccountConnectionResult.Connected)?.account
                     ?: throw ConnectionEnrollmentFailure((confirmation as AccountConnectionResult.Failed).error)
@@ -319,7 +327,7 @@ internal class ConnectionEnrollmentService(
             }
         }
         ConnectionEnrollmentResult.Enrolled(store.commit(anchor, directory, base, verified, nowEpochMilliseconds(), ownership,
-            explicitReAddBase = chosen.takeIf { request.explicitAdd }))
+            explicitReAddBase = chosen.takeIf { request.explicitAdd }, expectedTransport = transport))
     } catch (failure: ConnectionEnrollmentFailure) { ConnectionEnrollmentResult.Failed(failure.error) }
     catch (failure: LibraryRequestFailure) { ConnectionEnrollmentResult.Failed(failure.error) }
     catch (failure: AuthenticatedEndpointFailure) { ConnectionEnrollmentResult.Failed(failure.error) }
