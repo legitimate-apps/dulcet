@@ -754,6 +754,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil,
+        activationIdentifier: String? = nil,
         @ViewBuilder trailing: () -> Trailing
     ) {
         self.track = track
@@ -769,6 +770,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         self.queueAddition = queueAddition
         self.onActivate = onActivate
         self.onDownload = onDownload
+        self.activationIdentifier = activationIdentifier
         self.trailing = trailing()
     }
 
@@ -1154,7 +1156,8 @@ extension DulcetTrackRow where Trailing == EmptyView {
         albumArtists: [String] = [],
         queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
-        onDownload: (() -> Void)? = nil
+        onDownload: (() -> Void)? = nil,
+        activationIdentifier: String? = nil
     ) {
         self.init(
             track: track,
@@ -1170,6 +1173,7 @@ extension DulcetTrackRow where Trailing == EmptyView {
             queueAddition: queueAddition,
             onActivate: onActivate,
             onDownload: onDownload,
+            activationIdentifier: activationIdentifier,
             trailing: { EmptyView() }
         )
     }

@@ -760,7 +760,6 @@ struct DulcetReaderTrackRow: View {
                     }
                 } else {
                     row(track)
-                        .accessibilityIdentifier("dulcet.reader.track")
                         .dulcetTrackContextMenu(
                             track: withDownloadState(track),
                             onPlay: { onPlay(track) },
@@ -857,7 +856,9 @@ struct DulcetReaderTrackRow: View {
             albumArtists: albumArtists,
             queueAddition: queueAddition,
             onActivate: item.isUnavailableOffline ? nil : { onPlay(track) },
-            onDownload: downloadAction(track)
+            onDownload: downloadAction(track),
+            // Identify the play control, not the parent shared with its More menu.
+            activationIdentifier: "dulcet.reader.track"
         )
     }
 
