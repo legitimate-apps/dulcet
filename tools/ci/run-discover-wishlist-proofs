@@ -33,7 +33,7 @@ def completed_native_report(bundle, suite, selected, output):
     if suite.endswith('MacUITests') or suite=='DulcetMacDiscoverWishlistAppTest':expected+=['testMacKeyboardSearchSidebarAndContextRemove','testMacWindowClosureDropsPendingNavigation']
     elif suite.endswith('IPadUITests'):expected+=['testIPadSidebarSelectionSurvivesWishlistDetailAndResize']
     else:expected+=['testIPhoneLargestTextAndVoiceOverLabels']
-    if suite.endswith('IPadUITests'):expected=['testOfflineWishRelaunchRemoveAndScanArrival','testOfflineRemoveCompletedTouchSwallowed']
+    if suite.endswith('IPadUITests'):expected=['test01SearchWithoutInputMonitor','test02SearchWithObservableInputReceipts','test03SearchWithReadOnlyInputReceipts','test04OfflineRemoveCompletedTouchSwallowed','test05OfflineWishRelaunchRemoveAndScanArrival']
     if '/' in selected:expected=[selected.rsplit('/',1)[-1]]
     for path in bundle.rglob('StandardOutputAndStandardError*.txt'):
         transcript=path.read_text(errors='replace')

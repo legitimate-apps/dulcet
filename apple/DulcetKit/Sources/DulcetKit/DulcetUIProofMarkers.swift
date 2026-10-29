@@ -49,11 +49,16 @@ enum DulcetUIProofMarkers {
     }
 
 #if DEBUG && os(iOS)
+    private static var inputEntries: [String] = []
+    static var inputText: String { (["dulcet-input"] + inputEntries).joined(separator: " ") }
+
     static func input(_ phase: String, touch: Int, point: CGPoint) {
         guard isEnabled, inputReceiptsEnabled else { return }
         navigationSequence += 1
         let receipt = "INPUT|\(navigationSequence)|touch=\(touch)|phase=\(phase)|x=\(String(format: "%.1f", point.x))|y=\(String(format: "%.1f", point.y))"
-        record(receipt)
+        // Do not invalidate SwiftUI during an active touch. AX reads this ledger on demand.
+        inputEntries.append(receipt)
+        if ProcessInfo.processInfo.arguments.contains("-dulcet-control-publish-input") { record(receipt) }
         logger.notice("\(receipt, privacy: .public)")
     }
 #endif
@@ -91,15 +96,15 @@ extension View {
                     // Read-only evidence: it must never take a tap aimed at what is under it.
                     .allowsHitTesting(false)
                     .accessibilityIdentifier(DulcetUIProofMarkers.accessibilityIdentifier)
-#if os(iOS)
-                    .background {
-                        if DulcetUIProofMarkers.inputReceiptsEnabled {
-                            DulcetUIProofInputMonitor().frame(width: 0, height: 0)
-                        }
-                    }
-#endif
             }
         }
+#if os(iOS)
+        .overlay(alignment: .bottomTrailing) {
+            if DulcetUIProofMarkers.isEnabled && DulcetUIProofMarkers.inputReceiptsEnabled {
+                DulcetUIProofInputMonitor().frame(width: 1, height: 1).allowsHitTesting(false)
+            }
+        }
+#endif
 #else
         self
 #endif
@@ -152,6 +157,11 @@ extension UIWindow {
 }
 private struct DulcetUIProofInputMonitor: UIViewRepresentable {
     final class MonitorView: UIView {
+        // A computed AX label witnesses input without publishing touch-down into SwiftUI.
+        override var accessibilityLabel: String? {
+            get { DulcetUIProofMarkers.inputText }
+            set { }
+        }
         override func didMoveToWindow() {
             super.didMoveToWindow()
             if let window { DulcetUIProofInputWindows.start(in: window) }
@@ -160,7 +170,9 @@ private struct DulcetUIProofInputMonitor: UIViewRepresentable {
     func makeUIView(context: Context) -> MonitorView {
         let view = MonitorView(frame: .zero)
         view.isUserInteractionEnabled = false
-        view.isAccessibilityElement = false
+        view.isAccessibilityElement = true
+        view.accessibilityTraits = .staticText
+        view.accessibilityIdentifier = "dulcet.debug.input-markers"
         return view
     }
     func updateUIView(_ uiView: MonitorView, context: Context) {

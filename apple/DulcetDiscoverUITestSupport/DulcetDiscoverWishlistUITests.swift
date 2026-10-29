@@ -461,16 +461,21 @@ import UIKit
         let key = String(rowIdentifier.dropFirst("wishlist.row.".count))
         let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
         XCTAssertTrue(markers.waitForExistence(timeout: 10))
-        let baseline = DulcetRemoveInputProof.sequence(markers.label)
 #if os(iOS)
         let observesTouches = UIDevice.current.userInterfaceIdiom == .pad
 #else
         let observesTouches = false
 #endif
-        if observesTouches { XCTAssertTrue(markers.label.contains("input-monitor-ready")) }
+        let inputMarkers = app.staticTexts["dulcet.debug.input-markers"].firstMatch
+        if observesTouches {
+            XCTAssertTrue(inputMarkers.waitForExistence(timeout: 10))
+            XCTAssertTrue(markers.label.contains("input-monitor-ready"))
+        }
+        let receipts = { markers.label + (observesTouches ? " " + inputMarkers.label : "") }
+        let baseline = DulcetRemoveInputProof.sequence(receipts())
         let maximumInputs = observesTouches ? 2 : 1
         for attempt in 1...maximumInputs {
-            let before = markers.label
+            let before = receipts()
             if DulcetRemoveInputProof.received(before, key: key, after: baseline) { return }
             let inputBaseline = DulcetRemoveInputProof.sequence(before)
             // Re-resolve the same durable identity; a removed row must never turn a
@@ -483,13 +488,13 @@ import UIKit
                 print("CONTROL_REMOVE_OMITTED_FIRST_INPUT row=\(rowIdentifier)")
             } else { activate(button) }
             let received = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                DulcetRemoveInputProof.received(markers.label, key: key, after: baseline)
+                DulcetRemoveInputProof.received(receipts(), key: key, after: baseline)
             }, object: nil)
             if XCTWaiter.wait(for: [received], timeout: 5) == .completed {
                 print("DISCOVER_REMOVE_RECEIVED row=\(rowIdentifier) attempt=\(attempt)")
                 return
             }
-            let after = markers.label
+            let after = receipts()
             let classification = DulcetRemoveInputProof.recovery(after, after: inputBaseline)
             guard observesTouches, attempt < maximumInputs,
                   let reason = classification else {
@@ -692,8 +697,11 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     func testIPhoneLargestTextAndVoiceOverLabels() throws { try accessibilityVariants() }
 }
 @MainActor final class DulcetDiscoverWishlistIPadUITests: DulcetDiscoverWishlistProof {
-    func testOfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
-    func testOfflineRemoveCompletedTouchSwallowed() throws { try offlineWishRelaunchRemoveAndScanArrival() }
+    func test01SearchWithoutInputMonitor() throws { try launch(); try search() }
+    func test02SearchWithObservableInputReceipts() throws { try launch(); try search() }
+    func test03SearchWithReadOnlyInputReceipts() throws { try launch(); try search() }
+    func test04OfflineRemoveCompletedTouchSwallowed() throws { try offlineWishRelaunchRemoveAndScanArrival() }
+    func test05OfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
 }
 #endif
 
