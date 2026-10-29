@@ -84,6 +84,8 @@ def materialize(root: Path) -> None:
         # My Library's platform aliases cite methods from its shared UI suite. Include the
         # declarations so the synthetic baseline remains valid when a platform is promoted.
         "apple/DulcetMyLibraryUITestSupport",
+        # Discover's phone/tablet classes and promotion targets also share their declarations.
+        "apple/DulcetDiscoverUITestSupport",
         # library.sync/macos and the search cells cite the macOS app-host proofs, and the search
         # cells also cite the tvOS UI proof. The gate verifies every cited test NAME exists in
         # the tree, so without these the fixture rejects a correct FEATURES.yml for citing tests
@@ -1408,21 +1410,31 @@ DISCOVER_EXECUTION_CASES = (
         "testEverywhereQueryPagesAndHeldRouting",
         "testBusyStaleAndNavidromeControl",
         "testOfflineWishRelaunchRemoveAndScanArrival",
+        "testIPhoneDiscoverShelvesLargestTextPagesAndSources",
+        "testDiscoverShelvesEmptyCachedFailureAndNavidrome",
     )),
     ("apple-ci", "DulcetDiscoverWishlistIPadUITests", (
         "testEverywhereQueryPagesAndHeldRouting",
         "testBusyStaleAndNavidromeControl",
         "testOfflineWishRelaunchRemoveAndScanArrival",
+        "testIPadDiscoverShelvesSidebarCompactResizeAndBack",
+        "testDiscoverShelvesEmptyCachedFailureAndNavidrome",
     )),
     ("apple-ci", "DulcetMacDiscoverWishlistAppTest", (
         "testEverywhereQueryPagesAndHeldRouting",
         "testBusyStaleAndNavidromeControl",
         "testOfflineWishRelaunchRemoveAndScanArrival",
+        "testDiscoverShelvesMixedPagingAndShelfWish",
+        "testDiscoverShelvesEmptyFailureCachedVariantsAndNavidrome",
     )),
     ("core-ci", "com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest", (
         "everywherePagesAndHeldRoute",
         "busyStaleAndNavidromeControl",
         "offlineWishRelaunchRemoveRaceAndArrival",
+        "shelvesRoutesAndSourceWishes",
+        "shelvesMixedAndCachedOffline",
+        "shelvesNavidromeControl",
+        "shelvesAccessibilityAndRestoration",
     )),
 )
 for workflow, alias, methods in DISCOVER_EXECUTION_CASES:

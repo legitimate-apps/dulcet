@@ -591,7 +591,7 @@ private struct DulcetCompactShell: View {
             if store.selectedDestination == .settings { store.navigate(to: lastTab) }
         }) {
             DulcetDestinationStack(store: store, tab: .settings)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { connectionPresented = false } } }
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button(DulcetStrings.discoverDone) { connectionPresented = false } } }
         }
         .onChange(of: store.selectedDestination) { _, destination in
             if destination == .settings && !places.contains(.settings) { connectionPresented = true }
@@ -1022,8 +1022,8 @@ private struct DulcetSidebar: View {
                         sidebarRow(DulcetStrings.listenNow, symbol: "play.circle", destination: .listenNow)
                     }
                     if destinations.contains(.discover), store.librarySession?.discoverPublication?.access.discoverAvailable == true {
-                        sidebarChoice(.destination(.discover)) { Label("Discover", systemImage: "sparkles") }
-                            .accessibilityLabel("Discover").accessibilityIdentifier("discover.destination")
+                        sidebarChoice(.destination(.discover)) { Label(DulcetStrings.discoverTitle, systemImage: "sparkles") }
+                            .accessibilityLabel(DulcetStrings.discoverTitle).accessibilityIdentifier("discover.destination")
                     }
                     if destinations.contains(.library) {
                         sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
