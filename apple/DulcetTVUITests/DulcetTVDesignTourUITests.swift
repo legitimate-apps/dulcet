@@ -256,7 +256,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("settings-quality", app) {
             self.pressByRemote(app.buttons["dulcet.account.playback"].firstMatch, in: app, name: "Playback")
-                && app.buttons["dulcet.streaming-quality.unmetered.original"].firstMatch.waitForExistence(timeout: 20)
+                && app.navigationBars["Playback"].waitForExistence(timeout: 20)
+                && app.buttons["dulcet.streaming-quality.unmetered"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.streaming-quality.metered"].firstMatch.exists
         }
         print("DULCET FOUNDATION platform=tvos tabs=Listen Now|Library|Browse|Search|Now Playing|Account shots=\(shotNumber)")
     }

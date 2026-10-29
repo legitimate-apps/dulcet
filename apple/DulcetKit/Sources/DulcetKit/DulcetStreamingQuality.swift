@@ -43,14 +43,14 @@ public protocol DulcetStreamingQualitySetting: AnyObject {
 }
 
 /// The Streaming Quality section of the settings screen: a choice for unmetered networks and one
-/// for metered ones. A phone or tablet names them Wi-Fi and cellular. A Mac has no cellular radio,
-/// but its network monitor classifies a personal hotspot (expensive) and Low Data Mode
+/// for metered ones. A phone or tablet names them Wi-Fi and cellular. Mac and Apple TV have no cellular radio,
+/// but their network monitors classify a personal hotspot (expensive) and Low Data Mode
 /// (constrained) as metered, so it names the two choices for those networks instead.
 struct DulcetStreamingQualitySection: View {
     @Bindable var store: DulcetPresentationStore
     var inForm = false
 
-#if os(macOS)
+#if os(macOS) || os(tvOS)
     private let unmeteredTitle = DulcetStrings.streamingQualityStandardNetworks
     private let meteredTitle = DulcetStrings.streamingQualityLimitedNetworks
     private let footnote = DulcetStrings.streamingQualityLimitedFootnote
