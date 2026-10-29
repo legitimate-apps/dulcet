@@ -51,10 +51,7 @@ import UIKit
     }
     func launch(server: String? = nil, other: Bool = false, connect: Bool = true, variant: String = "light", navigationReceipts: Bool = true) throws {
         if !prepared { try prepare(); prepared = true }
-        var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, "-dulcet-debug-download-handoff", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
-        if baselineVariant != nil {
-            args += ["-dulcet-debug-capture-hide-diagnostics"]
-        }
+        var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, "-dulcet-debug-download-handoff", namespace, "-dulcet-debug-capture-hide-diagnostics", variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
         if variant == "largest" { args.append("-dulcet-debug-largest-text") }
         if other { args += ["-dulcet-debug-add-account"] }
