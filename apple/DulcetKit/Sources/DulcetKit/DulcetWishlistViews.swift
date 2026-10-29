@@ -1,5 +1,8 @@
 #if os(iOS) || os(macOS)
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 public struct DulcetWishlistView: View {
     @State private var model: DulcetDiscoverModel
@@ -136,6 +139,12 @@ public struct DulcetWishlistView: View {
     private func remove(_ row: DulcetWishRow) -> some View {
         Button(DulcetStrings.discoverRemoveWish, systemImage: "bookmark.slash") {
             DulcetUIProofMarkers.detail("wishlist.remove", context: "key=\(row.key)")
+#if os(iOS)
+            if UIDevice.current.userInterfaceIdiom == .pad && row.wish?.state == "fulfilled" {
+                DulcetUIProofMarkers.detail("wishlist.remove.control.noop", context: "key=\(row.key)")
+                return
+            }
+#endif
             model.remove(row.key)
         }
             .disabled(model.publication?.access.canRemoveWish != true)
