@@ -823,22 +823,33 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTFail("The remote did not reveal shelf album \(title): \(app.debugDescription)")
         return tile
     }
-    private func isFocused(_ target: XCUIElement) -> Bool {
+    private func snapshotIfPresent(_ element: XCUIElement) -> XCUIElementSnapshot? {
+        guard element.exists else { return nil }
+        return try? element.snapshot()
+    }
+    private func focusedSnapshots() -> (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?) {
+        let button = snapshotIfPresent(app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch)
+        let cell = snapshotIfPresent(app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch)
+        return (button, cell)
+    }
+    private func isFocused(
+        _ target: XCUIElementSnapshot,
+        among focused: (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?)
+    ) -> Bool {
         if target.hasFocus { return true }
         // Native confirmation dialogs expose an identified action and a focused UIKit
         // alias at the same label/frame. The alias carries focus, the identified one does not.
-        let button = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-        if button.exists, button.label == target.label, button.frame == target.frame { return true }
+        if let button = focused.button, button.label == target.label, button.frame == target.frame { return true }
         // tvOS context-menu actions sit inside a focused cell rather than holding focus themselves.
-        let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-        return cell.exists && cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+        return focused.cell?.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY)) == true
+    }
+    private func isFocused(_ target: XCUIElement) -> Bool {
+        guard let target = snapshotIfPresent(target) else { return false }
+        if target.hasFocus { return true }
+        return isFocused(target, among: focusedSnapshots())
     }
     private func focus(_ target: XCUIElement) {
-        func currentFocus() -> XCUIElement {
-            let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-            return cell.exists ? cell : app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-        }
-        func identity(_ element: XCUIElement) -> String {
+        func identity(_ element: XCUIElementSnapshot) -> String {
             "\(element.elementType.rawValue)|\(element.identifier)|\(element.label)"
         }
         func opposite(_ direction: XCUIRemote.Button) -> XCUIRemote.Button {
@@ -854,13 +865,21 @@ final class DulcetMyLibraryUITests: XCTestCase {
         var tried: [String: Set<UInt>] = [:]
         var arrival: [String: XCUIRemote.Button] = [:]
         for move in 0..<40 {
-            let published = target.exists
-            if published {
-                if isFocused(target) { return }
-                lastTargetFrame = target.frame
+            let started = ProcessInfo.processInfo.systemUptime
+            // Each live attribute read resolves a fresh accessibility query. Reuse one snapshot
+            // per element per move, including diagnostics, instead of resolving every field again.
+            let targetSnapshot = snapshotIfPresent(target)
+            if targetSnapshot?.hasFocus == true { return }
+            let focused = focusedSnapshots()
+            if let targetSnapshot {
+                if isFocused(targetSnapshot, among: focused) { return }
+                lastTargetFrame = targetSnapshot.frame
             }
-            let current = currentFocus()
-            guard current.exists else { XCUIRemote.shared.press(.down); continue }
+            let published = targetSnapshot != nil
+            guard let current = focused.cell ?? focused.button else {
+                XCUIRemote.shared.press(.down)
+                continue
+            }
             let key = identity(current), a = current.frame, b = lastTargetFrame
             let horizontal: XCUIRemote.Button = b.midX > a.midX ? .right : .left
             let vertical: XCUIRemote.Button = b.midY > a.midY ? .down : .up
@@ -883,15 +902,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 ?? arrival[key].map(opposite) ?? .up
             tried[key, default: []].insert(direction.rawValue)
             print("FOCUS MOVE \(move) direction=\(direction) tried=\(tried[key] ?? []) currentID=\(current.identifier) currentLabel=\(current.label) currentFrame=\(a) targetID=\(targetIdentifier) targetLabel=\(targetLabel) targetFrame=\(b) published=\(published)")
+            let queried = ProcessInfo.processInfo.systemUptime
             XCUIRemote.shared.press(direction)
-            let after = currentFocus()
-            if after.exists {
+            let pressed = ProcessInfo.processInfo.systemUptime
+            let afterFocus = focusedSnapshots()
+            if let after = afterFocus.cell ?? afterFocus.button {
                 let next = identity(after)
                 let afterFrame = after.frame
                 if next != key, arrival[next] == nil { arrival[next] = direction }
                 if next == key, afterFrame != a { tried[key]?.remove(direction.rawValue) }
-                print("FOCUS AFTER \(move) changed=\(next != key) id=\(after.identifier) label=\(after.label) frame=\(afterFrame) targetPublished=\(target.exists)")
+                print("FOCUS AFTER \(move) changed=\(next != key) id=\(after.identifier) label=\(after.label) frame=\(afterFrame)")
             } else { print("FOCUS AFTER \(move) none=true") }
+            let finished = ProcessInfo.processInfo.systemUptime
+            print("FOCUS TIMING \(move) before=\(queried - started) press=\(pressed - queried) after=\(finished - pressed) total=\(finished - started)")
         }
         let hierarchy = XCTAttachment(string: app.debugDescription)
         hierarchy.name = "tv-focus-timeout-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
