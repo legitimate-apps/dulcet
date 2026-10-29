@@ -1,6 +1,11 @@
 package com.legitimateapps.dulcet.core
 
 import app.cash.sqldelight.db.QueryResult
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.request.request
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpMethod
+import io.ktor.http.Url
 import kotlinx.coroutines.runBlocking
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.serialization.json.*
@@ -15,6 +20,95 @@ import kotlin.test.*
 /** Real Darwin transport, native SQLite and the exported Apple media executor facade. */
 @OptIn(ExperimentalForeignApi::class)
 class AppleConnectionOwnershipTest {
+    @Test fun mp01DarwinTlsAndLineageAdmissionKeepUnverifiedCandidatesCredentialFree() = runBlocking {
+        fixture { f ->
+            val download = f.client()
+            val playback = ApplePlaybackWireClient(f.account)
+            try {
+                assertNull(download.reconcile(f.partialIds, 0).errorKind)
+                f.control("reset", "POST")
+                val expected = ConnectionEnrollmentStore.lineage(f.anchor.serverIdentity)
+                val candidate = TlsConnectionCandidateProbe()
+                assertNull(candidate.verify(f.routeA, expected), "Trusted matching Darwin TLS positive control")
+                assertIs<DomainError.Security.TlsUntrusted>(candidate.verify(f.route("bad-name"), expected),
+                    "A trusted root with the wrong TLS name must fail before HTTP, without a replacement alert")
+                assertEquals(DomainError.Protocol.ServerIdentityChanged, candidate.verify(f.route("different"), expected),
+                    "The foreign-lineage discovery must actually be read and rejected before authentication")
+                val enrolled = assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(f.store.database).enroll(
+                    ConnectionEnrollmentRequest(f.anchor, AccountConnectionRequest(f.routeA, f.account.username, f.account.password)))).snapshot
+                for (id in listOf("home", "remote")) assertTrue(enrolled.routes.single { it.id == id }.enabled,
+                    "Matching TLS and lineage must admit the positive route: $id")
+                for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.enabled,
+                    "A failed candidate cannot become a credential destination: $id")
+                assertTrue(enrolled.routes.none { it.id == "unlisted" }, "A valid but unlisted listener is not a route")
+                val admission = f.control("state")
+                assertUnverifiedCandidatesCredentialFree(admission)
+                val before = admission.getValue("requests").jsonArray.map { it.jsonObject }
+                assertTrue(before.any { it.getValue("routeId").jsonPrimitive.content == "different" &&
+                    it.getValue("path").jsonPrimitive.content.endsWith("/.well-known/dulcet") },
+                    "The foreign-lineage public discovery negative control must execute")
+                val remoteProbes = before.filter { it.getValue("routeId").jsonPrimitive.content == "remote" }
+                assertTrue(remoteProbes.isNotEmpty(), "The admitted alternate must have an actual public probe")
+                remoteProbes.forEach { assertCredentialFree(it) }
+                val directory = before.filter { it.getValue("endpoint").jsonPrimitive.content == "getDulcetConnections" }
+                assertTrue(directory.isNotEmpty(), "Darwin enrollment must fetch the authenticated bridge directory")
+                directory.forEach {
+                    assertEquals("POST", it.getValue("method").jsonPrimitive.content)
+                    assertFalse(it.getValue("queryAuth").jsonPrimitive.boolean)
+                    assertTrue(it.getValue("bodyAuth").jsonPrimitive.boolean, "Salted authentication belongs in the form body")
+                }
+                ConnectionEnrollmentStore(f.store.database).selectForFixture(f.anchor, enrolled.routes.single { it.id == "remote" }.id)
+                val wire = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(f.anchor.normalizedBaseUrl,
+                    f.account.username, f.account.password, true), "native.apple.admission")
+                try {
+                    assertEquals(200, wire.request("ping", emptyMap()).statusCode)
+                    val prepared = wire.prepareGetRequest("stream", mapOf("id" to f.trackId))
+                    val generation = assertNotNull(prepared.routeGeneration)
+                    assertEquals("preserve", download.evaluateScopedRedirect(prepared.routeBaseUrl, generation,
+                        prepared.url, prepared.url, 0).kind)
+                    assertEquals("preserve", playback.evaluateScopedRedirect(prepared.routeBaseUrl, generation,
+                        prepared.url, prepared.url, 0).kind)
+                    // These exported native guards are the URLSession download / player boundary.
+                    // Another admitted alias still needs a newly prepared request scoped to it.
+                    for (resource in listOf(f.routeA + "/rest/stream.view", f.route("unlisted") + "/rest/stream.view",
+                        f.routeB.replaceFirst("https:", "http:") + "/rest/stream.view",
+                        f.routeB.substringBeforeLast('/') + "/outside/stream.view", f.routeB + "/%2e%2e/outside")) {
+                        assertEquals("reject", download.evaluateScopedRedirect(prepared.routeBaseUrl, generation,
+                            prepared.url, resource, 0).kind, "Download route guard rejects an origin, scheme or base escape")
+                        assertEquals("reject", playback.evaluateScopedRedirect(prepared.routeBaseUrl, generation,
+                            prepared.url, resource, 0).kind, "Player route guard rejects an origin, scheme or base escape")
+                    }
+                } finally { wire.close() }
+                val dispatched = f.control("state")
+                assertUnverifiedCandidatesCredentialFree(dispatched)
+                assertTrue(dispatched.getValue("requests").jsonArray.map { it.jsonObject }.any {
+                    it.getValue("routeId").jsonPrimitive.content == "remote" &&
+                        it.getValue("endpoint").jsonPrimitive.content == "ping" &&
+                        it.getValue("queryAuth").jsonPrimitive.boolean
+                }, "An admitted alternate must actually serve the authenticated Darwin request")
+                assertEquals(f.legacyHttp, f.account.normalizedBaseUrl, "Enrollment leaves ownership anchored")
+            } finally { playback.close(); download.close() }
+        }
+    }
+
+    private fun assertCredentialFree(receipt: JsonObject) {
+        for (field in listOf("queryAuth", "bodyAuth", "authorization"))
+            assertFalse(receipt.getValue(field).jsonPrimitive.boolean, "Unverified candidate received credential material: $field")
+    }
+
+    private fun assertUnverifiedCandidatesCredentialFree(state: JsonObject) {
+        val counts = state.getValue("counts").jsonObject
+        assertEquals(0, counts.getValue("bad-name").jsonPrimitive.int, "TLS name failure must prevent every HTTP request")
+        assertEquals(0, counts.getValue("unlisted").jsonPrimitive.int, "Unlisted origin must receive no HTTP request")
+        assertEquals(0, counts.getValue("legacy").jsonPrimitive.int, "HTTP anchor is never a candidate credential destination")
+        state.getValue("requests").jsonArray.map { it.jsonObject }.forEach { receipt ->
+            assertFalse(receipt.getValue("path").jsonPrimitive.content.contains("/dulcet/v1"),
+                "Native HTTPS REST enrollment cannot bootstrap through direct API authentication")
+            if (receipt.getValue("routeId").jsonPrimitive.content in setOf("different", "bad-name", "unlisted"))
+                assertCredentialFree(receipt)
+        }
+    }
+
     @Test fun mp02HttpEnrollmentAndFactoryRouteChangePreserveAllOwnedRowsAndFiles() = runBlocking {
         fixture { f ->
             val client = f.client()
@@ -136,7 +230,7 @@ class AppleConnectionOwnershipTest {
         downloads.filter { it.download_id in partialIds }.forEach {
             FileSystem.SYSTEM.copy(root / it.file_relative_path, root / ".tmp/${it.download_id}.partial")
         }
-        val f = Fixture(name, root, store, anchor, account, routeA, routeB, value("legacyHttp"), partialIds)
+        val f = Fixture(name, root, store, anchor, account, routeA, routeB, value("legacyHttp"), partialIds, doc)
         try { block(f) }
         finally {
             OwnershipBindingProbe.observe(null); ConnectionRouteRegistry.forget(anchor.accountId); store.close()
@@ -153,7 +247,37 @@ class AppleConnectionOwnershipTest {
     }
     private class Fixture(val name: String, val root: Path, val store: DulcetDatabaseStore,
         val anchor: OwnershipAnchor, val account: PlaybackEndpointAccount,
-        val routeA: String, val routeB: String, val legacyHttp: String, val partialIds: List<String>) {
+        val routeA: String, val routeB: String, val legacyHttp: String, val partialIds: List<String>, val manifest: JsonObject) {
+        val trackId: String get() = manifest.getValue("tracks").jsonArray.first().jsonObject.getValue("id").jsonPrimitive.content
+        fun route(id: String): String = manifest.getValue("routes").jsonObject.getValue(id).jsonPrimitive.content.also {
+            val url = Url(it)
+            assertEquals("https", url.protocol.name)
+            assertEquals("localhost", url.host, "A candidate must belong to the disposable local fixture")
+            assertNull(url.user); assertNull(url.password)
+        }
+        suspend fun control(path: String, method: String = "GET"): JsonObject {
+            val base = manifest.getValue("controlBase").jsonPrimitive.content
+            val url = Url(base)
+            assertEquals("http", url.protocol.name); assertEquals("localhost", url.host)
+            assertNull(url.user); assertNull(url.password)
+            assertTrue(base.endsWith("/__dulcet/fixture"))
+            val nonce = manifest.getValue("nonce").jsonPrimitive.content
+            assertTrue(nonce.isNotBlank())
+            val client = createAccountHttpClient(AccountClientTransport.Default()) {
+                expectSuccess = false; followRedirects = false
+                install(HttpTimeout) { requestTimeoutMillis = 5_000; connectTimeoutMillis = 5_000; socketTimeoutMillis = 5_000 }
+            }
+            return try {
+                val response = client.request("$base/$path") {
+                    this.method = HttpMethod.parse(method)
+                    headers.append("X-Dulcet-Fixture", nonce)
+                }
+                assertEquals(200, response.status.value)
+                Json.parseToJsonElement(response.bodyAsText()).jsonObject.also {
+                    assertEquals(nonce, it.getValue("nonce").jsonPrimitive.content)
+                }
+            } finally { client.close() }
+        }
         fun client() = AppleDownloadClient(account, name, root.toString())
         fun files(): Map<String, String> = FileSystem.SYSTEM.listRecursively(root)
             .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }.associate {

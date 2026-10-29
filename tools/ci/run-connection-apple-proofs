@@ -19,7 +19,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 CORE_CLASS = 'com.legitimateapps.dulcet.core.AppleConnectionOwnershipTest'
-CORE_METHODS = ['mp02HttpEnrollmentAndFactoryRouteChangePreserveAllOwnedRowsAndFiles',
+CORE_METHODS = ['mp01DarwinTlsAndLineageAdmissionKeepUnverifiedCandidatesCredentialFree',
+                'mp02HttpEnrollmentAndFactoryRouteChangePreserveAllOwnedRowsAndFiles',
                 'mp10RevokedPreparedRequestsAndRetiredHttpTasksStayClosed']
 APP_CLASS = 'DulcetAppleConnectionIntegrationTest'
 APP_METHOD = 'testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP'
