@@ -40,12 +40,13 @@ final class DulcetTVUITests: XCTestCase {
         let refresh=app.buttons["dulcet.listenNow.refresh"].firstMatch
         XCTAssertTrue(refresh.waitForExistence(timeout:10))
         XCTAssertTrue(focusByRemote(refresh,in:app),"Home's Refresh must take remote focus")
-        // tvOS can initially focus this first button instead of Refresh. It must remain a
-        // named control so launch/navigation drivers can observe the actual focused action.
-        let library = app.buttons["dulcet.listenNow.library"].firstMatch
-        XCTAssertTrue(library.waitForExistence(timeout:10))
-        XCTAssertTrue(focusByRemote(library,in:app))
-        XCTAssertEqual(focusedControlIdentifier(app), "dulcet.listenNow.library")
+        // Account and Library quick links moved into native shell destinations.
+        // Exercise the Library tab itself before returning to the loaded home shelf.
+        XCTAssertTrue(selectSection(app, "library"))
+        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 20))
+        XCTAssertTrue(app.buttons["dulcet.reader.section.playlists"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(selectSection(app, "listenNow"))
+        XCTAssertTrue(waitForNavigationTitle("Listen Now", in: app, timeout: 20))
         let album=app.buttons["dulcet.library.album"].firstMatch
         XCTAssertTrue(album.waitForExistence(timeout:30),app.debugDescription)
         XCTAssertTrue(focusByRemote(album,in:app))
@@ -78,7 +79,7 @@ final class DulcetTVUITests: XCTestCase {
             return (home?["playlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == playlist.id }
         }
         XCTAssertFalse(historyContainsPlaylist(), "Creation must not record a playlist play")
-        try openLibraryPlaylistsByRemote(app, section: "browse")
+        try openLibraryPlaylistsByRemote(app)
         try openPlaylistByRemote(app, named: name)
         let play = app.buttons["dulcet.playlist.play"].firstMatch
         XCTAssertTrue(play.waitForExistence(timeout: 20))
@@ -447,18 +448,14 @@ final class DulcetTVUITests: XCTestCase {
             "The section bar must return to Library from Now Playing: " + app.debugDescription
         )
         XCTAssertTrue(
-            app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 30),
-            "Returning to Library must present the library, not the section it came from: " + app.debugDescription
+            app.buttons["dulcet.reader.section.playlists"].firstMatch.waitForExistence(timeout: 30),
+            "Returning to Library must present its personal collections: " + app.debugDescription
         )
         XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Library")
-        // The reader's section bar is chrome; an album tile on Home is the library itself, read
-        // through the reader (the legacy library views are not reachable while it holds the account).
-        let shelfTile = app.descendants(matching: .any).matching(identifier: "dulcet.library.album").firstMatch
-        XCTAssertTrue(
-            shelfTile.waitForExistence(timeout: 30),
-            "Library must paint the reader's albums, not only its section bar: " + app.debugDescription
-        )
-        let observedTile = shelfTile.exists ? shelfTile.label : "missing"
+        let personalLink = app.buttons["dulcet.reader.section.favourites"].firstMatch
+        XCTAssertTrue(personalLink.waitForExistence(timeout: 30),
+            "Library must expose Favorites as well as Playlists: " + app.debugDescription)
+        let observedTile = personalLink.label
         XCTAssertFalse(
             app.textFields["dulcet.search.field"].firstMatch.exists,
             "Library must replace the search surface: " + app.debugDescription
@@ -822,18 +819,14 @@ final class DulcetTVUITests: XCTestCase {
             self.readServerSongStarred(track, album: album, server: server)
         }
 
-        // 3. The artist page's heart. Apple TV's album page names its artist without a link, so the
-        // artist is reached from Library > Artists, its row pressed. Search opened the album onto
-        // Library's own stack, so Menu goes back from it, one page, to Library's sections -- not to
-        // the app's bar with the album still showing.
+        // 3. Back leaves the searched album; Browse > Artists then reaches its artist.
+        // Menu must pop the detail page before the destination changes.
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForNonExistence(timeout: 5),
             "Menu on the album page must go back from it: " + app.debugDescription)
         XCTAssertNil(focusedSection(app), "Menu on a pushed page must go back, not move focus to the bar")
-        let artists = app.buttons["dulcet.reader.section.artists"].firstMatch
-        XCTAssertTrue(artists.waitForExistence(timeout: 15), "Library must offer Artists: " + app.debugDescription)
-        XCTAssertTrue(focusByRemote(artists, in: app), "Artists must take remote focus: " + app.debugDescription)
-        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(selectLibrarySection(app, "artists"), "Browse must reach Artists: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Artists", in: app, timeout: 30))
         let artistRow = app.buttons.matching(identifier: "dulcet.library.artist")
             .matching(NSPredicate(format: "label BEGINSWITH %@", artist)).firstMatch
         XCTAssertTrue(artistRow.waitForExistence(timeout: 30), "Artists must list \(artist): " + app.debugDescription)
@@ -1271,8 +1264,8 @@ final class DulcetTVUITests: XCTestCase {
 
         // Launch and the live connection on Connection; then Library through the section bar.
         let app = try launchAndConnect(serverURL: server.url, server: server)
-        XCTAssertTrue(selectSection(app, "library"), "The section bar must reach Library: " + app.debugDescription)
-        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30), "Library must present Home: " + app.debugDescription)
+        XCTAssertTrue(selectSection(app, "browse"), "The section bar must reach Library: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Browse", in: app, timeout: 30), "Library must present Home: " + app.debugDescription)
 
         // Home's newest shelf fills from the server: its tiles are the server's newest albums, in
         // its order, and Down from the bars reaches them.
@@ -1286,8 +1279,8 @@ final class DulcetTVUITests: XCTestCase {
             XCTAssertTrue(index < newest.count && Self.names(label, newest[index]),
                 "Shelf tile \(index) is \(label.debugDescription); the server's newest albums are \(newest)")
         }
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
-            "Down from the bars must reach the shelf: " + app.debugDescription)
+        XCTAssertTrue(focusByRemote(shelfTiles.firstMatch, in: app),
+            "The first loaded Browse shelf must take remote focus: " + app.debugDescription)
         let arrival = try XCTUnwrap(focusedElement(app))
         XCTAssertTrue(shelf.frame.contains(CGPoint(x: arrival.frame.midX, y: arrival.frame.midY)),
             "Down must land on the first shelf, Recently Added; focus=\(arrival) shelf=\(shelf.frame)")
@@ -1295,9 +1288,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", newest[0]),
             "Left along the shelf must end on its first album, the server's newest; focus=\(focusedElement(app).debugDescription)")
 
-        // The Library's own bar: Up to it, across to Albums, Select.
-        XCTAssertTrue(pressUntilFocus(app, .up, limit: 4) { $0.id.hasPrefix("dulcet.reader.section.") },
-            "Up from the shelf must reach the Library's sections: " + app.debugDescription)
+        // The native Browse category link opens Albums.
         XCTAssertTrue(selectLibrarySection(app, "albums"), "The Library's bar must reach Albums: " + app.debugDescription)
         let gridTiles = app.buttons.matching(identifier: "dulcet.library.album")
         XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
@@ -1376,7 +1367,7 @@ final class DulcetTVUITests: XCTestCase {
         let observedProgress = (try? progress.snapshot())?.value as? String ?? "missing"
 
         // Library again, as it was left: the album. Menu goes back to the grid, on the album.
-        XCTAssertTrue(selectSection(app, "library"), "The section bar must return to Library from Now Playing: " + app.debugDescription)
+        XCTAssertTrue(selectSection(app, "browse"), "The section bar must return to Library from Now Playing: " + app.debugDescription)
         XCTAssertTrue(albumTitle.waitForExistence(timeout: 15) && albumTitle.label == albumName,
             "Library must come back on the album it was left on: " + app.debugDescription)
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { !$0.id.hasPrefix("dulcet.tab.") },
@@ -1390,8 +1381,6 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Albums")
 
         // Artists: the list is the server's, walked in order to the artist.
-        XCTAssertTrue(pressUntilFocus(app, .up, limit: 4) { $0.id.hasPrefix("dulcet.reader.section.") },
-            "Up from the grid must reach the Library's sections: " + app.debugDescription)
         XCTAssertTrue(selectLibrarySection(app, "artists"), "The Library's bar must reach Artists: " + app.debugDescription)
         XCTAssertTrue(waitForNavigationTitle("Artists", in: app, timeout: 30), "Artists must open: " + app.debugDescription)
         let artistRows = app.buttons.matching(identifier: "dulcet.library.artist")
@@ -1555,7 +1544,7 @@ final class DulcetTVUITests: XCTestCase {
         let albumRow = albumResult.identifier
 
         // 4. Automatic reconnect already completed; return to the album and clean up.
-        XCTAssertTrue(selectSection(app, "library"), "The section bar must return to Library: " + app.debugDescription)
+        XCTAssertTrue(selectSection(app, "browse"), "The section bar must return to Library: " + app.debugDescription)
         let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
         XCTAssertTrue(albumTitle.waitForExistence(timeout: 15) && albumTitle.label == albumName,
             "Library must come back on the album it was left on: " + app.debugDescription)
@@ -1574,13 +1563,7 @@ final class DulcetTVUITests: XCTestCase {
     /// tracks: Library, Albums, the grid walked to the album's tile, Select, the page's title.
     @MainActor
     private func openAlbumTileByRemote(_ app: XCUIApplication, _ album: PlaylistProofAlbum) throws {
-        XCTAssertTrue(selectSection(app, "library"), "The section bar must reach Library: " + app.debugDescription)
-        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30), "Library must present Home: " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
-            "Down from the bars must reach Home's shelf: " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocus(app, .up, limit: 4) { $0.id.hasPrefix("dulcet.reader.section.") },
-            "Up from the shelf must reach the Library's sections: " + app.debugDescription)
-        XCTAssertTrue(selectLibrarySection(app, "albums"), "The Library's bar must reach Albums: " + app.debugDescription)
+        XCTAssertTrue(selectLibrarySection(app, "albums"), "Browse must reach Albums: " + app.debugDescription)
         XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
         XCTAssertTrue(app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30),
             "The grid must fill: " + app.debugDescription)
@@ -1863,8 +1846,6 @@ final class DulcetTVUITests: XCTestCase {
         // 3. Pending: on the playlist's page and its Playlists row; not on the server; the add
         //    met the outage.
         try returnToLibrarySectionRoot(app)
-        XCTAssertTrue(pressUntilFocus(app, .up, limit: 6) { $0.id.hasPrefix("dulcet.reader.section.") },
-            "Up must reach the Library's sections: " + app.debugDescription)
         XCTAssertTrue(selectLibrarySection(app, "playlists"), "The Library's bar must reach Playlists: " + app.debugDescription)
         XCTAssertTrue(waitForNavigationTitle("Playlists", in: app, timeout: 30), "Playlists must open: " + app.debugDescription)
         let pendingRow = app.buttons.matching(identifier: "dulcet.library.playlist")
@@ -2013,17 +1994,10 @@ final class DulcetTVUITests: XCTestCase {
         return last.first
     }
 
-    /// Library > Playlists by remote, from wherever the app is: the section bar, down into the
-    /// Library, back to a section's root, Up to its bar, across to Playlists.
+    /// Personal playlists belong to Library; server albums and artists belong to Browse.
     @MainActor
-    private func openLibraryPlaylistsByRemote(_ app: XCUIApplication, section: String = "library") throws {
-        XCTAssertTrue(selectSection(app, section), "The section bar must reach Library: " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { !$0.id.hasPrefix("dulcet.tab.") },
-            "Down from the section bar must reach the Library: " + app.debugDescription)
-        try returnToLibrarySectionRoot(app)
-        XCTAssertTrue(pressUntilFocus(app, .up, limit: 6) { $0.id.hasPrefix("dulcet.reader.section.") },
-            "Up must reach the Library's sections: " + app.debugDescription)
-        XCTAssertTrue(selectLibrarySection(app, "playlists"), "The Library's bar must reach Playlists: " + app.debugDescription)
+    private func openLibraryPlaylistsByRemote(_ app: XCUIApplication) throws {
+        XCTAssertTrue(selectLibrarySection(app, "playlists"), "Library must reach Playlists: " + app.debugDescription)
         XCTAssertTrue(waitForNavigationTitle("Playlists", in: app, timeout: 30), "Playlists must open: " + app.debugDescription)
     }
 
@@ -2040,12 +2014,10 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "Menu on a page must go back, not leave the app")
     }
 
-    /// From a Library section's root: Up to its bar, Albums, the grid walked to `album`, Select.
+    /// From another collection: Browse, Albums, the grid walked to `album`, Select.
     @MainActor
     private func openAlbumFromLibraryRootByRemote(_ app: XCUIApplication, _ album: PlaylistProofAlbum) throws {
-        XCTAssertTrue(pressUntilFocus(app, .up, limit: 6) { $0.id.hasPrefix("dulcet.reader.section.") },
-            "Up must reach the Library's sections: " + app.debugDescription)
-        XCTAssertTrue(selectLibrarySection(app, "albums"), "The Library's bar must reach Albums: " + app.debugDescription)
+        XCTAssertTrue(selectLibrarySection(app, "albums"), "Browse must reach Albums: " + app.debugDescription)
         XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
         try walkAlbumGridAndOpen(app, album)
     }
@@ -2136,16 +2108,10 @@ final class DulcetTVUITests: XCTestCase {
         }
     }
 
-    /// The album, by remote: Library, Albums, the grid walked to it, Select; then focus on its tracks.
+    /// The album, by remote: Browse, Albums, the grid walked to it, Select; then focus on its tracks.
     @MainActor
     private func openAlbumByRemote(_ app: XCUIApplication, _ album: PlaylistProofAlbum) throws {
-        XCTAssertTrue(selectSection(app, "library"), "The section bar must reach Library: " + app.debugDescription)
-        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30), "Library must present Home: " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
-            "Down from the bars must reach Home's shelf: " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocus(app, .up, limit: 4) { $0.id.hasPrefix("dulcet.reader.section.") },
-            "Up from the shelf must reach the Library's sections: " + app.debugDescription)
-        XCTAssertTrue(selectLibrarySection(app, "albums"), "The Library's bar must reach Albums: " + app.debugDescription)
+        XCTAssertTrue(selectLibrarySection(app, "albums"), "Browse must reach Albums: " + app.debugDescription)
         XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
         try walkAlbumGridAndOpen(app, album)
     }
@@ -2373,34 +2339,28 @@ final class DulcetTVUITests: XCTestCase {
         }
     }
 
-    /// From a control on the Library's own bar, across to `section` and Select.
+    /// Open a category through its native destination and vertical navigation link.
+    /// Menu unwinds only while a pushed page is present; it never exits a root page.
     @MainActor
     private func selectLibrarySection(_ app: XCUIApplication, _ section: String) -> Bool {
-        let order = ["home", "albums", "artists", "genres", "playlists", "favourites"]
-        guard let target = order.firstIndex(of: section) else { return false }
-        for _ in 0...order.count {
-            guard let focus = focusedElement(app), focus.id.hasPrefix("dulcet.reader.section."),
-                  let index = order.firstIndex(of: String(focus.id.dropFirst("dulcet.reader.section.".count))) else { return false }
-            if index == target {
-                XCUIRemote.shared.press(.select)
-                return true
-            }
-            XCUIRemote.shared.press(index > target ? .left : .right)
-            _ = awaitFocusChange(app, from: focus, timeout: 2)
+        guard ["albums", "artists", "genres", "playlists", "favourites"].contains(section) else { return false }
+        let destination = ["playlists", "favourites"].contains(section) ? "library" : "browse"
+        guard selectSection(app, destination) else { return false }
+        let rootTitle = destination == "library" ? "Library" : "Browse"
+        for _ in 0..<4 {
+            if app.navigationBars.firstMatch.identifier == rootTitle { break }
+            XCUIRemote.shared.press(.menu)
+            guard app.state == .runningForeground else { return false }
         }
-        return false
+        guard waitForNavigationTitle(rootTitle, in: app, timeout: 10) else { return false }
+        let link = app.buttons["dulcet.reader.section.\(section)"].firstMatch
+        guard link.waitForExistence(timeout: 10), focusByRemote(link, in: app), link.hasFocus else { return false }
+        XCUIRemote.shared.press(.select)
+        return true
     }
 
     @MainActor
     private func waitForNavigationTitle(_ title: String, in app: XCUIApplication, timeout: TimeInterval) -> Bool {
-        if title == "Playlists" {
-            let section = app.buttons["dulcet.reader.section.playlists"].firstMatch
-            let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(timeout * 1000)))
-            while !section.isSelected, ContinuousClock.now < deadline {
-                Thread.sleep(forTimeInterval: 0.25)
-            }
-            return section.isSelected && section.label == title
-        }
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(timeout * 1000)))
         while app.navigationBars.firstMatch.identifier != title, ContinuousClock.now < deadline {
             Thread.sleep(forTimeInterval: 0.25)
