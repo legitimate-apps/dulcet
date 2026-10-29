@@ -1,6 +1,6 @@
-name: Android emulator engine diagnostic
+name: Android emulator delivery diagnostic
 
-# Diagnostic branch only: one immutable full Discover workload per fresh host and pinned engine.
+# Diagnostic branch only: same expected engine and workload; compare original SDK delivery with a fresh verified archive.
 on:
   workflow_dispatch:
 
@@ -13,19 +13,13 @@ concurrency:
 
 jobs:
   engine:
-    name: Discover engine ${{ matrix.pin.version }}
+    name: Discover delivery ${{ matrix.delivery }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        pin:
-          - version: '37.2.12'
-            build: '16428233'
-            sha256: b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1
-          - version: '37.2.13'
-            build: '16740729'
-            sha256: cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd
+        delivery: [sdkmanager, digest-pin]
     env:
       TZ: UTC
       EMULATOR_API_LEVEL: '34'
@@ -33,7 +27,8 @@ jobs:
       EMULATOR_ARCH: x86_64
       EMULATOR_BUILD_TOOLS: '37.0.0'
       EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
-      EMULATOR_PIN: ${{ toJSON(matrix.pin) }}
+      EMULATOR_PIN: '{"version":"37.2.13","build":"16740729","sha256":"cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd"}'
+      ENGINE_DELIVERY: ${{ matrix.delivery }}
       DULCET_ANDROID_ENGINE_DIAGNOSTICS: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -60,7 +55,7 @@ jobs:
           sudo apt-get install --yes --no-install-recommends libpulse0
           ldconfig -p > "$RUNNER_TEMP/engine-diagnostic/loader-cache-after-prerequisite.log"
           python3 -c 'import os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"engine-diagnostic/loader-cache-after-prerequisite.log"; assert any(line.strip().startswith("libpulse.so.0 ") for line in p.read_text().splitlines()), "libpulse.so.0 missing after identified prerequisite"'
-      - name: Install the exact engine and existing image coordinates
+      - name: Install through the selected delivery path with the same image coordinates
         timeout-minutes: 10
         shell: bash
         env:
@@ -69,8 +64,14 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/engine-diagnostic"
           git rev-parse HEAD > "$RUNNER_TEMP/engine-diagnostic/source-sha.txt"
-          printf '%s\n' "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/pin.json"
-          DULCET_EMULATOR_LOADER_RECEIPTS="$RUNNER_TEMP/engine-diagnostic/loader-initial" python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --emulator-pin "$EMULATOR_PIN" --action-log "$RUNNER_TEMP/engine-diagnostic/sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/engine-diagnostic/sdk-install.log"
+          printf '%s\n' "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/expected-engine.json"
+          python3 -c 'import json,os,pathlib; delivery=os.environ["ENGINE_DELIVERY"]; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"engine-diagnostic/delivery.json"; p.write_text(json.dumps({"delivery":delivery,"archiveSha256VerificationRequired":delivery=="digest-pin","versionChecks":"metadata and binary version/build only; expected SHA is not archive verification for SDK-manager delivery"})+"\n")'
+          pin_args=()
+          if [[ "$ENGINE_DELIVERY" == digest-pin ]]; then
+            pin_args=(--emulator-pin "$EMULATOR_PIN")
+          fi
+          DULCET_EMULATOR_LOADER_RECEIPTS="$RUNNER_TEMP/engine-diagnostic/loader-initial" python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator "${pin_args[@]}" --action-log "$RUNNER_TEMP/engine-diagnostic/sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/engine-diagnostic/sdk-install.log"
+          DULCET_EMULATOR_LOADER_RECEIPTS="$RUNNER_TEMP/engine-diagnostic/loader-initial-check" python3 tools/ci/android-system-image verify-emulator --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/engine-after-initial-install.log"
       - name: Enable the same KVM configuration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -118,7 +119,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: android-engine-${{ matrix.pin.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: android-delivery-${{ matrix.delivery }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/engine-diagnostic
           if-no-files-found: error
           retention-days: 14
