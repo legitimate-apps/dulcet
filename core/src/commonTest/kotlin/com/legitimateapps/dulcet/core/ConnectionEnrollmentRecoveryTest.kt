@@ -60,6 +60,22 @@ class ConnectionEnrollmentRecoveryTest {
         }
     }
 
+    @Test fun explicitChoiceOfAnAdmittedRemoteRecoversWhenTheSelectedHomeIsUnavailable() = runTest {
+        fixture { f ->
+            assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request()))
+            f.failedProbes += f.home
+            f.clearReceipts()
+            assertIs<ConnectionEnrollmentResult.Failed>(f.service.enroll(f.request()))
+            assertTrue(f.authenticated.isEmpty(), "Verify does not automatically try remote")
+            f.clearReceipts()
+            val recovered = assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request(f.remote, explicit = true))).snapshot
+            assertEquals(listOf(f.remote), f.authenticated)
+            assertEquals(listOf(f.remote), f.fetched)
+            assertEquals("remote", recovered.selectedRouteId)
+            assertEquals(f.anchor, recovered.anchor)
+        }
+    }
+
     @Test fun unlistedExplicitAddNeverReceivesCredentialsAndDoesNotChangeSelection() = runTest {
         fixture { f ->
             val before = assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request())).snapshot
@@ -68,6 +84,20 @@ class ConnectionEnrollmentRecoveryTest {
             assertIs<ConnectionEnrollmentResult.Failed>(f.service.enroll(f.request(unknown, explicit = true)))
             assertEquals(listOf(f.home), f.authenticated)
             assertFalse(f.events.any { it.endsWith(unknown) })
+            assertEquals(before, f.service.snapshot(f.anchor))
+        }
+    }
+
+    @Test fun listedButFailedTlsOrLineageTargetNeverReceivesAddCredentials() = runTest {
+        fixture { f ->
+            assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request()))
+            f.service.remove(f.anchor, "remote")
+            val before = f.service.snapshot(f.anchor)
+            f.clearReceipts()
+            f.failedProbes += f.remote
+            assertIs<ConnectionEnrollmentResult.Failed>(f.service.enroll(f.request(f.remote, explicit = true)))
+            assertEquals(listOf(f.home), f.authenticated)
+            assertTrue(f.events.contains("probe:${f.remote}"))
             assertEquals(before, f.service.snapshot(f.anchor))
         }
     }
@@ -90,6 +120,23 @@ class ConnectionEnrollmentRecoveryTest {
         }
     }
 
+    @Test fun aLaterRemovalCancelsAnEarlierExplicitReAddWithoutRevivingItsTombstone() = runTest {
+        fixture { f ->
+            assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request()))
+            f.service.remove(f.anchor, "home")
+            val epoch = f.epoch()
+            f.clearReceipts()
+            f.afterFetch = { f.service.remove(f.anchor, "home") }
+            val result = f.service.enroll(f.request(f.home, explicit = true))
+            assertEquals(DomainError.Transport.Cancelled, assertIs<ConnectionEnrollmentResult.Failed>(result).error)
+            val after = f.service.snapshot(f.anchor)
+            assertTrue(after.routes.single { it.id == "home" }.removed)
+            assertNull(after.selectedRouteId)
+            assertEquals(epoch, f.epoch())
+            assertEquals(listOf(f.remote), f.authenticated, "A newer removal also fences target authentication")
+        }
+    }
+
     private suspend fun fixture(http: Boolean = false, fresh: Boolean = false, block: suspend (Fixture) -> Unit) {
         val store = DulcetDatabaseStore.open(createTestDriver())
         val f = Fixture(store, http)
@@ -108,6 +155,8 @@ class ConnectionEnrollmentRecoveryTest {
         val authenticated = mutableListOf<String>()
         val fetched = mutableListOf<String>()
         val events = mutableListOf<String>()
+        var afterFetch: (() -> Unit)? = null
+        val failedProbes = mutableSetOf<String>()
         fun epoch() = store.database.libraryDepthQueries.selectEntry(anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull()
         fun clearReceipts() { authenticated.clear(); fetched.clear(); events.clear() }
         fun request(url: String = anchor.normalizedBaseUrl, explicit: Boolean = false) = ConnectionEnrollmentRequest(anchor,
@@ -117,8 +166,12 @@ class ConnectionEnrollmentRecoveryTest {
             AccountConnectionResult.Connected(ConnectedAccount(request.serverUrl, false, "1.16.1", true, "dulcet", "fixture",
                 CapabilitySet(mapOf("dulcetRoutes" to setOf(1)), UserPermissions(true, true, false, false, false), false), emptyList(),
                 anchor.username, anchor.serverIdentity))
-        }, probe = ConnectionCandidateProbe { url, _ -> events += "probe:$url"; null }, fetch = { request ->
+        }, probe = ConnectionCandidateProbe { url, _ ->
+            events += "probe:$url"
+            if (url in failedProbes) DomainError.Protocol.ServerIdentityChanged else null
+        }, fetch = { request ->
             fetched += request.serverUrl
+            afterFetch?.invoke()
             val body = """{"subsonic-response":{"status":"ok","version":"1.16.1","dulcetConnections":{"version":1,"revision":1,"instanceId":"lineage","principal":{"id":"user:1","username":"listener"},"routes":[{"id":"home","baseUrl":"$home","role":"private","priority":10},{"id":"remote","baseUrl":"$remote","role":"public","priority":20}],"legacyOwnershipAnchors":["http://legacy.example.test/music"],"authAliases":[]}}}""".encodeToByteArray()
             AuthenticatedEndpointResponse(200, body, "<redacted>", AuthenticatedEndpointResponseHeaders("application/json", null, null, null, null),
                 RequestTrace.observed("getDulcetConnections", "POST", "<redacted>", AuthenticationLocation.FormBody,

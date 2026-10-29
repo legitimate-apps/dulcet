@@ -33,22 +33,20 @@ class FirstConnectionEnrollmentTest {
         val identity = ServerIdentityPolicy.identity("dulcet", "first-sign-in-fixture")
         var calls = 0
         var observedEpoch: String? = null
+        var observedSaved: StoredAccount? = null
+        var observedIdentity: String? = null
+        var observedRows = 0
         val store = object : AccountCredentialStore by credentials {
             override suspend fun enrollConnections(account: StoredAccount, request: AccountConnectionRequest) {
                 calls++
-                assertEquals(account, credentials.load())
-                assertEquals(identity, credentials.acceptedServerIdentity(account))
-                assertEquals("https://localhost:9/music", account.serverUrl)
+                observedSaved = credentials.load()
+                observedIdentity = credentials.acceptedServerIdentity(account)
                 SQLiteDatabase.openDatabase(context.getDatabasePath("dulcet.db").path, null, SQLiteDatabase.OPEN_READONLY).use { database ->
                     database.rawQuery("SELECT value FROM library_depth_entry WHERE server_id=? AND category='download.mediaBinding' AND raw_id='binding'",
                         arrayOf(account.id)).use { rows ->
-                        assertTrue(rows.moveToFirst(), "Fresh save must establish a real media epoch before enrollment")
-                        observedEpoch = rows.getString(0)
-                        assertFalse(rows.moveToNext())
+                        while (rows.moveToNext()) { observedRows++; observedEpoch = rows.getString(0) }
                     }
                 }
-                assertTrue(requireNotNull(observedEpoch).contains(account.serverUrl))
-                assertTrue(requireNotNull(observedEpoch).contains(account.username))
             }
         }
         val result = connectAndSaveAccount(request, { AccountConnectionResult.Connected(ConnectedAccount(
@@ -57,6 +55,13 @@ class FirstConnectionEnrollmentTest {
             request.username, identity)) }, store)
         assertIs<AccountConnectOutcome.Connected>(result)
         assertEquals(1, calls, "The actual sign-in composition reaches automatic enrollment without a media controller")
-        assertNotNull(observedEpoch)
+        val saved = assertNotNull(credentials.load())
+        assertEquals(saved, observedSaved)
+        assertEquals(identity, observedIdentity)
+        assertEquals("https://localhost:9/music", saved.serverUrl)
+        assertEquals(1, observedRows, "Fresh save must establish one real media epoch before automatic enrollment")
+        val epoch = assertNotNull(observedEpoch)
+        assertTrue(epoch.contains(saved.serverUrl))
+        assertTrue(epoch.contains(saved.username))
     }
 }
