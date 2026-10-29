@@ -2863,7 +2863,7 @@ jobs:
   discover-wishlist-macos:
     name: discover-wishlist-macos
     needs: [apple-plan, apple-platform]
-    if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
+    if: ${{ false }} # Control branch: only the two iPad fault injections.
     runs-on: macos-26
     timeout-minutes: 60
     outputs:
@@ -2933,7 +2933,7 @@ jobs:
   discover-wishlist-iphone:
     name: discover-wishlist-iphone
     needs: [apple-plan, apple-conformance-ipad-iphone]
-    if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
+    if: ${{ false }} # Control branch: only the two iPad fault injections.
     runs-on: macos-26
     timeout-minutes: 95
     outputs:
@@ -3006,7 +3006,7 @@ jobs:
   # Use released baseline slots for native proofs while retaining the four-slot envelope.
   discover-wishlist-ipad:
     name: discover-wishlist-ipad
-    needs: [apple-plan, discover-wishlist-macos]
+    needs: [apple-plan]
     if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
     runs-on: macos-26
     # Preserve the existing build/proof budget plus the separate six-minute destination step.
