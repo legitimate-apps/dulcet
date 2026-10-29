@@ -61,9 +61,11 @@ public protocol DulcetPlaybackResourceLoading: DulcetPlaybackResource {
 public struct DulcetPlaybackAuthorizedRequest: @unchecked Sendable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public let request: URLRequest
+    public let routeBaseURL: String?
 
-    public init(request: URLRequest) {
+    public init(request: URLRequest, routeBaseURL: String? = nil) {
         self.request = request
+        self.routeBaseURL = routeBaseURL
     }
 
     public var description: String { "DulcetPlaybackAuthorizedRequest(<redacted>)" }
@@ -136,6 +138,17 @@ public protocol DulcetPlaybackRedirectEvaluating: AnyObject, Sendable {
     ) -> DulcetPlaybackRedirectDecision
 }
 
+/// A production authorizer captures its route before dispatch; redirects cannot
+/// borrow a newer selected route while this byte request is still in flight.
+public protocol DulcetPlaybackScopedRedirectEvaluating: DulcetPlaybackRedirectEvaluating {
+    func evaluate(
+        routeBaseURL: String,
+        sourceURL: URL,
+        proposedURL: URL,
+        redirectsAlreadyFollowed: Int
+    ) -> DulcetPlaybackRedirectDecision
+}
+
 /// Performs the bytes request which the resource loader is currently satisfying.
 /// Request construction and response validation remain delegated to the core-owned collaborators.
 public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackResourceLoading,
@@ -147,6 +160,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
     private let sessionConfiguration: URLSessionConfiguration
     private let lock = NSLock()
     private var redirectsByTask: [Int: Int] = [:]
+    private var routeBasesByTask: [Int: String] = [:]
     /// Per task: the body received so far and what to do when the task completes. A delegate
     /// task rather than a completion-handler one, because a completion handler is given no data
     /// when the task ends in an error, so a body cut short could not reach the validator.
@@ -279,6 +293,9 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                 }
                 operation.install(task: task)
                 self.setRedirectCount(0, taskIdentifier: task.taskIdentifier)
+                self.lock.lock()
+                self.routeBasesByTask[task.taskIdentifier] = authorized.routeBaseURL
+                self.lock.unlock()
                 task.resume()
             }
         }
@@ -293,6 +310,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         let transfers = Array(transfersByTask.values)
         transfersByTask.removeAll()
         redirectsByTask.removeAll()
+        routeBasesByTask.removeAll()
         lock.unlock()
         // Never construct a session from deinit: its delegate must be a living object. The
         // proxy also lets an already used resource release without a session/delegate cycle.
@@ -438,11 +456,18 @@ extension DulcetURLSessionPlaybackResource: URLSessionDataDelegate {
             return
         }
         let redirects = redirectCount(taskIdentifier: task.taskIdentifier)
-        switch redirectEvaluator.evaluate(
-            sourceURL: sourceURL,
-            proposedURL: proposedURL,
-            redirectsAlreadyFollowed: redirects
-        ) {
+        lock.lock()
+        let capturedBase = routeBasesByTask[task.taskIdentifier]
+        lock.unlock()
+        let decision: DulcetPlaybackRedirectDecision
+        if let capturedBase, let scoped = redirectEvaluator as? any DulcetPlaybackScopedRedirectEvaluating {
+            decision = scoped.evaluate(routeBaseURL: capturedBase, sourceURL: sourceURL,
+                proposedURL: proposedURL, redirectsAlreadyFollowed: redirects)
+        } else {
+            decision = redirectEvaluator.evaluate(sourceURL: sourceURL,
+                proposedURL: proposedURL, redirectsAlreadyFollowed: redirects)
+        }
+        switch decision {
         case .followPreservingRequest:
             setRedirectCount(redirects + 1, taskIdentifier: task.taskIdentifier)
             completionHandler(request)

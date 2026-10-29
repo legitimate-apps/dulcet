@@ -9,10 +9,12 @@ call a binding method, account replacement, account removal or namespace purge.
 
 `tools/verify_connection_ownership.py --self-test` checks a reviewed expression
 inventory (`tools/connection_ownership_inventory.json`) against production Kotlin
-and Swift sources. The inventory contains **27 ownership constructions, 21
+and Swift sources. The inventory contains **27 ownership constructions, 22
 transport snapshots and all 15 equality call sites**. It scans declarations,
 constructor arguments, named Swift/Kotlin arguments and URL-changing `copy` calls;
-comments and string literals are excluded. Five negative fixtures substitute a
+comments and string literals are excluded. The one reviewed connected-result
+URL copy restores `request.serverUrl`, the original ownership anchor, after
+authenticating a selected transport route; it does not write a saved account. Five negative fixtures substitute a
 route or an intermediate address into account/cache/media constructors and a URL
 copy. Each is rejected; the anchor positive control passes. A new expression or a
 missing reviewed expression fails closed and requires a fresh source trace.
@@ -49,7 +51,7 @@ calls in one file. These groups describe the provenance of each URL expression:
 | Apple cache/media bindings (4 calls) | Reader and download client anchor; download initialization and confirmed principal continuation take anchor-based account values. |
 | Core stored binding comparisons (5 calls) | Existing persisted URL, requested `CacheBinding` URL, and previous/first/second anchored media accounts. |
 | Conformance-only namespace construction (6 calls) | Lyrics, playlist, rating, star and two Discover fixture request URLs. These are explicit fixture ownership inputs, not selected route values. |
-| Common endpoint credential snapshots (6 calls) | Artwork, library browse, playback, scrobble delivery and search retain their request/account anchor; the factory applies the route later. |
+| Common endpoint credential snapshots (7 calls) | Artwork, library browse, playback, scrobble delivery and search retain their request/account anchor; the factory applies the route later. The enrollment-only bootstrap credential snapshot uses the explicitly chosen HTTPS `base` and is never a binding source. |
 | Android endpoint/playback/artwork snapshots (10 calls) | Player's initial/refreshed wire and resource/scrobble clients; download initial/refreshed wire/resource clients; artwork request. All retain account anchor. |
 | Apple endpoint/playback/artwork snapshots (5 calls) | Player wire/resource clients, download wire/resource clients and artwork request retain anchor. |
 

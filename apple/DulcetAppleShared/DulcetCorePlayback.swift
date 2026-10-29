@@ -178,7 +178,7 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
 }
 
 private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAuthorizing,
-    DulcetPlaybackResponseValidating, DulcetPlaybackRedirectEvaluating, @unchecked Sendable {
+    DulcetPlaybackResponseValidating, DulcetPlaybackScopedRedirectEvaluating, @unchecked Sendable {
     private weak var source: DulcetCorePlaybackWireSource?
     private let plan: AppleRemotePlaybackPlanDto
 
@@ -220,7 +220,7 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             prepared.rangeHeader.map {
                 request.setValue($0, forHTTPHeaderField: "Range")
             }
-            completion(.success(DulcetPlaybackAuthorizedRequest(request: request)))
+            completion(.success(DulcetPlaybackAuthorizedRequest(request: request, routeBaseURL: prepared.routeBaseUrl)))
         }
         return DulcetCorePlaybackOperation(operation: operation, lifetime: selected)
     }
@@ -284,6 +284,20 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
         default:
             return .reject(.transport)
         }
+    }
+
+    func evaluate(
+        routeBaseURL: String,
+        sourceURL: URL,
+        proposedURL: URL,
+        redirectsAlreadyFollowed: Int
+    ) -> DulcetPlaybackRedirectDecision {
+        guard let selected = source?.select() else { return .reject(.transport) }
+        let outcome = selected.client.evaluateScopedRedirect(
+            routeBaseUrl: routeBaseURL, sourceUrl: sourceURL.absoluteString,
+            proposedUrl: proposedURL.absoluteString,
+            redirectsAlreadyFollowed: Int32(redirectsAlreadyFollowed))
+        return outcome.kind == "preserve" ? .followPreservingRequest : .reject(.transport)
     }
 
     private static func failure(

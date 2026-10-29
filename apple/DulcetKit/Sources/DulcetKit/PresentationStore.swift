@@ -158,6 +158,7 @@ public struct DulcetSignOutOffer: Sendable, Hashable, Identifiable {
 @Observable
 public final class DulcetPresentationStore {
     @ObservationIgnored private let source: any DulcetDataSource
+    public var connectionsManager: (any DulcetAccountConnectionsManaging)?
     @ObservationIgnored private var isApplyingSourceSnapshot = false
 
     /// Reading the snapshot keeps account chrome invalidated by source publications.

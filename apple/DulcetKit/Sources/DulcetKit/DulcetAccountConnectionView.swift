@@ -22,6 +22,9 @@ struct DulcetAccountConnectionView: View {
 #endif
     @State private var lastSubmissionTimestamp: TimeInterval?
 #if os(tvOS)
+    @State private var connectionState: DulcetConnectionsState?
+    @State private var connectionHTTPSAddress = ""
+    @State private var enrollingConnections = false
     @Namespace private var accountFocusScope
 #endif
     @State private var showingSignOutConfirmation = false
@@ -170,6 +173,58 @@ struct DulcetAccountConnectionView: View {
     }
 
     @ViewBuilder
+    @ViewBuilder
+    private var connectionsSection: some View {
+        if let manager = store.connectionsManager {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Connections").font(.headline)
+                if let connectionState {
+                    ForEach(connectionState.routes) { route in
+                        if !route.removed {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(route.label ?? route.address)
+                                Text(route.selected ? "Current HTTPS connection" : (route.enabled ? "Verified HTTPS connection" : "Unavailable"))
+                                    .font(.caption)
+                                Text(route.address).font(.caption)
+                                Button("Remove connection") { self.connectionState = manager.remove(routeID: route.id) }
+                                    .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
+                            }
+                        }
+                    }
+                    if let error = connectionState.error { Text(error) }
+                    if connectionState.canUpgrade && !connectionState.enrolled {
+                        TextField("HTTPS server address", text: $connectionHTTPSAddress)
+                            .dulcetCredentialInput(.serverAddress)
+                            .accessibilityIdentifier("dulcet.connections.https-address")
+                        Button("Upgrade connection to HTTPS") { enrollConnections(manager, url: connectionHTTPSAddress) }
+                            .disabled(enrollingConnections || !connectionHTTPSAddress.lowercased().hasPrefix("https://"))
+                            .accessibilityIdentifier("dulcet.connections.upgrade")
+                    } else {
+                        Button("Verify connections") { enrollConnections(manager, url: nil) }
+                            .disabled(enrollingConnections)
+                            .accessibilityIdentifier("dulcet.connections.verify")
+                    }
+                    if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && $0.enabled && !$0.removed }) {
+                        Text("Offline · Your downloads are available")
+                    }
+                }
+                if enrollingConnections { ProgressView() }
+                Text("Connections use HTTPS. A remote connection may terminate encryption at your server administrator's proxy, which can read authentication and content.")
+                    .font(.caption)
+            }
+            .accessibilityIdentifier("dulcet.connections")
+            .task { connectionState = manager.restore() }
+        }
+    }
+
+    private func enrollConnections(_ manager: any DulcetAccountConnectionsManaging, url: String?) {
+        enrollingConnections = true
+        manager.enroll(httpsURL: url) { result in
+            connectionState = result
+            enrollingConnections = false
+        }
+    }
+
     private var accountSurface: some View {
 #if os(tvOS)
         ScrollView {
@@ -178,6 +233,7 @@ struct DulcetAccountConnectionView: View {
                     accountRemovalProgress
                 } else {
                     savedServers
+                    connectionsSection
                     HStack(alignment: .top, spacing: 48) {
                         tvConnectionForm
                             .frame(maxWidth: .infinity)
@@ -207,6 +263,7 @@ struct DulcetAccountConnectionView: View {
                     Section { accountRemovalProgress }
                 } else {
                     Section { savedServers }
+                    Section { connectionsSection }
                     Section {
                         connectionForm
                     } footer: {
@@ -233,6 +290,7 @@ struct DulcetAccountConnectionView: View {
                     Section { accountRemovalProgress }
                 } else {
                     Section { savedServers }
+                    Section { connectionsSection }
                     accountCredentialsSection
                     accountStatusSection
                     DulcetStreamingQualitySection(store: store, inForm: true)

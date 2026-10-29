@@ -287,6 +287,11 @@ internal class AndroidHttpPlaybackResource(
                     val location = connection.getHeaderField("Location")
                         ?: throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
                     var proposed = URL(URL(logical), location).toString()
+                    if (ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username) &&
+                        (ConnectionResourcePolicy.resolve(prepared.routeBaseUrl, logical) == null ||
+                            ConnectionResourcePolicy.resolve(prepared.routeBaseUrl, proposed) == null)) {
+                        throw AndroidPlaybackIOException(DomainError.Security.ResourceOutsideRoute)
+                    }
                     when (val decision = AccountConnectionContract.redirectDecision(logical, proposed, redirects)) {
                         RedirectPolicyDecision.PreserveCredentials -> Unit
                         is RedirectPolicyDecision.Reject -> {
@@ -338,6 +343,7 @@ internal class AndroidHttpPlaybackResource(
         }
         @Suppress("UNREACHABLE_CODE") throw IllegalStateException()
     } catch (error: AndroidPlaybackIOException) { throw error }
+    catch (error: AuthenticatedEndpointFailure) { throw AndroidPlaybackIOException(error.error) }
     catch (_: Exception) { throw AndroidPlaybackIOException(DomainError.Transport.Unreachable) }
 }
 

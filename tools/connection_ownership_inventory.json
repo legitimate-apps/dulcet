@@ -379,6 +379,18 @@
       "kind": "ownership",
       "type": "PlaybackEndpointAccount",
       "source": "presentationAccount.normalizedServerURL"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
+      "kind": "ownership_copy",
+      "type": "copy",
+      "source": "normalizedBaseUrl = request.serverUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ConnectionEnrollment.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "base"
     }
   ]
 }

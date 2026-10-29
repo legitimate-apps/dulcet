@@ -45,6 +45,8 @@ public interface AccountCredentialStore {
     fun savedAccounts(): List<StoredAccount> = listOfNotNull(load())
     /** Strongest accepted lineage, including identity learned after a legacy credential was saved. */
     fun acceptedServerIdentity(account: StoredAccount): String = account.serverIdentity
+    /** Route enrollment is additive; unsupported stores retain single-address behavior. */
+    suspend fun enrollConnections(account: StoredAccount, request: com.legitimateapps.dulcet.core.AccountConnectionRequest) {}
     fun savedAccountIds(): Set<String> = setOfNotNull(activeAccountId())
     fun activate(id: String): StoredAccount? = load()?.takeIf { it.id == id }
     /** Adds an authenticated server, keeping the accounts already saved. */
@@ -113,6 +115,9 @@ public class AndroidAccountCredentialStore public constructor(
             ).also { account ->
                 if (account.serverIdentity.isNotEmpty()) com.legitimateapps.dulcet.core.AndroidServerIdentity.seed(
                     applicationContext, account.id, account.serverIdentity)
+                com.legitimateapps.dulcet.core.AndroidConnections(applicationContext).restore(
+                    com.legitimateapps.dulcet.core.OwnershipAnchor(account.id, account.serverUrl, account.username,
+                        acceptedServerIdentity(account)))
             }
         } catch (failure: CredentialStoreException) {
             throw failure
@@ -197,6 +202,14 @@ public class AndroidAccountCredentialStore public constructor(
             if (failure is CredentialStoreException) throw failure
             throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed, failure)
         }
+    }
+
+    override suspend fun enrollConnections(account: StoredAccount, request: com.legitimateapps.dulcet.core.AccountConnectionRequest) {
+        if (!account.serverUrl.startsWith("https://")) return
+        com.legitimateapps.dulcet.core.AndroidConnections(applicationContext).enroll(
+            com.legitimateapps.dulcet.core.ConnectionEnrollmentRequest(
+                com.legitimateapps.dulcet.core.OwnershipAnchor(account.id, account.serverUrl, account.username,
+                    acceptedServerIdentity(account)), request.copy(serverUrl = account.serverUrl)))
     }
 
     override fun saveAuthenticatedContinuation(expected: StoredAccount, confirmed: StoredAccount): StoredAccount? {
