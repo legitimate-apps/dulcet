@@ -70,6 +70,10 @@ struct DulcetNowPlayingView: View {
             let width = geometry.size.width
             let padding = horizontalPadding(for: width)
             if sideBySide(width: width) {
+#if os(macOS)
+                // Window geometry owns the cover size; status and title changes cannot resize it.
+                let artworkSize = min(520, max(Self.sideBySideMinimumArtwork, geometry.size.height - 420))
+#else
                 let artworkSize = Self.fittedArtworkSize(
                     widthLimit: 520,
                     availableHeight: geometry.size.height - 2 * DulcetSpacing.xl,
@@ -77,6 +81,7 @@ struct DulcetNowPlayingView: View {
                     minimum: Self.sideBySideMinimumArtwork,
                     unmeasured: Self.sideBySideArtworkSize(height: geometry.size.height)
                 )
+#endif
                 // Centred together: the queue sits beside the cover and controls it belongs to,
                 // not pinned to the window's top with the space under it empty.
                 HStack(alignment: .center, spacing: Self.playerToQueueSpacing) {
@@ -653,6 +658,9 @@ struct DulcetNowPlayingView: View {
     private func stackedArtworkSize(innerWidth: CGFloat, availableHeight: CGFloat) -> CGFloat {
         let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 220 : 360
         let widthLimit = max(Self.stackedMinimumArtwork, min(innerWidth, cap))
+#if os(macOS)
+        return min(widthLimit, max(Self.stackedMinimumArtwork, availableHeight - 420))
+#else
         return Self.fittedArtworkSize(
             widthLimit: widthLimit,
             availableHeight: availableHeight,
@@ -660,6 +668,7 @@ struct DulcetNowPlayingView: View {
             minimum: Self.stackedMinimumArtwork,
             unmeasured: widthLimit
         )
+#endif
     }
 
     private func playerPanel(
@@ -968,7 +977,7 @@ struct DulcetNowPlayingView: View {
 #if os(tvOS)
             Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
                 .font(.caption)
-                .dulcetForeground(.secondaryTextOnWindow)
+                .dulcetForeground(.primaryTextOnWindow)
 #endif
         }
         .frame(maxWidth: .infinity)
@@ -1013,12 +1022,12 @@ struct DulcetNowPlayingView: View {
                             .accessibilityValue(displayedRemaining.dulcetDuration)
                     }
                     .font(.caption.monospacedDigit())
-                    .dulcetForeground(.secondaryTextOnWindow)
+                    .dulcetForeground(.primaryTextOnWindow)
                 }
             } else if player.phase != .buffering {
                 Text(playbackPhaseLabel)
                     .font(.subheadline)
-                    .dulcetForeground(.secondaryTextOnWindow)
+                    .dulcetForeground(.primaryTextOnWindow)
                     .accessibilityLabel(playbackPhaseLabel)
                     .frame(maxWidth: .infinity)
             }

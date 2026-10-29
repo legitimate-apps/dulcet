@@ -41,9 +41,9 @@ enum DulcetQueueStrings {
 public struct DulcetUpNextSection: View {
     private let model: DulcetUpNextModel
     private let onEdit: (DulcetQueueEditIntent) -> Void
-    @State private var confirmingClear = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let autoplay: DulcetAutoplayToggle?
+    var showsEmptyState = true
 #if os(iOS)
     @Environment(\.editMode) private var editMode
 #endif
@@ -56,7 +56,7 @@ public struct DulcetUpNextSection: View {
 
     public var body: some View {
         Section {
-            if model.upcoming.isEmpty {
+            if model.upcoming.isEmpty && showsEmptyState {
                 ContentUnavailableView {
                     Label(DulcetQueueStrings.nothingUpNext, systemImage: "list.bullet")
                         .accessibilityIdentifier("dulcet.upNext.empty")
@@ -65,74 +65,11 @@ public struct DulcetUpNextSection: View {
             } else {
                 rows
             }
-        } header: {
-            VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                if dynamicTypeSize.isAccessibilitySize {
-                    headerTitle
-                    headerActions
-                } else {
-                    HStack(alignment: .center) {
-                        headerTitle
-                        Spacer(minLength: DulcetSpacing.sm)
-                        headerActions
-                    }
-                }
-            }
-            .textCase(nil)
-            .padding(.vertical, DulcetSpacing.xs)
-        }
+        } header: { header }
     }
 
-    private var headerTitle: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(DulcetQueueStrings.upNext).font(.headline)
-            if let source = model.sourceDisplayName {
-                Text(DulcetQueueStrings.playingFrom(source))
-                    .font(.caption)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .lineLimit(2)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-    }
-
-    private var headerActions: some View {
-        HStack(spacing: DulcetSpacing.md) {
-            if !model.upcoming.isEmpty {
-                Button(DulcetQueueStrings.clear) { confirmingClear = true }
-                    .accessibilityIdentifier("dulcet.upNext.clear")
-                    .confirmationDialog(DulcetQueueStrings.clear, isPresented: $confirmingClear) {
-                        Button(DulcetQueueStrings.clear, role: .destructive) { onEdit(.clearUpcoming) }
-                    }
-#if os(iOS)
-                EditButton().accessibilityIdentifier("dulcet.upNext.edit")
-#endif
-            }
-            if let autoplay {
-                Toggle(isOn: Binding(get: { autoplay.isOn }, set: autoplay.set)) {
-                    Image(systemName: "infinity")
-                }
-#if !os(tvOS)
-                .toggleStyle(.button)
-#endif
-#if os(iOS)
-                // Keep the native Switch semantics and 0/1 value used by VoiceOver and the
-                // existing AutoPlay proofs while drawing the compact infinity control.
-                .accessibilityRepresentation {
-                    Toggle(DulcetStrings.autoplay, isOn: Binding(get: { autoplay.isOn }, set: autoplay.set))
-                        .toggleStyle(.switch)
-                        .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
-                }
-#endif
-                .accessibilityLabel(DulcetStrings.autoplay)
-                .accessibilityHint(autoplay.isActive ? DulcetStrings.autoplayFootnote : DulcetStrings.autoplayPaused)
-                .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
-            }
-        }
-        .font(.subheadline)
-        .buttonStyle(.borderless)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    var header: some View {
+        DulcetQueueHeader(model: model, autoplay: autoplay, onEdit: onEdit)
     }
 
     @ViewBuilder
@@ -171,6 +108,7 @@ public struct DulcetUpNextSection: View {
                 HStack(spacing: DulcetSpacing.sm) {
                     Button(role: .destructive) { onEdit(.remove(entry.id)) } label: {
                         Label(DulcetQueueStrings.remove, systemImage: "minus.circle.fill")
+                            .dulcetForeground(.dangerIconOnTint)
                     }
                     .accessibilityIdentifier("dulcet.upNext.remove.\(offset)")
                     Spacer(minLength: 0)
@@ -256,6 +194,88 @@ public struct DulcetUpNextSection: View {
     }
 }
 
+/// The same installed header is used above populated lists and the empty overlay.
+private struct DulcetQueueHeader: View {
+    let model: DulcetUpNextModel
+    let autoplay: DulcetAutoplayToggle?
+    let onEdit: (DulcetQueueEditIntent) -> Void
+    @State private var confirmingClear = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+            VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                if dynamicTypeSize.isAccessibilitySize {
+                    headerTitle
+                    headerActions
+                } else {
+                    HStack(alignment: .center) {
+                        headerTitle
+                        Spacer(minLength: DulcetSpacing.sm)
+                        headerActions
+                    }
+                }
+            }
+            .textCase(nil)
+            .padding(.vertical, DulcetSpacing.xs)
+    }
+
+    private var headerTitle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(DulcetQueueStrings.upNext).font(.headline)
+            if let source = model.sourceDisplayName {
+                Text(DulcetQueueStrings.playingFrom(source))
+                    .font(.caption)
+                    .dulcetForeground(.primaryTextOnWindow)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: DulcetSpacing.md) {
+            if !model.upcoming.isEmpty {
+                Button(DulcetQueueStrings.clear) { confirmingClear = true }
+                    .accessibilityIdentifier("dulcet.upNext.clear")
+                    .confirmationDialog(DulcetQueueStrings.clear, isPresented: $confirmingClear) {
+                        Button(DulcetQueueStrings.clear, role: .destructive) { onEdit(.clearUpcoming) }
+                    }
+#if os(iOS)
+                EditButton().accessibilityIdentifier("dulcet.upNext.edit")
+#endif
+            }
+            if let autoplay {
+                Toggle(isOn: Binding(get: { autoplay.isOn }, set: autoplay.set)) {
+                    Image(systemName: "infinity")
+                        .frame(minWidth: 36, minHeight: 36)
+                        .background(autoplay.isOn ? Color.primary.opacity(0.12) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 12))
+                }
+#if !os(tvOS)
+                .toggleStyle(.button)
+#endif
+#if os(iOS)
+                // Keep the native Switch semantics and 0/1 value used by VoiceOver and the
+                // existing AutoPlay proofs while drawing the compact infinity control.
+                .accessibilityRepresentation {
+                    Toggle(DulcetStrings.autoplay, isOn: Binding(get: { autoplay.isOn }, set: autoplay.set))
+                        .toggleStyle(.switch)
+                        .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
+                }
+#endif
+                .accessibilityLabel(DulcetStrings.autoplay)
+                .accessibilityHint(autoplay.isActive ? DulcetStrings.autoplayFootnote : DulcetStrings.autoplayPaused)
+                .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
+            }
+        }
+        .font(.subheadline)
+        .buttonStyle(.borderless)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+}
+
 /// The AutoPlay switch as Up Next shows it (spec §14.8).
 public struct DulcetAutoplayToggle {
     public let isOn: Bool
@@ -284,6 +304,7 @@ struct DulcetAutoplaySection: View {
     }
 
     var body: some View {
+        if toggle.isOn && !model.autoplay.isEmpty {
         Section {
             if toggle.isOn {
                 autoplayRows
@@ -292,12 +313,13 @@ struct DulcetAutoplaySection: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(toggle.isOn && !toggle.isActive ? DulcetStrings.autoplayPaused : DulcetStrings.autoplay)
                     .font(.caption)
-                    .dulcetForeground(.secondaryTextOnWindow)
+                    .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(nil)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dulcet.upNext.autoplay")
+        }
     }
 
     @ViewBuilder
@@ -321,13 +343,13 @@ struct DulcetAutoplaySection: View {
             onEdit(model.jumpIntent(to: entry))
         } label: {
             HStack(spacing: DulcetSpacing.xs) {
-                DulcetArtworkView(artwork: entry.track.artwork, size: 40)
+                DulcetPlayerQueueArtwork(artwork: entry.track.artwork, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.track.title)
                         .lineLimit(1)
                     Text(DulcetStrings.artistNames(entry.track.artistNames))
                         .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
+                        .dulcetForeground(.primaryTextOnWindow)
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -373,6 +395,21 @@ public struct DulcetUpNextList: View {
     }
 
     public var body: some View {
+        let model = DulcetUpNextModel(nowPlaying: nowPlaying)
+        let hasAutoplay = autoplay?.isOn == true && !model.autoplay.isEmpty
+        if model.upcoming.isEmpty && !hasAutoplay && model.recentHistory.isEmpty
+            && (!showsCurrentTrack || nowPlaying == nil) {
+            VStack(spacing: 0) {
+                upcomingSection.header
+                    .padding(.horizontal, DulcetSpacing.md)
+                ContentUnavailableView {
+                    Label(DulcetQueueStrings.nothingUpNext, systemImage: "list.bullet")
+                        .accessibilityIdentifier("dulcet.upNext.empty")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .accessibilityIdentifier("dulcet.upNext")
+        } else {
         List {
             if showsCurrentTrack, let current = nowPlaying {
                 Section(DulcetStrings.nowPlaying) {
@@ -382,7 +419,7 @@ public struct DulcetUpNextList: View {
                             Text(current.current.title).font(.headline).lineLimit(2)
                             Text(DulcetStrings.artistNames(current.current.artistNames))
                                 .font(.subheadline)
-                                .dulcetForeground(.secondaryTextOnWindow)
+                                .dulcetForeground(.primaryTextOnWindow)
                                 .lineLimit(2)
                         }
                         Spacer(minLength: 0)
@@ -395,7 +432,7 @@ public struct DulcetUpNextList: View {
                     .listRowBackground(Color.clear)
                 }
             }
-            DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit, autoplay: autoplay)
+            upcomingSection
                 .listRowBackground(Color.clear)
             if let autoplay, autoplay.isOn {
                 DulcetAutoplaySection(nowPlaying: nowPlaying, toggle: autoplay, onEdit: onEdit)
@@ -415,6 +452,13 @@ public struct DulcetUpNextList: View {
         .environment(\.editMode, $editMode)
 #endif
         .accessibilityIdentifier("dulcet.upNext")
+        }
+    }
+
+    private var upcomingSection: DulcetUpNextSection {
+        var section = DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit, autoplay: autoplay)
+        section.showsEmptyState = false
+        return section
     }
 }
 
@@ -450,7 +494,7 @@ struct DulcetQueueHistorySection: View {
                                     .lineLimit(1)
                                 Text(DulcetStrings.artistNames(entry.track.artistNames))
                                     .font(.caption)
-                                    .dulcetForeground(.secondaryTextOnWindow)
+                                    .dulcetForeground(.primaryTextOnWindow)
                                     .lineLimit(1)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)

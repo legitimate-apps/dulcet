@@ -23,8 +23,8 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                         editingActions()
                     } else {
                         HStack {
-                            DulcetArtworkView(artwork: track.artwork, size: 36)
-                            Text(track.duration.dulcetDuration).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                            DulcetPlayerQueueArtwork(artwork: track.artwork, size: 36)
+                            Text(track.duration.dulcetDuration).font(.caption).dulcetForeground(.primaryTextOnWindow)
                             Spacer(minLength: 0)
                             more
                         }
@@ -32,10 +32,10 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                 }
             } else {
                 HStack(spacing: DulcetSpacing.sm) {
-                    DulcetArtworkView(artwork: track.artwork, size: 48)
+                    DulcetPlayerQueueArtwork(artwork: track.artwork, size: 48)
                     activation
                     if !isEditing {
-                        Text(track.duration.dulcetDuration).font(.caption.monospacedDigit()).dulcetForeground(.secondaryTextOnWindow)
+                        Text(track.duration.dulcetDuration).font(.caption.monospacedDigit()).dulcetForeground(.primaryTextOnWindow)
                         more
                     }
                 }
@@ -58,12 +58,12 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text(DulcetStrings.artistNames(track.artistNames))
                     .font(.subheadline)
-                    .dulcetForeground(.secondaryTextOnWindow)
+                    .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(accessibilityLayout ? nil : 1)
                 if let album = track.albumTitle {
                     Text(album)
                         .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
+                        .dulcetForeground(.primaryTextOnWindow)
                         .lineLimit(accessibilityLayout ? nil : 1)
                 }
             }
@@ -95,5 +95,24 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
         DulcetTrackMenuItems(track: track, onPlay: onActivate, queueAddition: nil,
             offersAlbum: true, publishedRating: nil, onDownload: nil, onNavigate: {})
         menuActions()
+    }
+}
+
+/// Missing queue covers stay neutral over either artwork palette.
+struct DulcetPlayerQueueArtwork: View {
+    let artwork: DulcetArtwork
+    let size: CGFloat
+
+    var body: some View {
+        if artwork.remoteReference == nil {
+            Image(systemName: "music.note")
+                .font(.system(size: size * 0.45))
+                .dulcetForeground(.primaryTextOnWindow)
+                .frame(width: size, height: size)
+                .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                .accessibilityHidden(true)
+        } else {
+            DulcetArtworkView(artwork: artwork, size: size)
+        }
     }
 }

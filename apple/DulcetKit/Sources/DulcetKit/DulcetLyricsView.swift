@@ -104,6 +104,7 @@ struct DulcetLyricsPanel: View {
                 }
                 .padding(.vertical, DulcetSpacing.md)
             }
+            .scrollIndicators(.hidden)
         case .none:
             ContentUnavailableView {
                 Label(DulcetStrings.lyricsNone, systemImage: "quote.bubble")
@@ -112,9 +113,11 @@ struct DulcetLyricsPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case let .unavailable(message, offersRetry):
             ContentUnavailableView {
-                Label(DulcetStrings.lyricsUnavailable, systemImage: "exclamationmark.bubble")
+                Label(DulcetStrings.lyricsFailureTitle, systemImage: "exclamationmark.bubble")
             } description: {
-                Text(message).accessibilityIdentifier("dulcet.lyrics.unavailable")
+                Text(offersRetry ? DulcetStrings.lyricsUnavailable : message)
+                    .dulcetForeground(.primaryTextOnWindow)
+                    .accessibilityIdentifier("dulcet.lyrics.unavailable")
             } actions: {
                 if offersRetry {
                     Button(DulcetStrings.lyricsTryAgain) { model.retry(from: reader) }
@@ -275,6 +278,7 @@ enum DulcetLyricsDimming {
 }
 
 private struct DulcetSyncedLyrics: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let document: DulcetLyricsDocument
     /// Media time at this tick; the gap indicator is computed from it.
     let position: Duration
@@ -286,6 +290,8 @@ private struct DulcetSyncedLyrics: View {
     let onSeek: (Duration) -> Void
     let reduceMotion: Bool
     @State private var follow = DulcetLyricsFollow()
+    // Keep the requested type size unless the laid-out sung line cannot fit even at the top.
+    @State private var needsTypeLimit = false
 #if os(tvOS)
     /// The line the remote sits on; moving into the lines is a hand scroll, selecting one seeks.
     @FocusState private var focusedLine: Int?
@@ -299,7 +305,9 @@ private struct DulcetSyncedLyrics: View {
 
     /// The lit line parks in the upper third, where the next lines are already in view -- the
     /// system player's reading position, not the centre.
-    private static let followAnchor = UnitPoint(x: 0.5, y: 0.33)
+    private var followAnchor: UnitPoint {
+        dynamicTypeSize.isAccessibilitySize ? .top : UnitPoint(x: 0.5, y: 0.33)
+    }
 
     private static let followAnimation: Animation = .spring(duration: 0.55, bounce: 0.12)
 
@@ -326,12 +334,25 @@ private struct DulcetSyncedLyrics: View {
                                     .id(Self.gapDotsID)
                             }
                             lineRow(index: index, line: line)
+                                .dynamicTypeSize(...(needsTypeLimit ? DynamicTypeSize.accessibility2 : .accessibility5))
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                                    if cursor.contains(index), dynamicTypeSize.isAccessibilitySize,
+                                       height > geometry.size.height, !needsTypeLimit {
+                                        needsTypeLimit = true
+                                    }
+                                }
+                                .modifier(DulcetLyricsEdgeFade(
+                                    isCurrent: cursor.contains(index), viewportHeight: geometry.size.height
+                                ))
                                 .id(index)
                         }
                     }
                     .padding(.horizontal, DulcetSpacing.md)
-                    .padding(.vertical, geometry.size.height * Self.edgeFraction)
+                    .padding(.top, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.sm : geometry.size.height * Self.edgeFraction)
+                    .padding(.bottom, geometry.size.height)
                 }
+                .coordinateSpace(name: "dulcet.lyrics.viewport")
+                .scrollIndicators(.hidden)
                 // A drag on the sheet is a hand scroll, on the platforms with touch or a pointer.
                 // A television scrolls by moving the remote's focus, which pauses the follow
                 // through `focusedLine` below.
@@ -347,7 +368,7 @@ private struct DulcetSyncedLyrics: View {
                     follow.noteManualScroll()
                 })
                 .onAppear {
-                    if cursor.index >= 0 { proxy.scrollTo(cursor.index, anchor: Self.followAnchor) }
+                    if cursor.index >= 0 { proxy.scrollTo(cursor.index, anchor: followAnchor) }
                 }
                 .onChange(of: cursor.index) { _, index in
                     guard following, index >= 0 else { return }
@@ -358,20 +379,14 @@ private struct DulcetSyncedLyrics: View {
                     guard nowFollowing, cursor.index >= 0 else { return }
                     scrollToCurrentLine(proxy: proxy)
                 }
-                // Lines feather out at the sheet's edges instead of clipping, the way the system
-                // player fades its lyrics under the header and over the transport. A fixed mask:
-                // visual only, never a hit or a layout, and the reading position is far inside.
-                .mask {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.05),
-                            .init(color: .black, location: 0.95),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+                .onChange(of: geometry.size) { _, _ in
+                    needsTypeLimit = false
+                    guard following, cursor.index >= 0 else { return }
+                    scrollToCurrentLine(proxy: proxy)
+                }
+                .onChange(of: needsTypeLimit) { _, _ in
+                    guard following, cursor.index >= 0 else { return }
+                    scrollToCurrentLine(proxy: proxy)
                 }
             }
         }
@@ -387,7 +402,7 @@ private struct DulcetSyncedLyrics: View {
 
     private func scrollToCurrentLine(proxy: ScrollViewProxy) {
         withAnimation(reduceMotion ? nil : Self.followAnimation) {
-            proxy.scrollTo(cursor.index, anchor: Self.followAnchor)
+            proxy.scrollTo(cursor.index, anchor: followAnchor)
         }
     }
 
@@ -441,6 +456,30 @@ private struct DulcetSyncedLyrics: View {
             .accessibilityIdentifier(lit ? "dulcet.lyrics.line.current" : "dulcet.lyrics.line")
             .accessibilityAddTraits(lit ? .isSelected : [])
 #endif
+    }
+}
+
+/// Feather past/upcoming lines at the viewport edges. The sung line is never masked.
+private struct DulcetLyricsEdgeFade: ViewModifier {
+    let isCurrent: Bool
+    let viewportHeight: CGFloat
+
+    func body(content: Content) -> some View {
+        if isCurrent {
+            content
+        } else {
+            content.mask {
+                GeometryReader { geometry in
+                    let frame = geometry.frame(in: .named("dulcet.lyrics.viewport"))
+                    let positions = [frame.minY, frame.maxY, 0, 40, viewportHeight - 40, viewportHeight]
+                        .filter { $0 >= frame.minY && $0 <= frame.maxY }.sorted()
+                    LinearGradient(stops: positions.map { y in
+                        Gradient.Stop(color: .black.opacity(Double(max(0, min(1, y / 40, (viewportHeight - y) / 40)))),
+                                      location: (y - frame.minY) / max(1, frame.height))
+                    }, startPoint: .top, endPoint: .bottom)
+                }
+            }
+        }
     }
 }
 

@@ -315,6 +315,8 @@ final class DulcetDesignTourUITests: XCTestCase {
             guard bar.waitForExistence(timeout: 20), self.waitFor(timeout: 20, { bar.label.contains("Twenty Nine Seconds") }) else {
                 return false
             }
+            let miniPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+            if miniPause.label == "Pause" { miniPause.tap() }
             print("DULCET MINI before-scroll " + app.debugDescription)
             self.shoot("mini-player-inline", app)
             if compact, app.scrollViews.firstMatch.exists {
@@ -326,7 +328,8 @@ final class DulcetDesignTourUITests: XCTestCase {
             self.shoot("mini-player", app)
             bar.tap()
             let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
-            return title.waitForExistence(timeout: 10) && self.settle(app, seconds: 2)
+            return title.waitForExistence(timeout: 10) && self.freezePlayer(at: 16.25, duration: 29, in: app)
+                && self.settle(app, seconds: 2)
         }
             let transport = app.buttons["dulcet.now-playing.play-pause"].firstMatch
             step("player-paused", app) {
@@ -339,8 +342,14 @@ final class DulcetDesignTourUITests: XCTestCase {
             guard toggle.waitForExistence(timeout: 10) else { return false }
             toggle.tap()
             let lit = app.staticTexts["dulcet.lyrics.line.current"].firstMatch
-            return app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch.waitForExistence(timeout: 10)
-                && lit.waitForExistence(timeout: 25) && self.settle(app)
+            let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+            guard panel.waitForExistence(timeout: 10), lit.waitForExistence(timeout: 25), self.settle(app) else { return false }
+            if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
+                let fits = lit.frame.minY >= panel.frame.minY - 1 && lit.frame.maxY <= panel.frame.maxY + 1
+                print("DULCET PLAYER LYRICS current=\(lit.frame) viewport=\(panel.frame) fully-visible=\(fits)")
+                return fits
+            }
+            return true
         }
         step("up-next", app) {
             let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
@@ -358,8 +367,10 @@ final class DulcetDesignTourUITests: XCTestCase {
                 .withOffset(CGVector(dx: -24, dy: 0))
             hit.tap()
             guard self.waitFor(timeout: 8, { (autoplay.value as? String) == (value == "1" ? "0" : "1") }) else { return false }
+            if value == "1" { self.shoot("up-next-autoplay-off", app) }
             hit.tap()
             guard self.waitFor(timeout: 8, { (autoplay.value as? String) == value }) else { return false }
+            if value == "0" { self.shoot("up-next-autoplay-off", app) }
             print("DULCET PLAYER AX autoplay=switch value=\(value) toggle-and-restore=passed identifier=dulcet.upNext.autoplay.toggle")
             return true
         }
@@ -386,11 +397,14 @@ final class DulcetDesignTourUITests: XCTestCase {
                 app.buttons["dulcet.album.play"].firstMatch.tap()
                 let bar = app.buttons["dulcet.mini-player.open"].firstMatch
                 guard self.waitFor(timeout: 15, { bar.label.contains("Amber Evening") }) else { return false }
+                let miniPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+                if miniPause.label == "Pause" { miniPause.tap() }
                 bar.tap()
-                return app.staticTexts["dulcet.now-playing.title"].firstMatch.waitForExistence(timeout: 10) && self.settle(app, seconds: 2)
+                return app.staticTexts["dulcet.now-playing.title"].firstMatch.waitForExistence(timeout: 10)
+                    && self.freezePlayer(at: 16.25, duration: 60, in: app) && self.settle(app, seconds: 2)
             }
             closePlayer(in: app)
-            if compact {
+            if compact, environment["DULCET_DESIGN_TOUR_SCREENS"]?.contains("mini-player-buffering") == true {
                 app.terminate()
                 app.launchArguments += ["-dulcet-capture-mini-buffering"]
                 launchInInteractionScope(app)
@@ -955,6 +969,18 @@ final class DulcetDesignTourUITests: XCTestCase {
 
     /// Lets artwork and list animations land before a shot, without asserting anything.
     @MainActor
+    private func freezePlayer(at seconds: Double, duration: Double, in app: XCUIApplication) -> Bool {
+        let transport = app.buttons["dulcet.now-playing.play-pause"].firstMatch
+        if transport.label == "Pause" { transport.tap() }
+        let slider = app.sliders["Now Playing"].firstMatch
+        guard slider.waitForExistence(timeout: 15), slider.isHittable else { return false }
+        slider.coordinate(withNormalizedOffset: CGVector(dx: seconds / duration, dy: 0.5)).tap()
+        let elapsed = app.staticTexts["Elapsed"].firstMatch
+        let matched = waitFor(timeout: 8) { (elapsed.value as? String) == "0:16" && transport.label == "Play" }
+        if matched { print("DULCET PLAYER POSITION elapsed=0:16 paused=true duration=\(duration)") }
+        return matched
+    }
+
     private func settle(_ app: XCUIApplication, seconds: TimeInterval = 1.2) -> Bool {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
         return true

@@ -109,6 +109,11 @@ final class DulcetMacDesignTourTest: XCTestCase {
             await step("now-playing") {
                 guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
                 guard await self.waitFor(seconds: 20, { store.showsNowPlayingBar }) else { return false }
+                store.sendPlaybackControl(.pause)
+                guard await self.waitFor(seconds: 15, { store.snapshot.nowPlaying?.seekability == .seekable }) else { return false }
+                store.sendPlaybackControl(.seek(.milliseconds(16_250)))
+                guard await self.waitFor(seconds: 5, { store.snapshot.nowPlaying?.elapsed == .milliseconds(16_250) }) else { return false }
+                print("DULCET PLAYER POSITION first=16.250 paused=true")
                 await self.shoot("mini-player")
                 store.selectDestination(.nowPlaying)
                 return await self.find("dulcet.now-playing.title") != nil
@@ -125,6 +130,12 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 _ = await self.press("dulcet.now-playing.lyrics")
                 return await self.find("dulcet.upNext") != nil
             }
+            await step("up-next-autoplay-off") {
+                store.setAutoplay(false)
+                return await self.waitFor(seconds: 5) { store.listening?.autoplayEnabled == false }
+            }
+            store.setAutoplay(true)
+            guard await self.waitFor(seconds: 5, { store.listening?.autoplayEnabled == true }) else { return }
             if let player = store.snapshot.nowPlaying {
                 await capturePlayerPresentationVariants(player: player, store: store)
             }
@@ -136,6 +147,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
                       await self.press("dulcet.album.play"),
                       await self.waitFor(seconds: 15, { store.snapshot.nowPlaying?.current.title == "Amber Evening" }) else { return false }
                 store.sendPlaybackControl(.pause)
+                guard await self.waitFor(seconds: 15, { store.snapshot.nowPlaying?.seekability == .seekable }) else { return false }
+                store.sendPlaybackControl(.seek(.milliseconds(16_250)))
+                guard await self.waitFor(seconds: 5, { store.snapshot.nowPlaying?.elapsed == .milliseconds(16_250) }) else { return false }
+                print("DULCET PLAYER POSITION second=16.250 paused=true")
                 store.selectDestination(.nowPlaying)
                 return await self.find("dulcet.now-playing.title") != nil
             }
@@ -613,7 +628,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
         guard let window, let original = window.contentView else { return }
         defer { window.contentView = original; hostingView = original }
         let track = player.current
+        let requested = Set((ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "").split(separator: " ").map(String.init))
         for name in ["player-buffering", "player-long-title", "player-no-artwork", "player-artwork-reference", "up-next-empty", "up-next-long", "lyrics-loading", "lyrics-absent", "lyrics-failure", "lyrics-unsynced"] {
+            if !requested.isEmpty && !requested.contains(name) { continue }
             let projectedTrack = DulcetTrack(
                 id: track.id,
                 title: name == "player-long-title"
