@@ -92,7 +92,7 @@ internal fun canonicalConnectionBase(value: String, allowHttp: Boolean = false):
     if (value.length > 2048 || value.isBlank() || value.any { it.isWhitespace() || it.isISOControl() } ||
         '\\' in value || '?' in value || '#' in value
     ) throw ConnectionEnrollmentFailure(DomainError.Protocol.MalformedEnvelope)
-    val url = try { Url(value) } catch (_: IllegalArgumentException) { throw ConnectionEnrollmentFailure(DomainError.Protocol.MalformedEnvelope) }
+    val url = try { Url(value) } catch (_: Exception) { throw ConnectionEnrollmentFailure(DomainError.Protocol.MalformedEnvelope) }
     if (url.protocol.name !in (if (allowHttp) setOf("http", "https") else setOf("https")) ||
         !value.startsWith("${url.protocol.name}://", ignoreCase = true) || url.host.isBlank() ||
         url.host.any { it.code > 127 } || url.user != null || url.password != null || url.port !in 1..65535 ||

@@ -8,6 +8,17 @@ import kotlin.test.*
 
 /** Enrollment may commit while an old plaintext request is suspended in DNS admission. */
 class ConnectionDispatchFenceTest {
+    @Test fun registryLookupCannotBypassLegacyInputValidationWithAParserException() {
+        for (input in listOf("https://127.0.0.1:70000", "https://[::1", "https://host:bad", "127.0.0.1:4533")) {
+            assertFalse(ConnectionRouteRegistry.selectionFor(input, "listener").enrolled)
+        }
+        for (input in listOf("https://127.0.0.1:70000", "https://[::1", "https://host:bad")) {
+            val result = runBlocking { AccountConnector().connect(AccountConnectionRequest(input, "listener", "synthetic-canary")) }
+            assertEquals(DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.MalformedHost),
+                assertIs<AccountConnectionResult.Failed>(result).error)
+        }
+    }
+
     @Test fun aQueuedLegacyConnectorCannotDialHttpAfterEnrollmentCommits() = fixture { base, hits ->
         val anchor = OwnershipAnchor("connector-dispatch-fence", base, "listener", "fixture-lineage")
         val resolver = HostResolver {
