@@ -1357,7 +1357,6 @@ struct DulcetNowPlayingSheet: View {
                     }
                     .accessibilityLabel(DulcetStrings.closeNowPlaying)
                     .accessibilityIdentifier("dulcet.now-playing.close")
-                    .offset(y: 10)
                 }
             }
         }
