@@ -1,18 +1,21 @@
-name: Android emulator loader diagnostic
+name: Android emulator engine diagnostic
 
-# Diagnostic branch only: zero native tests, no images, AVDs, application builds or package installs.
+# Diagnostic branch only: one immutable full Discover workload per fresh host and pinned engine.
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 concurrency:
-  group: android-engine-loader-${{ github.ref }}-${{ github.run_id }}
+  group: android-engine-diagnostic-${{ github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
+
 jobs:
-  loader:
-    name: Loader engine ${{ matrix.pin.version }}
+  engine:
+    name: Discover engine ${{ matrix.pin.version }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -24,23 +27,98 @@ jobs:
             build: '16740729'
             sha256: cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd
     env:
+      TZ: UTC
+      EMULATOR_API_LEVEL: '34'
+      EMULATOR_TARGET: google_apis
+      EMULATOR_ARCH: x86_64
+      EMULATOR_BUILD_TOOLS: '37.0.0'
+      EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
       EMULATOR_PIN: ${{ toJSON(matrix.pin) }}
+      DULCET_ANDROID_ENGINE_DIAGNOSTICS: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Verify the official archive and execute the version command once
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - name: Use hosted SDK command-line tools
+        run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+      - name: Provision the identified engine version-command dependency
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/engine-loader" "$RUNNER_TEMP/loader-sdk"
-          git rev-parse HEAD > "$RUNNER_TEMP/engine-loader/source-sha.txt"
-          printf '%s\n' "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-loader/pin.json"
-          printf '%s\n' '{"nativeTestsExecuted":0,"scope":"loader-only; no images, AVD, app, fixture or apt"}' > "$RUNNER_TEMP/engine-loader/scope.json"
-          DULCET_EMULATOR_LOADER_RECEIPTS="$RUNNER_TEMP/engine-loader/receipts" ANDROID_HOME="$RUNNER_TEMP/loader-sdk" python3 tools/ci/android-system-image install-emulator --api-level 34 --target google_apis --arch x86_64 --emulator-pin "$EMULATOR_PIN" 2>&1 | tee "$RUNNER_TEMP/engine-loader/install.log"
-      - name: Preserve loader receipts without claiming native acceptance
+          mkdir -p "$RUNNER_TEMP/engine-diagnostic"
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libpulse0
+          ldconfig -p > "$RUNNER_TEMP/engine-diagnostic/loader-cache-after-prerequisite.log"
+          python3 -c 'import os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"engine-diagnostic/loader-cache-after-prerequisite.log"; assert any(line.strip().startswith("libpulse.so.0 ") for line in p.read_text().splitlines()), "libpulse.so.0 missing after identified prerequisite"'
+      - name: Install the exact engine and existing image coordinates
+        timeout-minutes: 10
+        shell: bash
+        env:
+          COMPILE_SDK: ${{ steps.pins.outputs.compile_sdk }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/engine-diagnostic"
+          git rev-parse HEAD > "$RUNNER_TEMP/engine-diagnostic/source-sha.txt"
+          printf '%s\n' "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/pin.json"
+          DULCET_EMULATOR_LOADER_RECEIPTS="$RUNNER_TEMP/engine-diagnostic/loader-initial" python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --emulator-pin "$EMULATOR_PIN" --action-log "$RUNNER_TEMP/engine-diagnostic/sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/engine-diagnostic/sdk-install.log"
+      - name: Enable the same KVM configuration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle --timeout=30
+          test -w /dev/kvm
+      - name: Provision the same disposable fixture
+        timeout-minutes: 5
+        run: |
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg lsof
+          python3 tools/ci/prepare-discover-fixture
+      - name: Build the same real app and fixture
+        timeout-minutes: 15
+        run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest
+      - name: Select the native evidence directory
+        run: |
+          echo "DULCET_DISCOVER_ANDROID_OUTPUT=$RUNNER_TEMP/engine-diagnostic/native" >> "$GITHUB_ENV"
+          echo "DULCET_EMULATOR_LOADER_RECEIPTS=$RUNNER_TEMP/engine-diagnostic/loader-action" >> "$GITHUB_ENV"
+      - name: Run the unchanged full ten-phase Discover proof once
+        timeout-minutes: 25
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: ${{ env.EMULATOR_API_LEVEL }}
+          arch: ${{ env.EMULATOR_ARCH }}
+          target: ${{ env.EMULATOR_TARGET }}
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: |
+            DULCET_EMULATOR_LOADER_RECEIPTS="$RUNNER_TEMP/engine-diagnostic/loader-before-launch" python3 tools/ci/android-system-image verify-emulator --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/engine-before-launch.log"
+            mkdir -p "$RUNNER_TEMP/engine-diagnostic/host"
+            python3 tools/ci/observe-android-engine watch --sdk "$ANDROID_HOME" --output "$RUNNER_TEMP/engine-diagnostic/host" --stop-marker "$RUNNER_TEMP/engine-diagnostic/stop" --duration 1800 > "$RUNNER_TEMP/engine-diagnostic/observer.log" 2>&1 &
+          script: |
+            DULCET_EMULATOR_LOADER_RECEIPTS="$RUNNER_TEMP/engine-diagnostic/loader-after-boot" python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/engine-after-boot.log"
+            ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/engine-diagnostic/fixture" -- tools/ci/run-discover-wishlist-proofs android
+      - name: Finish the finite host observer
+        if: ${{ always() }}
+        run: python3 tools/ci/observe-android-engine stop --output "$RUNNER_TEMP/engine-diagnostic/host" --stop-marker "$RUNNER_TEMP/engine-diagnostic/stop"
+      - name: Preserve every result and infrastructure receipt
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: android-engine-loader-${{ matrix.pin.version }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/engine-loader
+          name: android-engine-${{ matrix.pin.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/engine-diagnostic
           if-no-files-found: error
           retention-days: 14
