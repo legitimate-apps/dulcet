@@ -33,7 +33,22 @@ fun Ctx.directPlan(trackId: String, token: String = tokenA): com.fasterxml.jacks
 }
 
 fun Ctx.fetchMedia(url: String, range: String? = null): Exchange =
-    send("GET", "getMedia", url, headers = if (range == null) emptyMap() else mapOf("Range" to range))
+    send("GET", "getMedia", resolveRouteResource(run.apiBase.removeSuffix("/dulcet/v1"), url), headers = if (range == null) emptyMap() else mapOf("Range" to range))
+
+/** Resolve media grants under the route that issued the plan; never follow an alias or downgrade. */
+internal fun resolveRouteResource(routeBase: String, resource: String): String {
+    fun rejected(): Nothing = throw CheckFailure("Media resource is outside the issuing route")
+    val base = runCatching { URI(routeBase.trimEnd('/') + "/") }.getOrElse { rejected() }
+    val supplied = runCatching { URI(resource) }.getOrElse { rejected() }
+    if (resource.startsWith("//") || resource.any { it.code <= 32 || it == '\\' } || supplied.rawUserInfo != null || supplied.rawFragment != null) rejected()
+    val path = supplied.rawPath.orEmpty()
+    if (Regex("(?i)%(2e|2f|5c|25)").containsMatchIn(path) || path.split('/').any { it == "." || it == ".." }) rejected()
+    val target = base.resolve(supplied).normalize()
+    fun port(uri: URI) = if (uri.port >= 0) uri.port else if (uri.scheme == "https") 443 else 80
+    if (target.scheme != base.scheme || target.host?.equals(base.host, true) != true || port(target) != port(base) ||
+        !target.rawPath.startsWith(base.rawPath)) rejected()
+    return target.toASCIIString()
+}
 
 fun accessChecks(): List<Check> = listOf(
     Check("DA-PRE-1", Core, "token A is accepted and holds the scopes the suite needs", "CONFORMANCE.md Shape") {
