@@ -1,239 +1,109 @@
-name: Android host-test soak
+name: Android emulator engine diagnostic
 
-# Runs one filtered set of Android host (Robolectric/JVM) tests many times on the runner that
-# core-ci uses, and counts every repetition from its JUnit XML. New host tests have repeatedly
-# passed in local loops on Apple Silicon and then raced on ubuntu-latest after merge; a local loop
-# does not sample this environment, and this workflow does. Dispatch it for the changed classes
-# before opening a pull request that adds or changes Android host tests (CLAUDE.md).
-#
-# workflow_dispatch only: it never runs automatically, and it is an instrument, never a gate.
-
+# Diagnostic branch only: one immutable full Discover workload per fresh host and pinned engine.
 on:
   workflow_dispatch:
-    inputs:
-      task:
-        description: Gradle test task to repeat
-        required: true
-        default: ':android:app:testProdDebugUnitTest'
-        type: string
-      tests:
-        description: Comma-separated Gradle --tests filters, e.g. *DownloadExecutorTest,*LibraryDepthTest
-        required: true
-        type: string
-      repeat:
-        # A string, not a number: workflow_dispatch inputs reach the API as strings, and a JSON
-        # number in a dispatch request is rejected. Validated as an integer below.
-        description: Repetitions (1 to 100)
-        required: true
-        default: '20'
-        type: string
-      disposable_conformance:
-        description: Start the local disposable Navidrome and enable production app conformance tests
-        required: false
-        default: false
-        type: boolean
-      discover_fixture:
-        description: Use the finite Discover and Wishlist fixture for PhoneWishlistIntegrationTest
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  # Phone and TV samples on the same ref are independent and must not cancel each other.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.task }}
-  cancel-in-progress: true
+  group: android-engine-diagnostic-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  android-test-soak:
-    name: android-test-soak
-    runs-on: ubuntu-latest
-    # The loop stops starting repetitions after SOAK_BUDGET_SECONDS and reports what it drew, so a
-    # slow class yields a partial (failing) result instead of a timed-out job that uploads nothing.
-    timeout-minutes: 120
+  engine:
+    name: Discover engine ${{ matrix.pin.version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        pin:
+          - version: '37.2.12'
+            build: '16428233'
+            sha256: b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1
+          - version: '37.2.13'
+            build: '16740729'
+            sha256: cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd
     env:
-      SOAK_TASK: ${{ inputs.task }}
-      SOAK_TESTS: ${{ inputs.tests }}
-      SOAK_REPEAT: ${{ inputs.repeat }}
-      SOAK_BUDGET_SECONDS: "6000"
       TZ: UTC
+      EMULATOR_API_LEVEL: '34'
+      EMULATOR_TARGET: google_apis
+      EMULATOR_ARCH: x86_64
+      EMULATOR_BUILD_TOOLS: '37.0.0'
+      EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
+      EMULATOR_PIN: ${{ toJSON(matrix.pin) }}
+      DULCET_ANDROID_ENGINE_DIAGNOSTICS: 'true'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Validate the requested soak
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! [[ "$SOAK_TASK" =~ ^(:[A-Za-z0-9_-]+)+$ ]]; then
-            echo "SOAK ERROR task must be a Gradle task path such as :android:app:testProdDebugUnitTest: $SOAK_TASK"
-            exit 2
-          fi
-          if [[ -z "${SOAK_TESTS//[[:space:]]/}" ]]; then
-            echo "SOAK ERROR tests filter is required"
-            exit 2
-          fi
-          if ! [[ "$SOAK_REPEAT" =~ ^[0-9]+$ ]] || (( SOAK_REPEAT < 1 || SOAK_REPEAT > 100 )); then
-            echo "SOAK ERROR repeat must be an integer from 1 to 100: $SOAK_REPEAT"
-            exit 2
-          fi
-          echo "SOAK PLAN task=$SOAK_TASK tests=$SOAK_TESTS repeat=$SOAK_REPEAT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         with:
           distribution: temurin
           java-version: ${{ steps.pins.outputs.jdk }}
-      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
-        with:
-          packages: platform-tools platforms;android-${{ steps.pins.outputs.compile_sdk }}
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-      - name: Start disposable conformance environment
-        if: ${{ inputs.disposable_conformance && !inputs.discover_fixture }}
-        run: |
-          root="$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label android-soak)"
-          echo "SOAK_CONFORMANCE_ROOT=$root" >> "$GITHUB_ENV"
-          tools/conformance-env/linux-local --root "$root" up
-      - name: Provision the Discover fixture
-        if: ${{ inputs.discover_fixture }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - name: Use hosted SDK command-line tools
+        run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+      - name: Install the exact engine and existing image coordinates
         timeout-minutes: 10
+        shell: bash
+        env:
+          COMPILE_SDK: ${{ steps.pins.outputs.compile_sdk }}
         run: |
-          # Use the same Ubuntu archive fallback as the existing server conformance leg.
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/engine-diagnostic"
+          git rev-parse HEAD > "$RUNNER_TEMP/engine-diagnostic/source-sha.txt"
+          printf '%s\n' "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/pin.json"
+          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --emulator-pin "$EMULATOR_PIN" --action-log "$RUNNER_TEMP/engine-diagnostic/sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/engine-diagnostic/sdk-install.log"
+      - name: Enable the same KVM configuration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle --timeout=30
+          test -w /dev/kvm
+      - name: Provision the same disposable fixture
+        timeout-minutes: 5
+        run: |
           if [ -f /etc/apt/apt-mirrors.txt ]; then
             sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
           fi
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg lsof
-          tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist
           python3 tools/ci/prepare-discover-fixture
-      - name: Repeat the filtered tests
-        shell: bash
-        run: |
-          set -uo pipefail
-          # :android:app:testProdDebugUnitTest -> android/app/build/test-results/testProdDebugUnitTest
-          project_path="${SOAK_TASK%:*}"
-          task_name="${SOAK_TASK##*:}"
-          project_dir="${project_path#:}"
-          project_dir="${project_dir//://}"
-          results_dir="$project_dir/build/test-results/$task_name"
-          failures_dir="$RUNNER_TEMP/android-test-soak-failures"
-          mkdir -p "$failures_dir"
-          command=(./gradlew --max-workers=2 --no-build-cache)
-          test_args=()
-          IFS=',' read -ra filters <<< "$SOAK_TESTS"
-          for filter in "${filters[@]}"; do
-            # Trim surrounding whitespace while preserving Gradle's wildcard syntax.
-            filter="${filter#"${filter%%[![:space:]]*}"}"
-            filter="${filter%"${filter##*[![:space:]]}"}"
-            if [[ -z "$filter" ]]; then
-              echo "SOAK ERROR each tests filter must be nonempty"
-              exit 2
-            fi
-            test_args+=(--tests "$filter")
-          done
-          if [[ -n "${SOAK_CONFORMANCE_ROOT:-}" ]]; then
-            command=(tools/conformance-env/linux-local --root "$SOAK_CONFORMANCE_ROOT" run -- "${command[@]}" -Pdulcet.productionSearchConformance)
-          fi
-
-          if [[ "${{ inputs.discover_fixture }}" == true ]]; then
-            command=(tools/ci/with-discover-wishlist-fixture -- "${command[@]}" -Pdulcet.discoverWishlistConformance)
-          fi
-          passed=0
-          failed=0
-          started=$SECONDS
-          for ((iteration = 1; iteration <= SOAK_REPEAT; iteration++)); do
-            if (( SECONDS - started > SOAK_BUDGET_SECONDS )); then
-              echo "SOAK BUDGET EXHAUSTED after $((iteration - 1)) of $SOAK_REPEAT repetitions"
-              break
-            fi
-            label="$(printf '%03d' "$iteration")"
-            # Deleting the results first is what makes every count below this repetition's own:
-            # any XML present afterwards was written by this execution. --rerun forces the task to
-            # execute, and --no-build-cache stops its outputs being restored from an earlier one.
-            rm -rf "$results_dir"
-            # The runner starts bash with -e: a failing Gradle run must be recorded, not end the soak.
-            gradle_exit=0
-            "${command[@]}" "$SOAK_TASK" "${test_args[@]}" --rerun \
-              > "$RUNNER_TEMP/soak-$label.log" 2>&1 || gradle_exit=$?
-            mkdir -p "$RUNNER_TEMP/android-test-soak-results/repetition-$label"
-            cp "$results_dir"/TEST-*.xml "$RUNNER_TEMP/android-test-soak-results/repetition-$label/" 2>/dev/null || true
-            counts="$(python3 - "$results_dir" <<'PY'
-          import sys
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-          root = Path(sys.argv[1])
-          tests = failures = skipped = 0
-          names = []
-          for report in sorted(root.glob("TEST-*.xml")) if root.is_dir() else []:
-              suite = ET.parse(report).getroot()
-              for case in suite.iter("testcase"):
-                  tests += 1
-                  if case.find("failure") is not None or case.find("error") is not None:
-                      failures += 1
-                      names.append(f"{case.get('classname')}.{case.get('name')}")
-                  elif case.find("skipped") is not None:
-                      skipped += 1
-          print(tests, failures, skipped, ",".join(names) or "-")
-          PY
-            )" || counts="0 0 0 -"
-            read -r tests failures skipped names <<< "$counts"
-            executed=$((tests - skipped))
-            echo "SOAK ITERATION $label gradle_exit=$gradle_exit tests=$tests failed=$failures skipped=$skipped failing=$names"
-            if (( executed == 0 )); then
-              # A filter matching nothing, or a build that never reached the tests, is not a pass.
-              tail -n 60 "$RUNNER_TEMP/soak-$label.log"
-              echo "SOAK ERROR repetition $label executed zero tests; the filter matched nothing or the build failed first"
-              echo "SOAK RESULT passed=$passed failed=$failed"
-              exit 2
-            fi
-            if (( failures > 0 )); then
-              failed=$((failed + 1))
-              mkdir -p "$failures_dir/repetition-$label"
-              cp "$results_dir"/TEST-*.xml "$failures_dir/repetition-$label/"
-              cp "$RUNNER_TEMP/soak-$label.log" "$failures_dir/repetition-$label/gradle.log"
-            elif (( gradle_exit != 0 )); then
-              # Every test passed and Gradle still failed: the instrument broke, not a test.
-              tail -n 60 "$RUNNER_TEMP/soak-$label.log"
-              echo "SOAK ERROR repetition $label: Gradle exited $gradle_exit with no failing testcase"
-              echo "SOAK RESULT passed=$passed failed=$failed"
-              exit 2
-            else
-              passed=$((passed + 1))
-            fi
-          done
-
-          echo "SOAK RESULT passed=$passed failed=$failed"
-          {
-            echo "### Android host-test soak"
-            echo "\`$SOAK_TASK --tests $SOAK_TESTS\`: passed=$passed failed=$failed of $SOAK_REPEAT requested"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if (( failed > 0 )); then
-            exit 1
-          fi
-          if (( passed < SOAK_REPEAT )); then
-            echo "SOAK ERROR only $passed of $SOAK_REPEAT repetitions ran inside the budget"
-            exit 1
-          fi
-      - name: Stop disposable conformance environment
-        if: ${{ always() && inputs.disposable_conformance }}
-        run: |
-          if [[ -n "${SOAK_CONFORMANCE_ROOT:-}" ]]; then
-            tools/conformance-env/linux-local --root "$SOAK_CONFORMANCE_ROOT" down
-          fi
-      - name: Upload every repetition's XML
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Build the same real app and fixture
+        timeout-minutes: 15
+        run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest
+      - name: Select the native evidence directory
+        run: echo "DULCET_DISCOVER_ANDROID_OUTPUT=$RUNNER_TEMP/engine-diagnostic/native" >> "$GITHUB_ENV"
+      - name: Run the unchanged full ten-phase Discover proof once
+        timeout-minutes: 25
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
-          name: android-test-soak-results-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/android-test-soak-results
-          if-no-files-found: warn
-          retention-days: 14
-      - name: Upload failing repetitions
+          api-level: ${{ env.EMULATOR_API_LEVEL }}
+          arch: ${{ env.EMULATOR_ARCH }}
+          target: ${{ env.EMULATOR_TARGET }}
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: |
+            python3 tools/ci/android-system-image verify-emulator --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/engine-before-launch.log"
+            mkdir -p "$RUNNER_TEMP/engine-diagnostic/host"
+            python3 tools/ci/observe-android-engine watch --sdk "$ANDROID_HOME" --output "$RUNNER_TEMP/engine-diagnostic/host" --stop-marker "$RUNNER_TEMP/engine-diagnostic/stop" --duration 1800 > "$RUNNER_TEMP/engine-diagnostic/observer.log" 2>&1 &
+          script: |
+            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/engine-after-boot.log"
+            ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/engine-diagnostic/fixture" -- tools/ci/run-discover-wishlist-proofs android
+      - name: Finish the finite host observer
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        run: python3 tools/ci/observe-android-engine stop --output "$RUNNER_TEMP/engine-diagnostic/host" --stop-marker "$RUNNER_TEMP/engine-diagnostic/stop"
+      - name: Preserve every result and infrastructure receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: android-test-soak-failures-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/android-test-soak-failures
-          if-no-files-found: ignore
+          name: android-engine-${{ matrix.pin.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/engine-diagnostic
+          if-no-files-found: error
           retention-days: 14

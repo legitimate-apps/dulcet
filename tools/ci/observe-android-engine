@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Finite read-only Linux emulator host receipts; PID disappearance is not an exit-code claim."""
+from __future__ import annotations
+import argparse
+from datetime import datetime, timezone
+import json
+import itertools
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import subprocess
+import time
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def read_text(path):
+    try:
+        return path.read_text(errors='replace')
+    except OSError:
+        return None
+
+
+def sample(sdk: Path, proc: Path = Path('/proc'), cgroup: Path = Path('/sys/fs/cgroup')):
+    sdk = sdk.resolve()
+    engines = []
+    workloads = []
+    for process in proc.glob('[0-9]*'):
+        try:
+            executable = (process / 'exe').resolve(strict=True)
+            engine = executable.is_relative_to(sdk / 'emulator') and executable.name.startswith(('emulator', 'qemu-system'))
+            java = executable.name == 'java'
+            if not engine and not java:
+                continue
+            status = read_text(process / 'status') or ''
+            record = {'pid': int(process.name), 'executable': str(executable),
+                      'status': [line for line in status.splitlines() if line.split(':', 1)[0] in
+                                 {'Name', 'State', 'VmPeak', 'VmSize', 'VmRSS', 'VmSwap', 'Threads'}],
+                      'stat': read_text(process / 'stat'), 'oom_score': read_text(process / 'oom_score')}
+            if engine:
+                engines.append(record)
+            else:
+                # Classify without retaining JVM arguments, which can carry application secrets.
+                command = read_text(process / 'cmdline') or ''
+                record['kind'] = ('gradle-daemon' if 'GradleDaemon' in command else
+                                  'gradle-worker' if 'GradleWorkerMain' in command else 'java-other')
+                workloads.append(record)
+        except (OSError, ValueError):
+            continue
+    groups = []
+    own = read_text(proc / 'self/cgroup') or ''
+    for line in own.splitlines():
+        if line.startswith('0::'):
+            relative = line[3:].lstrip('/')
+            candidate = (cgroup / relative).resolve()
+            if candidate.is_relative_to(cgroup.resolve()):
+                groups = [{'path': relative, **{name: read_text(candidate / name) for name in
+                          ['memory.events', 'memory.events.local', 'memory.current', 'memory.max', 'memory.peak']}}]
+    net = read_text(proc / 'net/tcp') or ''
+    listeners = [line for line in net.splitlines()[1:] if len(line.split()) > 3 and
+                 line.split()[1].rsplit(':', 1)[-1].upper() in {'15B2', '15B3'}]
+    return {'timestamp': now(), 'engines': sorted(engines, key=lambda value: value['pid']),
+            'jvm_workloads': sorted(workloads, key=lambda value: value['pid']), 'memory': read_text(proc / 'meminfo'), 'pressure': read_text(proc / 'pressure/memory'),
+            'cgroups': groups, 'emulator_tcp_ports': listeners}
+
+
+def collect(output: Path, since: str):
+    crashes = output / 'crashes'
+    crashes.mkdir(exist_ok=True)
+    manifest = []
+    total = 0
+    root = Path('/tmp/android-runner')
+    for path in itertools.islice(root.rglob('*'), 1000) if root.is_dir() else []:
+        if path.is_symlink() or not path.is_file() or not ('emu-crash' in path.name or path.suffix == '.dmp'):
+            continue
+        size = path.stat().st_size
+        record = {'path': str(path.relative_to(root)), 'bytes': size}
+        if total + size <= 64 * 1024 * 1024:
+            target = crashes / path.relative_to(root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+            total += size
+            record['copied'] = True
+        else:
+            record['copied'] = False
+            record['reason'] = 'finite-64MiB-artifact-budget'
+        manifest.append(record)
+    (output / 'crash-files.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    records = []
+    for command in [['journalctl', '-k', '--since', since, '--no-pager'], ['sudo', '-n', 'dmesg', '--ctime']]:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            lines = [line for line in result.stdout.splitlines() if re.search(r'out of memory|oom|killed process|segfault', line, re.I)]
+            records.append({'command': command, 'returncode': result.returncode, 'stderr': result.stderr[-2000:], 'matchingLines': lines[-200:]})
+        except (OSError, subprocess.TimeoutExpired) as failure:
+            records.append({'command': command, 'unavailable': type(failure).__name__})
+    (output / 'kernel-resource-receipts.json').write_text(json.dumps(records, indent=2) + '\n')
+
+
+def watch(args):
+    output = args.output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    stop = args.stop_marker.resolve()
+    started = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    deadline = time.monotonic() + args.duration
+    interrupted = False
+    def signal_stop(*_):
+        nonlocal interrupted
+        interrupted = True
+    signal.signal(signal.SIGTERM, signal_stop)
+    signal.signal(signal.SIGINT, signal_stop)
+    (output / 'observer.json').write_text(json.dumps({'pid': os.getpid(), 'started': now(), 'durationSeconds': args.duration,
+        'sdk': str(args.sdk.resolve()), 'scope': 'read-only-host-process-and-resource-observer',
+        'terminationCause': 'unknown unless retained OS or crash receipt establishes it'}) + '\n')
+    with (output / 'samples.jsonl').open('w') as log:
+        while True:
+            log.write(json.dumps(sample(args.sdk.resolve())) + '\n')
+            log.flush()
+            if stop.exists() or interrupted or time.monotonic() >= deadline:
+                break
+            time.sleep(2)
+    try:
+        collect(output, started)
+    except (OSError, RuntimeError) as failure:
+        (output / 'collection-unavailable.json').write_text(json.dumps({'error': type(failure).__name__}) + '\n')
+    finally:
+        (output / 'finished.json').write_text(json.dumps({'timestamp': now(), 'stopMarker': stop.exists(),
+            'deadlineReached': time.monotonic() >= deadline, 'signalReceived': interrupted}) + '\n')
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('operation', choices=['watch', 'stop'])
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--stop-marker', type=Path, required=True)
+    parser.add_argument('--sdk', type=Path)
+    parser.add_argument('--duration', type=int, default=1800)
+    args = parser.parse_args()
+    if args.operation == 'watch':
+        if args.sdk is None or not 1 <= args.duration <= 2100:
+            parser.error('watch requires --sdk and a duration of 1..2100 seconds')
+        return watch(args)
+    args.stop_marker.parent.mkdir(parents=True, exist_ok=True)
+    args.stop_marker.touch()
+    if not (args.output / 'observer.json').exists():
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / 'not-started.json').write_text(json.dumps({'timestamp': now(), 'reason': 'action did not reach pre-launch observer'}) + '\n')
+        return 0
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if (args.output / 'finished.json').exists():
+            return 0
+        time.sleep(1)
+    print('Host observer has not finished its finite collection; retain its receipts without claiming cleanup completion')
+    return 1
+
+if __name__ == '__main__':
+    raise SystemExit(main())

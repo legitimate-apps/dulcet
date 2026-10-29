@@ -184,7 +184,22 @@ class Runner:
             (report/'reader-receipts.log').write_text(receipts.stdout if receipts.returncode==0 else 'reachability receipts unavailable\n')
         except (OSError,subprocess.TimeoutExpired):
             (report/'reader-receipts.log').write_text('reachability receipts unavailable\n')
-        self.adb_run('pull',f'/sdcard/Android/data/{PACKAGE}/files/discover-wishlist-proof',str(report/'captures'),check=False,capture_output=True,text=True)
+        if os.environ.get('DULCET_ANDROID_ENGINE_DIAGNOSTICS') == 'true':
+            # This diagnostic retains the transport result without changing any proof assertion.
+            exchanges = []
+            for name, command, limit in [('before-pull', ['get-state'], 15),
+                ('pull', ['pull', f'/sdcard/Android/data/{PACKAGE}/files/discover-wishlist-proof', str(report/'captures')], 30),
+                ('after-pull', ['get-state'], 15)]:
+                timestamp = time.time()
+                try:
+                    receipt = self.adb_run(*command, check=False, capture_output=True, text=True, timeout=limit)
+                    exchanges.append({'phase': name, 'wallSeconds': timestamp, 'returncode': receipt.returncode,
+                        'stdout': receipt.stdout[-4000:], 'stderr': receipt.stderr[-4000:]})
+                except (OSError, subprocess.TimeoutExpired) as failure:
+                    exchanges.append({'phase': name, 'wallSeconds': timestamp, 'error': type(failure).__name__})
+            (report/'adb-capture-exchanges.json').write_text(json.dumps(exchanges, indent=2))
+        else:
+            self.adb_run('pull',f'/sdcard/Android/data/{PACKAGE}/files/discover-wishlist-proof',str(report/'captures'),check=False,capture_output=True,text=True)
         if result=='passed':
             cause=capture_window_cause(report/'captures',label)
             if cause:result,detail='error',cause
