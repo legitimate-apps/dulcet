@@ -990,6 +990,9 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The \(tabTitle) destination must be visible: " + app.debugDescription)
             return false
         }
+        // Re-selecting the current native tab resets its navigation stack. Keep an
+        // existing selection and let callers use Back before opening their category.
+        if row.isSelected { return true }
         for _ in 0..<2 {
             row.tap()
             let deadline = Date().addingTimeInterval(3)
