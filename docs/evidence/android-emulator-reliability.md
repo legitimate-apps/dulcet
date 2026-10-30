@@ -68,7 +68,7 @@ their signals were not recorded. The third is a genuine timeout waiting for the 
 
 ### What android-test-soak actually ran
 
-Of its latest 30 runs,24 ran the ordinary JVM-host workflow:22 successes, one cancellation,
+Of its latest 30 runs, 24 ran the ordinary JVM-host workflow: 22 successes, one cancellation,
 and one failure. The failure ([40462380890](https://github.com/legitimate-apps/dulcet/actions/runs/40462380890))
 repeats `TvMyLibraryTest.supportedServerDoesNotFetchDiscoverUntilOpened` failure in all 20 iterations;
 there is no emulator and it shares no observed QEMU cause.
@@ -77,12 +77,12 @@ The [workflow-body census](android-soak-workflow-census.tsv) identifies six emul
 runs, including one successful run; five failed:
 
 - The successful [40970314441](https://github.com/legitimate-apps/dulcet/actions/runs/40970314441)
-  launches one replica of each engine; both complete10/10 and shut down normally.
+  launches one replica of each engine; both complete 10/10 and shut down normally.
 - [40969206593](https://github.com/legitimate-apps/dulcet/actions/runs/40969206593) and
   [40969915139](https://github.com/legitimate-apps/dulcet/actions/runs/40969915139) fail before boot;
   loader probes identify missing `libpulse.so.0` and emulator exit 127 for both version archives.
 - [40973534192](https://github.com/legitimate-apps/dulcet/actions/runs/40973534192): both delivery
-  variants actually run37.2.13; one passes 10/10, one loses the emulator. Archive delivery alone
+  variants actually run 37.2.13; one passes 10/10, one loses the emulator. Archive delivery alone
   changes no engine version.
 - [40976834257](https://github.com/legitimate-apps/dulcet/actions/runs/40976834257): both actual
   37.2.12 / build 16428233 replicas pass 10/10 and shut down normally. Their red jobs are a diagnostic
@@ -90,7 +90,7 @@ runs, including one successful run; five failed:
   shells, so the latter gets `exit: Illegal number:`. Of two 37.2.13 replicas, one passes 10/10
   before the same harness error; the other loses the emulator with three infrastructure errors.
 - [40978902527](https://github.com/legitimate-apps/dulcet/actions/runs/40978902527): both renderer
-  choices run37.2.13 and each has one successful proof replica and one emulator loss. The
+  choices run 37.2.13 and each has one successful proof replica and one emulator loss. The
   evidence does not isolate a specific renderer or graphics function as the crashing site.
 
 
@@ -125,13 +125,13 @@ Every repetition has its own fresh hosted runner, emulator and fixture; no faile
 
 The four current-engine losses first appear in before-death, busy, account-switch and dark-mode
 phases. Every failed control has zero native assertion failures and subsequent ADB setup errors,
-then console5554 refusal. The pinned engines all remain responsive through successful explicit
+then console 5554 refusal. The pinned engines all remain responsive through successful explicit
 shutdown. This finite comparison supports the version pin as the infrastructure fix; it does not
 identify an internal crashing instruction or promise a universal pass rate.
 
 ### A separate reconnect-helper race exposed by the healthy engine
 
-Pinned [rep3, job124119526652](https://github.com/legitimate-apps/dulcet/actions/runs/41072377154/job/124119526652)
+Pinned [rep 3, job 124119526652](https://github.com/legitimate-apps/dulcet/actions/runs/41072377154/job/124119526652)
 fails `accountSwitchIdentityFence`: `Did not observe displayed library.reconnect`. Its stack is
 `accountSwitchIdentityFence:330 -> reconnect:402 -> click:456 -> ensureDisplayed:472 -> await:508`
 in `AndroidEmulatorDiscoverWishlistProofTest.kt` before this change. The first six phases and the
@@ -140,7 +140,7 @@ The emulator shuts down normally. This failure is preserved in the sample above.
 
 OBSERVED: the captured failure semantics already contains the expected different-server identity
 rejection and `library.connection.retry`; the original `library.reconnect` control is absent.
-The helper had resumed the activity, observed that optional old control, then waited up to30seconds
+The helper had resumed the activity, observed that optional old control, then waited up to 30 seconds
 for it to be displayed. `LibraryLifecycle` dispatches ON_START to `LibrarySession.start()`, which
 already starts the normal reconnect. INFERENCE supported by the stack and captured semantics:
 the automatic reconnect retired the manual fallback between its existence check and click.
@@ -151,14 +151,47 @@ original effect: delivered durable mutations/removal on the server, or the diffe
 replacement confirmation/cancellation, retained owner and absence of rejected-account mutations.
 No outcome assertion, timeout, failure reporting or emulator-failure handling is weakened. PR #408
 already owns the historical artist-pagination proof repair; those changes are not included here.
-A fresh ten-runner measurement of this final helper is recorded below when complete.
+The [recorded deterministic Kotlin replay](android-reconnect-helper-replay.kt) compiles the actual
+old and fixed helper bodies unchanged. Its fake UI completes automatic reconnect after returning
+`exists("library.reconnect")=true` but before the next click. The old helper throws for the retired
+tag even though the expected rejection is present; the fixed helper returns and its caller observes
+the rejection. Missing-RESUMED and missing-product-effect controls both reject the absent outcome.
+All four cases behave as expected (1,000 identical deterministic executions each; this measures no
+race frequency). Compiler and execution exits are zero. This isolated JVM logic probe uses a
+modeled lifecycle/UI; it is not a production-session or Android runtime proof.
+
+## Final helper: fresh hosted proof
+
+OBSERVED: [run 41075488902](https://github.com/legitimate-apps/dulcet/actions/runs/41075488902),
+implementation head `6e1ba53a8567119142520ca4657f91181d4493b8`, completes **10/10 Discover jobs**.
+Each job explicitly launches 37.2.12.0/build 16428233, executes the exact ten distinct expected
+method/phase identities, and reports ten passing tests with zero failures, errors or skips.
+Total: **100 native invocations passed**, zero assertion failures, zero infrastructure errors,
+zero skips, zero console losses; every emulator acknowledges clean shutdown. Individual job URLs,
+actual versions and JUnit counts are in the [final sample table](android-emulator-final-samples.tsv).
+No failed job from any earlier sample was rerun or excluded from the reported rates.
+The entire dispatch passes all 15 jobs, including phone and TV on the same pinned engine; each
+My Library verifier reports two executed/passed tests and zero skips (4/4 combined, separately
+from Discover). The required aggregate reports `tests=278 reports=400`.
+
+| Sample | Job pass rate | Emulator service losses |
+|---|---:|---:|
+| Reconstructed historical baseline, cancellation excluded | 11/43 (25.6%) | 31/43 |
+| Matched 37.2.13 control | 2/6 (33.3%) | 4/6 |
+| 37.2.12 before the helper fix | 9/10 (90.0%) | 0/10 |
+| 37.2.12 with the helper fix | 10/10 (100.0%) | 0/10 |
+
+The finite samples show elimination of the observed infrastructure loss and the helper failure,
+not a guarantee against every future failure. The real Android run complements the isolated
+selected-interleaving replay. Historical genuine paging and TV queue assertions remain explicit
+in the census; no retry wrapper turns them green.
 
 ## Local validation
 
-- `tools/test-android-system-image`:23 tests passed,0 failed. Two new controls inject a different version
+- `tools/test-android-system-image`: 23 tests passed, 0 failed. Two new controls inject a different version
   or the correct version with the wrong build; both are rejected.
-- Exact same two controls against the original image verifier:2 tests failed because it accepted
-  either engine. With the version guard:2 passed. All temporary old source restored.
-- CI policy, parity gate, actionlint and diff whitespace checks passed.
+- Exact same two controls against the original image verifier: 2 tests failed because it accepted
+  either engine. With the version guard: 2 passed. All temporary old source restored.
+- CI policy and all 215 regression checks, parity gate, actionlint and diff whitespace checks passed.
 
 Primary context: [official emulator release notes](https://developer.android.com/studio/releases/emulator).
