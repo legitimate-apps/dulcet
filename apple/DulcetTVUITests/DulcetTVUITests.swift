@@ -37,7 +37,7 @@ final class DulcetTVUITests: XCTestCase {
             password: try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"]))
         app.launch()
         XCTAssertTrue(waitForNavigationTitle("Listen Now",in:app,timeout:60),app.debugDescription)
-        let refresh=app.buttons["dulcet.listenNow.refresh"].firstMatch
+        let refresh=listenNowRefresh(in: app)
         XCTAssertTrue(refresh.waitForExistence(timeout:10))
         XCTAssertTrue(focusByRemote(refresh,in:app),"Home's Refresh must take remote focus")
         // Account and Library quick links moved into native shell destinations.
@@ -111,7 +111,7 @@ final class DulcetTVUITests: XCTestCase {
         while !historyContainsPlaylist(), ContinuousClock.now < deadline { Thread.sleep(forTimeInterval: 0.5) }
         XCTAssertTrue(historyContainsPlaylist(), "A real playlist play must submit the raw playlist ID")
         XCTAssertTrue(selectSection(app, "listenNow"))
-        let refresh = app.buttons["dulcet.listenNow.refresh"].firstMatch
+        let refresh = listenNowRefresh(in: app)
         XCTAssertTrue(focusByRemote(refresh, in: app))
         XCUIRemote.shared.press(.select)
         let recent = app.buttons.matching(identifier: "dulcet.library.playlist")
@@ -504,7 +504,7 @@ final class DulcetTVUITests: XCTestCase {
         }
         XCTAssertNil(focusedSection(app), "Must start with focus inside the Connection surface, not on the bar")
         let priorFocus = try XCTUnwrap(
-            focusedControlIdentifier(app),
+            focusedControlIdentity(app),
             "Launch must place remote focus on a named control: " + app.debugDescription
         )
 
@@ -2883,7 +2883,7 @@ final class DulcetTVUITests: XCTestCase {
             if let snapshot = try? app.snapshot() {
                 let elements = hierarchyElements(snapshot)
                 section = elements.first { $0.elementType == .navigationBar }?.identifier ?? ""
-                observedFocus = launchSections.contains(section) ? focusedControlIdentifier(in: elements) : nil
+                observedFocus = launchSections.contains(section) ? focusedControlIdentity(in: elements) : nil
                 if let focus = observedFocus, section != "Account" || focus.hasPrefix("dulcet.account-connect.") { break }
             }
             Thread.sleep(forTimeInterval: 0.25)
@@ -2920,7 +2920,7 @@ final class DulcetTVUITests: XCTestCase {
             )
         } else {
             XCTAssertTrue(
-                focus.hasPrefix("dulcet."),
+                focus.hasPrefix("dulcet.") || focus == "Listen Now/Refresh",
                 "Launch focus must be one of the library's own controls, observed \(focus): " + app.debugDescription
             )
             XCTAssertTrue(
@@ -2946,18 +2946,18 @@ final class DulcetTVUITests: XCTestCase {
         }
     }
 
-    /// The identifier of the focused control in one observation. Enumerating a live query by
+    /// The identity of the focused control in one observation. Enumerating a live query by
     /// an earlier count races with screen transitions: Connection's text fields can disappear
     /// after the count and before `hasFocus` resolves the next field (hosted runs 38354526936
     /// and 38470501331). All attribute reads below belong to the same immutable snapshot.
     @MainActor
-    private func focusedControlIdentifier(_ app: XCUIApplication) -> String? {
+    private func focusedControlIdentity(_ app: XCUIApplication) -> String? {
         guard let snapshot = try? app.snapshot() else { return nil }
-        return focusedControlIdentifier(in: hierarchyElements(snapshot))
+        return focusedControlIdentity(in: hierarchyElements(snapshot))
     }
 
     @MainActor
-    private func focusedControlIdentifier(in elements: [XCUIElementSnapshot]) -> String? {
+    private func focusedControlIdentity(in elements: [XCUIElementSnapshot]) -> String? {
         for kind in [XCUIElement.ElementType.textField, .secureTextField, .button, .switch] {
             if let element = elements.first(where: {
                 $0.elementType == kind && $0.hasFocus && !$0.identifier.isEmpty
@@ -2965,7 +2965,22 @@ final class DulcetTVUITests: XCTestCase {
                 return element.identifier
             }
         }
+        // tvOS 27's native toolbar bridge exposes Refresh's label and focus but can
+        // omit its SwiftUI identifier. Accept only this scoped, named native control.
+        if let bar = elements.first(where: { $0.elementType == .navigationBar && $0.identifier == "Listen Now" }),
+           hierarchyElements(bar).contains(where: {
+               $0.elementType == .button && $0.label == "Refresh" && $0.hasFocus
+           }) {
+            return "Listen Now/Refresh"
+        }
         return nil
+    }
+
+    @MainActor
+    private func listenNowRefresh(in app: XCUIApplication) -> XCUIElement {
+        let identified = app.buttons["dulcet.listenNow.refresh"].firstMatch
+        if identified.exists { return identified }
+        return app.navigationBars["Listen Now"].buttons["Refresh"].firstMatch
     }
 
     /// Depth-first document order, matching the query's first-match order without re-querying.
