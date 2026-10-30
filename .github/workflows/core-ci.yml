@@ -78,6 +78,7 @@ jobs:
           arch: ${{ env.EMULATOR_ARCH }}
           target: ${{ env.EMULATOR_TARGET }}
           profile: pixel_6
+          emulator-build: '16428233'
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
