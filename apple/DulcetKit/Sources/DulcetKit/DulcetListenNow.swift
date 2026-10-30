@@ -35,7 +35,12 @@ struct DulcetListenNowView: View {
         .refreshable { store.librarySession?.reconnect() }
 #endif
 #if os(macOS) || os(tvOS)
-        .toolbar { ToolbarItem(placement: .primaryAction) { DulcetListenNowRefresh() } }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                DulcetListenNowRefresh()
+                    .accessibilityIdentifier("dulcet.listenNow.refresh")
+            }
+        }
 #endif
         .accessibilityIdentifier("dulcet.listenNow")
         .overlay(alignment: .top) { DulcetReaderAccountBanner() }
