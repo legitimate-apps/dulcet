@@ -5,7 +5,7 @@ set -euo pipefail
 : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
 mode="${1:-}"
 case "$mode" in
-    iphone) scheme=DulcetiOS; destination='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'; derived=DulcetiOSDerivedData;;
+    iphone) scheme=DulcetiOS; destination='platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'; derived=DulcetiOSDerivedData;;
     ipados) scheme=DulcetiOS; destination="${2:?iPad simulator destination required}"; derived=DulcetiPadOSDerivedData;;
     tvos) scheme=DulcetTV; destination='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'; derived=DulcetTVDerivedData;;
     macos) scheme=DulcetMac; destination='platform=macOS'; derived=DulcetMacAppTestDerivedData ;;
