@@ -15,6 +15,74 @@ final class DulcetMacPlaybackSystemLiveTests: XCTestCase {
     private let username = "dulcet-admin"
     private let password = "dulcet-ci-canary-password"
 
+    /// The same reader Play route as the native library, with the server's absent duration
+    /// preserved through queue admission into the real AVFoundation decoder.
+    func testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let baseURL = try XCTUnwrap(environment["DULCET_CONFORMANCE_BASE_URL"])
+        guard environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true",
+              URL(string: baseURL)?.host == "127.0.0.1" else {
+            XCTFail("the durationless proof requires a local disposable fixture")
+            return
+        }
+        let server = LiveServer(baseURL: baseURL, username: username, password: password)
+        let provider = "durationless-\(UUID().uuidString)"
+        let item = try await server.durationlessReaderItem(provider: provider)
+        let track = try XCTUnwrap(item.playableTrack, "a server-listed track must be queueable without duration")
+        XCTAssertNil(track.duration)
+        let before = try await server.playCount(track.id.rawID)
+        let databaseName = "durationless-live-\(UUID().uuidString).db"
+        removeDatabaseAfterTest(databaseName)
+        let queue = ApplePlaybackQueueClient(databaseName: databaseName)
+        defer { queue.close() }
+        let controller = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(),
+                                                      catalog: [], identityDatabaseName: databaseName)
+        var reports: [DulcetScrobbleDeliveryReport] = []
+        controller.setScrobbleDeliveryHandler { reports.append($0) }
+        controller.configure(account: DulcetPlaybackAccount(
+            providerInstanceID: provider, normalizedServerURL: baseURL,
+            username: username, password: password, allowLocalHTTP: true
+        ))
+        defer { controller.disconnect() }
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+            connector: DurationlessUnusedConnector(), playbackController: controller
+        ))
+        store.playTracks(DulcetPlaybackQueueIntent(
+            tracks: [track], sourceKind: .library, sourceID: nil,
+            sourceDisplayName: "Library", startIndex: 0, shuffle: false
+        ))
+        let initialSession = try XCTUnwrap(queue.snapshot().snapshot?.currentSession,
+                                           "the production Play action must create a session")
+        XCTAssertEqual(initialSession.durationMilliseconds, -1,
+                       "positive control: the session really starts with unknown duration")
+        var progressingPositions: [Duration] = []
+        var decodedDuration: Duration?
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(45))
+        while clock.now < deadline {
+            if let playing = store.snapshot.nowPlaying {
+                if playing.progressBegan, playing.elapsed > .zero {
+                    progressingPositions.append(playing.elapsed)
+                    decodedDuration = playing.duration
+                }
+                if !progressingPositions.isEmpty, playing.sessionID == nil { break }
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertNil(queue.snapshot().snapshot?.currentSession, "the real queue must reach its natural end")
+        XCTAssertFalse(progressingPositions.isEmpty, "the real decoder must advance media time")
+        XCTAssertNotNil(decodedDuration, "the player's duration must reach the scrubber presentation")
+        XCTAssertFalse(reports.isEmpty, "positive control: the delivery observer is attached")
+        // Submitted-play ingestion is synchronous before the queue transition returns; this
+        // terminal report sees every play even if its network delivery would still be pending.
+        XCTAssertEqual(queue.deliveryReport().submittedPlaysPersisted, 0)
+        XCTAssertEqual(queue.deliveryReport().submittedPlaysPending, 0)
+        XCTAssertTrue(reports.allSatisfy { $0.submittedPlaysPersisted == 0 && $0.submittedPlaysDelivered == 0 })
+        let after = try await server.playCount(track.id.rawID)
+        XCTAssertEqual(after, before)
+        print("DURATIONLESS-APPLE-EVIDENCE server-duration=absent initial-session-duration=-1 positions=\(progressingPositions) decoded-duration=\(String(describing: decodedDuration)) submitted=0")
+    }
+
     func testAnAlbumTailAdvancesWithoutPreparingAndEndsOnTheLastTrackStopped() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let baseURL = environment["DULCET_CONFORMANCE_BASE_URL"],
@@ -222,6 +290,27 @@ private struct LiveServer {
         }
     }
 
+    func durationlessReaderItem(provider: String) async throws -> DulcetReaderItem {
+        let response = try await call("search3", ["query": "Durationless Playback Canary", "songCount": "20"])
+        let songs = ((response["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]]) ?? []
+        let song = try XCTUnwrap(songs.first { $0["title"] as? String == "Durationless Playback Canary" })
+        XCTAssertNil(song["duration"], "search3 must actually omit duration")
+        let id = try XCTUnwrap(song["id"] as? String)
+        let detail = try await call("getSong", ["id": id])
+        let detailSong = try XCTUnwrap(detail["song"] as? [String: Any])
+        XCTAssertEqual(detailSong["id"] as? String, id)
+        XCTAssertNil(detailSong["duration"], "getSong must actually omit duration too")
+        return try XCTUnwrap(DulcetReaderItem(
+            kind: "track", providerInstanceID: provider, rawID: id, title: song["title"] as? String,
+            artistName: song["artist"] as? String, artistRawID: song["artistId"] as? String,
+            albumTitle: song["album"] as? String, albumRawID: song["albumId"] as? String,
+            year: nil, genre: nil, durationMilliseconds: nil, songCount: nil, albumCount: nil,
+            discNumber: nil, trackNumber: nil, sourceContainer: "Flac", artworkKey: nil, owner: nil,
+            favourite: nil, rating: nil, playCount: nil, playability: "streamable",
+            detailComplete: true, metadataMissing: false
+        ))
+    }
+
     func playCount(_ id: String) async throws -> Int {
         ((try await call("getSong", ["id": id])["song"] as? [String: Any])?["playCount"] as? Int) ?? 0
     }
@@ -239,5 +328,13 @@ private struct LiveServer {
         let (data, _) = try await URLSession.shared.data(from: try XCTUnwrap(components.url))
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         return try XCTUnwrap(object?["subsonic-response"] as? [String: Any])
+    }
+}
+
+@MainActor
+private final class DurationlessUnusedConnector: DulcetAccountConnecting {
+    func connect(_ request: DulcetAccountConnectRequest,
+                 completion: @escaping @MainActor (DulcetAccountConnectOutcome) -> Void) -> any DulcetAccountConnectOperation {
+        fatalError("the playback proof configures its disposable account directly")
     }
 }

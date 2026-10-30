@@ -119,27 +119,49 @@ def find_probe(response: dict, title: str) -> dict | None:
     return next((song for song in songs if song.get("title") == title), None)
 
 
-def require_playback_durations(client: ServerClient, expected_count: int) -> int:
-    """Positive playback fixtures must be queueable through the shared reader adapter."""
-    count = 0
+def require_playback_durations(
+    client: ServerClient, expected_count: int, *, durationless_fixture: dict[str, str] | None = None,
+) -> int:
+    """Keep positive playback controls strict; only the named sub-second fixture has no duration."""
+    count = positive_count = 0
+    durationless: list[dict] = []
     while True:
         songs = client.subsonic("search3", parameters={
             "query": "", "artistCount": "0", "albumCount": "0",
             "songCount": "200", "songOffset": str(count),
         }).get("searchResult3", {}).get("song", [])
         for song in songs:
+            if durationless_fixture is not None and all(
+                song.get(key) == value for key, value in durationless_fixture.items()
+            ):
+                if "duration" in song:
+                    raise SystemExit(f"durationless playback fixture has a server duration field: {song.get('id')}")
+                durationless.append(song)
+                continue
             duration = song.get("duration")
             if type(duration) is not int or duration <= 0:
-                raise SystemExit(
-                    f"playback corpus track has no positive server duration: {song.get('id')}; "
-                    "Navidrome omits the duration of sub-second media"
-                )
+                raise SystemExit(f"playback corpus track has no positive server duration: {song.get('id')}")
+            positive_count += 1
         count += len(songs)
         if len(songs) < 200:
             break
     if count != expected_count:
         raise SystemExit(f"playback corpus count mismatch: expected {expected_count}, observed {count}")
-    return count
+    if durationless_fixture is not None:
+        if len(durationless) != 1:
+            raise SystemExit(f"durationless playback fixture count mismatch: expected 1, observed {len(durationless)}")
+        fixture_id = durationless[0].get("id")
+        if not fixture_id:
+            raise SystemExit("durationless playback fixture has no server id")
+        song = client.subsonic("getSong", parameters={"id": fixture_id}).get("song", {})
+        if song.get("id") != fixture_id or not all(
+            song.get(key) == value for key, value in durationless_fixture.items()
+        ):
+            raise SystemExit("durationless playback fixture getSong identity mismatch")
+        if "duration" in song:
+            raise SystemExit(f"durationless playback fixture getSong has a server duration field: {fixture_id}")
+        print(f"OBSERVED durationless_playback_fixture id={fixture_id} search3_duration_present=false getSong_duration_present=false")
+    return positive_count
 
 
 def append_summary(lines: list[str]) -> None:
@@ -259,8 +281,8 @@ def main() -> None:
         )
     if manifest.get("copyrighted_audio") is not False:
         raise SystemExit("corpus manifest must assert copyrighted_audio=false")
-    if manifest.get("generated_media_files") != 314:
-        raise SystemExit("corpus manifest must contain exactly 314 scanner-visible media files")
+    if manifest.get("generated_media_files") != 315:
+        raise SystemExit("corpus manifest must contain exactly 315 scanner-visible media files")
     format_evidence = manifest.get("formats", {})
     expected_format_tokens = ["flac", "m4a", "mp3", "ogg"]
     if format_evidence.get("expected_tokens") != expected_format_tokens:
@@ -363,6 +385,15 @@ def main() -> None:
         raise SystemExit(
             f"corpus awkward-case evidence drifted: expected {expected_awkward_cases}, "
             f"observed {manifest.get('awkward_cases')}"
+        )
+    expected_durationless_fixture = {"title": "Durationless Playback Canary", "album": "Durationless"}
+    expected_durationless = {
+        **expected_durationless_fixture, "duration_seconds": 0.9, "server_duration_field_present": False,
+    }
+    if manifest.get("durationless_playback_canary") != expected_durationless:
+        raise SystemExit(
+            f"corpus durationless playback evidence drifted: expected {expected_durationless}, "
+            f"observed {manifest.get('durationless_playback_canary')}"
         )
     if manifest.get("verification") != "ffprobe-plus-id3v24-round-trip":
         raise SystemExit("corpus manifest does not identify the required media probes")
@@ -482,7 +513,9 @@ def main() -> None:
             f"observed {scan_status.get('count')}"
         )
 
-    queueable_tracks = require_playback_durations(client, manifest["generated_media_files"])
+    queueable_tracks = require_playback_durations(
+        client, manifest["generated_media_files"], durationless_fixture=expected_durationless_fixture,
+    )
 
     extensions_response = client.subsonic("getOpenSubsonicExtensions")
     extension_names = {
@@ -554,7 +587,7 @@ def main() -> None:
         "known_probe_retrievable": True,
     }
     lines = [
-        f"OBSERVED playback_corpus known_positive_durations={queueable_tracks} expected={manifest['generated_media_files']}",
+        f"OBSERVED playback_corpus known_positive_durations={queueable_tracks} expected={manifest['generated_media_files'] - 1} durationless=1",
         f"OBSERVED runtime expected={args.runtime} observed={actual_runtime}",
         (
             f"OBSERVED timezone expected={compact_json(expected_timezone)} "

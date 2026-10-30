@@ -32,7 +32,7 @@ failure. So the Android proof uses this album; no Apple proof uses it. Its secon
 same 40-second tone.
 
 It is deliberately NOT part of tools/seed-corpus. The default corpus is counted exactly: the health
-check requires its 314 files, and the conformance suites count its albums. An extra album there would
+check requires its 315 files, and the conformance suites count its albums. An extra album there would
 change what those assert. So it is opt-in, and it goes into a server that has already passed the
 health check:
 

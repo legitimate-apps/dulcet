@@ -17,6 +17,12 @@ import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnector
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.playback.PlaybackService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -202,4 +208,47 @@ fun requireExactlyOneServerPlay(probe: DisposableServerProbe, rawId: String, bef
     Thread.sleep(5_000)
     val after = probe.playCount(rawId)
     check(after == before + 1) { "Expected exactly one server play: before=$before after=$after" }
+}
+
+/**
+ * The sub-second fixture is omitted from Navidrome's duration field but has real decodable audio.
+ * Observe before Play so its brief unknown-duration and progressing states cannot be missed by
+ * a slow test poll. The production state still comes from Media3 and the production controller.
+ */
+fun requireDurationlessPlayback(
+    observer: PlaybackObserver,
+    probe: DisposableServerProbe,
+    rawId: String,
+    start: () -> Unit,
+) {
+    val song = probe.call("getSong", mapOf("id" to rawId)).getJSONObject("song")
+    check(!song.has("duration")) { "The durationless fixture must omit duration on the real server" }
+    val before = probe.playCount(rawId)
+    val observed = java.util.concurrent.CopyOnWriteArrayList<AndroidPlaybackState>()
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    observer.onController { controller ->
+        controller.setAutoplay(false)
+        scope.launch { controller.state.collect { observed += it } }
+    }
+    try {
+        start()
+        await("durationless playback to progress and end", timeoutMillis = 30_000) {
+            observed.any { it.phase == "Progressing" && it.positionMilliseconds > 0 } && !observer.state().hasSession
+        }
+        val sessionStates = observed.filter { state ->
+            state.hasSession && state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId == rawId
+        }
+        check(sessionStates.any { it.durationMilliseconds == null }) {
+            "The production queue never exposed its unknown duration: ${sessionStates.map { it.durationMilliseconds }}"
+        }
+        val positions = sessionStates.filter { it.phase == "Progressing" }.map { it.positionMilliseconds }
+        check(positions.any { it > 0 }) { "The durationless track did not advance media time: $positions" }
+        check(sessionStates.any { it.validatedBytesConsumed > 0 }) { "No inline-validated media bytes reached Media3" }
+        check(observer.awaitQueuedPlaybackDelivery() == 0) { "The short track must leave no submitted play pending" }
+        val after = probe.playCount(rawId)
+        check(after == before) { "A durationless sub-second track submitted a play: $before -> $after" }
+        println("DURATIONLESS PLAYBACK OBSERVED server-duration=absent queue-duration=unknown " +
+            "media-ms=0->${positions.max()} validated-bytes=${sessionStates.maxOf { it.validatedBytesConsumed }} " +
+            "server-plays=$before->$after pending-plays=0")
+    } finally { scope.cancel() }
 }

@@ -948,8 +948,10 @@ private func rawSearchPage(artists: [String], albums: [String], tracks: [String]
     )
 }
 
-@Test @MainActor
-func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent() async throws {
+@Test(arguments: [DulcetPlaybackStartNavigation.stayOnCurrentSurface, .showNowPlaying]) @MainActor
+func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent(
+    navigation: DulcetPlaybackStartNavigation
+) async throws {
     let connector = ControlledAccountConnector()
     let libraryBrowser = ControlledLibraryBrowser()
     let search = ControlledServerSearch()
@@ -960,7 +962,8 @@ func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent
         serverSearch: search,
         playbackController: playback,
         searchDebounce: .zero,
-        providerInstanceIDFactory: { "provider-instance-fixture" }
+        providerInstanceIDFactory: { "provider-instance-fixture" },
+        playbackStartNavigation: navigation
     )
     let store = DulcetPresentationStore(source: source)
     store.accountServerURL = "https://music.example.invalid"
@@ -1009,13 +1012,20 @@ func searchResultActivationRoutesTracksAlbumsAndArtistsThroughPresentationIntent
     ])))
 
     store.activateSearchResult(missingDurationTrack.id)
-    #expect(playback.queueIntents.isEmpty)
+    #expect(playback.queueIntents.last?.tracks.map(\.id) == [firstTrack.id, secondTrack.id, missingDurationTrack.id])
+    #expect(playback.queueIntents.last?.startIndex == 2)
+    #expect(playback.queueIntents.last?.tracks.last?.duration == nil)
+    #expect(playback.queueIntents.count == 1)
+    #expect(store.snapshot.selectedDestination == (navigation == .showNowPlaying ? .nowPlaying : .search))
 
+    // TV opens Now Playing after Play; return to Search before activating another result.
+    store.selectDestination(.search)
     store.activateSearchResult(secondTrack.id)
+    #expect(playback.queueIntents.count == 2)
     let queueIntent = try #require(playback.queueIntents.last)
     #expect(queueIntent.sourceKind == .search)
     #expect(queueIntent.sourceID == nil)
-    #expect(queueIntent.tracks.map(\.id) == [firstTrack.id, secondTrack.id])
+    #expect(queueIntent.tracks.map(\.id) == [firstTrack.id, secondTrack.id, missingDurationTrack.id])
     #expect(queueIntent.startIndex == 1)
 
     store.selectDestination(.search)
