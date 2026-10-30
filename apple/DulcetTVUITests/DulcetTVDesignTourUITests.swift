@@ -1158,7 +1158,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     @MainActor
     private func isFocused(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
         guard let target = try? element.snapshot() else { return false }
-        if target.hasFocus { return true }
+        // Native button menus can focus an anonymous child of their identified button.
+        // Restrict this check to that control's snapshot subtree.
+        func containsFocus(_ node: XCUIElementSnapshot) -> Bool {
+            node.hasFocus || node.children.contains(where: containsFocus)
+        }
+        if containsFocus(target) { return true }
         guard let cell = try? app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.snapshot() else { return false }
         return cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
     }

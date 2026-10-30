@@ -905,7 +905,7 @@ final class DulcetTVUITests: XCTestCase {
         var presses: [String] = []
         var visited: [CGRect] = []
         var swapAxes = false
-        while !(target.exists && target.hasFocus), presses.count < bound {
+        while !(target.exists && isFocused(app, target)), presses.count < bound {
             guard let from = focusedFrame() else {
                 XCUIRemote.shared.press(.down)
                 presses.append("down")
@@ -934,8 +934,8 @@ final class DulcetTVUITests: XCTestCase {
                 break
             }
         }
-        print("DULCET TV FOCUS target=\(target.identifier) presses=\(presses.joined(separator: ",")) reached=\(target.hasFocus)")
-        return target.exists && target.hasFocus
+        print("DULCET TV FOCUS target=\(target.identifier) presses=\(presses.joined(separator: ",")) reached=\(isFocused(app, target))")
+        return target.exists && isFocused(app, target)
     }
 
     /// Focuses `heart` by remote and, from what the server holds, Select stars and Select again
@@ -2220,7 +2220,12 @@ final class DulcetTVUITests: XCTestCase {
     @MainActor
     private func isFocused(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
         guard let target = try? element.snapshot() else { return false }
-        if target.hasFocus { return true }
+        // Native button menus can focus an anonymous child of their identified button.
+        // Restrict this check to that control's snapshot subtree.
+        func containsFocus(_ node: XCUIElementSnapshot) -> Bool {
+            node.hasFocus || node.children.contains(where: containsFocus)
+        }
+        if containsFocus(target) { return true }
         guard let cell = try? app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.snapshot() else { return false }
         return cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
     }
