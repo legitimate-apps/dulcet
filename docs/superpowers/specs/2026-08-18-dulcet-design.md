@@ -7961,6 +7961,18 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-30 — Re-measure the Darwin workflow envelopes with native connections included.**
+
+§21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) sets the
+Darwin core job to 240 minutes from successful core leg 41011042975 (158.233 minutes),
+its composite to 155 (100.833 measured), and its native iOS connections step to 20
+(12.500 measured). The composite cap plus that successful job's remaining 57.400 minutes
+is 212.400, below the job cap. Run 41060169137 reached the previous 170-minute job cap
+while TV account-state proofs were progressing; the later iOS connection proof did not run.
+A cancelled job supplies no passing full-run evidence. The job graph, commands, test-case
+readiness and execution bounds, simulator acknowledgments and parity requirements stay fixed.
+These workflow envelopes supersede the earlier calibration; no feature status is promoted.
+
 **2026-10-29 — Fence connection publications and provide explicit preserving recovery.**
 
 Route restoration reads route rows and their exact transport generation in one statement;

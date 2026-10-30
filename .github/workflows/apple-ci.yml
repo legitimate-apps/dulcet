@@ -885,9 +885,12 @@ jobs:
   # iPhone proofs ending in the skip probe, which must come after everything that counts the
   # corpus, and the iPhone streaming-quality cap.
   #
-  # §21.5 rule 5, remeasured 2026-10-18 from successful leg 39133541765:
-  # 170 = ceil(1.5 x 111.367 / 5) x 5. The composite took 84.900 minutes, so its
-  # 130-minute envelope plus this run's remaining 26.467 fits within the job envelope.
+  # §21.5 rule 5, remeasured 2026-10-30 from successful core leg 41011042975:
+  # 240 = ceil(1.5 x 158.233 / 5) x 5. Its composite took 100.833 minutes, hence
+  # 155 = ceil(1.5 x 100.833 / 5) x 5. Composite cap plus measured remainder is
+  # 155 + 57.400 = 212.400 minutes, below the job cap. The iOS connections step
+  # took 12.500 minutes, hence its envelope is 20. Run 41060169137 reached the
+  # old 170-minute job cap during progressing TV proofs, before iOS connections.
   # The former 100-minute step limit expired during progressing TV proofs in both
   # main's 39131842852 and this branch's 39144805540; these are workflow envelopes,
   # not changes to the test cases' own readiness, observation or execution bounds.
@@ -896,7 +899,7 @@ jobs:
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 170
+    timeout-minutes: 240
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -1142,9 +1145,9 @@ jobs:
           python3 tools/ci/isolate-simulator --phase first-boot-tvos --keep-name "Apple TV 4K (3rd generation)"
           python3 tools/ci/isolate-simulator --phase first-boot-done --none
       - name: Assert Darwin conformance preconditions
-        # §21.5 rule 5: 130 = ceil(1.5 x 84.900 / 5) x 5, measured in the
-        # successful Darwin leg of 39133541765. Replaces the old 66.6 projection.
-        timeout-minutes: 130
+        # §21.5 rule 5: 155 = ceil(1.5 x 100.833 / 5) x 5, measured in the
+        # successful core leg of 41011042975; test-case bounds are unchanged.
+        timeout-minutes: 155
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -2028,7 +2031,7 @@ jobs:
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
       # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
       - name: Prove preserving connections on the native iOS executors
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" connections-proof
