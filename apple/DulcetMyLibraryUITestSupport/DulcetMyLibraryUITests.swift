@@ -889,47 +889,104 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTFail("The remote did not reveal shelf album \(title): \(app.debugDescription)")
         return tile
     }
-    private func isFocused(_ target: XCUIElement) -> Bool {
+    private func snapshotIfPresent(_ element: XCUIElement) -> XCUIElementSnapshot? {
+        guard element.exists else { return nil }
+        return try? element.snapshot()
+    }
+    private func focusedSnapshots() -> (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?) {
+        let button = snapshotIfPresent(app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch)
+        let cell = snapshotIfPresent(app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch)
+        return (button, cell)
+    }
+    private func isFocused(
+        _ target: XCUIElementSnapshot,
+        among focused: (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?)
+    ) -> Bool {
         if target.hasFocus { return true }
         // Native confirmation dialogs expose an identified action and a focused UIKit
         // alias at the same label/frame. The alias carries focus, the identified one does not.
-        let button = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-        if button.exists, button.label == target.label, button.frame == target.frame { return true }
+        if let button = focused.button, button.label == target.label, button.frame == target.frame { return true }
         // tvOS context-menu actions sit inside a focused cell rather than holding focus themselves.
-        let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-        return cell.exists && cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+        return focused.cell?.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY)) == true
+    }
+    private func isFocused(_ target: XCUIElement) -> Bool {
+        guard let target = snapshotIfPresent(target) else { return false }
+        if target.hasFocus { return true }
+        return isFocused(target, among: focusedSnapshots())
     }
     private func focus(_ target: XCUIElement) {
-        var previousFrame: CGRect?
-        for _ in 0..<40 {
-            if isFocused(target) { return }
-            let focusedCell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-            let current = focusedCell.exists ? focusedCell : app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-            guard current.exists else { XCUIRemote.shared.press(.down); continue }
-            let a = current.frame, b = target.frame
-            // Album Add is centred beside the vertical Play/Shuffle stack. Its centre is
-            // below Play and above Shuffle, so centre-only steering oscillates Up/Down.
-            // Overlapping vertical spans identify the reachable horizontal neighbour.
-            if min(a.maxY, b.maxY) > max(a.minY, b.minY),
-               b.minX >= a.maxX || b.maxX <= a.minX {
-                XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)
-                previousFrame = a
-                continue
-            }
-            if previousFrame == a && abs(a.midX - b.midX) > 20 {
-                // A narrow first-column tile can have no Down neighbor from a wider section bar.
-                XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)
-                previousFrame = nil
-                continue
-            }
-            previousFrame = a
-            if abs(a.midY - b.midY) > max(20, min(a.height, b.height) / 2) {
-                XCUIRemote.shared.press(b.midY > a.midY ? .down : .up)
-            } else {
-                XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)
+        func identity(_ element: XCUIElementSnapshot) -> String {
+            "\(element.elementType.rawValue)|\(element.identifier)|\(element.label)"
+        }
+        func opposite(_ direction: XCUIRemote.Button) -> XCUIRemote.Button {
+            switch direction {
+            case .up: .down
+            case .down: .up
+            case .left: .right
+            default: .left
             }
         }
-        XCTFail("Remote could not focus " + target.debugDescription)
+        let targetIdentifier = target.identifier, targetLabel = target.label
+        var lastTargetFrame = target.frame
+        var tried: [String: Set<UInt>] = [:]
+        var arrival: [String: XCUIRemote.Button] = [:]
+        for move in 0..<40 {
+            let started = ProcessInfo.processInfo.systemUptime
+            // Each live attribute read resolves a fresh accessibility query. Reuse one snapshot
+            // per element per move, including diagnostics, instead of resolving every field again.
+            let targetSnapshot = snapshotIfPresent(target)
+            if targetSnapshot?.hasFocus == true { return }
+            let focused = focusedSnapshots()
+            if let targetSnapshot {
+                if isFocused(targetSnapshot, among: focused) { return }
+                lastTargetFrame = targetSnapshot.frame
+            }
+            let published = targetSnapshot != nil
+            guard let current = focused.cell ?? focused.button else {
+                XCUIRemote.shared.press(.down)
+                continue
+            }
+            let key = identity(current), a = current.frame, b = lastTargetFrame
+            let horizontal: XCUIRemote.Button = b.midX > a.midX ? .right : .left
+            let vertical: XCUIRemote.Button = b.midY > a.midY ? .down : .up
+            let overlaps = min(a.maxY, b.maxY) > max(a.minY, b.minY)
+            let horizontalNeighbor = overlaps && (b.minX >= a.maxX || b.maxX <= a.minX)
+            let verticalDistance = abs(a.midY - b.midY) > max(20, min(a.height, b.height) / 2)
+            var directions: [XCUIRemote.Button] = horizontalNeighbor || !verticalDistance
+                ? [horizontal, vertical, opposite(vertical), opposite(horizontal)]
+                : [vertical, horizontal, opposite(vertical), opposite(horizontal)]
+            // Focus geometry is a preference, not a route. A tall, staggered grid can
+            // require moving back onto the card above a More control before moving left.
+            // Remember tried directions by focus identity. A press that scrolls the same
+            // focused element still makes progress and remains eligible below. The target
+            // itself can leave the lazy snapshot while a route moves back through a card.
+            if let entered = arrival[key] {
+                let back = opposite(entered)
+                directions.removeAll { $0 == back }; directions.append(back)
+            }
+            let direction = directions.first { !(tried[key] ?? []).contains($0.rawValue) }
+                ?? arrival[key].map(opposite) ?? .up
+            tried[key, default: []].insert(direction.rawValue)
+            print("FOCUS MOVE \(move) direction=\(direction) tried=\(tried[key] ?? []) currentID=\(current.identifier) currentLabel=\(current.label) currentFrame=\(a) targetID=\(targetIdentifier) targetLabel=\(targetLabel) targetFrame=\(b) published=\(published)")
+            let queried = ProcessInfo.processInfo.systemUptime
+            XCUIRemote.shared.press(direction)
+            let pressed = ProcessInfo.processInfo.systemUptime
+            let afterFocus = focusedSnapshots()
+            if let after = afterFocus.cell ?? afterFocus.button {
+                let next = identity(after)
+                let afterFrame = after.frame
+                if next != key, arrival[next] == nil { arrival[next] = direction }
+                if next == key, afterFrame != a { tried[key]?.remove(direction.rawValue) }
+                print("FOCUS AFTER \(move) changed=\(next != key) id=\(after.identifier) label=\(after.label) frame=\(afterFrame)")
+            } else { print("FOCUS AFTER \(move) none=true") }
+            let finished = ProcessInfo.processInfo.systemUptime
+            print("FOCUS TIMING \(move) before=\(queried - started) press=\(pressed - queried) after=\(finished - pressed) total=\(finished - started)")
+        }
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "tv-focus-timeout-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = "tv-focus-timeout-screen"; screen.lifetime = .keepAlways; add(screen)
+        XCTFail("Remote could not focus \(targetIdentifier), \(targetLabel), last frame \(lastTargetFrame)")
     }
 #endif
     @MainActor private func revealAlbumActions() {

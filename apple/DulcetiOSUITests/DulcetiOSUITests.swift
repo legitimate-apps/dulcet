@@ -239,12 +239,12 @@ final class DulcetiOSUITests: XCTestCase {
         )
 
         let libraryTab = app.tabBars.buttons["Library"].firstMatch
-        guard libraryTab.waitForExistence(timeout: 10) else {
-            XCTFail("A compact window must present a tab bar with Library: " + app.debugDescription)
+        guard libraryTab.waitForExistence(timeout: 10), libraryTab.isHittable else {
+            XCTFail("A compact window must present a visible tab bar with Library: " + app.debugDescription)
             return
         }
         XCTAssertFalse(
-            app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.exists,
+            window.buttons["dulcet.sidebar.library"].firstMatch.exists,
             "A compact window must not fall back to the sidebar list"
         )
         // The fixture opens Account as a sheet. It must not raise the keyboard on arrival;
@@ -5920,6 +5920,11 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
         guard let width = settledWindowWidth(window, expecting: "regular", matching: { $0 > 700 }) else { return }
         XCTAssertGreaterThan(width, 700, "This proof requires a regular-width iPad")
+        let legacySidebar = window.buttons["dulcet.sidebar.library"].firstMatch
+        let nativeSidebar = window.descendants(matching: .any)["dulcet.tab.library"].firstMatch
+        let sidebar = legacySidebar.exists ? legacySidebar : nativeSidebar
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 10) && sidebar.isHittable,
+            "Regular width must expose the Library destination")
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else { return }
         let libraryTitle = app.navigationBars.staticTexts["Library"].firstMatch
         XCTAssertTrue(libraryTitle.waitForExistence(timeout: 10) && libraryTitle.isHittable,

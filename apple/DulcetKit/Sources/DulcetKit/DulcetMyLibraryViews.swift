@@ -115,11 +115,12 @@ struct DulcetMyLibraryCollection: View {
     let library: DulcetMyLibrarySnapshot
     let section: DulcetMyLibrarySection
     let width: CGFloat
+    var onFirstGridWidthChange: ((CGFloat) -> Void)? = nil
 
     var body: some View {
         switch section {
         case .recent:
-            tiles(library.albums)
+            tiles(library.albums, observesWidth: true)
             tiles(library.artists)
             tracks(library.songs)
         case .albums: tiles(library.albums)
@@ -129,10 +130,20 @@ struct DulcetMyLibraryCollection: View {
         }
     }
 
-    private func tiles(_ items: [DulcetReaderItem]) -> some View {
-        DulcetArtworkGrid(items: items, width: width) { item, _, size in
+    @ViewBuilder
+    private func tiles(_ items: [DulcetReaderItem], observesWidth: Bool = false) -> some View {
+        let grid = DulcetArtworkGrid(items: items, width: width) { item, _, size in
             DulcetReaderTile(item: item, width: size)
         }
+#if os(iOS)
+        if #available(iOS 27, *), observesWidth, let onFirstGridWidthChange {
+            grid.onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { width in onFirstGridWidthChange(width) }
+        } else { grid }
+#else
+        grid
+#endif
     }
 
     private func tracks(_ items: [DulcetReaderItem]) -> some View {
@@ -218,6 +229,9 @@ struct DulcetMyLibrarySectionPage: View {
 struct DulcetMyLibraryView: View {
     @Environment(DulcetPresentationStore.self) private var store
     private var section: DulcetMyLibrarySection { store.myLibrarySection }
+    @Environment(\.displayScale) private var gridDisplayScale
+    @State private var recentGridWidth: CGFloat?
+    @State private var recentGridGeneration = 0
 #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// A phone lists the sections as rows that push their pages; a regular width has the sidebar's.
@@ -299,7 +313,9 @@ struct DulcetMyLibraryView: View {
                         if library.syncState != "syncing" { DulcetMyLibraryEmptyState() }
                     } else {
                         Section {
-                            DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width)
+                            DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width,
+                                onFirstGridWidthChange: recordRecentGridWidth)
+                                .id(recentGridGeneration)
                                 .dulcetHideListRowSeparator()
                         } header: {
                             DulcetShelfHeader(title: DulcetStrings.recentlyAdded,
@@ -320,6 +336,18 @@ struct DulcetMyLibraryView: View {
             .refreshable { refresh() }
 #endif
         }
+    }
+
+    private func recordRecentGridWidth(_ width: CGFloat) {
+#if os(iOS)
+        guard #available(iOS 27, *), width.isFinite else { return }
+        // Initial narrow-to-wide proposals can stale the lazy grid's accessibility node.
+        // List owns the scroll offset, so observe width rather than its moving viewport origin.
+        let pixelWidth = (width * gridDisplayScale).rounded() / gridDisplayScale
+        guard recentGridWidth != pixelWidth else { return }
+        if recentGridWidth != nil { recentGridGeneration += 1 }
+        recentGridWidth = pixelWidth
+#endif
     }
 
     /// The whole Library for one section, chosen by the sidebar or the television's section row.

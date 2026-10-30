@@ -203,11 +203,41 @@ album drag interaction to its label also failed in
 this time after the saved-account relaunch at line 138. The first online relaunch
 passed. The album is again visible in the recording but absent from the AX tree;
 the artist is published. This does not isolate the drag interaction as the cause.
-Further production modifier changes are paused. A separate test-only
-[diagnostic run 40602486910](https://github.com/legitimate-apps/dulcet/actions/runs/40602486910)
-retains the original assertion result while observing a snapshot, a short wait
-and a small reversible scroll after an original miss. These observations cannot
-turn that miss into a pass.
+The speculative tile modifier changes have been reverted. The first diagnostic
+run, 40602486910, failed during fixture startup and supplies no accessibility
+evidence. The corrected test-only
+[diagnostic run 40608050935](https://github.com/legitimate-apps/dulcet/actions/runs/40608050935)
+retained the original assertion result while observing a snapshot, a short wait
+and a small reversible scroll after an original miss. Neither waiting nor moving
+the scroll position restored the album; the artist control stayed published.
+These observations cannot turn the original miss into a pass.
+
+The controlled matrix in
+[iPhone job 122598984681](https://github.com/legitimate-apps/dulcet/actions/runs/40622303960/job/122598984681)
+then reproduced the offline-pending miss with the original tile modifiers. Removing
+the drag, combined accessibility children, explicit label or subtitle separately
+did not restore publication. The identifier-removal variant failed its connection
+precondition before reaching Library, so it supplies no tile evidence.
+
+Swapping only the album and artist grid order published the album at
+`(16, 500, 150, 190.333)` while the artist disappeared. The original album case
+passed, but that variant transfers the accessibility failure and is not a fix.
+Both tiles are visibly drawn and unobscured in the original and swapped captures.
+The missing element follows the first lazy grid, rather than album kind or its
+tile modifiers. The original-miss snapshot contains two zero-frame `Other`
+leaves under the scroll content, each with an empty identifier and label, no value
+and no children. Their individual identities are not established by the snapshot.
+
+The next [iPhone matrix job 122627786082](https://github.com/legitimate-apps/dulcet/actions/runs/40631216324/job/122627786082)
+kept the original album-first order and tested explicit accessibility containment,
+a plain layout wrapper, and both together. All three failed the unchanged
+20-second album assertion while the artist stayed published. Containment alone
+failed at the saved-account checkpoint; the other two failed at offline pending
+addition, as did the baseline. These are negative controls, not production fixes.
+The native lazy grids and tile behavior remain unchanged. A bounded search of
+Apple documentation and forums did not establish a matching reported defect or
+known repair, so this remains an unresolved accessibility failure rather than a
+confirmed external image defect.
 
 
 The following [PR platform check 122465865449](https://github.com/legitimate-apps/dulcet/actions/runs/40582613223/job/122465865449)
@@ -250,6 +280,49 @@ result; a visible keyboard still requires bounded dismissal; an unavailable
 snapshot stays unknown and cannot allow activation. A Search or Hide key must
 also be hittable before it is tapped. The three-attempt limit and five-second
 post-gesture budget remain, measured with a monotonic clock. The changed iPhone
-UI test target type-checks under SDK 27.0; hosted behavior remains to be verified.
+UI test target type-checks under SDK 27.0. The exact lyrics case passed on iPad
+in [diagnostic job 122598984724](https://github.com/legitimate-apps/dulcet/actions/runs/40622303960/job/122598984724),
+with one executed test, one pass and no failures or skips in its result bundle.
 Eight sampled failed main iPad jobs had no matching keyboard failure, so none is
 claimed as an exemption for this job.
+
+## Largest-text tvOS focus trace
+
+The corrected [tvOS diagnostic job 122611375419](https://github.com/legitimate-apps/dulcet/actions/runs/40626131393/job/122611375419)
+executed the original tour with a trace before and after every remote press.
+All 40 moves alternated Down and Left while focus stayed on the same
+`More, Several Album Artists` button at `(1533.5, 663, 183, 99)`. The target album
+was published at `(116, 782, 220, 659.5)`. The other first-row More buttons were
+at y=378 or y=443, rather than overlapping the focused button vertically.
+The geometric steering rule kept choosing two directions that made no progress;
+it never tried Up. This trace establishes a helper loop, but does not establish
+that the app's native focus graph can reach the target by another route.
+
+The next [diagnostic job 122619016697](https://github.com/legitimate-apps/dulcet/actions/runs/40628476961/job/122619016697)
+tried Up after Down and Left stalled. The target then left the lazy accessibility
+snapshot and diagnostic logging failed by querying its frame. That run does not
+prove target activation. The corrected helper records focus identity and
+frame progress, explores unused directions, and retains the last target geometry
+while the target is unpublished. It retains the 40-move bound and requires the
+actual target to hold focus before activation.
+
+[tvOS job 122627786439](https://github.com/legitimate-apps/dulcet/actions/runs/40631216324/job/122627786439)
+then passed the exact light, dark and largest-text tour with the same app layout.
+Its result bundle records one executed test, one pass, no failures and no skips
+on Apple TV 4K (3rd generation), tvOS 27.0 (24J360). This establishes that the
+native focus graph can reach and activate the target; the original two-direction
+helper loop was the failure. The helper change adds no application focus section
+or layout change. A final full run is still required for the production head.
+
+## iPad edition timeout observation
+
+The earlier [Discover iPad job 122569887585](https://github.com/legitimate-apps/dulcet/actions/runs/40595126706/job/122569887585)
+timed out waiting for the selected edition's value after the largest-text menu
+choice. Its attachment held the query chain rather than the application state,
+so it cannot establish whether the menu remained open or the selected value was
+published differently. The exact sidebar, detail and resize case passed in
+[diagnostic job 122598984724](https://github.com/legitimate-apps/dulcet/actions/runs/40622303960/job/122598984724)
+with the original value assertion and 30-second wait. That is a non-reproduction,
+not a diagnosed edition fix. The test now attaches the full hierarchy, screenshot
+and recursive snapshot if this assertion times out again. Its success path and
+application behavior are unchanged.
