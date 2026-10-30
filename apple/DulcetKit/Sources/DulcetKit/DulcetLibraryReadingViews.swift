@@ -1631,9 +1631,11 @@ struct DulcetReaderTrackListPage: View {
         GeometryReader { geometry in
             HStack(alignment: .top, spacing: DulcetSpacing.xl) {
                 if let window = model.window {
-                    wideAlbumHeader(window)
-                        .frame(width: 420)
-                        .focusSection()
+                    ScrollView {
+                        wideAlbumHeader(window)
+                    }
+                    .frame(width: min(600, geometry.size.width * 0.36))
+                    .focusSection()
                     ScrollView {
                         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                             let subject: DulcetReaderCopy.Subject = window.header == nil ? .album : .albumTracks
@@ -1670,6 +1672,7 @@ struct DulcetReaderTrackListPage: View {
                 Text(item?.displayTitle ?? String())
                     .font(.title2.weight(.bold))
                     .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("dulcet.\(kind.rawValue).title")
                 if let item, !item.credits.isEmpty {
