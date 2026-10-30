@@ -112,8 +112,8 @@ struct DulcetAccountConnectionView: View {
         .navigationBarTitleDisplayMode(.inline)
 #endif
 #if os(iOS)
-        // Dragging the form puts the keyboard away, uncovering the tab bar.
-        .scrollDismissesKeyboard(.interactively)
+        // Either scroll direction dismisses input without requiring a downward sheet drag.
+        .scrollDismissesKeyboard(.immediately)
 #endif
 #if os(macOS)
         .toolbarTitleDisplayMode(.inline)

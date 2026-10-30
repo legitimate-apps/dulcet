@@ -25,7 +25,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--navigation-source-ref', help='Replay an earlier compact navigation helper')
 parser.add_argument('--source', type=Path, help='Alternate proof source for a before/after control')
 parser.add_argument('--mutant', choices=['before-only', 'after-only', 'no-scope', 'confirmation-once', 'moving-target',
-                                       'covered-target', 'reversed-drag', 'unbounded-drag'])
+                                       'covered-target', 'reversed-drag', 'unbounded-drag', 'keyboard-sheet-dismiss'])
 args = parser.parse_args()
 source = (args.source or ROOT / 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift').read_text()
 
@@ -55,6 +55,11 @@ tour_source = (subprocess.check_output(['git', 'show', f'{args.navigation_source
                if args.navigation_source_ref else (ROOT / tour_path).read_text())
 tour_destination = declaration('    private func openDestination(', tour_source).replace('func openDestination(', 'func openDesignTourDestination(', 1)
 scroll = method('scrollIntoView')
+keyboard_dismiss = method('dismissKeyboardIfPresent')
+if args.mutant == 'keyboard-sheet-dismiss':
+    keyboard_dismiss = keyboard_dismiss.replace('CGVector(dx: 0.5, dy: 0.15)', 'CGVector(dx: 0.5, dy: 0.9)')
+account_view = (ROOT / 'apple/DulcetKit/Sources/DulcetKit/DulcetAccountConnectionView.swift').read_text()
+assert '.scrollDismissesKeyboard(.immediately)' in account_view, 'Account scrolling must dismiss the keyboard in either direction'
 stable = method('waitForStableHitTarget')
 snapshot_polling = 'matching target: HitTarget' in stable
 helpers = (declaration('    private enum HitTarget {') + '\n' + method('hitTarget')) if snapshot_polling else ''
@@ -161,6 +166,18 @@ final class XCUIApplication: NSObject {
     var accountCloses = 0
     var accountPage = "Account"
     var accountBacks = 0
+    var phoneKeyboardFixture = false
+    var phoneKeyboardVisible = false
+    var keyboards: ElementQuery { ElementQuery(app: self, scope: "keyboard") }
+    var collectionViews: ElementQuery { ElementQuery(app: self, scope: "form") }
+    func snapshot() throws -> XCUIElementSnapshot {
+        precondition(phoneKeyboardFixture)
+        let keyboard = Snapshot(elementType: .keyboard, identifier: "", label: "Keyboard",
+            frame: CGRect(x: 0, y: 500, width: 400, height: 300))
+        let window = Snapshot(children: phoneKeyboardVisible ? [keyboard] : [], elementType: .window,
+            identifier: "window", label: "", frame: CGRect(x: 0, y: 0, width: 400, height: 800))
+        return Snapshot(children: [window], elementType: .any, identifier: "", label: "", frame: window.frame)
+    }
     var navigationBars: ElementQuery { ElementQuery(app: self, scope: "navigation") }
     func descendants(matching type: XCUIElementType) -> ElementQuery { ElementQuery(app: self, scope: "descendants") }
     var tabBars: ElementQuery { ElementQuery(app: self, scope: "tab") }
@@ -183,6 +200,7 @@ final class XCUIApplication: NSObject {
 struct ElementQuery {
     let app: XCUIApplication
     let scope: String
+    var firstMatch: Element { Element(app: app, scope: scope, key: scope) }
     var buttons: Self { ElementQuery(app: app, scope: scope == "navigation" ? "navigation-button" : scope) }
     subscript(_ key: String) -> Element { Element(app: app, scope: scope, key: key) }
 }
@@ -190,6 +208,7 @@ struct Element {
     let app: XCUIApplication
     let scope: String
     let key: String
+    var buttons: ElementQuery { ElementQuery(app: app, scope: scope) }
     var firstMatch: Self { self }
     var exists: Bool {
         precondition(!app.forbidLiveGeometry || (key != "moving-button" && key != "window"),
@@ -244,7 +263,8 @@ struct Element {
         return Snapshot(children: [target], elementType: .window, identifier: "", label: "", frame: window)
     }
     func coordinate(withNormalizedOffset offset: CGVector) -> Coordinate {
-        precondition(key == "window", "scroll coordinates must be anchored to the window")
+        precondition(key == "window" || (app.phoneKeyboardFixture && key == "dulcet.account.settingsForm"),
+                     "scroll coordinates must be anchored to the window or keyboard-dismissal form")
         let frame = app.geometryFixture?.frame ?? CGRect(x: 0, y: 0, width: 400, height: 800)
         return Coordinate(app: app, point: CGPoint(x: frame.minX + frame.width * offset.dx,
                                                    y: frame.minY + frame.height * offset.dy))
@@ -257,11 +277,17 @@ struct Element {
             Self(app: app, point: CGPoint(x: point.x + offset.dx, y: point.y + offset.dy))
         }
         func press(forDuration duration: TimeInterval, thenDragTo end: Self,
-                   withVelocity velocity: Velocity, thenHoldForDuration hold: TimeInterval) {
+                   withVelocity velocity: Velocity = .slow, thenHoldForDuration hold: TimeInterval = 0.3) {
             precondition(duration == 0.05 && velocity == .slow && hold >= 0.3,
                          "the bounded scroll must settle without fling momentum")
             app.drags.append((point, end.point))
             app.swipes += 1
+            if app.phoneKeyboardFixture {
+                // Native failure: a downward pull dismissed Account and its keyboard together.
+                if end.point.y > point.y { app.accountPresented = false }
+                app.phoneKeyboardVisible = false
+                return
+            }
             if let fixture = app.geometryFixture {
                 // Model content following the finger; native chrome stays fixed.
                 func move(_ node: XCUIElementSnapshot) -> Snapshot {
@@ -436,6 +462,17 @@ struct Check {
         precondition(proof.openDesignTourDestination("Library", sidebar: "dulcet.sidebar.library", in: sheetApp, compact: true))
         precondition(!sheetApp.accountPresented && sheetApp.accountCloses == 2 && sheetApp.selectedTab == "Library")
         print("native Account sheet / observed presentation / close before tab navigation: PASS")
+        let keyboardApp = XCUIApplication()
+        keyboardApp.nativeAccountFlow = true
+        keyboardApp.accountPresented = true
+        keyboardApp.state = "signed-out"
+        keyboardApp.phoneKeyboardFixture = true
+        keyboardApp.phoneKeyboardVisible = true
+        precondition(proof.dismissKeyboardIfPresent(in: keyboardApp))
+        precondition(!keyboardApp.phoneKeyboardVisible && keyboardApp.accountPresented,
+                     "keyboard dismissal must preserve the Account sheet and its explicit Sign In action")
+        precondition(keyboardApp.drags.count == 1 && keyboardApp.drags[0].1.y < keyboardApp.drags[0].0.y)
+        print("upward keyboard dismissal / Account sheet and explicit Sign In preserved: PASS")
         // A hittable control may still overlap native chrome. Keep the fixture independent of
         // the implementation's safe-viewport arithmetic, including a nonzero window origin.
         let geometryApp = XCUIApplication()
@@ -538,6 +575,6 @@ checks = checks.replace('MATCHING ', 'matching: .identifier("moving-button"), ' 
 with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
     path = Path(temporary)
     swift = path / 'control.swift'
-    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + await_sign_out + '\n' + open_destination + '\n' + tour_destination + '\n' + helpers + '\n' + scroll + '\n' + stable + checks)
+    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + await_sign_out + '\n' + open_destination + '\n' + tour_destination + '\n' + helpers + '\n' + scroll + '\n' + stable + '\n' + keyboard_dismiss + checks)
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(path / 'control')], check=True)
     subprocess.run([str(path / 'control')], check=True)

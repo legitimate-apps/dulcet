@@ -757,12 +757,15 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func tap(_ control: XCUIElement, in app: XCUIApplication, name: String) -> Bool {
+        guard reveal(control, in: app), control.waitForExistence(timeout: 5) else {
+            XCTFail("\(name) must exist on the presented Account page: " + app.debugDescription)
+            return false
+        }
         // The toolbar keeps Sign In after an error. Match the actual primary control,
         // including retries, rather than the historical action name used in diagnostics.
         let target: HitTarget = control.identifier == "dulcet.account-connect.primary-action"
             ? .identifier("dulcet.account-connect.primary-action") : .button(name)
-        guard reveal(control, in: app), control.waitForExistence(timeout: 5),
-              scrollIntoView(control, matching: target, in: app) else {
+        guard scrollIntoView(control, matching: target, in: app) else {
             XCTFail("\(name) must be reachable: " + app.debugDescription)
             return false
         }
@@ -1113,6 +1116,13 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     @MainActor
     private func dismissKeyboardIfPresent(in app: XCUIApplication) -> Bool {
         let keyboard = app.keyboards.firstMatch
+        func accountStillPresented() -> Bool {
+            guard app.buttons["dulcet.account.close"].firstMatch.exists else {
+                XCTFail("Keyboard dismissal must preserve the Account sheet: " + app.debugDescription)
+                return false
+            }
+            return true
+        }
         // iPad can retain an AX keyboard and its offscreen Hide button after dismissal.
         // Its container then has zero height at the window's bottom edge. Hardware focus
         // and stale descendants do not mean that a software keyboard covers the app.
@@ -1135,27 +1145,28 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // and fail if a visible keyboard still covers the window after all three attempts.
         for attempt in 1...3 {
             let shown = isShown()
-            if shown == false { return true }
+            if shown == false { return accountStillPresented() }
             if shown == true {
                 let hide = keyboard.buttons["Hide keyboard"].firstMatch
                 if hide.waitForExistence(timeout: 2) {
                     hide.tap()
                 } else {
-                    // Return submits the native form. Dismiss through its scroll gesture
-                    // so the next explicit Sign In tap starts, rather than cancels, a request.
+                    // Return submits the native form. Scroll upward to dismiss its keyboard;
+                    // a downward drag can dismiss the whole Account sheet on iPhone.
                     let form = app.collectionViews["dulcet.account.settingsForm"].firstMatch
                     guard form.exists else {
                         XCTFail("The account form must support keyboard dismissal")
                         return false
                     }
-                    form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+                    form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
                         .press(forDuration: 0.05, thenDragTo:
-                            form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7)))
+                            form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)),
+                               withVelocity: .slow, thenHoldForDuration: 0.3)
                 }
             }
             let deadline = Date().addingTimeInterval(10)
             repeat {
-                if isShown() == false { return true }
+                if isShown() == false { return accountStillPresented() }
                 Thread.sleep(forTimeInterval: 0.1)
             } while Date() < deadline
             print("DULCET ACCOUNT STATES keyboard-still-shown attempt=\(attempt)")
