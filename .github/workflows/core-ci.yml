@@ -67,10 +67,9 @@ jobs:
         run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest
       - name: Select the phone evidence directory
         run: echo "DULCET_DISCOVER_ANDROID_OUTPUT=$RUNNER_TEMP/discover-android/native" >> "$GITHUB_ENV"
-      - name: Start bounded host sampling and record emulator exit status
+      - name: Start bounded host sampling
         run: |
           python3 tools/ci/diagnose-android-emulator-host start --output "$RUNNER_TEMP/android-host-diagnostic"
-          python3 tools/ci/diagnose-android-emulator-host wrap --output "$RUNNER_TEMP/android-host-diagnostic" --executable "$ANDROID_HOME/emulator/emulator"
       - name: Drive Discover and Wishlist through the native phone app
         timeout-minutes: 25
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d

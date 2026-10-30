@@ -51,6 +51,8 @@ def sample(output):
             row = {'time': stamp(), 'memory': memory(), 'cgroup': cgroup_memory()}
             try:
                 row['memory_pressure'] = Path('/proc/pressure/memory').read_text().strip()
+                row['cpu_pressure'] = Path('/proc/pressure/cpu').read_text().strip()
+                row['loadavg'] = Path('/proc/loadavg').read_text().split()[:3]
                 # comm is an executable name. args/cmd/environment are deliberately excluded.
                 result = subprocess.run(['ps', '-eo', 'pid,ppid,rss,comm', '--sort=-rss'],
                                         text=True, capture_output=True, timeout=5, check=True)
