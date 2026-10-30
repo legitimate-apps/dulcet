@@ -191,13 +191,13 @@ struct DulcetReaderAccountBanner: View {
     var body: some View {
         if store.librarySession?.mode == .deviceOnly {
             DulcetDestinationStatus(title: DulcetStrings.offline,
+                                   identifier: "dulcet.reader.deviceOnly",
                                    retryIdentifier: "dulcet.reader.reconnect",
                                    retryEnabled: store.snapshot.accountConnection != .connecting) {
                 store.submitAccountConnection()
             }
                 .padding(.horizontal, 16)
                 .background(.background, ignoresSafeAreaEdges: [])
-                .accessibilityIdentifier("dulcet.reader.deviceOnly")
         } else if store.librarySession?.connectionFailure != nil {
             DulcetDestinationStatus(title: DulcetStrings.connectionFailed, symbol: "exclamationmark.circle",
                                    retryIdentifier: "dulcet.reader.retry",

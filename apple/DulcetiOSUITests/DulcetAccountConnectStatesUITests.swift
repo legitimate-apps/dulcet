@@ -603,7 +603,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.terminate()
         launchInInteractionScope(app)
         XCTAssertTrue(reconnectInLibrary.waitForExistence(timeout: 20), "Offline library keeps manual Reconnect")
-        XCTAssertTrue(app.otherElements["dulcet.reader.deviceOnly"].firstMatch.exists)
+        XCTAssertTrue(app.otherElements["dulcet.reader.deviceOnly"].firstMatch.exists,
+                      "The offline status container must retain its stable identity: " + app.debugDescription)
         tourPhotograph("connection-saved-disconnected")
         let observations = proxy.control("GET", "", path: "/__dulcet/outage")
         let dropped = observations?["dropped"] as? [String: Int] ?? [:]

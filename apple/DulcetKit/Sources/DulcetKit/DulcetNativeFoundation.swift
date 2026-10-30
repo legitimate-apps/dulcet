@@ -143,6 +143,7 @@ extension View {
 struct DulcetDestinationStatus: View {
     let title: String
     var symbol = "wifi.slash"
+    var identifier = "dulcet.destination.status"
     var retryIdentifier = "dulcet.destination.retry"
     var retryEnabled = true
     var retry: (() -> Void)?
@@ -161,7 +162,7 @@ struct DulcetDestinationStatus: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("dulcet.destination.status")
+        .accessibilityIdentifier(identifier)
     }
 }
 
