@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Execute the account-state proof's actual saved-account precondition with Swift XCUI doubles.
+
+The selected-row fixture matches the retained native failure: a selected saved-server button is
+visible while the lazy Sign Out status and reconnect heading are absent. Identifier filtering is
+performed by Foundation NSPredicate on NSObject values, not a model of the production predicate.
+Use --source-ref to replay an earlier implementation without modifying its assertions.
+"""
+import argparse
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+SOURCE = 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--source-ref')
+args = parser.parse_args()
+source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{SOURCE}'], cwd=ROOT, text=True)
+          if args.source_ref else (ROOT / SOURCE).read_text())
+anchor = source.index('print("DULCET ACCOUNT STATES precondition=saved-account action=sign-out")')
+start = source.rfind('        if ', 0, anchor)
+end = source.rfind(' {', start, anchor)
+if start < 0 or end < start:
+    raise SystemExit('Cannot find the real saved-account precondition before its setup receipt')
+expression = source[start + len('        if '):end].strip()
+
+helper = ''
+match = re.search(r'(?:private\s+)?func\s+hasSavedAccount\(in app:\s*XCUIApplication\)\s*->\s*Bool\s*\{', source)
+if match:
+    # Balance Swift braces while ignoring comments and string literals. This includes a helper's
+    # nested closures but excludes the next helper or any test-driving code.
+    at = match.end() - 1
+    depth = 0
+    token = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|[{}]', re.S)
+    for brace in token.finditer(source, at):
+        if brace.group() == '{':
+            depth += 1
+        elif brace.group() == '}':
+            depth -= 1
+            if depth == 0:
+                helper = source[match.start():brace.end()]
+                break
+    if not helper:
+        raise SystemExit('Cannot extract the balanced hasSavedAccount helper')
+    helper = re.sub(r'^private\s+', '', helper)
+
+collaborators = r'''
+import Foundation
+import Darwin
+
+@MainActor
+final class XCUIElement: NSObject {
+    @objc dynamic var identifier: String
+    @objc dynamic var label: String
+    var isSelected: Bool
+    var exists: Bool
+    init(_ identifier: String = "", label: String = "", selected: Bool = false, exists: Bool = true) {
+        self.identifier = identifier; self.label = label
+        isSelected = selected; self.exists = exists
+    }
+    func waitForExistence(timeout: TimeInterval) -> Bool { exists }
+}
+
+@MainActor
+struct ElementQuery {
+    let elements: [XCUIElement]
+    var firstMatch: XCUIElement { elements.first ?? XCUIElement(exists: false) }
+    var allElementsBoundByIndex: [XCUIElement] { elements.filter(\.exists) }
+    subscript(label: String) -> ElementQuery {
+        ElementQuery(elements: elements.filter { $0.label == label })
+    }
+    func matching(_ predicate: NSPredicate) -> ElementQuery {
+        ElementQuery(elements: elements.filter { predicate.evaluate(with: $0) })
+    }
+}
+
+@MainActor
+final class XCUIApplication {
+    let buttons: ElementQuery
+    let text: [XCUIElement]
+    init(buttons: [XCUIElement] = [], text: [XCUIElement] = []) {
+        self.buttons = ElementQuery(elements: buttons); self.text = text
+    }
+}
+
+@MainActor
+final class ActualPrecondition {
+    func element(labelPrefix: String, in app: XCUIApplication) -> XCUIElement {
+        (app.text + app.buttons.allElementsBoundByIndex).first { $0.label.hasPrefix(labelPrefix) }
+            ?? XCUIElement(exists: false)
+    }
+'''
+checks = r'''
+}
+
+@main
+struct Controls {
+    @MainActor static func main() {
+        let actual = ActualPrecondition()
+        let cases: [(String, XCUIApplication, Bool)] = [
+            ("selected-saved-server-with-lazy-status", XCUIApplication(buttons: [
+                XCUIElement("dulcet.account.server.fixture-id", label: "Fixture, Current server", selected: true)
+            ]), true),
+            ("empty-store", XCUIApplication(), false),
+            ("unrelated-selected-button", XCUIApplication(buttons: [
+                XCUIElement("dulcet.sidebar.settings", label: "Connection", selected: true)
+            ]), false),
+            ("inactive-saved-server", XCUIApplication(buttons: [
+                XCUIElement("dulcet.account.server.inactive-id", label: "Other fixture", selected: false)
+            ]), false),
+            ("realized-sign-out", XCUIApplication(buttons: [
+                XCUIElement(label: "Sign Out")
+            ]), true),
+            ("reconnect-heading", XCUIApplication(text: [
+                XCUIElement(label: "Reconnect to Fixture")
+            ]), true)
+        ]
+        var failed = 0
+        for (name, app, expected) in cases {
+            let observed = actual.evaluate(in: app)
+            if observed != expected { failed += 1 }
+            print("ACCOUNT PRECONDITION \(name) expected=\(expected) actual=\(observed) \(observed == expected ? "PASS" : "FAIL")")
+        }
+        print("ACCOUNT PRECONDITION RESULT tests=\(cases.count) failures=\(failed)")
+        if failed != 0 { exit(1) }
+    }
+}
+'''
+swift = (collaborators + '\n' + helper + '\n' +
+         '    func evaluate(in app: XCUIApplication) -> Bool {\n        return (' + expression + ')\n    }\n' + checks)
+with tempfile.TemporaryDirectory(prefix='dulcet-account-precondition-') as tmp:
+    path = Path(tmp) / 'Controls.swift'
+    binary = Path(tmp) / 'controls'
+    path.write_text(swift)
+    subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
+    result = subprocess.run([str(binary)])
+    raise SystemExit(result.returncode)

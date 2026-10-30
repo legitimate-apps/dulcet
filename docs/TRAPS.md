@@ -807,3 +807,19 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     paging follows the rendered viewport. The same behavioral regression requires native
     scrolling to reach the final rows and request the next page exactly once. Keep the existing
     end-to-end shuffle assertion and deadline; the full native run supplies the playback proof.
+
+
+71. **Account-state setup must recognize a saved account before its lazy status appears.**
+    **OBSERVED 2026-10-30:** [conformance 41011042975](https://github.com/legitimate-apps/dulcet/actions/runs/41011042975)
+    passed all seven iPhone My Library cases, including the unchanged Shuffle assertion, then
+    the separate account-state proof failed its initial empty-form assertion. The retained
+    hierarchy showed a selected `dulcet.account.server.*` button and the new Connections
+    section; the later Sign Out row was outside the realized Form. Setup had queried only
+    Sign Out and the reconnect heading, missed the saved account and skipped its cleanup.
+    Recognize the selected saved-server row too, then require the existing real Sign Out,
+    confirmation and relaunch. An inactive saved row or an unrelated selected control is not
+    that witness. `tools/test-account-state-precondition` extracts the actual setup expression
+    and helper: the unchanged source fails the selected-row/lazy-status positive, while the
+    fixed source passes it and the five empty, inactive, unrelated and visible-status controls.
+    These are host controls; the native conformance case still must pass without a changed
+    assertion, timeout, account-store shortcut or authentication retry.

@@ -114,6 +114,7 @@ jobs:
         run: |
           python3 tools/test-live-account-status-witness
           python3 tools/test-live-account-status-witness --design-tour
+          python3 tools/test-account-state-precondition
       - name: Prove Wishlist Remove rejects completed input and stale handler receipts
         run: python3 tools/test-discover-remove-input
       - name: Prove download-handoff diagnostics explain namespace rejection without exposing paths

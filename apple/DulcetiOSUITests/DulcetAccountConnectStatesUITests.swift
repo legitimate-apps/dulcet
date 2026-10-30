@@ -349,8 +349,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // person does, so idle below is the launch of an app with no account.
         let reconnectInLibrary = app.buttons["dulcet.reader.reconnect"].firstMatch
         guard openConnection(in: app, compact: compact) else { return }
-        if app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 1)
-            || element(labelPrefix: "Reconnect to", in: app).exists {
+        if hasSavedAccount(in: app) {
             print("DULCET ACCOUNT STATES precondition=saved-account action=sign-out")
             guard awaitSignOut(in: app, compact: compact), signOut(in: app) else { return }
             app.terminate()
@@ -770,6 +769,16 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // Reselecting the sidebar republishes the source snapshot over unsubmitted edits.
         if !row.isSelected { row.tap() }
         return true
+    }
+
+    /// The saved-server selector can be visible while the lazy Form has not realized status.
+    /// Recognize its selected row, then let awaitSignOut reveal and require the real action.
+    @MainActor
+    private func hasSavedAccount(in app: XCUIApplication) -> Bool {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.account.server."))
+            .allElementsBoundByIndex.contains(where: \.isSelected)
+            || app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 1)
+            || element(labelPrefix: "Reconnect to", in: app).exists
     }
 
     /// Waits for the connected account's Sign Out on Connection, opening Connection when the
