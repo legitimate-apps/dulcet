@@ -309,6 +309,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var reached = reach()
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
+        if reached, screen == "album", requested.contains(screen) {
+            reached = focusByRemote(app.buttons["dulcet.album.more"].firstMatch, in: app)
+        }
         if reached, requested.contains(screen),
            ["connection-filled", "connection-connected"].contains(screen) {
             // The connected summary replaces credential fields with settings links.

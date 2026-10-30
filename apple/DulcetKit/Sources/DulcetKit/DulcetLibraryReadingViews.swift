@@ -1687,6 +1687,9 @@ struct DulcetReaderTrackListPage: View {
             if let item {
                 Menu { DulcetReaderItemMenuItems(item: item) }
                 label: { Label(DulcetStrings.more, systemImage: "ellipsis") }
+                    .menuStyle(.button)
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                     .accessibilityIdentifier("dulcet.\(kind.rawValue).more")
             }
         }

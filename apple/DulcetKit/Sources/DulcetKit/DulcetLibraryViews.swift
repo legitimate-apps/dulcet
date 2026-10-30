@@ -799,7 +799,12 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
+#if os(tvOS)
+            .menuStyle(.button)
+            .buttonStyle(.bordered)
+#else
             .menuStyle(.borderlessButton)
+#endif
             .dulcetForeground(.accentIconOnWindow)
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))

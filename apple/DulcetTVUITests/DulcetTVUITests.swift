@@ -871,10 +871,12 @@ final class DulcetTVUITests: XCTestCase {
     ) throws {
         let initial = try XCTUnwrap(read(), "The disposable server must answer before changing Favorite")
         for expected in [!initial, initial] {
-            XCTAssertTrue(more.waitForExistence(timeout: 10) && focusByRemote(more, in: app))
+            XCTAssertTrue(more.waitForExistence(timeout: 10) && focusByRemote(more, in: app),
+                "\(name)'s More must take remote focus: " + app.debugDescription)
             XCUIRemote.shared.press(.select)
             let action = app.buttons[expected ? "Favorite" : "Remove Favorite"].firstMatch
-            XCTAssertTrue(action.waitForExistence(timeout: 5) && focusByRemote(action, in: app))
+            XCTAssertTrue(action.waitForExistence(timeout: 5) && focusByRemote(action, in: app),
+                "\(name)'s Favorite action must take remote focus: " + app.debugDescription)
             XCUIRemote.shared.press(.select)
             let deadline = ContinuousClock.now.advanced(by: .seconds(30))
             var observed = read()
