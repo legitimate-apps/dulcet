@@ -107,8 +107,14 @@ class Runner:
         self.port=origin.port;self.out=args.output.resolve()
         self.out.mkdir(parents=True,exist_ok=False)
         self.adb=os.environ.get('ADB','adb');self.reports=[];self.reversed=False
+        self.adb_diagnostic=None
+        if os.environ.get('DULCET_ADB_DIAGNOSTIC_OUTPUT'):
+            from android_adb_diagnostic import Recorder
+            self.adb_diagnostic=Recorder(os.environ['DULCET_ADB_DIAGNOSTIC_OUTPUT'])
     def run(self,argv,**kwargs):return subprocess.run(argv,cwd=REPO,check=True,**kwargs)
-    def adb_run(self,*argv,check=True,**kwargs):return subprocess.run([self.adb,'-s',self.serial,*argv],cwd=REPO,check=check,**kwargs)
+    def adb_run(self,*argv,check=True,**kwargs):
+        if self.adb_diagnostic is not None:return self.adb_diagnostic.run(self.adb,self.serial,argv,cwd=REPO,check=check,**kwargs)
+        return subprocess.run([self.adb,'-s',self.serial,*argv],cwd=REPO,check=check,**kwargs)
     def shell(self,*argv,check=True):return self.adb_run('shell',shlex.join(argv),check=check,capture_output=True,text=True).stdout.strip()
     def control_json(self,path,body=None):
         request=urllib.request.Request(self.control+path,data=None if body is None else json.dumps(body).encode(),headers={'Content-Type':'application/json'})

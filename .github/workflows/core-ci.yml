@@ -82,7 +82,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
             python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
-            ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-android/fixture" -- tools/ci/run-discover-wishlist-proofs android
+            DULCET_ADB_DIAGNOSTIC_OUTPUT="$RUNNER_TEMP/android-host-diagnostic" ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-android/fixture" -- tools/ci/run-discover-wishlist-proofs android
       - name: Retain safe host and crash accounting after the real verdict
         if: ${{ always() }}
         run: python3 tools/ci/diagnose-android-emulator-host collect --output "$RUNNER_TEMP/android-host-diagnostic"
