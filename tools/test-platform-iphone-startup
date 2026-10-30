@@ -5,6 +5,7 @@ These controls launch no simulator. They prove a mere attempt to boot/settle can
 satisfy the prerequisite, and the native/UI tests use the device that did satisfy it.
 """
 import os
+import argparse
 import json
 from pathlib import Path
 import shlex
@@ -15,7 +16,11 @@ import textwrap
 
 
 root = Path(__file__).resolve().parents[1]
-workflow = (root / ".github/workflows/apple-ci.yml").read_text()
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--workflow', type=Path, default=root / '.github/workflows/apple-ci.yml',
+                    help='Replay actual shell steps from an alternate workflow for a before/after control')
+args = parser.parse_args()
+workflow = args.workflow.read_text()
 preparation = workflow.split("id: platform_iphone_destination", 1)[1].split(
     "      - name: Build iOS shell and test", 1
 )[0]
@@ -101,6 +106,8 @@ groups = {
     'ipad': {'Settle iPadOS host pressure before destination confirmation',
              'Confirm booted iPad remains an Xcode destination',
              'Launch iPadOS shell and prove layout plus stored Keychain attributes'},
+    'compact': {'Settle iPhone host pressure before the compact-shell launch',
+                'Verify the compact shell keeps the album and opens Now Playing from the bar'},
 }
 with tempfile.TemporaryDirectory() as directory:
     tmp = Path(directory)
@@ -123,14 +130,15 @@ raise AssertionError(args)
     sentinel.chmod(0o755)
     for mode, names in groups.items():
         selected = [s for s in steps if s.get('name') in names]
-        for scenario in ['positive', 'pressure-failure'] + ([] if mode == 'iphone' else
+        for scenario in ['positive', 'pressure-failure'] + ([] if mode in ('iphone', 'compact') else
                                                            ['destination-failure', 'destination-mismatch']):
             calls = tmp / 'calls'
             calls.write_text('')
             env = dict(os.environ, PATH=str(tmp) + ':' + os.environ['PATH'], CALLS=str(calls),
                        SCENARIO=scenario, IPAD_UDID='IPAD', DULCET_HOST_PRESSURE_LOG=str(tmp / 'pressure'))
             for step in selected:
-                proof = step['name'].startswith(('Build iOS shell', 'Launch iPadOS shell'))
+                proof = step['name'].startswith(('Build iOS shell', 'Launch iPadOS shell',
+                                                   'Verify the compact shell keeps the album'))
                 result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c',
                                          'xcodebuild' if proof else textwrap.dedent(step['run'])],
                                         env=env, capture_output=True, text=True, timeout=10)

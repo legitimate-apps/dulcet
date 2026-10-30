@@ -7961,6 +7961,19 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-30 — Admit the compact iPhone proof after its own simulator reboot.**
+
+Apple platform now applies the existing post-boot host-pressure admission between compact
+iPhone isolation and the compact-shell test. Run 41114131492 attempt 2 recorded load1 up to
+489 on three CPUs in that phase, with load1 285.5 immediately before app launch, then timed
+out querying the absent sidebar before selecting Library. Isolation had booted the iPhone
+after tvOS without another pressure gate. The new gate retains the existing quiet-window
+thresholds and 900-second bound; failed admission prevents the proof. The UI assertions,
+testcase deadlines and job envelope remain unchanged. Pressure causing the AX timeout is
+not established. A shell-boundary regression fails the old workflow because failed compact
+admission still reaches XCTest, and passes with the gate. A fresh phase mark keeps admission
+work separate from measurements of the proof itself.
+
 **2026-10-30 — Integrate the duration-optional playback baseline and retain both measured CI envelopes.**
 
 The merged playback baseline adds main's successful 110.367-minute composite measurement from

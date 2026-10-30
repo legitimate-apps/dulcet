@@ -848,3 +848,14 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     and retains above-dock, primary-action and Cancel positives. The per-tap archives still
     lack a usable clipping tree, so these controls prove the source defect; final native
     conformance decides whether that correction resolves the observed focus failure.
+
+73. **Simulator isolation does not admit a newly rebooted compact iPhone.** OBSERVED in
+    apple-ci 41114131492 attempt 2: the final compact-shell phase booted the iPhone after tvOS,
+    isolated it, then launched XCTest without post-boot pressure admission. Its phase reached
+    load1 489 on three CPUs; the last sample before app launch was 285.5. The test timed out
+    querying the absent sidebar before tapping Library. Pressure causing that AX timeout is
+    not established. Apply the same existing `host-pressure settle` quiet-window policy after
+    compact isolation and before the proof, then mark the actual proof separately. Unknown,
+    busy or failed admission must prevent XCTest. The startup shell controls execute both
+    positive and failed compact admission, alongside the original iPhone/iPad controls. Keep
+    the UI assertions, testcase deadlines and job envelope intact.

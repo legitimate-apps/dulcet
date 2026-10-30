@@ -761,6 +761,15 @@ jobs:
         # finding supports. It prints `SIMULATOR ISOLATION ... isolated=true|false` and marks the
         # host-pressure record with the phase.
         run: python3 tools/ci/isolate-simulator --phase compact-iphone --keep-name "iPhone 18 Pro"
+      - name: Settle iPhone host pressure before the compact-shell launch
+        # Isolation can reboot the iPhone after tvOS. In 41114131492 attempt 2 the
+        # compact phase reached load1 489 on three CPUs; the UI query then timed out.
+        # Require the same quiet window as the earlier platform phases before XCTest.
+        # Keep the gate's existing 15-minute bound plus two for process startup.
+        timeout-minutes: 17
+        run: |
+          python3 tools/ci/host-pressure settle --phase compact-iphone \
+            --output "$DULCET_HOST_PRESSURE_LOG"
       - name: Verify the compact shell keeps the album and opens Now Playing from the bar
         # 12 was inherited from `Verify iPhone uses the full display` and was too small. OBSERVED on
         # run 35985802454: the step was killed at 12.05 minutes, seconds after its test had passed
@@ -778,6 +787,7 @@ jobs:
         timeout-minutes: 25
         run: |
           set -o pipefail
+          python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" compact-iphone
           # Placed after every platform UI and Keychain proof on purpose. This job is one
           # sequential list, so a step's position decides what its failure SKIPS; putting a new
           # iPhone step above the iPadOS launch would let it gate iPadOS layout evidence that
