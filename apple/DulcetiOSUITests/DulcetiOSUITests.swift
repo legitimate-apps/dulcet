@@ -2494,20 +2494,11 @@ final class DulcetiOSUITests: XCTestCase {
               + " menu-left-open-after=\(drag.menuLeftOpen)")
     }
 
-    /// The Playlists list, from wherever the Library destination's stack was left: the phone's
-    /// tab keeps its stack, so it is popped to the root first.
+    /// The shared section helper returns through native Back until Library exposes Playlists.
+    /// A second pop loop can race the root's arrival and try to tap a disappearing Back button.
     @MainActor
     private func openLibraryPlaylistsFromAnywhere(in app: XCUIApplication, compact: Bool) -> Bool {
-        if compact {
-            guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return false }
-            let back = app.navigationBars.buttons["BackButton"].firstMatch
-            var pops = 0
-            while back.exists, back.isHittable, pops < 4 {
-                back.tap()
-                pops += 1
-            }
-        }
-        return openLibraryPlaylists(in: app, compact: compact)
+        openLibraryPlaylists(in: app, compact: compact)
     }
 
     /// Up Next once two reads in a row agree. A queue restored from an earlier launch can still be
