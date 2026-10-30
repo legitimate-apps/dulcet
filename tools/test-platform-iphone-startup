@@ -59,6 +59,7 @@ def verify_destinations(candidate):
     for name, expected_calls in (
         ("Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone", 2),
         ("Verify iPhone uses the full display", 1),
+        ("Verify native credential entry above the persistent action dock", 1),
         ("Verify the first-run Library title wraps on iPhone", 1),
     ):
         step = candidate.split("      - name: " + name, 1)[1].split("      - name: ", 1)[0]
@@ -73,8 +74,8 @@ def verify_destinations(candidate):
 
 verify_destinations(workflow)
 binding = '-destination "id=$IPHONE_UDID"'
-assert workflow.count(binding) == 4
-for index in range(4):
+assert workflow.count(binding) == 5
+for index in range(5):
     for replacement in ('-destination "id=$WRONG_UDID"', '-destination "name=iPhone 18 Pro"', ''):
         pieces = workflow.split(binding)
         mutated = binding.join(pieces[:index + 1]) + replacement + binding.join(pieces[index + 1:])
@@ -85,7 +86,7 @@ for index in range(4):
         else:
             raise AssertionError(("destination mutation escaped", index, replacement))
     print(f"PLATFORM IPHONE DESTINATION MUTATION CONTROL PASS invocation={index + 1} wrong/generic/missing rejected")
-print("PLATFORM IPHONE DESTINATION CONTROL PASS native/keychain/full-display/first-run use acknowledged UDID")
+print("PLATFORM IPHONE DESTINATION CONTROL PASS native/keychain/full-display/credential-dock/first-run use acknowledged UDID")
 
 # Execute the actual pressure/confirmation steps in workflow order with fake process boundaries.
 # Represent the first proof by a sentinel: failure of a prerequisite must prevent reaching it.
