@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""One-run host evidence without process arguments, environment, or raw dumps."""
+import argparse
+import datetime
+import json
+import os
+from pathlib import Path
+import shlex
+import struct
+import subprocess
+import sys
+import time
+
+
+def stamp():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def write_json(path, value):
+    path.write_text(json.dumps(value, indent=2) + '\n')
+
+
+def memory():
+    names = {'MemTotal', 'MemAvailable', 'MemFree', 'SwapTotal', 'SwapFree', 'Dirty', 'Slab'}
+    return {line.split(':')[0]: line.split(':', 1)[1].strip()
+            for line in Path('/proc/meminfo').read_text().splitlines() if line.split(':')[0] in names}
+
+
+def cgroup_memory():
+    # Read only accounting values, never environment or process command lines.
+    group = next((line.split(':', 2)[2] for line in Path('/proc/self/cgroup').read_text().splitlines()
+                  if line.startswith('0::')), '/')
+    root = Path('/sys/fs/cgroup')
+    directories = [root, root / group.lstrip('/')]
+    result = []
+    for directory in dict.fromkeys(directories):
+        values = {}
+        for name in ('memory.current', 'memory.peak', 'memory.max', 'memory.events', 'memory.events.local'):
+            try:
+                values[name] = (directory / name).read_text().strip()
+            except OSError:
+                pass
+        result.append(values)
+    return result
+
+
+def sample(output):
+    deadline = time.monotonic() + 40 * 60
+    with (output / 'host-samples.jsonl').open('a', buffering=1) as stream:
+        while time.monotonic() < deadline and not (output / 'stop').exists():
+            row = {'time': stamp(), 'memory': memory(), 'cgroup': cgroup_memory()}
+            try:
+                row['memory_pressure'] = Path('/proc/pressure/memory').read_text().strip()
+                # comm is an executable name. args/cmd/environment are deliberately excluded.
+                result = subprocess.run(['ps', '-eo', 'pid,ppid,rss,comm', '--sort=-rss'],
+                                        text=True, capture_output=True, timeout=5, check=True)
+                processes = [line.split(None, 3) for line in result.stdout.splitlines()[1:]]
+                row['processes'] = [{'pid': int(p[0]), 'ppid': int(p[1]), 'rss_kib': int(p[2]), 'name': p[3]}
+                                    for i, p in enumerate(processes)
+                                    if len(p) == 4 and (i < 25 or any(x in p[3] for x in ('qemu', 'emulator', 'crashpad', 'java')))]
+            except (OSError, subprocess.SubprocessError) as error:
+                row['sampling_error_type'] = type(error).__name__
+            stream.write(json.dumps(row) + '\n')
+            time.sleep(2)
+
+
+def wrap(executable, output):
+    original = executable.with_name(executable.name + '.diagnostic-original')
+    executable.rename(original)
+    log = output / 'emulator-lifetime.jsonl'
+    # Preserve the action's stdout/stderr and real child exit status. No arguments are recorded.
+    script = '''#!/bin/bash
+record=0
+for option in "$@"; do
+  if [ "$option" = '-avd' ]; then record=1; fi
+done
+if [ "$record" = 0 ]; then exec ORIGINAL "$@"; fi
+set +e
+ORIGINAL "$@" &
+emulator_child=$!
+printf '{"event":"start","time":"%s","pid":%s}\\n' "$(date -u +%FT%TZ)" "$emulator_child" >> LOGFILE
+wait "$emulator_child"
+emulator_status=$?
+printf '{"event":"exit","time":"%s","pid":%s,"status":%s}\\n' "$(date -u +%FT%TZ)" "$emulator_child" "$emulator_status" >> LOGFILE
+exit "$emulator_status"
+'''.replace('ORIGINAL', shlex.quote(str(original))).replace('LOGFILE', shlex.quote(str(log)))
+    executable.write_text(script)
+    executable.chmod(0o755)
+    write_json(output / 'wrapper-installed.json', {'time': stamp(), 'installed': True})
+
+
+def dump_metadata(path, root):
+    entry = {'file': str(path.relative_to(root)), 'size': path.stat().st_size,
+             'modified': path.stat().st_mtime}
+    try:
+        with path.open('rb') as stream:
+            header = stream.read(32)
+            if len(header) < 32 or header[:4] != b'MDMP':
+                return entry
+            count, directory = struct.unpack_from('<II', header, 8)
+            if count > 256:
+                return entry
+            entry['minidump'] = True
+            entry['dump_timestamp'] = struct.unpack_from('<I', header, 20)[0]
+            stream.seek(directory)
+            entries = stream.read(count * 12)
+            for offset in range(0, len(entries) - 11, 12):
+                kind, size, location = struct.unpack_from('<III', entries, offset)
+                if kind == 6 and size >= 40:  # exception stream; no stack/register/memory contents
+                    stream.seek(location)
+                    record = stream.read(40)
+                    if len(record) == 40:
+                        entry['thread_id'] = struct.unpack_from('<I', record, 0)[0]
+                        entry['exception_code'] = hex(struct.unpack_from('<I', record, 8)[0])
+                        entry['exception_flags'] = hex(struct.unpack_from('<I', record, 12)[0])
+    except (OSError, struct.error) as error:
+        entry['metadata_error_type'] = type(error).__name__
+    return entry
+
+
+def collect(output):
+    (output / 'stop').touch()
+    result = subprocess.run(['sudo', '-n', 'dmesg', '--time-format', 'iso'],
+                            text=True, capture_output=True, check=False)
+    signatures = ('out of memory', 'killed process', 'oom-kill', 'oom_reaper',
+                  'memory cgroup out of memory', 'segfault', 'general protection fault')
+    filtered = [line for line in result.stdout.splitlines() if any(x in line.lower() for x in signatures)]
+    write_json(output / 'kernel-events.json', {'time': stamp(), 'read_status': result.returncode, 'events': filtered})
+    crash_root = Path('/tmp/android-runner')
+    metadata = [dump_metadata(p, crash_root) for p in crash_root.rglob('*') if p.is_file()] if crash_root.exists() else []
+    write_json(output / 'crash-metadata.json', {'time': stamp(), 'files': metadata})
+    write_json(output / 'final-accounting.json', {'time': stamp(), 'memory': memory(), 'cgroup': cgroup_memory()})
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=['start', 'sample', 'wrap', 'collect'])
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--executable', type=Path)
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
+    if args.action == 'start':
+        process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'sample', '--output', str(args.output)],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   start_new_session=True)
+        write_json(args.output / 'sampler.json', {'time': stamp(), 'pid': process.pid, 'maximum_seconds': 2400})
+    elif args.action == 'sample':
+        sample(args.output)
+    elif args.action == 'wrap':
+        if not args.executable:
+            parser.error('wrap requires --executable')
+        wrap(args.executable, args.output)
+    else:
+        collect(args.output)
+
+
+if __name__ == '__main__':
+    main()
