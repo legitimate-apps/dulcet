@@ -1,6 +1,6 @@
-name: Android emulator fatal-core diagnostic
+name: Android emulator renderer diagnostic
 
-# Diagnostic branch only: four fresh full proofs; retain bounded text after an actual engine fault.
+# Diagnostic branch only: compare the deprecated and supported software renderer on the same verified engine.
 on:
   workflow_dispatch:
 
@@ -13,19 +13,17 @@ concurrency:
 
 jobs:
   engine:
-    name: Discover engine ${{ matrix.engine.version }} replica ${{ matrix.replica }}
+    name: Discover renderer ${{ matrix.renderer.name }} replica ${{ matrix.replica }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        engine:
-          - version: '37.2.12'
-            build: '16428233'
-            sha256: b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1
-          - version: '37.2.13'
-            build: '16740729'
-            sha256: cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd
+        renderer:
+          - name: legacy
+            gpu: swiftshader_indirect
+          - name: software
+            gpu: software
         replica: [1, 2]
     env:
       TZ: UTC
@@ -34,8 +32,9 @@ jobs:
       EMULATOR_ARCH: x86_64
       EMULATOR_BUILD_TOOLS: '37.0.0'
       EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
-      EMULATOR_PIN: '{"version":"${{ matrix.engine.version }}","build":"${{ matrix.engine.build }}","sha256":"${{ matrix.engine.sha256 }}"}'
+      EMULATOR_PIN: '{"version":"37.2.13","build":"16740729","sha256":"cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd"}'
       ENGINE_DELIVERY: digest-pin
+      ENGINE_GPU_MODE: ${{ matrix.renderer.gpu }}
       DULCET_ANDROID_ENGINE_DIAGNOSTICS: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -113,7 +112,7 @@ jobs:
           target: ${{ env.EMULATOR_TARGET }}
           profile: pixel_6
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu ${{ matrix.renderer.gpu }} -noaudio -no-boot-anim -camera-back none
           pre-emulator-launch-script: |
             DULCET_EMULATOR_LOADER_RECEIPTS="$RUNNER_TEMP/engine-diagnostic/loader-before-launch" python3 tools/ci/android-system-image verify-emulator --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/engine-before-launch.log"
             python3 tools/ci/collect-android-engine-core watch --private "$RUNNER_TEMP/engine-private-cores" --output "$RUNNER_TEMP/engine-diagnostic/core-text" --sdk "$ANDROID_HOME" > "$RUNNER_TEMP/engine-diagnostic/core-watch.log" 2>&1 &
@@ -122,11 +121,8 @@ jobs:
           script: |
             DULCET_EMULATOR_LOADER_RECEIPTS="$RUNNER_TEMP/engine-diagnostic/loader-after-boot" python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN" > "$RUNNER_TEMP/engine-diagnostic/engine-after-boot.log"
             python3 tools/ci/collect-android-engine-core ready --private "$RUNNER_TEMP/engine-private-cores" --output "$RUNNER_TEMP/engine-diagnostic/core-text" --sdk "$ANDROID_HOME"
-            set +e
-            ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/engine-diagnostic/fixture" -- tools/ci/run-discover-wishlist-proofs android
-            proof_status=$?
-            if [ "$proof_status" -ne 0 ]; then touch "$RUNNER_TEMP/engine-diagnostic/core-text/proof-failed"; fi
-            exit "$proof_status"
+            python3 -c 'import json,os,pathlib,subprocess; r=subprocess.run(["adb","-s","emulator-5554","shell","dumpsys","SurfaceFlinger"],check=True,capture_output=True,text=True,timeout=15); gles=[line.strip() for line in r.stdout.splitlines() if line.lstrip().startswith("GLES:")]; assert gles,"No actual SurfaceFlinger GLES renderer receipt"; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"engine-diagnostic/renderer.json"; p.write_text(json.dumps({"requestedMode":os.environ["ENGINE_GPU_MODE"],"actualGles":gles,"source":"guest SurfaceFlinger GLES field; engine graphics backend/Vulkan init retained in full hosted log"},indent=2)+"\n")'
+            set +e; ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/engine-diagnostic/fixture" -- tools/ci/run-discover-wishlist-proofs android; proof_status=$?; if [ "$proof_status" -ne 0 ]; then touch "$RUNNER_TEMP/engine-diagnostic/core-text/proof-failed"; fi; exit "$proof_status"
       - name: Restore core policy and delete private binary cores
         if: ${{ always() }}
         timeout-minutes: 3
@@ -138,7 +134,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: android-engine-core-${{ matrix.engine.version }}-${{ matrix.replica }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: android-renderer-${{ matrix.renderer.name }}-${{ matrix.replica }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/engine-diagnostic
           if-no-files-found: error
           retention-days: 14
