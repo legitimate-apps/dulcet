@@ -318,11 +318,25 @@ import UIKit
         return result
     }
     func wishlist() {
+#if os(iOS)
+        // Selecting a saved account commits the account without closing its sheet.
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        if close.exists {
+            activate(close)
+            XCTAssertTrue(close.waitForNonExistence(timeout: 10), "Account must close before opening Wishlist")
+        }
+#endif
         let started = ProcessInfo.processInfo.systemUptime
         var requestedLibrary = false
+        var lastNavigation = ""
         repeat {
             if let root = try? app.snapshot() {
                 let nodes = descendants(root)
+                lastNavigation = nodes.filter {
+                    $0.elementType == .navigationBar || $0.identifier == "dulcet.tab.library"
+                        || $0.identifier == "wishlist.destination" || $0.identifier == "wishlist.refresh"
+                }.map { "\($0.elementType.rawValue):\($0.identifier):selected=\($0.isSelected):enabled=\($0.isEnabled):\($0.frame)" }
+                    .joined(separator: "; ")
                 let sidebarSelected = nodes.contains { $0.identifier == "wishlist.destination" && $0.isSelected }
                 // Native adaptable tabs expose buttons in the top bar and cells in the
                 // expanded iPad sidebar. Both retain the tab identity and selection.
@@ -336,8 +350,25 @@ import UIKit
                     $0.identifier == "wishlist.refresh" && $0.isEnabled && presented($0, in: root)
                 }) { return }
                 // Activate Wishlist directly so a delayed Library reset cannot dismiss its content.
-                if nodes.contains(where: { $0.identifier == "wishlist.destination" && presented($0, in: root) }) {
-                    activate(app.descendants(matching: .any)["wishlist.destination"].firstMatch)
+#if os(iOS)
+                let canActivateDestination = sidebarSelected || libraryTabSelected
+#else
+                let canActivateDestination = true
+#endif
+                if canActivateDestination, let destination = nodes.first(where: { $0.identifier == "wishlist.destination" }) {
+                    let top = nodes.filter { $0.elementType == .navigationBar && presented($0, in: root) }
+                        .map { $0.frame.maxY }.max() ?? root.frame.minY
+                    let bottom = nodes.filter {
+                        ($0.elementType == .tabBar || $0.identifier == "dulcet.mini-player.open") && presented($0, in: root)
+                    }.map { $0.frame.minY }.min() ?? root.frame.maxY
+                    let control = app.descendants(matching: .any)["wishlist.destination"].firstMatch
+                    // A row's center can be inside the window but behind native chrome.
+                    // At large text sizes scroll it into the actual content viewport first.
+                    if destination.frame.midY <= top || destination.frame.midY >= bottom || !control.isHittable {
+                        scrollContent(up: destination.frame.midY > top, nodes: nodes)
+                    } else {
+                        activate(control)
+                    }
                 } else if !requestedLibrary, nodes.contains(where: {
                     ($0.identifier == "dulcet.tab.library" || $0.elementType == .tabBar) && presented($0, in: root)
                 }) {
@@ -347,7 +378,7 @@ import UIKit
             }
             Thread.sleep(forTimeInterval: 0.25)
         } while ProcessInfo.processInfo.systemUptime - started < 180
-        XCTFail("Wishlist activation must present content; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s")
+        XCTFail("Wishlist activation must present content; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s; navigation=\(lastNavigation)")
     }
     func capture(_ name: String) throws {
 #if os(macOS)
