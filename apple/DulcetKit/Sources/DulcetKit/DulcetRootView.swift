@@ -806,6 +806,7 @@ private struct DulcetInheritedNowPlayingBar: ViewModifier {
 
 private struct DulcetOptionalNowPlayingBar: ViewModifier {
     @Bindable var store: DulcetPresentationStore
+    @Environment(\.dulcetPlaybackNotices) private var notices
     let placement: DulcetNowPlayingBarPlacement.Placement?
     let isSuppressed: Bool
     let drawsNotices: Bool
@@ -825,6 +826,15 @@ private struct DulcetOptionalNowPlayingBar: ViewModifier {
             ))
         } else {
             content
+                // The system accessory reserves the mini player's space, but the page
+                // still owns its playback notices. A hidden stack must not draw them.
+                .overlay(alignment: .bottom) {
+                    if drawsNotices {
+                        DulcetPlaybackNoticeRegion {
+                            DulcetPlaybackNoticeStack(notices: notices)
+                        }
+                    }
+                }
         }
 #endif
     }
