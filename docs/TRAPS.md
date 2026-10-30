@@ -792,3 +792,18 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     failed-phase and post-proof process errors visible; do not retry application assertions or
     change their deadlines. Diagnostic core collection stays on its separate branch; private
     binary cores were deleted and only bounded text was retained.
+
+
+70. **Eager song rows turn appearance callbacks into false viewport reports.**
+    **OBSERVED 2026-10-30:** in [conformance 40994913820](https://github.com/legitimate-apps/dulcet/actions/runs/40994913820),
+    the iPhone Shuffle All proof missed its unchanged 30-second mini-player wait. The disposable
+    fixture delivered random songs in 420 ms; the first stream request followed 52.511 seconds
+    later. The captured hierarchy contained all 314 song rows in a 15,844-point document, and
+    the main-thread sample was in XCTest accessibility traversal and SwiftUI frame collection.
+    Those observations support accessibility amplification; they do not attribute the entire
+    delay to that work. The native hosted-page regression independently reproduces the cause
+    of eager paging: before any scroll, the old Songs page reports `viewport(0,313)` and requests
+    another page. Its rows now use a lazy stack, as album tracks already do, so appearance-driven
+    paging follows the rendered viewport. The same behavioral regression requires native
+    scrolling to reach the final rows and request the next page exactly once. Keep the existing
+    end-to-end shuffle assertion and deadline; the full native run supplies the playback proof.
