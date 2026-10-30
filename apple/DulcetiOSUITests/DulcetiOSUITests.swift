@@ -238,6 +238,11 @@ final class DulcetiOSUITests: XCTestCase {
             "This proof requires a compact-width iPhone window; an iPad is invalid evidence"
         )
 
+        // This fixture starts with Account presented. Check keyboard policy before
+        // closing it, then judge the tab bar after the native modal is dismissed.
+        XCTAssertFalse(app.keyboards.firstMatch.exists,
+                       "Account must not raise the keyboard on arrival")
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return }
         let libraryTab = app.tabBars.buttons["Library"].firstMatch
         guard libraryTab.waitForExistence(timeout: 10), libraryTab.isHittable else {
             XCTFail("A compact window must present a visible tab bar with Library: " + app.debugDescription)
@@ -247,11 +252,6 @@ final class DulcetiOSUITests: XCTestCase {
             window.buttons["dulcet.sidebar.library"].firstMatch.exists,
             "A compact window must not fall back to the sidebar list"
         )
-        // The fixture opens Account as a sheet. It must not raise the keyboard on arrival;
-        // dismiss it before selecting the underlying content tab.
-        XCTAssertFalse(app.keyboards.firstMatch.exists,
-                       "Account must not raise the keyboard on arrival")
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return }
         XCTAssertTrue(libraryTab.isSelected, "The Library tab must be selected after closing Account")
 
         let album = app.buttons.matching(
