@@ -874,7 +874,11 @@ final class DulcetTVUITests: XCTestCase {
             XCTAssertTrue(more.waitForExistence(timeout: 10) && focusByRemote(more, in: app),
                 "\(name)'s More must take remote focus: " + app.debugDescription)
             XCUIRemote.shared.press(.select)
-            let action = app.buttons[expected ? "Favorite" : "Remove Favorite"].firstMatch
+            // Native button menus expose their actions as labelled Other elements inside
+            // focusable cells. The exact action still needs real remote focus and Select.
+            let action = app.descendants(matching: .any).matching(NSPredicate(
+                format: "label == %@", expected ? "Favorite" : "Remove Favorite"
+            )).firstMatch
             XCTAssertTrue(action.waitForExistence(timeout: 5) && focusByRemote(action, in: app),
                 "\(name)'s Favorite action must take remote focus: " + app.debugDescription)
             XCUIRemote.shared.press(.select)
