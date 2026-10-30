@@ -281,7 +281,7 @@ public struct DulcetReaderItem: Identifiable, Sendable, Hashable {
         self.releaseTypes = releaseTypes
         self.discographyGroup = discographyGroup
         self.genre = genre
-        duration = durationMilliseconds.map { .milliseconds($0) }
+        duration = durationMilliseconds.flatMap { $0 > 0 ? .milliseconds($0) : nil }
         self.songCount = songCount
         self.albumCount = albumCount
         self.discNumber = discNumber
@@ -336,9 +336,9 @@ public struct DulcetReaderItem: Identifiable, Sendable, Hashable {
     }
 
     /// The track the player needs, for a track the device knows how to ask the server for. Nil for
-    /// anything else, and for a track whose duration the server never gave.
+    /// anything else. An unknown duration is learned from the decoder after queueing.
     public var playableTrack: DulcetTrack? {
-        guard kind == .track, let duration else { return nil }
+        guard kind == .track else { return nil }
         return DulcetTrack(
             id: id,
             title: displayTitle,

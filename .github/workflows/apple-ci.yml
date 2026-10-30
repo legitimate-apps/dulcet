@@ -906,15 +906,12 @@ jobs:
   # iPhone proofs ending in the skip probe, which must come after everything that counts the
   # corpus, and the iPhone streaming-quality cap.
   #
-  # §21.5 rule 5, remeasured 2026-10-30 from successful core leg 41011042975:
-  # 240 = ceil(1.5 x 158.233 / 5) x 5. Its composite took 100.833 minutes, hence
-  # 155 = ceil(1.5 x 100.833 / 5) x 5. Composite cap plus measured remainder is
-  # 155 + 57.400 = 212.400 minutes, below the job cap. The iOS connections step
-  # took 12.500 minutes, hence its envelope is 20. Run 41060169137 reached the
-  # old 170-minute job cap during progressing TV proofs, before iOS connections.
-  # The former 100-minute step limit expired during progressing TV proofs in both
-  # main's 39131842852 and this branch's 39144805540; these are workflow envelopes,
-  # not changes to the test cases' own readiness, observation or execution bounds.
+  # §21.5 rule 5, combining successful measurements from both merged branches:
+  # job 240 = ceil(1.5 x 158.233 / 5) x 5 from 41011042975, including native connections.
+  # Composite 170 = ceil(1.5 x 110.367 / 5) x 5 from 40489093193 (main's slower composite);
+  # its cap plus the measured larger remainder 57.400 is 227.400, below the job cap.
+  # Native iOS connections measured 12.500 minutes, hence its envelope 20.
+  # These are workflow envelopes; test-case readiness, observation and execution bounds stay fixed.
   apple-conformance-core:
     name: apple-conformance-core
     needs: [apple-plan]
@@ -1166,9 +1163,9 @@ jobs:
           python3 tools/ci/isolate-simulator --phase first-boot-tvos --keep-name "Apple TV 4K (3rd generation)"
           python3 tools/ci/isolate-simulator --phase first-boot-done --none
       - name: Assert Darwin conformance preconditions
-        # §21.5 rule 5: 155 = ceil(1.5 x 100.833 / 5) x 5, measured in the
-        # successful core leg of 41011042975; test-case bounds are unchanged.
-        timeout-minutes: 155
+        # §21.5 rule 5: 170 = ceil(1.5 x 110.367 / 5) x 5, measured in the successful
+        # Darwin leg of 40489093193 (the latest green legs took 97.2, 100.5 and 110.4).
+        timeout-minutes: 170
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -1522,6 +1519,21 @@ jobs:
           /usr/bin/plutil -insert \
             'DulcetPlaybackIntegrationTests.EnvironmentVariables.DULCET_CONFORMANCE_DISPOSABLE' \
             -string "$DULCET_CONFORMANCE_DISPOSABLE" "$download_xctestrun"
+          xcodebuild test-without-building \
+              -xctestrun "$download_xctestrun" \
+              -destination 'platform=macOS' \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-durationless-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetPlaybackIntegrationTests/DulcetMacPlaybackSystemLiveTests/testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-durationless-playback.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-durationless-playback.xcresult" \
+            DulcetPlaybackIntegrationTests.DulcetMacPlaybackSystemLiveTests \
+            testDurationlessReaderPlayAdvancesMediaTimeWithoutSubmittingAnUnknownPlay
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-durationless-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-mac-download-junit/TEST-durationless-playback.xml" \
+            DulcetMacPlaybackSystemLiveTests
           xcodebuild test-without-building \
               -xctestrun "$download_xctestrun" \
               -destination 'platform=macOS' \

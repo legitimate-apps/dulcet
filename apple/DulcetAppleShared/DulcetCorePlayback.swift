@@ -530,7 +530,7 @@ enum DulcetCoreLibraryTrackCopy {
             albumTitle: track.albumTitle,
             discNumber: track.discNumber?.intValue,
             trackNumber: track.trackNumber?.intValue,
-            duration: .milliseconds(track.durationMilliseconds),
+            duration: track.durationMilliseconds > 0 ? .milliseconds(track.durationMilliseconds) : nil,
             sourceContainer: track.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:)),
             mediaSourceID: track.mediaSourceId,
             artwork: artwork(

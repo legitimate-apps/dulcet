@@ -522,7 +522,7 @@ func readerTitlesUseTheSameLocalizedFallbackAsSearch() {
         let expected = title == "A real title" ? "A real title" : DulcetStrings.readerUntitled
         #expect(track.displayTitle == expected)
         #expect(track.playableTrack?.title == expected)
-        #expect(item("track", "unknown-duration", title: title, duration: nil).playableTrack == nil)
+        #expect(item("track", "unknown-duration", title: title, duration: nil).playableTrack?.title == expected)
     }
 }
 
@@ -532,9 +532,33 @@ func anUnavailableOfflineTrackIsNeverHandedToThePlayer() {
     #expect(offline.isUnavailableOffline)
     #expect(offline.playableTrack?.availability == .metadataOnly)
     #expect(window([offline, item("track", "t2")]).playableTracks.map(\.id.rawID) == ["t2"])
-    // No length, no playback: the server never said how long it is.
-    #expect(item("track", "t3", duration: nil).playableTrack == nil)
+    // An unknown duration is queueable; an offline-only refusal still applies.
+    #expect(window([item("track", "t3", duration: nil)]).playableTracks.map(\.id.rawID) == ["t3"])
+    #expect(window([item("track", "offline-unknown", playability: "unavailableOffline", duration: nil)]).playableTracks.isEmpty)
     #expect(item("track", "t4").playableTrack?.albumID?.rawID == "album-1")
+}
+
+@Test
+func unknownDurationWaitsForTheDecoderWithoutInventingTime() throws {
+    let track = try #require(item("track", "durationless", duration: nil).playableTrack)
+    #expect(track.duration == nil)
+    #expect(track.duration.dulcetDuration == DulcetStrings.readerTrackDurationUnknown)
+    func playing(_ decoded: Duration? = nil) -> DulcetNowPlaying {
+        DulcetNowPlaying(current: track, queue: [track], elapsed: .seconds(5),
+            decodedDuration: decoded, isPlaying: true, outputName: "Fixture", volume: 1,
+            audioFormat: .init(codec: "FLAC", sampleRateKilohertz: 44.1))
+    }
+    #expect(playing().duration == nil)
+    #expect(playing().remaining == nil)
+    #expect(playing().progressFraction == nil)
+    #expect(playing(.seconds(20)).duration == .seconds(20))
+    #expect(playing(.seconds(20)).remaining == .seconds(15))
+    #expect(playing(.seconds(20)).progressFraction == 0.25)
+    #expect(playing(.seconds(2)).remaining == .zero)
+    #expect(playing(.seconds(2)).progressFraction == 1)
+    #expect(playing(.zero).duration == nil)
+    #expect(item("track", "zero", duration: 0).playableTrack?.duration == nil)
+    #expect(item("track", "negative", duration: -1).playableTrack?.duration == nil)
 }
 
 // MARK: - The session
@@ -2634,7 +2658,8 @@ func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
 }
 
 
-@Test @MainActor func discoverSongPlaybackUsesAnExactScopedLookupWithoutATitleSearch() throws {
+@Test(arguments: [Int64?.none, Int64?.some(180_000)]) @MainActor
+func discoverSongPlaybackUsesAnExactScopedLookupWithoutATitleSearch(duration: Int64?) throws {
     let factory = RecordingReaderFactory()
     let session = DulcetLibrarySession(factory: factory)
     session.open(account: readerAccount, mode: .connected)
@@ -2651,9 +2676,10 @@ func wishlistMetadataUsesTheReaderStackAndReturnsToItsPendingList() throws {
     store.openDiscoverLibrary(ref)
     reader.songLookupCompletions[1](item("track", "opaque-exact", title: "Obsolete"))
     #expect(source.queues.isEmpty, "A cancelled previous lookup cannot activate the player")
-    reader.songLookupCompletions[2](item("track", "opaque-exact", title: "A"))
+    reader.songLookupCompletions[2](item("track", "opaque-exact", title: "A", duration: duration))
     #expect(source.queues.first?.tracks.first?.title == "A")
     #expect(source.queues.first?.tracks.first?.id.rawID == "opaque-exact")
+    #expect(source.queues.first?.tracks.first?.duration == duration.map { .milliseconds($0) })
     store.openDiscoverLibrary(ref)
     let late = reader.songLookupCompletions[3]
     session.close()

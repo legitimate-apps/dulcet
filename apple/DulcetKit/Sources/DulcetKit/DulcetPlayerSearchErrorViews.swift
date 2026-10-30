@@ -1071,9 +1071,9 @@ struct DulcetNowPlayingView: View {
                         .accessibilityLabel(DulcetStrings.nowPlaying)
                         .accessibilityValue(DulcetStrings.playbackProgress(
                             elapsed: displayedElapsed.dulcetDuration,
-                            duration: player.current.duration.dulcetDuration
+                            duration: player.duration.dulcetDuration
                         ))
-                    Text(DulcetStrings.remaining(displayedRemaining.dulcetDuration))
+                    Text(displayedRemaining.map { DulcetStrings.remaining($0.dulcetDuration) } ?? DulcetStrings.readerTrackDurationUnknown)
                         .accessibilityLabel(DulcetStrings.remainingTime)
                         .accessibilityValue(displayedRemaining.dulcetDuration)
                         .lineLimit(1)
@@ -1093,9 +1093,9 @@ struct DulcetNowPlayingView: View {
     @ViewBuilder
     private var playbackProgressIndicator: some View {
 #if os(tvOS)
-        ProgressView(value: displayedSeconds, total: durationSeconds)
+        ProgressView(value: player.duration == nil ? 0 : displayedSeconds, total: durationSeconds)
 #else
-        if player.seekability == .seekable {
+        if player.seekability == .seekable, player.duration != nil {
             DulcetScrubber(
                 value: Binding(
                     get: { displayedSeconds },
@@ -1112,25 +1112,25 @@ struct DulcetNowPlayingView: View {
             .dulcetPlayerGestureRegion()
 #endif
         } else {
-            ProgressView(value: displayedSeconds, total: durationSeconds)
+            ProgressView(value: player.duration == nil ? 0 : displayedSeconds, total: durationSeconds)
         }
 #endif
     }
 
     private var displayedSeconds: Double {
-        min(max(0, scrubPosition ?? player.elapsed.dulcetSeconds), durationSeconds)
+        min(max(0, scrubPosition ?? player.elapsed.dulcetSeconds), player.duration?.dulcetSeconds ?? .infinity)
     }
 
     private var displayedElapsed: Duration {
         .milliseconds(Int64((displayedSeconds * 1_000).rounded()))
     }
 
-    private var displayedRemaining: Duration {
-        max(.zero, player.current.duration - displayedElapsed)
+    private var displayedRemaining: Duration? {
+        player.duration.map { max(.zero, $0 - displayedElapsed) }
     }
 
     private var durationSeconds: Double {
-        max(1, player.current.duration.dulcetSeconds)
+        player.duration?.dulcetSeconds ?? 1
     }
 
     private var playbackPhaseLabel: String {

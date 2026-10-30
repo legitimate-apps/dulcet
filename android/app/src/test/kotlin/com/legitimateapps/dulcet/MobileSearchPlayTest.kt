@@ -28,7 +28,7 @@ import kotlin.test.assertNull
 class MobileSearchPlayTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun aDurationlessUntitledSearchResultOffersNoPlayOrRowActivation() {
+    @Test fun aDurationlessUntitledSearchResultPlaysFromItsRowAndButton() {
         val account = SearchAccount("provider::opaque", "https://music.example.invalid", "u", "p", false)
         val source = object : com.legitimateapps.dulcet.search.SearchSource {
             override fun open(listener: (com.legitimateapps.dulcet.core.AndroidLibrarySearchPublication) -> Unit) =
@@ -43,8 +43,9 @@ class MobileSearchPlayTest {
         compose.onNodeWithTag("search.query").performTextInput("echo")
         compose.waitUntil(5_000) { presenter.state.value.results.size == 3 }
         compose.onNodeWithTag("search.result.2").performTouchInput { click() }
-        assertEquals(emptyList(), activated)
-        compose.onNodeWithTag("search.play.2").assertDoesNotExist()
+        assertEquals(listOf("track::a9-opaque"), activated.map { it.id.rawId })
+        compose.onNodeWithTag("search.play.2").performClick()
+        assertEquals(listOf("track::a9-opaque", "track::a9-opaque"), activated.map { it.id.rawId })
         compose.onNodeWithTag("search.result.2").assertTextContains(RuntimeEnvironment.getApplication().getString(com.legitimateapps.dulcet.core.R.string.playback_untitled))
         presenter.close()
     }
