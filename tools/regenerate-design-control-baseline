@@ -21,7 +21,7 @@ swift run --package-path apple/DulcetKit DulcetCapture \
   --generate-control-candidates
 
 expected_width=1180
-expected_height=728
+expected_height=732
 for appearance in light dark; do
   filename="macos-CONTROL-DELIBERATELY-BAD-library-browse-${appearance}.jpg"
   candidate="$candidate_directory/$filename"

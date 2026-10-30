@@ -98,11 +98,12 @@ existed at the time in both light and dark at 1180 × 760 plus both hash-pinned 
 no missing captures.
 
 Each deterministic current-run reference is a compressed JPEG of the `NSHostingView` content at
-exactly 1180 × 728 pixels. The 32-point standard AppKit title bar, system title, traffic-light
+exactly 1180 × 732 pixels on macOS 27. The 28-point standard AppKit title bar, system title, traffic-light
 controls, and theme-frame material are outside that compared pixel boundary. The separately produced
 shipping-reference images remain complete titled windows at 1180 × 760. The two reviewed,
-byte-pinned controls are 1180 × 728 content-only peers of the deterministic references they
-calibrate. Only the titled shipping-reference artifact is eligible to establish product-level
+byte-pinned controls are 1180 × 728 content-only calibration resources. Their bytes and reviewed
+hashes are retained across the macOS 27 reference-geometry update; their height differs from current
+references by four pixels. Only the titled shipping-reference artifact is eligible to establish product-level
 native-macOS evidence; content-only renders make no window-chrome claim. The deterministic render
 environment is fixed:
 
@@ -120,7 +121,7 @@ environment is fixed:
 - a capture-only `NSWindow` subclass that declines AppKit's visible-screen frame constraint, so the
   1180 × 760 host window does not shrink to the hosted desktop; the fixed frame is applied first,
   the window is then ordered, and the hosting content is installed afterward, followed by a runtime
-  geometry guard requiring both an 1180 × 760 window frame and a zero-origin 1180 × 728
+  geometry guard requiring both an 1180 × 760 window frame and a zero-origin 1180 × 732
   hosting-view capture boundary;
 - SwiftUI `controlActiveState` fixed to `key` and recorded per manifest entry, so standard prominent
   button fills and their rendered label contrast are present in pixels even though a hosted command-
@@ -142,7 +143,7 @@ environment is fixed:
 Each capture directory includes `manifest.json` with the complete filename set, separate reference
 and pinned-control dimensions, environment values, per-record window-frame and capture-bound
 coordinates, rendered control-active and focus states, a provenance declaration, byte lengths, and
-SHA-256 digests. Current-run references carry measured 1180 × 728 content geometry and the asserted
+SHA-256 digests. Current-run references carry measured 1180 × 732 content geometry and the asserted
 no-focused-control state; pinned controls carry their reviewed 1180 × 728 content-capture geometry
 and mark live focus as inapplicable. Each JPEG also carries a self-authored consistency
 comment with a fixture-state label, appearance, variant, and the SHA-256 of the original compressed
@@ -269,10 +270,11 @@ Control regeneration is an explicit candidate-producing act:
 tools/regenerate-design-control-baseline <new-candidate-directory>
 ```
 
-The command renders both appearances, requires each candidate to be exactly 1180 × 728 before
+The command renders both appearances, requires each candidate to be exactly 1180 × 732 before
 printing pinned and candidate SHA-256 values, and never modifies the checked-in resources. Accepting
 a change requires reviewing both candidate images, replacing both resources as one reviewable commit,
-and updating the expected hashes in `DulcetCapture`, `DulcetShippingReferenceCapture`, and
+and updating the pinned-control dimensions and expected hashes in `DulcetCapture`,
+`DulcetShippingReferenceCapture`, and
 `tools/verify_design_captures.py`. **Any accepted control change creates a new calibration baseline:
 every previously recorded score must be re-run with two fresh raters. Scores from before and after the
 control change must never be compared, averaged, or presented as a trend.**

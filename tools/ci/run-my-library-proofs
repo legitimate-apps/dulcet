@@ -70,14 +70,14 @@ if [ "$mode" = iphone ]; then
     # count alone still admitted load1 671 in run 40117378423. Warm the built shell's in-memory
     # connect screen before the quiet window, then terminate it; an idle-device window alone
     # renewed pressure on first launch in 40153793474. No production account/library is opened.
-    python3 tools/ci/isolate-simulator --phase my-library-iphone --keep-name "iPhone 17 Pro" --settle --require-settle --settle-pressure --require-isolation \
+    python3 tools/ci/isolate-simulator --phase my-library-iphone --keep-name "iPhone 18 Pro" --settle --require-settle --settle-pressure --require-isolation \
         --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
     # 600 s per test on iPhone and iPad (docs/TRAPS.md 56): after admission, one accessibility query
     # can still take 17-30 s, and the browse/relaunch/offline test was cut off at 300 s while it was
     # still progressing (40232687092). The allowance remains a hang guard, not a retry.
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
-        -destination "platform=iOS Simulator,name=iPhone 17 Pro,OS=latest" \
+        -destination "platform=iOS Simulator,name=iPhone 18 Pro,OS=latest" \
         -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
         -parallel-testing-enabled NO \

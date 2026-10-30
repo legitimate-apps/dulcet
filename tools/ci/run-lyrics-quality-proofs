@@ -37,7 +37,7 @@ set -euo pipefail
 server_log="$ROOT/logs/navidrome.log"
 allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900)
 proxy_url=http://127.0.0.1:4544
-iphone='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+iphone='platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'
 tv='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'
 
 mode="${1:-}"
@@ -146,7 +146,7 @@ macos)
         DulcetMacLyricsAndQualityAppTest
     ;;
 iphone-lyrics)
-    python3 tools/ci/isolate-simulator --phase lyrics-states-iphone --keep-name "iPhone 17 Pro"
+    python3 tools/ci/isolate-simulator --phase lyrics-states-iphone --keep-name "iPhone 18 Pro"
     ui_proof DulcetiOS "$RUNNER_TEMP/DulcetiOSDerivedData" "$iphone" DulcetiOSUITests \
         testTheLyricsPanelShowsEveryStateOnIPhone ios-lyrics-states
     python3 tools/swift-testing-junit \
@@ -155,7 +155,7 @@ iphone-lyrics)
         DulcetiOSUITests
     ;;
 iphone-quality)
-    python3 tools/ci/isolate-simulator --phase streaming-quality-iphone --keep-name "iPhone 17 Pro"
+    python3 tools/ci/isolate-simulator --phase streaming-quality-iphone --keep-name "iPhone 18 Pro"
     ui_proof DulcetiOS "$RUNNER_TEMP/DulcetiOSDerivedData" "$iphone" DulcetiOSUITests \
         testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPhone ios-streaming-quality
     python3 tools/swift-testing-junit \

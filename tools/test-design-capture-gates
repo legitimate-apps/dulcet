@@ -209,6 +209,18 @@ def main() -> None:
             "captureBoundsHeightPoints mismatch",
         )
 
+        old_sdk_height_root = Path(temporary) / "old-sdk-reference-height"
+        shutil.copytree(args.root, old_sdk_height_root)
+        manifest_path = old_sdk_height_root / "standard" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        reference = next(
+            record for record in manifest["captures"]
+            if record["captureProvenance"] == "rendered-current-run"
+        )
+        reference["captureBoundsHeightPoints"] = 728
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_rejection(old_sdk_height_root, "captureBoundsHeightPoints mismatch")
+
         stale_title_policy_root = Path(temporary) / "stale-title-policy"
         shutil.copytree(args.root, stale_title_policy_root)
         manifest_path = stale_title_policy_root / "standard" / "manifest.json"
@@ -387,7 +399,7 @@ def main() -> None:
         "identical-pixels-different-encoding=true "
         "self-consistent-payload-swap-accepted=true semantic-oracle=absent "
         "byte-identical-dynamic-type=true translated-capture-bound=true "
-        "stale-reference-height=true stale-window-title-policy=true "
+        "stale-reference-height=true old-sdk-reference-height=true stale-window-title-policy=true "
         "inactive-control-state=true wrong-focus-state=true "
         "wrong-layout-scale=true settle-attempt-range=true "
         "settle-first-match-consistency=true resolved-apple-languages=true "

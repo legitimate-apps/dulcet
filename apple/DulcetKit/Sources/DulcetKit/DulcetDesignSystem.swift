@@ -33,7 +33,7 @@ enum DulcetMetrics {
     static let denseRowSeparatorInset: CGFloat = 36
     static let denseRowVerticalPadding: CGFloat = 2
     static let captureWidth: CGFloat = 1180
-    static let captureHeight: CGFloat = 728
+    static let captureHeight: CGFloat = 732
 }
 
 extension Color {
