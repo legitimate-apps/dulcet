@@ -41,7 +41,7 @@ sys.exit(17)
         process = self.proc / '4377'
         (process / 'fd').mkdir(parents=True)
         (process / 'comm').write_text('qemu-system-x86\n')
-        fields = ['0'] * 22
+        fields = ['0'] * 50
         for index, value in {0: 'S', 1: '1', 11: '3', 12: '4', 17: '2', 19: '100', 21: '200'}.items():
             fields[index] = value
         (process / 'stat').write_text('4377 (qemu-system-x86) ' + ' '.join(fields))
@@ -111,6 +111,17 @@ sys.exit(17)
         self.assertIsNone(row['returncode'])
         self.assertEqual(row['stderr_class'], 'timeout')
         self.assertEqual(len(self.snapshots), 1)
+
+    def test_zombie_retains_field52_encoded_signal_and_normal_exit(self):
+        path = self.proc / '4377/stat'
+        prefix, tail = path.read_text().rsplit(') ', 1)
+        fields = tail.split()
+        fields[0] = 'Z'
+        fields[21] = '0'
+        for encoded in (13, 11 | 128, 17 << 8, 0):
+            fields[49] = str(encoded)
+            path.write_text(prefix + ') ' + ' '.join(fields))
+            self.assertEqual(snapshot(self.proc)['qemu'][0]['exit_code_encoded'], encoded)
 
 
 if __name__ == '__main__':

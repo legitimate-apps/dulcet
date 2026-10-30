@@ -86,6 +86,9 @@ def snapshot(proc=Path('/proc')):
                 result['qemu'].append({'pid': int(directory.name), 'state': fields[0], 'ppid': int(fields[1]),
                     'utime_ticks': int(fields[11]), 'stime_ticks': int(fields[12]), 'threads': int(fields[17]),
                     'starttime_ticks': int(fields[19]), 'rss_pages': int(fields[21]),
+                    # /proc stat starts here at field3(state), so field52 is index49.
+                    # Retain the encoded wait status verbatim; do not guess a signal from stateZ.
+                    'exit_code_encoded': int(fields[49]) if len(fields) > 49 else None,
                     'page_size': os.sysconf('SC_PAGE_SIZE'),
                     'wchan': wchan if re.fullmatch(r'[a-zA-Z0-9_]{1,128}', wchan) else 'unavailable'})
             # File-descriptor targets are compared internally and never copied to output.
