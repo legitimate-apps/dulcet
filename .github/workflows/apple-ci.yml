@@ -112,6 +112,8 @@ jobs:
         run: python3 tools/test-account-connect-idle-waits
       - name: Prove Wishlist Remove rejects completed input and stale handler receipts
         run: python3 tools/test-discover-remove-input
+      - name: Prove playlist Rename rejects completed input and stale handler receipts
+        run: python3 tools/test-playlist-rename-input
       - name: Prove download-handoff diagnostics explain namespace rejection without exposing paths
         run: python3 tools/test-download-handoff-diagnostics
       - name: Prove nonexistent promotion targets are rejected
@@ -2582,12 +2584,14 @@ jobs:
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
               -parallel-testing-enabled NO \
-              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer 2>&1 | \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistRenameRecoversAnUndeliveredInputOnIPhone 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-ios-playlist.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
-            testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer
+            testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer \
+            testAPlaylistRenameRecoversAnUndeliveredInputOnIPhone
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-playlist-junit/TEST-DulcetiOSUITests.xml" \

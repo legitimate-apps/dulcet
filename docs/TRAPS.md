@@ -289,6 +289,19 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     `DulcetReachability` tag. In a Robolectric test the grace runs on the paused main looper's clock:
     `PlatformNetwork.lose()` passes it, `drop()` does not.
 
+    **A synthesized tap is not a completed control action.** OBSERVED in `apple-ci` run
+    40939608799 attempt 2 (iPhone playlist rename): BackBoard registered a Recap digitizer
+    twice, skipped contact updates, then detached it while the contact remained down and
+    explicitly cancelled the path. The name field held the edit, but the alert stayed open
+    and no rename reached the server. The [xcresult screenshots and app/HID logs](../evidence/playlist-rename-input/README.md)
+    distinguish cancelled input from a lost edit. Like the Wishlist Remove proof, the rename
+    proof requires a fresh handler receipt for the exact playlist and witnesses earlier
+    completed contact before accepting a missing-input classification. It re-synthesizes once
+    only for absent/cancelled contact; a normally ended contact without its handler fails.
+    The page-title and server-read assertions still run after delivery. The visible keyboard
+    introduction was not established as a cause; manipulating it introduced a separate
+    interruption-handling failure in a local control and is not part of the fix.
+
 48. **On iOS, an open context menu on a row that is also a drag source keeps the app from ever going
     idle, and a custom menu preview kills the drag.** UIKit keeps the drag's lift armed while the
     menu is up: a paused animation sits on a zero-size view the app never draws, so XCUITest's
