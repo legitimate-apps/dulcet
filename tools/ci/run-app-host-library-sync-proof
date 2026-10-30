@@ -143,9 +143,9 @@ fi
 # first boot is the heaviest one. isolate-simulator shuts every other device down, boots the one
 # the proof needs, and waits for boot completion before the proof starts its clocks. The iPhone and
 # the Apple TV are kept by name, newest runtime, which is the device `OS=latest` below selects.
-python3 tools/ci/isolate-simulator --phase library-sync-iphone --keep-name "iPhone 17 Pro"
+python3 tools/ci/isolate-simulator --phase library-sync-iphone --keep-name "iPhone 18 Pro"
 proof ios "$RUNNER_TEMP/DulcetiOSDerivedData" DulcetiOS \
-    DulcetKeychainIOSTests 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+    DulcetKeychainIOSTests 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
     testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator \
     "$RUNNER_TEMP/dulcet-ios-library-sync-junit/TEST-DulcetKeychainIOSTests.xml"
 

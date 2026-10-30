@@ -94,6 +94,34 @@ print("SETTLE DECISION CONTROLS PASS 6/6")
 from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import patch
+
+# Boot and readiness share one subprocess deadline. A timed-out or failed boot must
+# stop before service/pressure admission or any app warm-up, and retain timing evidence.
+for outcome, expected, reason in [
+    (subprocess.CompletedProcess([], 0), True, "ready=true"),
+    (subprocess.CompletedProcess([], 149), False, "ready=false"),
+    (subprocess.TimeoutExpired(["xcrun", "simctl", "bootstatus"], 660), False, "reason=deadline"),
+]:
+    with patch.object(tool, "simctl", side_effect=outcome if isinstance(outcome, Exception) else None,
+                      return_value=outcome) as command, \
+            patch.object(tool.time, "monotonic", side_effect=[10.0, 13.5]), \
+            redirect_stdout(StringIO()) as output:
+        assert tool.boot("first-boot-ipad", "IPAD") is expected
+    command.assert_called_once_with("bootstatus", "IPAD", "-b", timeout=660, capture_output=False)
+    assert reason in output.getvalue() and "seconds=3.5" in output.getvalue(), output.getvalue()
+    assert "budget_seconds=660" in output.getvalue(), output.getvalue()
+    print(f"BOOT DEADLINE CONTROL PASS {reason} single-command=true streamed=true")
+
+with patch.object(sys, "argv", [TOOL, "--phase", "first-boot-ipad", "--keep", "IPAD",
+                               "--settle", "--require-settle", "--require-isolation"]), \
+        patch.object(tool, "devices", return_value={"runtime": []}), \
+        patch.object(tool, "boot", return_value=False), patch.object(tool, "settle") as settle, \
+        patch.object(tool, "warm_first_launch") as warm, redirect_stdout(StringIO()):
+    assert tool.main() == 1
+settle.assert_not_called()
+warm.assert_not_called()
+print("BOOT FAILURE CONTROL PASS admission-and-app-launch-not-reached")
+
 for remaining, strict, expected in [(False, True, 0), (True, True, 1), (True, False, 0)]:
     empty = {"runtime": []}
     leftover = {"runtime": [{"udid": "PHONE", "state": "Booted"}]}
@@ -111,15 +139,78 @@ for remaining, strict, expected in [(False, True, 0), (True, True, 1), (True, Fa
     print(f"SHUTDOWN ACK CONTROL PASS leftover={remaining} required={strict} exit={expected}")
 
 workflow = (Path(TOOL).parents[2] / ".github/workflows/apple-ci.yml").read_text()
-release = workflow.split("      - name: Release the platform iPhone before iPadOS boot", 1)[1].split("      - name: ", 1)[0]
-boot = workflow.split("      - name: Boot iPadOS simulator before the layout launch", 1)[1].split("      - name: ", 1)[0]
-assert "set -euo pipefail" in release
-assert "--none --require-isolation" in release
-assert release.index("--require-isolation") < release.index('echo "udid=')
-assert "timeout-minutes: 6" in boot
-assert "steps.ipados_layout_destination.outputs.udid" in boot
-assert "resolve-ipad-destination" not in boot
-print("PLATFORM IPAD ORDER CONTROL PASS verified shutdown precedes unchanged six-minute boot")
+# Discovery can publish before shutdown; Actions must still acknowledge shutdown before boot.
+# Inspect step order directly, since the output now belongs to the separate discovery step.
+import re
+
+def require_platform_ipad_order(candidate):
+    platform = candidate.split("  apple-platform:", 1)[1]
+    platform = re.split(r"(?m)^  [A-Za-z0-9_-]+:\s*$", platform, maxsplit=1)[0]
+    def named(name):
+        matches = list(re.finditer(r"(?m)^      - name: " + re.escape(name) + r"$", platform))
+        assert len(matches) == 1, f"expected one platform step: {name}"
+        start = matches[0].start()
+        return start, platform[start:].split("\n      - ", 1)[0]
+    resolve_index, resolve = named("Resolve the platform iPadOS destination")
+    release_index, release = named("Release the platform iPhone before iPadOS boot")
+    boot_index, boot = named("Boot iPadOS simulator before the layout launch")
+    assert resolve_index < release_index < boot_index, "destination resolution and required shutdown must precede iPad boot"
+    for step in [resolve, release, boot]:
+        properties = step.split("        run:", 1)[0]
+        allowed_failure = re.search(r"(?m)^        continue-on-error:[ \t]*(.*)$", properties)
+        assert allowed_failure is None or allowed_failure[1] == "false", "platform prerequisites must fail closed"
+        condition = re.search(r"(?m)^        if:\s*(.*)$", properties)
+        assert condition is None or condition[1] in ["success()", "${{ success() }}"], "platform prerequisites require prior success"
+        assert "set -euo pipefail" in step, "platform prerequisite shell must stop on failure"
+    assert "id: ipados_layout_destination" in resolve
+    assert resolve.index("resolve-ipad-destination --print udid") < resolve.index('echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"')
+    assert "--none --require-isolation" in release, "shutdown requires an empty booted-device acknowledgment"
+    assert "timeout-minutes: 19" in boot, "platform boot must retain its Xcode 27 readiness allowance"
+    assert "IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}" in boot, "boot must consume the published destination"
+    assert 'tools/ci/isolate-simulator --phase platform-ipad-first-boot' in boot
+    assert '--keep "$IPAD_UDID" --require-isolation' in boot
+    assert "resolve-ipad-destination" not in boot, "boot must not rediscover its destination"
+    return release, boot
+
+release, boot = require_platform_ipad_order(workflow)
+print("PLATFORM IPAD ORDER CONTROL PASS resolve publishes udid; required shutdown precedes nineteen-minute boot using that output")
+
+for mutation, changed in [
+    ("boot-before-shutdown", workflow.replace(release, "RELEASE_STEP_PLACEHOLDER").replace(boot, release).replace("RELEASE_STEP_PLACEHOLDER", boot)),
+    ("shutdown-continue-on-error", workflow.replace(release, release.replace("        run:", "        continue-on-error: true\n        run:"))),
+    ("boot-old-budget", workflow.replace(boot, boot.replace("timeout-minutes: 19", "timeout-minutes: 6"))),
+    ("boot-wrong-output", workflow.replace(boot, boot.replace("steps.ipados_layout_destination.outputs.udid", "steps.other_destination.outputs.udid"))),
+]:
+    assert changed != workflow, f"mutation changed nothing: {mutation}"
+    try:
+        require_platform_ipad_order(changed)
+    except AssertionError as error:
+        print(f"PLATFORM IPAD ORDER NEGATIVE CONTROL PASS {mutation} rejected: {error}")
+    else:
+        raise AssertionError(f"platform ordering control accepted {mutation}")
+
+# Discover's dedicated iPad job must use the same bounded discovery and retain its result.
+def require_discover_ipad_destination(candidate):
+    job = candidate.split("  discover-wishlist-ipad:", 1)[1].split("\n  apple-ci:", 1)[0]
+    resolution = job.split("      - name: Resolve the iPadOS simulator for Discover and Wishlist", 1)[1].split("\n      - ", 1)[0]
+    proof = job.split("      - name: Drive Discover and Wishlist through the native ipad app", 1)[1].split("\n      - ", 1)[0]
+    assert job.index(resolution) < job.index(proof), "Discover iPad must resolve before proof execution"
+    assert "timeout-minutes: 6" in resolution and "id: discover_ipad_destination" in resolution
+    assert "set -euo pipefail" in resolution and "resolve-ipad-destination --print udid" in resolution
+    assert 'echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"' in resolution
+    assert "DULCET_DISCOVER_PROOF_UDID: ${{ steps.discover_ipad_destination.outputs.udid }}" in proof, "Discover iPad must reuse its proven destination"
+    assert "resolve-ipad-destination" not in proof
+
+require_discover_ipad_destination(workflow)
+print("DISCOVER IPAD DESTINATION CONTROL PASS six-minute discovery precedes proof using published UDID")
+changed = workflow.replace("DULCET_DISCOVER_PROOF_UDID: ${{ steps.discover_ipad_destination.outputs.udid }}", "DULCET_DISCOVER_PROOF_UDID: WRONG")
+assert changed != workflow
+try:
+    require_discover_ipad_destination(changed)
+except AssertionError:
+    print("DISCOVER IPAD DESTINATION NEGATIVE CONTROL PASS wrong destination binding rejected")
+else:
+    raise AssertionError("Discover iPad control accepted a different destination")
 
 # Service-count stability is a prerequisite in a device member, not a best-effort sleep.
 for did_settle in [True, False]:
@@ -135,17 +226,31 @@ for did_settle in [True, False]:
     assert ('bootstatus', 'IPAD', '-b') in calls
     print(f'SETTLE ACK CONTROL PASS observed={did_settle} accepted={did_settle}')
 
-# Pressure admission is mandatory when requested, even if service counts already stabilized.
-for pressure_ok in [True, False]:
+# Pressure must admit service RPCs and still be quiet immediately before proof execution.
+from unittest.mock import call
+for pre_ok, post_ok in [(True, True), (False, True), (True, False)]:
+    operations = []
+    pressure_results = iter([pre_ok, post_ok])
+    def observed_pressure(phase):
+        operations.append(phase)
+        return next(pressure_results)
+    def observed_services(*unused):
+        operations.append('services')
+        return True
     arguments = [TOOL, '--phase', 'my-library-ipad', '--keep', 'IPAD', '--settle',
                  '--require-settle', '--settle-pressure', '--require-isolation']
     with patch.object(sys, 'argv', arguments), patch.object(tool, 'devices', return_value=running), \
-            patch.object(tool, 'simctl', side_effect=fake_simctl), patch.object(tool, 'settle', return_value=True), \
-            patch.object(tool, 'settle_pressure', return_value=pressure_ok) as pressure, \
+            patch.object(tool, 'simctl', side_effect=fake_simctl), patch.object(tool, 'settle', side_effect=observed_services), \
+            patch.object(tool, 'settle_pressure', side_effect=observed_pressure) as pressure, \
             patch.dict(tool.os.environ, {}, clear=True), redirect_stdout(StringIO()):
-        assert tool.main() == (0 if pressure_ok else 1)
-        pressure.assert_called_once_with('my-library-ipad')
-    print(f'PRESSURE ACK CONTROL PASS observed={pressure_ok} accepted={pressure_ok}')
+        assert tool.main() == (0 if pre_ok and post_ok else 1)
+        expected = [call('my-library-ipad-before-services')]
+        if pre_ok: expected.append(call('my-library-ipad'))
+        assert pressure.call_args_list == expected
+        timeline = ['my-library-ipad-before-services']
+        if pre_ok: timeline += ['services', 'my-library-ipad']
+        assert operations == timeline
+    print(f'PRESSURE ACK CONTROL PASS pre={pre_ok} post={post_ok} accepted={pre_ok and post_ok}')
 
 # The sacrificial first launch pays installation/render work before admission, never connects
 # an account, and must be gone before proof execution. Failures cannot authorize a proof.
@@ -197,5 +302,35 @@ for warm_ok in [True, False]:
             patch.dict(tool.os.environ, {}, clear=True), redirect_stdout(StringIO()):
         assert tool.main() == (0 if warm_ok else 1)
         warm.assert_called_once_with('my-library-ipad', 'IPAD', '/built.app')
-        pressure.assert_not_called()
+        pressure.assert_called_once_with('my-library-ipad-before-services')
 print('WARMUP ACK CONTROLS PASS 2/2')
+
+# A first-boot host can be busy even after bootstatus completes. The existing host
+# pressure gate must admit service RPCs, and every gate must stop later operations.
+arguments = [TOOL, '--phase', 'my-library-ipad', '--keep', 'IPAD', '--settle',
+             '--require-settle', '--settle-pressure', '--require-isolation', '--warmup-app', '/built.app']
+for scenario, pressure_ok, services_ok, warm_ok in [
+    ('positive', True, True, True), ('pre-pressure-failure', False, True, True),
+    ('service-failure', True, False, True), ('warmup-failure', True, True, False),
+]:
+    operations = []
+    def record_boot(*unused):
+        operations.append('boot'); return True
+    def record_pressure(*unused):
+        operations.append('pressure'); return pressure_ok
+    def record_services(*unused):
+        operations.append('services'); return services_ok
+    def record_warmup(*unused):
+        operations.append('warmup'); return warm_ok
+    with patch.object(sys, 'argv', arguments), patch.object(tool, 'devices', return_value=running), \
+            patch.object(tool, 'boot', side_effect=record_boot), \
+            patch.object(tool, 'settle_pressure', side_effect=record_pressure), \
+            patch.object(tool, 'settle', side_effect=record_services), \
+            patch.object(tool, 'warm_first_launch', side_effect=record_warmup), \
+            patch.dict(tool.os.environ, {}, clear=True), redirect_stdout(StringIO()):
+        assert tool.main() == (0 if pressure_ok and services_ok and warm_ok else 1)
+    expected = ['boot', 'pressure']
+    if pressure_ok: expected.append('services')
+    if pressure_ok and services_ok: expected.append('warmup')
+    assert operations == expected, (scenario, operations)
+    print(f'ADMISSION ORDER CONTROL PASS {scenario} operations={operations}')

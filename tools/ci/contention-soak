@@ -68,7 +68,7 @@ tools/conformance-env/health-check \
 if [ "$ARM" = current ]; then
   # Three resident devices: the worst case the platform legs can leave behind. (PR #136's run found
   # one still booted at the composite's start, so this arm overstates today's typical residency.)
-  for device in "$(udid_for 'iPhone 17 Pro')" \
+  for device in "$(udid_for 'iPhone 18 Pro')" \
                 "$(python3 tools/resolve-ipad-destination --print udid)" \
                 "$(udid_for 'Apple TV 4K (3rd generation)')"; do
     xcrun simctl boot "$device" 2>/dev/null || true
@@ -124,7 +124,7 @@ for i in $(seq 1 "$ITERATIONS"); do
     continue
   fi
   rm -rf "$binary_dir" core-conformance/build/test-results/iosSimulatorArm64Test
-  sim="$(xcrun simctl create "dulcet-soak-$i" com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
+  sim="$(xcrun simctl create "dulcet-soak-$i" com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro)"
   xcrun simctl boot "$sim"
   if [ "$ARM" = isolated ]; then
     xcrun simctl bootstatus "$sim" -b >/dev/null

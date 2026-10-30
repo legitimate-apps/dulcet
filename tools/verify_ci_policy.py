@@ -1127,12 +1127,12 @@ def discover_native_condition_errors(lines: list[str]) -> list[str]:
 
 def discover_diagnostic_selector_errors(lines: list[str]) -> list[str]:
     """A focused reproduction cannot narrow a default, push or plain dispatch run."""
-    expected = "${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || 'DulcetDiscoverWishlistIPadUITests' }}"
+    expected = "${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || inputs.discover_only == true && inputs.discover_ipad_case == 'offline' && 'DulcetDiscoverWishlistIPadUITests/testOfflineWishRelaunchRemoveAndScanArrival' || 'DulcetDiscoverWishlistIPadUITests' }}"
     errors = []
     for line in lines:
         entry = mapping_entry(line)
         if entry and entry[1] == "DULCET_DISCOVER_ONLY_TEST" and entry[2] != expected:
-            errors.append("Discover native selector must guard both focused cases with discover_only == true and fall back to the complete iPad suite")
+            errors.append("Discover native selector must guard every focused case with discover_only == true and fall back to the complete iPad suite")
     return errors
 
 
@@ -1211,7 +1211,8 @@ def discover_parity_artifact_path_errors(lines: list[str]) -> list[str]:
 # an allowlist rather than a list of forbidden suffixes: any label not matched here is refused,
 # including larger-runner spellings nobody thought to forbid. Self-hosted labels are judged by the
 # workflow_dispatch-only rule below instead (spec §21.3.1).
-STANDARD_RUNNER = re.compile(r"ubuntu-latest|ubuntu-[0-9]+\.04|macos-latest|macos-[0-9]+")
+# xcode-27 is the standard Apple preview image; keep it in the Apple slot and evidence checks.
+STANDARD_RUNNER = re.compile(r"ubuntu-latest|ubuntu-[0-9]+\.04|xcode-27")
 
 for workflow in workflows:
     text = workflow.read_text()
@@ -1237,7 +1238,7 @@ for workflow in workflows:
         elif not STANDARD_RUNNER.fullmatch(runner_value.strip().strip("'\"")):
             errors.append(
                 f"{workflow}: job {job} runs on {runner_value.strip()!r}; only the standard hosted "
-                "labels ubuntu-latest, ubuntu-<LTS version>, macos-latest and macos-<version> are allowed",
+                "labels ubuntu-latest, ubuntu-<LTS version> and xcode-27 are allowed",
             )
     for name, start, end in job_spans(lines):
         env = job_properties(lines, start, end).get("env") or {}
@@ -1412,7 +1413,7 @@ if apple_ci:
     apple_jobs = {name: (start, end) for name, start, end in job_spans(apple_lines)}
     apple_runners = dict(job_runner_values(apple_lines))
     macos_jobs = sorted(name for name in apple_jobs
-                        if re.match(r"macos-", apple_runners.get(name, "").strip()))
+                        if re.match(r"(?:macos-|xcode-27$)", apple_runners.get(name, "").strip()))
 
     def macos_slots(name: str) -> int:
         start, end = apple_jobs[name]
@@ -1768,7 +1769,7 @@ if Path("core-conformance").is_dir():
     gating_legs = [
         name for name, (start, end) in spans.items()
         if name in aggregator_needs
-        and re.match(r"macos-", runners.get(name, "").strip())
+        and re.match(r"(?:macos-|xcode-27$)", runners.get(name, "").strip())
         and gates(start, end)
     ]
     for control in DIAGNOSTIC_CONTROLS:
@@ -1797,7 +1798,7 @@ if Path("apple/project.yml").is_file():
     gating_legs = [
         name for name, (start, end) in spans.items()
         if name in aggregator_needs
-        and re.match(r"macos-", runners.get(name, "").strip())
+        and re.match(r"(?:macos-|xcode-27$)", runners.get(name, "").strip())
         and "continue-on-error" not in (props := job_properties(apple_lines, start, end))
         # A leg run when the plan says so still gates (spec §21.6): every generated Xcode file is an
         # Apple input, so a pull request touching one plans the leg, and a release needs a full run.

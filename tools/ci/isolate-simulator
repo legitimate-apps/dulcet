@@ -12,7 +12,7 @@ CoreSimulator to report boot complete before the phase starts its clocks.
 Usage:
   isolate-simulator --phase NAME --none
   isolate-simulator --phase NAME --keep UDID
-  isolate-simulator --phase NAME --keep-name "iPhone 17 Pro"     # newest runtime, as OS=latest does
+  isolate-simulator --phase NAME --keep-name "iPhone 18 Pro"     # newest runtime, as OS=latest does
   isolate-simulator --phase NAME --keep UDID --settle             # wait for stable service counts
   isolate-simulator --phase NAME --keep UDID --settle --settle-pressure # require quiet memory/CPU
   isolate-simulator --devices-json FILE --plan ...               # offline: print the plan, touch nothing
@@ -31,7 +31,12 @@ import subprocess
 import sys
 import time
 
-BOOT_TIMEOUT_SECONDS = 300
+# Xcode 27 run 40547199270: iPhone readiness <=264s; iPad's split boot/bootstatus
+# prerequisite exhausted its guard after 433s overall. Recent macos-26 main readiness
+# was <=88..173s. One 660s deadline is ceil(1.5 * 433 / 60) * 60, including the boot
+# itself. This allowance is provisional until a successful final-head iPad witness.
+# Stream CoreSimulator's migration stages so a future timeout keeps its cause.
+BOOT_TIMEOUT_SECONDS = 660
 # A booted device keeps starting its widget, poster and News extensions after `bootstatus` returns,
 # and that burst is what swaps. OBSERVED in run 37519277991: the iPhone's first boot took 201 s, the
 # step shut it down 12 s later, the proof booted it again, and its first test ran at load1 567 with
@@ -43,8 +48,33 @@ SETTLE_WINDOW = 3
 SETTLE_TOLERANCE = 2
 
 
-def simctl(*args: str, timeout: float = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(["xcrun", "simctl", *args], capture_output=True, text=True, timeout=timeout)
+def simctl(*args: str, timeout: float = 120, capture_output: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(["xcrun", "simctl", *args], capture_output=capture_output,
+                          text=True, timeout=timeout)
+
+
+def boot(phase: str, udid: str) -> bool:
+    """One monotonic subprocess deadline covers automatic boot and readiness.
+
+    bootstatus -b also boots a shut-down device. A separate `simctl boot` adds an
+    unmeasured RPC wait before the readiness budget and hides its migration output.
+    Inherit stdout/stderr so CoreSimulator's stages survive success and timeout.
+    """
+    started = time.monotonic()
+    print(f"SIMULATOR BOOT BEGIN phase={phase} udid={udid} budget_seconds={BOOT_TIMEOUT_SECONDS}",
+          flush=True)
+    try:
+        status = simctl("bootstatus", udid, "-b", timeout=BOOT_TIMEOUT_SECONDS,
+                        capture_output=False)
+    except subprocess.TimeoutExpired:
+        print(f"SIMULATOR BOOT phase={phase} udid={udid} ready=false reason=deadline "
+              f"seconds={time.monotonic() - started:.1f} budget_seconds={BOOT_TIMEOUT_SECONDS}",
+              flush=True)
+        return False
+    print(f"SIMULATOR BOOT phase={phase} udid={udid} ready={'true' if status.returncode == 0 else 'false'} "
+          f"exit={status.returncode} seconds={time.monotonic() - started:.1f} "
+          f"budget_seconds={BOOT_TIMEOUT_SECONDS}", flush=True)
+    return status.returncode == 0
 
 
 def devices(devices_json: str | None) -> dict:
@@ -85,11 +115,16 @@ def settled(counts: list, window: int = SETTLE_WINDOW, tolerance: int = SETTLE_T
 
 def running_services(udid: str):
     """How many of the device's launchd services have a process, or None when it cannot be read."""
+    started = time.monotonic()
     try:
         listing = simctl("spawn", udid, "launchctl", "list", timeout=60)
     except subprocess.TimeoutExpired:
+        print(f"SIMULATOR SERVICES udid={udid} available=false reason=timeout "
+              f"seconds={time.monotonic() - started:.1f}", flush=True)
         return None
     if listing.returncode != 0:
+        print(f"SIMULATOR SERVICES udid={udid} available=false reason=exit "
+              f"exit={listing.returncode} seconds={time.monotonic() - started:.1f}", flush=True)
         return None
     return sum(1 for line in listing.stdout.splitlines()[1:] if line.split("\t", 1)[0].isdigit())
 
@@ -180,7 +215,7 @@ def main() -> int:
     parser.add_argument("--require-settle", action="store_true",
                         help="fail if the requested service-count settle condition was not observed")
     parser.add_argument("--settle-pressure", action="store_true",
-                        help="require a quiet host-pressure window after service settling")
+                        help="require quiet host pressure before service queries and again before the proof")
     parser.add_argument("--warmup-app", help="install/launch the built Debug iOS shell's in-memory fixture before pressure settling")
     args = parser.parse_args()
     if args.require_settle and not args.settle:
@@ -212,11 +247,13 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             print(f"SIMULATOR ISOLATION shutdown timed out phase={args.phase} udid={udid}", flush=True)
     if keep:
-        simctl("boot", keep)  # "already booted" is fine; bootstatus below is the actual check
-        status = simctl("bootstatus", keep, "-b", timeout=BOOT_TIMEOUT_SECONDS)
-        if status.returncode != 0:
-            print(f"SIMULATOR ISOLATION FAILED phase={args.phase} keep={keep} "
-                  f"bootstatus_exit={status.returncode}: {status.stderr.strip()[-300:]}")
+        if not boot(args.phase, keep):
+            return 1
+        # Boot completion can precede background migration/widget startup. In run
+        # 40575992017 boot succeeded in 104.5s, but all service RPCs were unavailable
+        # while host load rose past 630. Admit cheap host metrics first, then start
+        # the unchanged service-query budget. Rendering still pays its own quiet window.
+        if args.settle_pressure and not settle_pressure(args.phase + "-before-services"):
             return 1
         if args.settle:
             did_settle = settle(args.phase, keep)

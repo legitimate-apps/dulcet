@@ -71,6 +71,7 @@ targets:
         excludes:
           - Host-Info.plist
       - DulcetSignedDeviceUITestSupport
+      - DulcetWindowUITestSupport
     dependencies:
       - target: DulcetSignedIPhoneHost
     settings:

@@ -27,19 +27,42 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-XCODE_QUERY_TIMEOUT = 60
-DISCOVERY_TIMEOUT = 120
+# Give slow discovery most of the budget; restarting a killed query discards its progress.
+XCODE_QUERY_TIMEOUT = 180
+DISCOVERY_TIMEOUT = 240
+SIMCTL_PROBE_TIMEOUT = 5
 DISCOVERY_RETRY_INTERVAL = 5
 
 
 class DestinationQueryTimeout(ValueError):
     """The xcodebuild query never answered, so the accepted set is UNKNOWN.
 
-    Distinct from a query that answered with nothing. "Unknown" and "empty" are
-    different facts, and only the second one is a result. Treating a timeout as a
-    terminal failure spent one attempt and abandoned the rest of the deadline.
+    Distinct from a query that answered with nothing; only the latter establishes an empty set.
     """
+
+
+def simulator_responsiveness() -> str:
+    """A bounded service probe after Xcode times out, without emitting simctl's private paths."""
+    started = time.monotonic()
+    try:
+        result = subprocess.run(["xcrun", "simctl", "list", "devices", "--json"],
+                                capture_output=True, text=True, timeout=SIMCTL_PROBE_TIMEOUT,
+                                check=False)
+        status = f"exited-{result.returncode}"
+        if result.returncode == 0:
+            try:
+                document = json.loads(result.stdout)
+                count = sum(len(devices) for devices in document["devices"].values())
+                status = f"responsive devices={count}"
+            except (ValueError, KeyError, TypeError, AttributeError):
+                status = "invalid-json"
+    except subprocess.TimeoutExpired:
+        status = "timed-out"
+    except OSError:
+        status = "unavailable"
+    return f"simctl-probe={status} elapsed={time.monotonic() - started:.3f}s budget={SIMCTL_PROBE_TIMEOUT}s"
 
 
 def load_destinations(path: str | None, project: str, scheme: str,
@@ -48,17 +71,26 @@ def load_destinations(path: str | None, project: str, scheme: str,
         return Path(path).read_text()
     command = ["xcrun", "xcodebuild", "-showdestinations", "-project", project,
                "-scheme", scheme, "-configuration", "Debug"]
+    started = time.monotonic()
     try:
-        result = subprocess.run(command, capture_output=True, text=True,
-                                timeout=timeout, check=False)
+        with TemporaryDirectory(prefix="dulcet-destinations-") as derived:
+            command += ["-derivedDataPath", derived]
+            result = subprocess.run(command, capture_output=True, text=True,
+                                    timeout=timeout, check=False)
     except subprocess.TimeoutExpired as error:
         def decoded(value):
             return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
+        elapsed = time.monotonic() - started
+        print(f"XCODE DESTINATION QUERY status=timeout elapsed={elapsed:.3f}s budget={timeout:g}s", file=sys.stderr)
+        probe = simulator_responsiveness()
+        print(probe, file=sys.stderr)
         raise DestinationQueryTimeout(
-            f"xcodebuild destination query timed out after {timeout:g}s; "
-            "accepted set UNKNOWN; partial output:\n"
+            f"xcodebuild destination query timed out after {timeout:g}s (elapsed={elapsed:.3f}s); "
+            f"accepted set UNKNOWN; {probe}; partial output:\n"
             + decoded(error.stdout) + decoded(error.stderr)
         ) from error
+    print(f"XCODE DESTINATION QUERY status=exited-{result.returncode} "
+          f"elapsed={time.monotonic() - started:.3f}s budget={timeout:g}s", file=sys.stderr)
     transcript = result.stdout + "\n" + result.stderr
     if result.returncode:
         raise ValueError(f"xcodebuild destination query exited {result.returncode}; "
@@ -68,13 +100,17 @@ def load_destinations(path: str | None, project: str, scheme: str,
 
 def accepted_ids(transcript: str, scheme: str) -> set[str]:
     """Only concrete available iOS Simulator rows count, never ineligible rows/placeholders."""
-    header = f'Available destinations for the "{scheme}" scheme:'
+    # Xcode 27 renamed both sections to compatible/incompatible (run 40544160667).
+    headers = {
+        f'Available destinations for the "{scheme}" scheme:',
+        f'Destinations compatible with the "{scheme}" scheme:',
+    }
     active = False
     seen_header = False
     identifiers = set()
     for line in transcript.splitlines():
         line = line.strip()
-        if line == header:
+        if line in headers:
             active = seen_header = True
             continue
         if not line:
@@ -93,7 +129,7 @@ def accepted_ids(transcript: str, scheme: str) -> set[str]:
                 and "placeholder" not in identifier.lower() and "error" not in fields):
             identifiers.add(identifier.upper())
     if not seen_header:
-        raise ValueError(f"missing {header!r}; accepted set UNKNOWN")
+        raise ValueError(f"missing compatible destinations section for {scheme!r}; accepted set UNKNOWN")
     return identifiers
 
 RUNTIME_IOS = re.compile(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)(?:-(\d+))?(?:-(\d+))?$")
@@ -166,12 +202,13 @@ def main() -> None:
     parser.add_argument("--project", default="apple/Dulcet.xcodeproj")
     parser.add_argument("--scheme", default="DulcetiOS")
     parser.add_argument("--discovery-timeout", type=float, default=DISCOVERY_TIMEOUT,
-                        help="overall inventory and Xcode discovery deadline in seconds (default: 120)")
+                        help="overall inventory and Xcode discovery deadline in seconds (default: 240)")
     parser.add_argument("--query-timeout", type=float, default=XCODE_QUERY_TIMEOUT,
-                        help="per inventory/Xcode query timeout in seconds (default: 60). "
+                        help="per inventory/Xcode query timeout in seconds (default: 180). "
                              "Each attempt receives the smaller of this value and the remaining "
                              "discovery budget, so a timed-out query leaves the rest of the "
-                             "deadline available to later attempts.")
+                             "deadline available to later attempts. A timeout diagnostic runs a "
+                             "separately bounded five-second simctl probe.")
     parser.add_argument("--print", dest="field", choices=("destination", "name", "udid"), default="destination")
     args = parser.parse_args()
     if not math.isfinite(args.discovery_timeout) or args.discovery_timeout <= 0:
@@ -208,11 +245,8 @@ def main() -> None:
                 transcript = load_destinations(args.destinations_file, args.project, args.scheme,
                                                min(args.query_timeout, remaining))
             except DestinationQueryTimeout as error:
-                # A query that never answered leaves the accepted set UNKNOWN, which is not the
-                # same as answered-and-empty. Both are eligible for another attempt; previously
-                # only the second was, so a single slow query ended discovery with most of the
-                # deadline unspent. No sleep here: the attempt already waited its own timeout,
-                # so it cannot spin.
+                # Preserve UNKNOWN, and retry only if the long query left discovery budget.
+                # The diagnostic simctl probe has its own five-second bound.
                 timed_out = error
                 print(f"IPAD DISCOVERY phase=xcode-query-timeout attempt={attempts} "
                       f"elapsed={time.monotonic() - started:.3f}s", file=sys.stderr, flush=True)

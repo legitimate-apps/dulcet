@@ -387,7 +387,8 @@ private struct DulcetCaptureMain {
     private static let windowWidth = 1180
     private static let windowHeight = 760
     private static let referenceCaptureWidth = 1180
-    private static let referenceCaptureHeight = 728
+    // macOS 27 AppKit uses 28 points of the fixed 760-point frame for window chrome.
+    private static let referenceCaptureHeight = 732
     private static let pinnedControlWidth = 1180
     private static let pinnedControlHeight = 728
     private static let jpegCompression = 0.72

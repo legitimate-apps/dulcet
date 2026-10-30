@@ -73,7 +73,8 @@ def device(name: str, udid: str, available: bool = True) -> dict:
 
 
 def discovery_fixture(transcripts: list[str], query_duration: float = 0,
-                      inventory_duration: float = 0) -> dict:
+                      inventory_duration: float = 0,
+                      budgets: tuple[float, float] | None = (120, 60)) -> dict:
     """Drive main with a query sequence and a virtual monotonic clock, without Apple tools."""
     resolver = runpy.run_path(str(RESOLVER))
     elapsed = 0.0
@@ -89,7 +90,7 @@ def discovery_fixture(transcripts: list[str], query_duration: float = 0,
         nonlocal elapsed
         timeouts.append(timeout)
         entry = transcripts[min(len(timeouts) - 1, len(transcripts) - 1)]
-        if entry is TIMEOUT:
+        if entry is TIMEOUT or query_duration > timeout:
             # A timed-out attempt consumes its whole per-attempt budget and returns no answer.
             elapsed += timeout
             raise resolver["DestinationQueryTimeout"](
@@ -109,7 +110,9 @@ def discovery_fixture(transcripts: list[str], query_duration: float = 0,
               "load_destinations": query,
           }), patch("time.monotonic", side_effect=lambda: elapsed),
           patch("time.sleep", side_effect=sleep),
-          patch.object(sys, "argv", [str(RESOLVER), "--print", "udid"]),
+          patch.object(sys, "argv", [str(RESOLVER), "--print", "udid"] + (
+              ["--discovery-timeout", str(budgets[0]), "--query-timeout", str(budgets[1])]
+              if budgets else [])),
           redirect_stdout(stdout), redirect_stderr(stderr)):
         status = 0
         try:
@@ -122,6 +125,32 @@ def discovery_fixture(transcripts: list[str], query_duration: float = 0,
 
 
 def main() -> None:
+    # Xcode 27.0, hosted run 40544160667, uses compatible/incompatible section names.
+    # A simulator in the incompatible section must stay excluded even without an error field.
+    xcode27 = '\n'.join([
+        'Destinations compatible with the "DulcetiOS" scheme:',
+        '  { platform:iOS Simulator, id:EEE, OS:27.0, name:iPad Pro 13-inch (M5) }',
+        '  { platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder, name:Any iOS Simulator Device }',
+        'Destinations incompatible with the "DulcetiOS" scheme:',
+        '  { platform:iOS Simulator, id:FFF, OS:27.0, name:iPad Pro 13-inch (M5) }',
+    ])
+    eligible = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+        device("iPad Pro 13-inch (M5)", "EEE"), device("iPad Pro 13-inch (M5)", "FFF"),
+    ]}}
+    selected = run(eligible, xcode27, "udid")
+    assert selected.returncode == 0 and selected.stdout == "EEE\n", selected.stderr
+    excluded = run({"devices": {IOS: [device("iPad Pro 13-inch (M5)", "FFF")]}}, xcode27, "udid")
+    assert excluded.returncode != 0 and not excluded.stdout, excluded.stdout
+    wrong_scheme = run(eligible, xcode27.replace('"DulcetiOS"', '"OtherScheme"'), "udid")
+    assert wrong_scheme.returncode != 0 and not wrong_scheme.stdout, wrong_scheme.stdout
+    print("XCODE 27 CONTROL PASS compatible_ipad_selected=true incompatible_and_wrong_scheme_rejected=true")
+
+    # Every fresh query needs 75s; killing at 60s cannot be repaired by starting another query.
+    slow_answer = discovery_fixture([destinations("EEE")], query_duration=75, budgets=None)
+    if (slow_answer["status"] != 0 or slow_answer["stdout"] != "EEE\n"
+            or slow_answer["attempts"] != 1 or slow_answer["elapsed"] != 75):
+        raise SystemExit(f"SLOW QUERY CONTROL FAILED every_query_needs_75s: {slow_answer}")
+    print("SLOW QUERY CONTROL PASS every_query_needs_75s exit_code=0 attempts=1 virtual_elapsed=75s stdout='EEE'")
     # Inventory is part of discovery, not untimed work before its advertised deadline.
     # A 45-second inventory leaves only 75 seconds for Xcode in the same 120-second budget.
     budget = discovery_fixture([TIMEOUT], inventory_duration=45)
@@ -129,6 +158,12 @@ def main() -> None:
             or budget["stdout"]):
         raise SystemExit(f"INVENTORY DEADLINE CONTROL FAILED: inventory escaped the total discovery budget: {budget}")
     print("INVENTORY DEADLINE CONTROL PASS inventory=45s xcode=75s total=120s stdout_empty=true")
+
+    combined = discovery_fixture([destinations("EEE")], query_duration=75,
+                                 inventory_duration=45, budgets=None)
+    assert combined["status"] == 0 and combined["stdout"] == "EEE\n", combined
+    assert combined["elapsed"] == 120 and combined["timeouts"] == [180], combined
+    print("INVENTORY SLOW QUERY CONTROL PASS inventory=45s xcode=75s total=120s deadline=240s attempts=1")
 
     resolver = runpy.run_path(str(RESOLVER))
     inventory_command = ["xcrun", "simctl", "list", "devices", "available", "--json"]
@@ -278,9 +313,10 @@ def main() -> None:
         ("query_timeout", None, subprocess.TimeoutExpired(command, 60, b"partial", b"timeout detail"),
          "timed out after 60s", True),
     ):
-        with patch("subprocess.run", return_value=returned, side_effect=thrown) as process:
+        with (patch("subprocess.run", return_value=returned, side_effect=thrown) as process,
+              patch.dict(query.__globals__, {"simulator_responsiveness": lambda: "simctl-probe=timed-out"})):
             try:
-                query(None, "test.xcodeproj", "TestScheme")
+                query(None, "test.xcodeproj", "TestScheme", timeout=60)
             except ValueError as error:
                 if expected not in str(error) or "partial" not in str(error) or "UNKNOWN" not in str(error):
                     raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: {error}")
@@ -291,7 +327,10 @@ def main() -> None:
                     )
             else:
                 raise SystemExit(f"NEGATIVE CONTROL FAILED {label}: query did not fail")
-            process.assert_called_once_with(command, capture_output=True, text=True, timeout=60, check=False)
+            invoked = process.call_args.args[0]
+            assert invoked[:-2] == command and invoked[-2] == "-derivedDataPath", invoked
+            assert not Path(invoked[-1]).exists(), "temporary query DerivedData was retained"
+            process.assert_called_once_with(invoked, capture_output=True, text=True, timeout=60, check=False)
         print(f"NEGATIVE CONTROL PASS {label}_rejected=true query_timeout_seconds=60 "
               f"retryable={is_timeout}")
 
@@ -371,6 +410,7 @@ def main() -> None:
         raise SystemExit(f"RETRY CONTROL FAILED concrete_mismatch: {mismatch}")
     print("RETRY CONTROL PASS concrete_mismatch exit_code=1 attempts=1 virtual_elapsed=0.000s deadline=120s sleeps=0 both_inventories=true stdout_empty=true")
 
+    # Explicit 120/60 overrides retain the original retry controls independently of defaults.
     # A query that never answered leaves the accepted set UNKNOWN, which is not the same fact as
     # answered-and-empty. Before this was distinguished, the first timeout ended discovery with
     # half the deadline unspent -- observed in CI as "attempts=1 elapsed=60.147s deadline=120s".
@@ -395,23 +435,64 @@ def main() -> None:
     print("RETRY CONTROL PASS timeout_throughout exit_code=1 attempts=2 virtual_elapsed=120.000s "
           "deadline=120s names_timeout=true both_inventories=true stdout_empty=true")
 
+    default_hung = discovery_fixture([TIMEOUT], budgets=None)
+    if (default_hung["status"] != 1 or default_hung["stdout"]
+            or default_hung["timeouts"] != [180, 60] or default_hung["elapsed"] != 240
+            or "accepted set UNKNOWN" not in default_hung["stderr"]):
+        raise SystemExit(f"TIMEOUT CONTROL FAILED default_deadline: {default_hung}")
+    print("TIMEOUT CONTROL PASS default_deadline attempts=2 query_timeouts=[180,60] virtual_elapsed=240s accepted=UNKNOWN stdout_empty=true")
+
+    # Timing and responsiveness are observed at the real process boundary, without Apple tools.
+    elapsed = 0.0
+    def finished_query(*args, **kwargs):
+        nonlocal elapsed
+        elapsed += 75
+        return subprocess.CompletedProcess(args[0], 0, destinations("EEE"), "")
+    measured = io.StringIO()
+    with (patch("time.monotonic", side_effect=lambda: elapsed),
+          patch("subprocess.run", side_effect=finished_query), redirect_stderr(measured)):
+        assert query(None, "test.xcodeproj", "TestScheme") == destinations("EEE") + "\n"
+    assert "status=exited-0 elapsed=75.000s budget=180s" in measured.getvalue(), measured.getvalue()
+    print("TIMING CONTROL PASS successful_query elapsed=75.000s logged=true")
+
+    probe = resolver["simulator_responsiveness"]
+    probe_command = ["xcrun", "simctl", "list", "devices", "--json"]
+    for label, returned, thrown, expected in (
+        ("responsive", subprocess.CompletedProcess(probe_command, 0, json.dumps({"devices": {IOS: [private_device]}}), ""), None, "responsive devices=1"),
+        ("nonzero", subprocess.CompletedProcess(probe_command, 1, "/Users/SOMEUSER/private", "/Users/SOMEUSER/private"), None, "exited-1"),
+        ("hung", None, subprocess.TimeoutExpired(probe_command, 5, b"/Users/SOMEUSER/private"), "timed-out"),
+        ("missing", None, FileNotFoundError("/Users/SOMEUSER/private"), "unavailable"),
+    ):
+        with patch("subprocess.run", return_value=returned, side_effect=thrown) as process:
+            diagnostic = probe()
+        assert expected in diagnostic and "budget=5s" in diagnostic, diagnostic
+        assert "/Users/" not in diagnostic and "SOMEUSER" not in diagnostic, diagnostic
+        process.assert_called_once_with(probe_command, capture_output=True, text=True, timeout=5, check=False)
+        print(f"PROBE CONTROL PASS {label} bounded=true home_paths_absent=true")
+
     # End-to-end through the REAL load_destinations, with only the process boundary mocked.
     # Every other retry control injects DestinationQueryTimeout directly and so cannot detect a
     # wrapper that stopped raising it; this one can, because the exception must be produced by
     # subprocess.TimeoutExpired travelling through the real wrapper into the real retry loop.
     calls = []
+    elapsed = 0.0
 
     def timeout_then_listing(*args, **kwargs):
-        calls.append(kwargs.get("timeout"))
+        nonlocal elapsed
+        calls.append(kwargs["timeout"])
         if len(calls) == 1:
-            raise subprocess.TimeoutExpired(command, kwargs.get("timeout") or 60, b"partial", b"")
+            elapsed += kwargs["timeout"]
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"], b"partial", b"")
         return subprocess.CompletedProcess(command, 0, destinations("EEE"), "")
 
     stdout, stderr = io.StringIO(), io.StringIO()
     with (patch.dict(resolver["main"].__globals__, {
               "load_devices": lambda *args, **kwargs: {"devices": {IOS: [device("iPad Pro 13-inch (M5)", "EEE")]}},
+              "simulator_responsiveness": lambda: "simctl-probe=responsive",
           }), patch("subprocess.run", side_effect=timeout_then_listing),
-          patch.object(sys, "argv", [str(RESOLVER), "--print", "udid"]),
+          patch("time.monotonic", side_effect=lambda: elapsed),
+          patch.object(sys, "argv", [str(RESOLVER), "--print", "udid",
+                                     "--discovery-timeout", "120", "--query-timeout", "60"]),
           redirect_stdout(stdout), redirect_stderr(stderr)):
         status = 0
         try:
@@ -426,6 +507,34 @@ def main() -> None:
         )
     print("RETRY CONTROL PASS real_subprocess_timeout_then_listing exit_code=0 subprocess_calls=2 "
           f"query_timeouts={calls} stdout='EEE' wrapper=real")
+
+    # A hung Xcode and a hung service probe still have independent finite bounds. The final
+    # probe can extend diagnostics five seconds past discovery, but can never authorize a device.
+    elapsed = 0.0
+    timeouts = []
+    def hung_process(args, **kwargs):
+        nonlocal elapsed
+        elapsed += kwargs["timeout"]
+        timeouts.append((args[1], kwargs["timeout"]))
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"], b"", b"")
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with (patch.dict(resolver["main"].__globals__, {
+              "load_devices": lambda *args, **kwargs: inventory,
+          }), patch("subprocess.run", side_effect=hung_process),
+          patch("time.monotonic", side_effect=lambda: elapsed),
+          patch.object(sys, "argv", [str(RESOLVER), "--print", "udid"]),
+          redirect_stdout(stdout), redirect_stderr(stderr)):
+        try:
+            resolver["main"]()
+        except SystemExit as failure:
+            diagnostic = str(failure)
+        else:
+            raise AssertionError("a hung Xcode query cannot resolve a destination")
+    assert timeouts == [("xcodebuild", 180), ("simctl", 5), ("xcodebuild", 55), ("simctl", 5)], timeouts
+    assert elapsed == 245 and not stdout.getvalue(), (elapsed, stdout.getvalue())
+    assert "accepted set UNKNOWN" in diagnostic and "simctl-probe=timed-out" in diagnostic, diagnostic
+    assert "elapsed=245.000s deadline=240s" in diagnostic, diagnostic
+    print("TIMEOUT CONTROL PASS real_hung_query_and_probe discovery=240s final_probe=5s virtual_elapsed=245s accepted=UNKNOWN stdout_empty=true")
 
     slow = discovery_fixture([empty], query_duration=59)
     if slow["status"] != 1 or slow["stdout"] or slow["elapsed"] != 120 or slow["timeouts"] != [60, 56]:
