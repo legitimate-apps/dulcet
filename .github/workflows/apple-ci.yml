@@ -112,6 +112,7 @@ jobs:
         run: |
           python3 tools/test-account-connect-idle-waits
           python3 tools/test-account-connect-idle-waits --clip-case all
+          python3 tools/test-account-connect-idle-waits --dock-case all
       - name: Prove live account status requires the native phone Form witness
         run: |
           python3 tools/test-live-account-status-witness
@@ -525,6 +526,26 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-full-display.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
             testIPhoneWindowUsesFullDisplay
+      - name: Verify native credential entry above the persistent action dock
+        timeout-minutes: 12
+        env:
+          IPHONE_UDID: ${{ steps.platform_iphone_destination.outputs.udid }}
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination "id=$IPHONE_UDID" \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-credential-dock.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetiOSUITests/DulcetAccountConnectStatesUITests/testCredentialEntryClearsThePersistentActionDockOnIPhone 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ios-credential-dock.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-credential-dock.xcresult" \
+            DulcetiOSUITests.DulcetAccountConnectStatesUITests \
+            testCredentialEntryClearsThePersistentActionDockOnIPhone
       - name: Verify the first-run Library title wraps on iPhone
         # Same launch-and-test shape and cap as the full-display step above.
         timeout-minutes: 12

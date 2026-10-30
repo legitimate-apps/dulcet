@@ -838,3 +838,13 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     before each event. Frozen controls fail on the old helper and require exact credential
     readback, fresh focus, normal Delete input and unchanged interaction deadlines. These
     controls distinguish the helper defects; the complete native case supplies runtime proof.
+    **OBSERVED later 2026-10-30:** run 41099572697 still failed after native focus taps at
+    (201, 539.5); its recording shows Password invisible at that point. A separate source defect
+    remains: the iOS primary action lives in a bottom `safeAreaInset`, whose padded dock is not
+    a navigation bar, tab bar or keyboard. A credential can fit those bounds while sitting
+    behind the dock. Include the primary action's same-snapshot frame in the viewport for
+    other targets, while preserving Connect and Cancel as valid targets themselves.
+    `tools/test-account-connect-idle-waits --dock-case all` rejects the old covered-field case
+    and retains above-dock, primary-action and Cancel positives. The per-tap archives still
+    lack a usable clipping tree, so these controls prove the source defect; final native
+    conformance decides whether that correction resolves the observed focus failure.

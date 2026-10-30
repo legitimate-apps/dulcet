@@ -55,6 +55,39 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         super.tearDown()
     }
 
+    /// A fast native keyboard/Form regression, before the server-backed conformance legs.
+    /// The unsupported scheme cannot dial a server; all text is disposable fixture input.
+    @MainActor
+    func testCredentialEntryClearsThePersistentActionDockOnIPhone() {
+        guard requireSimulator(.phone, "Credential entry above the action dock") else { return }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        withoutIdleWaits(app) { [self] in
+            installSystemAlertInterruptionMonitors()
+            app.launchArguments = []
+            launchInInteractionScope(app)
+            defer { app.terminate() }
+            guard openConnection(in: app, compact: true) else { return }
+            if hasSavedAccount(in: app) {
+                guard awaitSignOut(in: app, compact: true), signOut(in: app) else { return }
+                app.terminate()
+                launchInInteractionScope(app)
+                guard openConnection(in: app, compact: true) else { return }
+            }
+            let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
+            let username = app.textFields["dulcet.account-connect.username"].firstMatch
+            let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
+            guard enterCredential(in: address, with: "ftp://127.0.0.1:9", name: "server address", app: app),
+                  enterCredential(in: username, with: "dulcet-admin", name: "username", app: app),
+                  enterCredential(in: password, with: "dulcet-ci-canary-password", name: "password", secure: true, app: app)
+            else { return }
+            XCTAssertTrue(password.value(forKey: "hasKeyboardFocus") as? Bool ?? false,
+                          "The revealed password must retain keyboard focus after exact entry")
+            XCTAssertEqual((password.value as? String)?.count, "dulcet-ci-canary-password".count)
+            print("DULCET ACCOUNT CREDENTIAL DOCK native-entry=passed fields=3 network-submissions=0")
+        }
+    }
+
     @MainActor
     func testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPhone() {
         guard requireSimulator(.phone, "The account-connect states proof on iPhone") else { return }
@@ -1256,6 +1289,18 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 if (node.elementType == .navigationBar || node.elementType == .tabBar),
                    let nativeTarget = hitTarget(target, in: node), nativeTarget.frame == targetFrame {
                     nativeTargetViewport = frame.intersection(window.frame)
+                }
+                // The persistent Connect/Cancel action is a bottom safeAreaInset, not a
+                // navigation/tab bar or keyboard. Form can retain a field's AX frame behind
+                // this dock. Its button frame comes from this same snapshot; keep the dock
+                // itself tappable while reserving its padded top edge for every other target.
+                if node.elementType == .button,
+                   node.identifier == "dulcet.account-connect.primary-action" {
+                    if let dockTarget = hitTarget(target, in: node), dockTarget.frame == targetFrame {
+                        nativeTargetViewport = frame.intersection(window.frame)
+                    } else {
+                        bottom = min(bottom, frame.minY - 8)
+                    }
                 }
                 switch node.elementType {
                 case .navigationBar:

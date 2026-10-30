@@ -7961,6 +7961,16 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-30 — Keep account proof taps clear of the persistent primary-action dock.**
+
+The iOS Connect/Cancel action is a bottom safe-area inset. Account proof geometry now excludes
+its same-snapshot padded frame for other controls, alongside native bars, keyboards and the
+matched scroll ancestors. Connect and Cancel remain tappable as the dock's own targets.
+A new covered-credential regression fails the earlier helper; above-dock, primary-action and
+Cancel controls stay positive. The observed invisible Password tap and the absence of a usable
+native clipping tree are recorded separately from this independently demonstrated source defect.
+The native account-state case, its focus/readback assertions and its deadlines remain required.
+
 **2026-10-30 — Re-measure the Darwin workflow envelopes with native connections included.**
 
 §21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) sets the

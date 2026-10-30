@@ -23,15 +23,23 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument('--navigation-source-ref', help='Replay an earlier compact navigation helper')
-parser.add_argument('--source', type=Path, help='Alternate proof source for a before/after control')
+source_group = parser.add_mutually_exclusive_group()
+source_group.add_argument('--source', type=Path, help='Alternate proof source for a before/after control')
+source_group.add_argument('--source-ref', help='Replay the actual proof source from a Git revision')
 parser.add_argument('--clip-case', choices=['scroll-below', 'collection-partial', 'table-horizontal',
                                           'nested-intersection', 'empty-container', 'visible-container',
                                           'unrelated-container', 'native-tab', 'sibling-keyboard', 'all'],
                     help='Run one immutable ancestor-clipping control only')
+parser.add_argument('--dock-case', choices=['covered-credential', 'credential-above', 'primary-action',
+                                          'cancel-action', 'all'],
+                    help='Run immutable safe-area action-dock coverage controls only')
 parser.add_argument('--mutant', choices=['before-only', 'after-only', 'no-scope', 'confirmation-once', 'moving-target',
                                        'covered-target', 'reversed-drag', 'unbounded-drag'])
 args = parser.parse_args()
-source = (args.source or ROOT / 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift').read_text()
+proof_path = 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift'
+source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{proof_path}'], cwd=ROOT, text=True)
+          if args.source_ref else (args.source or ROOT / proof_path).read_text())
+assert not (args.clip_case and args.dock_case), 'Choose one focused control family per invocation'
 
 def declaration(marker, source=source):
     start = source.index(marker)
@@ -587,6 +595,64 @@ struct ClipCheck {
 '''
 if args.clip_case:
     checks = clip_checks.replace('__APPLICATION_ARGUMENT__', ', application: app' if 'application: XCUIApplication?' in stable else '')
+dock_checks = r'''
+}
+@main
+struct DockCheck {
+    @MainActor static func main() {
+        let proof = Proof()
+        let name = CommandLine.arguments[1]
+        let window = CGRect(x: 0, y: 0, width: 402, height: 874)
+        let navigation = Snapshot(elementType: .navigationBar, identifier: "", label: "",
+                                  frame: CGRect(x: 0, y: 62, width: 402, height: 54))
+        let tab = Snapshot(elementType: .tabBar, identifier: "", label: "",
+                           frame: CGRect(x: 0, y: 791, width: 402, height: 83))
+        let keyboard = Snapshot(elementType: .keyboard, identifier: "", label: "",
+                                frame: CGRect(x: 0, y: 568, width: 402, height: 306))
+        var dock = Snapshot(elementType: .button, identifier: "dulcet.account-connect.primary-action",
+                            label: "Connect", frame: CGRect(x: 16, y: 500, width: 370, height: 48))
+        var credential = Snapshot(elementType: .secureTextField, identifier: "credential", label: "Password",
+                                  frame: CGRect(x: 32, y: 529, width: 338, height: 21))
+        let matching: Proof.HitTarget
+        let target: Snapshot
+        let expected: Bool
+        switch name {
+        case "covered-credential":
+            matching = .credential("credential")
+            target = credential
+            expected = false
+        case "credential-above":
+            credential.frame.origin.y = 450
+            matching = .credential("credential")
+            target = credential
+            expected = true
+        case "primary-action":
+            matching = .identifier("dulcet.account-connect.primary-action")
+            target = dock
+            expected = true
+        case "cancel-action":
+            dock.label = "Cancel"
+            matching = .cancel
+            target = dock
+            expected = true
+        default: fatalError("unknown immutable action-dock fixture")
+        }
+        // The AX Form bounds and software keyboard both admit this field. The separate
+        // safe-area action remains above the keyboard and covers the field's actual tap.
+        let form = Snapshot(children: [credential], elementType: .collectionView, identifier: "", label: "",
+                            frame: CGRect(x: 16, y: 116, width: 370, height: 452))
+        let root = Snapshot(children: [navigation, tab, form, dock, keyboard], elementType: .window,
+                            identifier: "", label: "", frame: window)
+        let viewport = proof.hitViewport(for: matching, in: root)
+        let actual = !viewport.isNull && !viewport.isInfinite && !viewport.isEmpty && viewport.contains(target.frame)
+        print("ACTION DOCK case=\(name) expected=\(expected) actual=\(actual) viewport=\(viewport)")
+        precondition(actual == expected, "A credential cannot authorize a tap through the safe-area action dock; the dock itself stays tappable")
+        print("ACTION DOCK PASS \(name)")
+    }
+}
+'''
+if args.dock_case:
+    checks = dock_checks
 checks = checks.replace('MATCHING ', 'matching: .identifier("moving-button"), ' if snapshot_polling else '')
 with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
     path = Path(temporary)
@@ -599,4 +665,10 @@ with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
         results = [subprocess.run([str(path / 'control'), name]).returncode for name in clip_cases]
         print(f'ANCESTOR CLIP RESULT tests={len(results)} failures={sum(result != 0 for result in results)}', flush=True)
         raise SystemExit(any(result != 0 for result in results))
-    subprocess.run([str(path / 'control')] + ([args.clip_case] if args.clip_case else []), check=True)
+    if args.dock_case == 'all':
+        dock_cases = ['covered-credential', 'credential-above', 'primary-action', 'cancel-action']
+        results = [subprocess.run([str(path / 'control'), name]).returncode for name in dock_cases]
+        print(f'ACTION DOCK RESULT tests={len(results)} failures={sum(result != 0 for result in results)}', flush=True)
+        raise SystemExit(any(result != 0 for result in results))
+    focused_case = args.clip_case or args.dock_case
+    subprocess.run([str(path / 'control')] + ([focused_case] if focused_case else []), check=True)
