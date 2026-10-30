@@ -736,7 +736,11 @@ final class DulcetiOSUITests: XCTestCase {
         let log = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
         guard log.exists else { return ["<no marker log>"] }
         let words = log.label.split(separator: " ").map(String.init)
-        return words.first == "dulcet-ui" ? Array(words.dropFirst()) : ["<unreadable marker log>"]
+        guard words.first == "dulcet-ui" else { return ["<unreadable marker log>"] }
+        // A sheet's appearance records its accessibility environment for capture eligibility.
+        // That metadata is not a handler event. Keep every action (including duplicates)
+        // so the exact event sequence still rejects an extra or missing invocation.
+        return words.dropFirst().filter { !$0.hasPrefix("accessibility:") }
     }
 
     /// Waits until exactly `expected` has been recorded after `before`, and returns what was.
