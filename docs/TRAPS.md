@@ -823,3 +823,18 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     fixed source passes it and the five empty, inactive, unrelated and visible-status controls.
     These are host controls; the native conformance case still must pass without a changed
     assertion, timeout, account-store shortcut or authentication retry.
+
+
+72. **An accessibility frame is not the visible part of a Form.**
+    **OBSERVED 2026-10-30:** [conformance 41060169137](https://github.com/legitimate-apps/dulcet/actions/runs/41060169137)
+    signed out the saved account and reached the empty Connection form, then failed to focus
+    Password after four raw coordinate taps. The recording retained Username's cursor while
+    Password was invisible. The per-tap archives lack a usable target tree, so they do not
+    establish the exact clipping ancestor. Independently, the old geometry helper accepts
+    fields clipped by scroll, collection and table ancestors, and misses a keyboard in a
+    sibling window. Poll one application snapshot, intersect the target's own ancestor clips,
+    and retain native bar targets; unrelated containers must not narrow its viewport. Acquire
+    focus with native `tap()` before placing the cursor with a coordinate, rechecking geometry
+    before each event. Frozen controls fail on the old helper and require exact credential
+    readback, fresh focus, normal Delete input and unchanged interaction deadlines. These
+    controls distinguish the helper defects; the complete native case supplies runtime proof.

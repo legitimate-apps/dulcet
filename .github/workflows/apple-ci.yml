@@ -109,7 +109,9 @@ jobs:
       - name: Prove account-state text entry avoids hardware keyboard transitions
         run: python3 tools/test-account-connect-text-entry
       - name: Prove account-state interactions use their screen-state waits
-        run: python3 tools/test-account-connect-idle-waits
+        run: |
+          python3 tools/test-account-connect-idle-waits
+          python3 tools/test-account-connect-idle-waits --clip-case all
       - name: Prove live account status requires the native phone Form witness
         run: |
           python3 tools/test-live-account-status-witness

@@ -79,6 +79,10 @@ final class XCUIElement {
     var prepareCalls = 0
     var focusTaps = 0
     var ignoredFocusTaps = 0
+    // A field can have an AX frame outside the visible Form content. Native tap resolves
+    // its hittable point; a raw coordinate is only valid for cursor placement after focus.
+    var requiresNativeFocus = false
+    var nativeFocusTaps = 0
     var inputEvents = 0
     func prepareFocus() -> Bool {
         prepareCalls += 1
@@ -115,7 +119,7 @@ final class XCUIElement {
     }
     func value(forKey key: String) -> Any? { precondition(key == "hasKeyboardFocus"); return focused }
     func waitForExistence(timeout: Double) -> Bool { true }
-    func tap() { focused = recordFocusTap(); cursor = text.count / 2 }
+    func tap() { nativeFocusTaps += 1; focused = recordFocusTap(); cursor = text.count / 2 }
     @MainActor struct Coordinate {
         let field: XCUIElement
         let point: CGVector
@@ -123,7 +127,8 @@ final class XCUIElement {
             fatalError("This control exercises normal entry, not tour scrolling")
         }
         func tap() {
-            field.focused = field.recordFocusTap()
+            let accepted = field.recordFocusTap()
+            if !field.requiresNativeFocus || field.focused { field.focused = accepted }
             // The field shows 20 characters; a trailing-edge tap on wider text lands under the tap.
             field.cursor = point.dx > 0.9 ? min(field.text.count, 20) : field.text.count / 2
         }
@@ -254,6 +259,21 @@ focus_controls = r'''
                      blocked.hardwareEvents == 0,
                      "A later revealed field still requires reacquired focus and exact replacement")
         print("later-reveal-retains-focus-and-readback: PASS")
+        for (name, old, secure) in [
+            ("native-focus-before-coordinate-empty-password", "", true),
+            ("native-focus-before-coordinate-last-character", "x", true),
+            ("native-focus-before-coordinate-long-address", "http://127.0.0.1:50364/lyrics-fault/proxy/path", false)
+        ] {
+            let field = XCUIElement(old, secure: secure)
+            field.requiresNativeFocus = true
+            field.requiresPreparation = true
+            precondition(proof.replaceText(in: field, with: "canary", name: name, secure: secure,
+                beforeFocusTap: { field.prepareFocus() }), name)
+            precondition(field.nativeFocusTaps > 0 && field.focused && field.text == "canary")
+            precondition(field.prepareCalls == field.focusTaps && field.hardwareEvents == 0,
+                         "Native focus and subsequent cursor taps each need fresh geometry")
+            print("\(name): PASS")
+        }
 '''
 controls = controls.replace('__FOCUS_PREFLIGHT_CONTROLS__', focus_controls if has_focus_preflight else '')
 # Current source carries the application for tour-only geometry. Older --source-ref controls

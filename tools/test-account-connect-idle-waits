@@ -4,7 +4,7 @@
 The supported runtime models an event whose animation-idle notification never arrives, although
 its screen state changes normally. Both event waits must be bypassed and the state still checked.
 A visible button moves during a scroll and must settle before a tap. Geometry polling gets one
-immutable window snapshot; live geometry reads fail the control. Temporary target absence and
+immutable application or window snapshot; live geometry reads fail the control. Temporary target absence and
 an occluded settled target must be re-observed, with hittability still required.
 An opening confirmation ignores its first tap; the observed empty form must follow a retry.
 Connection must be opened before querying Sign Out after a Library relaunch. A slow navigation
@@ -24,6 +24,10 @@ ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument('--navigation-source-ref', help='Replay an earlier compact navigation helper')
 parser.add_argument('--source', type=Path, help='Alternate proof source for a before/after control')
+parser.add_argument('--clip-case', choices=['scroll-below', 'collection-partial', 'table-horizontal',
+                                          'nested-intersection', 'empty-container', 'visible-container',
+                                          'unrelated-container', 'native-tab', 'sibling-keyboard', 'all'],
+                    help='Run one immutable ancestor-clipping control only')
 parser.add_argument('--mutant', choices=['before-only', 'after-only', 'no-scope', 'confirmation-once', 'moving-target',
                                        'covered-target', 'reversed-drag', 'unbounded-drag'])
 args = parser.parse_args()
@@ -68,7 +72,12 @@ if args.mutant in ('reversed-drag', 'unbounded-drag'):
     assert delta in scroll
     scroll = scroll.replace(delta, '-(' + delta + ')' if args.mutant == 'reversed-drag' else 'viewport.midY - targetY')
 if args.mutant == 'moving-target':
-    scroll = scroll.replace('waitForStableHitTarget(element, matching: target, in: window, timeout: 5)' if snapshot_polling else 'waitForStableHitTarget(element, in: window, timeout: 5)', 'element.isHittable')
+    calls = (['waitForStableHitTarget(element, matching: target, in: window, timeout: 5)',
+              'waitForStableHitTarget(element, matching: target, in: window, timeout: 5, application: app)']
+             if snapshot_polling else ['waitForStableHitTarget(element, in: window, timeout: 5)'])
+    matches = [call for call in calls if call in scroll]
+    assert len(matches) == 1 and scroll.count(matches[0]) == 1, 'moving-target must mutate exactly one actual wait call'
+    scroll = scroll.replace(matches[0], 'element.isHittable', 1)
 if args.mutant == 'confirmation-once':
     start = sign_out.index('        let confirmationDeadline')
     end = sign_out.index('        guard primary.waitForExistence', start)
@@ -84,7 +93,7 @@ import CoreGraphics
 import Foundation
 import ObjectiveC
 
-enum XCUIElementType { case button, `switch`, textField, secureTextField, window, navigationBar, tabBar, keyboard, staticText }
+enum XCUIElementType { case button, `switch`, textField, secureTextField, application, window, navigationBar, tabBar, keyboard, staticText, scrollView, collectionView, table }
 protocol XCUIElementSnapshot {
     var children: [XCUIElementSnapshot] { get }
     var elementType: XCUIElementType { get }
@@ -144,6 +153,12 @@ final class XCUIApplication: NSObject {
     var lastTargetY = 1_000.0
     var swipes = 0
     var geometryFixture: XCUIElementSnapshot?
+    var applicationGeometryFixture: XCUIElementSnapshot?
+    func snapshot() throws -> XCUIElementSnapshot {
+        snapshotReads += 1
+        if let fixture = applicationGeometryFixture { return fixture }
+        return try windows.snapshot()
+    }
     var drags: [(CGPoint, CGPoint)] = []
     var windows: Element { Element(app: self, scope: "window", key: "window") }
     func swipeUp() { swipes += 1 }
@@ -485,10 +500,103 @@ credential_controls = r'''
         print("covered plain/secure field / actual bounded reveal before focus: PASS")
 '''
 checks = checks.replace('__CREDENTIAL_CONTROLS__', credential_controls if 'case credential(' in source else '')
+clip_checks = r'''
+}
+@main
+struct ClipCheck {
+    @MainActor static func main() {
+        let proof = Proof()
+        let name = CommandLine.arguments[1]
+        let window = CGRect(x: 0, y: 0, width: 402, height: 874)
+        let navigation = Snapshot(elementType: .navigationBar, identifier: "", label: "",
+                                  frame: CGRect(x: 0, y: 62, width: 402, height: 54))
+        var tab = Snapshot(elementType: .tabBar, identifier: "", label: "",
+                           frame: CGRect(x: 0, y: 791, width: 402, height: 83))
+        var target = Snapshot(elementType: .secureTextField, identifier: "moving-button", label: "Password",
+                              frame: CGRect(x: 32, y: 529, width: 338, height: 21))
+        let clip = CGRect(x: 16, y: 116, width: 370, height: 346)
+        func container(_ kind: XCUIElementType, _ frame: CGRect, _ children: [XCUIElementSnapshot]) -> Snapshot {
+            Snapshot(children: children, elementType: kind, identifier: "", label: "", frame: frame)
+        }
+        var content: [XCUIElementSnapshot] = []
+        let expected: Bool
+        switch name {
+        case "scroll-below":
+            content = [container(.scrollView, clip, [target])]
+            expected = false
+        case "collection-partial":
+            target.frame = CGRect(x: 32, y: 450, width: 338, height: 21)
+            content = [container(.collectionView, clip, [target])]
+            expected = false
+        case "table-horizontal":
+            target.frame = CGRect(x: 375, y: 300, width: 20, height: 21)
+            content = [container(.table, clip, [target])]
+            expected = false
+        case "nested-intersection":
+            content = [container(.scrollView, CGRect(x: 0, y: 116, width: 402, height: 600),
+                       [container(.collectionView, clip, [target])])]
+            expected = false
+        case "empty-container":
+            content = [container(.scrollView, CGRect(x: 16, y: 116, width: 370, height: 0), [target])]
+            expected = false
+        case "visible-container":
+            content = [container(.scrollView, CGRect(x: 16, y: 116, width: 370, height: 500), [target])]
+            expected = true
+        case "unrelated-container":
+            content = [target, container(.scrollView, clip, [])]
+            expected = true
+        case "native-tab":
+            target.elementType = .button
+            target.frame = CGRect(x: 32, y: 810, width: 100, height: 30)
+            tab.children = [target]
+            expected = true
+        case "sibling-keyboard":
+            // The main window exposes the target while the input lives in a sibling window.
+            // A main-window-only poll cannot see that it covers the bottom of the field.
+            let main = Snapshot(children: [navigation, tab, target], elementType: .window,
+                                identifier: "", label: "", frame: window)
+            let keyboard = Snapshot(elementType: .keyboard, identifier: "", label: "",
+                                    frame: CGRect(x: 0, y: 540, width: 402, height: 334))
+            let input = Snapshot(children: [keyboard], elementType: .window, identifier: "", label: "",
+                                 frame: window)
+            let app = XCUIApplication()
+            app.swipes = 1
+            app.forbidLiveGeometry = true
+            app.geometryFixture = main
+            app.applicationGeometryFixture = Snapshot(children: [main, input], elementType: .application,
+                                                      identifier: "", label: "", frame: window)
+            let element = Element(app: app, scope: "root", key: "moving-button")
+            let accepted = proof.waitForStableHitTarget(element, matching: .credential("moving-button"),
+                in: app.windows, timeout: 1__APPLICATION_ARGUMENT__)
+            print("ANCESTOR CLIP case=\(name) expected=false actual=\(accepted)")
+            precondition(!accepted, "A sibling-window software keyboard cannot authorize a covered focus tap")
+            print("ANCESTOR CLIP PASS \(name)")
+            return
+        default: fatalError("unknown immutable clipping fixture")
+        }
+        let root = Snapshot(children: [navigation, tab] + content, elementType: .window,
+                            identifier: "", label: "", frame: window)
+        let matching = name == "native-tab" ? Proof.HitTarget.identifier("moving-button") : .credential("moving-button")
+        let viewport = proof.hitViewport(for: matching, in: root)
+        let actual = !viewport.isNull && !viewport.isInfinite && !viewport.isEmpty && viewport.contains(target.frame)
+        print("ANCESTOR CLIP case=\(name) expected=\(expected) actual=\(actual) viewport=\(viewport)")
+        precondition(actual == expected, "A target must fit every clipping container on its own ancestor path")
+        print("ANCESTOR CLIP PASS \(name)")
+    }
+}
+'''
+if args.clip_case:
+    checks = clip_checks.replace('__APPLICATION_ARGUMENT__', ', application: app' if 'application: XCUIApplication?' in stable else '')
 checks = checks.replace('MATCHING ', 'matching: .identifier("moving-button"), ' if snapshot_polling else '')
 with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
     path = Path(temporary)
     swift = path / 'control.swift'
     swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + await_sign_out + '\n' + open_destination + '\n' + tour_destination + '\n' + helpers + '\n' + scroll + '\n' + stable + checks)
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(path / 'control')], check=True)
-    subprocess.run([str(path / 'control')], check=True)
+    clip_cases = ['scroll-below', 'collection-partial', 'table-horizontal', 'nested-intersection',
+                  'empty-container', 'visible-container', 'unrelated-container', 'native-tab', 'sibling-keyboard']
+    if args.clip_case == 'all':
+        results = [subprocess.run([str(path / 'control'), name]).returncode for name in clip_cases]
+        print(f'ANCESTOR CLIP RESULT tests={len(results)} failures={sum(result != 0 for result in results)}', flush=True)
+        raise SystemExit(any(result != 0 for result in results))
+    subprocess.run([str(path / 'control')] + ([args.clip_case] if args.clip_case else []), check=True)
