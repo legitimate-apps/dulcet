@@ -285,6 +285,7 @@ import CoreGraphics
 @MainActor var recordedFailures: [String] = []
 @MainActor func XCTFail(_ message: String) { recordedFailures.append(message) }
 enum ElementType { case application, window, keyboard }
+enum XCUIGestureVelocity { case slow }
 struct XCUIElementSnapshot {
     var frame: CGRect
     var elementType: ElementType
@@ -339,18 +340,25 @@ struct XCUIElementSnapshot {
     }
     @MainActor struct Coordinate {
         var element: XCUIElement
+        var offset: CGVector
         func tap() { preconditionFailure("Return submits the form and cannot be used to dismiss the keyboard") }
-        func press(forDuration: Double, thenDragTo: Coordinate) {
+        func press(forDuration: Double, thenDragTo: Coordinate,
+                   withVelocity: XCUIGestureVelocity, thenHoldForDuration: Double) {
             guard let keyboard = element.keyboard else { preconditionFailure("Only the native Form dismisses by scrolling") }
+            precondition(thenDragTo.offset.dy < offset.dy,
+                         "Keyboard dismissal must scroll upward and preserve the Account sheet")
             keyboard.dragEvents += 1
             keyboard.hide!.tap()
         }
     }
-    func coordinate(withNormalizedOffset: CGVector) -> Coordinate { Coordinate(element: self) }
+    func coordinate(withNormalizedOffset: CGVector) -> Coordinate {
+        Coordinate(element: self, offset: withNormalizedOffset)
+    }
 }
 @MainActor final class XCUIApplication {
     var keyboard: XCUIElement
     let window = XCUIElement(CGRect(x: 0, y: 0, width: 1032, height: 1376))
+    let accountClose = XCUIElement(CGRect(x: 960, y: 24, width: 44, height: 44))
     var snapshotFailures = 0
     enum SnapshotFailure: Error { case unavailable }
     func snapshot() throws -> XCUIElementSnapshot {
@@ -379,6 +387,7 @@ struct XCUIElementSnapshot {
         return .init(firstMatch: form)
     }
     var keyboards: XCUIElement.Query { .init(firstMatch: keyboard) }
+    var buttons: XCUIElement.Query { .init(firstMatch: accountClose) }
     var windows: XCUIElement.Query { .init(firstMatch: window) }
     var debugDescription: String { "keyboard dismissal collaborator" }
 }
