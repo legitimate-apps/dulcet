@@ -69,7 +69,6 @@ jobs:
         run: echo "DULCET_DISCOVER_ANDROID_OUTPUT=$RUNNER_TEMP/discover-android/native" >> "$GITHUB_ENV"
       - name: Start bounded host sampling
         run: |
-          mkdir -p "$RUNNER_TEMP/android-emulator-sdk-output"
           python3 tools/ci/diagnose-android-emulator-host start --output "$RUNNER_TEMP/android-host-diagnostic"
       - name: Drive Discover and Wishlist through the native phone app
         timeout-minutes: 25
@@ -80,7 +79,7 @@ jobs:
           target: ${{ env.EMULATOR_TARGET }}
           profile: pixel_6
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -stdouterr-file ${{ runner.temp }}/android-emulator-sdk-output/emulator-stdouterr.log
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
             python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
             DULCET_ADB_DIAGNOSTIC_OUTPUT="$RUNNER_TEMP/android-host-diagnostic" ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-android/fixture" -- tools/ci/run-discover-wishlist-proofs android
@@ -103,11 +102,3 @@ jobs:
           path: ${{ runner.temp }}/discover-android
           if-no-files-found: error
           retention-days: 14
-      - name: Retain SDK output for local diagnostic review
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: android-emulator-sdk-output-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/android-emulator-sdk-output
-          if-no-files-found: warn
-          retention-days: 1
