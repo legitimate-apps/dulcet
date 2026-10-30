@@ -2932,7 +2932,7 @@ final class DulcetTVUITests: XCTestCase {
             app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 60),
             "The live account connection must succeed before navigation is attempted: " + app.debugDescription
         )
-        XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Connection")
+        XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Account")
         return (section, focus)
     }
 
