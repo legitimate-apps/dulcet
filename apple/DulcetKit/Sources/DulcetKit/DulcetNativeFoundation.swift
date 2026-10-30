@@ -141,6 +141,7 @@ extension View {
 
 /// Destination status is ordinary content, so native bars retain their scroll-edge effects.
 struct DulcetDestinationStatus: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     var symbol = "wifi.slash"
     var identifier = "dulcet.destination.status"
@@ -148,21 +149,39 @@ struct DulcetDestinationStatus: View {
     var retryEnabled = true
     var retry: (() -> Void)?
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Label(title, systemImage: symbol)
-                .font(.footnote)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            if let retry {
-                Button(DulcetStrings.tryAgain, action: retry)
-                    .buttonStyle(.borderless)
-                    .disabled(!retryEnabled)
-                    .accessibilityIdentifier(retryIdentifier)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    statusLabel
+                    retryButton
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    statusLabel
+                    Spacer(minLength: 8)
+                    retryButton
+                }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(identifier)
+    }
+
+    private var statusLabel: some View {
+        Label(title, systemImage: symbol)
+            .font(.footnote)
+            .dulcetForeground(.secondaryTextOnWindow)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var retryButton: some View {
+        if let retry {
+            Button(DulcetStrings.tryAgain, action: retry)
+                .buttonStyle(.borderless)
+                .disabled(!retryEnabled)
+                .accessibilityIdentifier(retryIdentifier)
+        }
     }
 }
 

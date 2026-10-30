@@ -27,6 +27,20 @@ func accountConnectRootLoadsForIOS() {
     window.isHidden = true
 }
 
+@Test @MainActor
+func libraryRefreshStatusLeavesRoomForContentAtLargestText() {
+    let library = DulcetMyLibrarySnapshot(availability: .available, syncState: "cached", error: .unreachable)
+    let status = DulcetMyLibraryStatusLines(library: library, onRetry: {})
+        .dynamicTypeSize(.accessibility5)
+    let controller = UIHostingController(rootView: status)
+    controller.loadViewIfNeeded()
+    let size = controller.sizeThatFits(in: CGSize(width: 402, height: 874))
+    // The regression filled most of the phone with a wrapped heading beside Retry.
+    // Both remain full-size and readable while leaving the majority for the destination.
+    #expect(size.height > 44)
+    #expect(size.height < 220)
+}
+
 @Test
 func adaptiveIOSAccentResolvesForLightAndDarkAppearances() {
     let light = DulcetContrastColor.accent.resolvedColor(

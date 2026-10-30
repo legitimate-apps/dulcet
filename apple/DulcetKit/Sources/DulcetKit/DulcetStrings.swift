@@ -17,6 +17,7 @@ enum DulcetStrings {
     static let addToLibrary = text("action.library.add", "Add to Library")
     static let removeFromLibrary = text("action.library.remove", "Remove from Library")
     static let myLibraryRefresh = text("myLibrary.refresh", "Refresh Library")
+    static let myLibraryRefreshFailedTitle = text("myLibrary.refreshFailedTitle", "Couldn\u{2019}t Refresh")
     static func myLibraryRefreshFailed(_ phrase: String) -> String {
         formatted("myLibrary.refreshFailed", "Couldn\u{2019}t refresh your library. %@", phrase)
     }

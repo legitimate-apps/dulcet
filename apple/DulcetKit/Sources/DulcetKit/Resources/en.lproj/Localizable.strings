@@ -553,3 +553,5 @@
 "reader.freshness" = "Last Updated";
 
 "action.goToLibrary" = "Go to Library";
+
+"myLibrary.refreshFailedTitle" = "Couldn’t Refresh";

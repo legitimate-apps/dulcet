@@ -886,6 +886,15 @@ import UIKit
             _ = try scenario("offline"); activate(wish)
             XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
             try capture("Pending-" + variant)
+#if os(iOS)
+            if variant == "largest" {
+                select("library")
+                let refreshError = app.staticTexts["Couldn’t Refresh"].firstMatch
+                let errorShown = refreshError.waitForExistence(timeout: 15)
+                print("DISCOVER_LIBRARY_ERROR_CAPTURE largest=true refreshError=\(errorShown)")
+                try capture("Library-offline-largest")
+            }
+#endif
             wishlist()
             XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
             try capture("Wishlist-" + variant)

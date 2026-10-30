@@ -71,8 +71,9 @@ struct DulcetMyLibraryStatusLines: View {
 
     var body: some View {
         if let error = library.error {
-            DulcetDestinationStatus(title: DulcetStrings.myLibraryRefreshFailed(DulcetStrings.readerErrorPhrase(error)),
+            DulcetDestinationStatus(title: DulcetStrings.myLibraryRefreshFailedTitle,
                 symbol: "exclamationmark.circle", retry: onRetry)
+                .accessibilityLabel(DulcetStrings.myLibraryRefreshFailed(DulcetStrings.readerErrorPhrase(error)))
                 .padding(.horizontal, 16)
                 .background(.background, ignoresSafeAreaEdges: [])
         } else if library.syncState == "syncing" {
@@ -191,7 +192,7 @@ struct DulcetMyLibrarySectionPage: View {
                 }
             }
         }
-        .overlay(alignment: .top) {
+        .safeAreaInset(edge: .top, spacing: 0) {
             if let library = store.librarySession?.myLibrary {
                 DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
             }
@@ -247,12 +248,15 @@ struct DulcetMyLibraryView: View {
             .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
             .accessibilityIdentifier("dulcet.myLibrary")
             .overlay(alignment: .top) {
-                if let library = store.librarySession?.myLibrary {
-                    if store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
-                        DulcetReaderAccountBanner()
-                    } else {
-                        DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
-                    }
+                if store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
+                    DulcetReaderAccountBanner()
+                }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let library = store.librarySession?.myLibrary,
+                   store.librarySession?.mode != .deviceOnly,
+                   store.librarySession?.connectionFailure == nil {
+                    DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                 }
             }
 #if os(macOS)
