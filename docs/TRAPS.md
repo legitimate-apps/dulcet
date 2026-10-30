@@ -773,3 +773,22 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     enrollment, only when accepted identity is the namespace's sole row. It refuses existing
     ownership instead of rotating an epoch or invoking destructive binding. First-sign-in tests
     use the real credential store and SQLite without a preseeded epoch or media controller.
+
+
+69. **A passing instrumentation process does not prove the host emulator survived cleanup.**
+    **OBSERVED 2026-10-29:** current Linux emulator 37.2.13/build 16740729 repeatedly lost
+    ADB during Discover capture/reset. Bounded offline core extraction on disposable hosted
+    runners established SIGSEGV at address 0x28 in `libgfxstream_backend.so`, through
+    `EmulatedEglContext` destruction and `ProcessCleanupThread` resource cleanup. The same
+    fault also occurred after all ten native phases had passed. No application assertion failed.
+    Choosing supported `-gpu software` retained the same GLES renderer and reproduced the same
+    fault; a new requested mode alone is not a remedy. Three fresh 37.2.12/build 16428233 runs
+    completed all ten phases without errors. CI therefore uses a bounded rollback to that
+    official Google archive, checking SHA256, metadata and actual version/build before replacing
+    the package, before launch and after boot. Keep the pin in the SDK-manager shim too: the
+    pinned emulator action otherwise reinstalls the newest engine. Install `libpulse0` before
+    executing archive validation, which precedes the later media-tool installation. This is an
+    environment mitigation, not proof that every upstream graphics race is resolved. Keep
+    failed-phase and post-proof process errors visible; do not retry application assertions or
+    change their deadlines. Diagnostic core collection stays on its separate branch; private
+    binary cores were deleted and only bounded text was retained.

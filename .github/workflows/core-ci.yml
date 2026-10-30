@@ -368,10 +368,14 @@ jobs:
       EMULATOR_BUILD_TOOLS: '37.0.0'
       # AGP 9.1's default build tools, used by Gradle before emulator-runner starts.
       EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
+      # Bounded rollback: 37.2.13 faults in host EGL/process cleanup (TRAPS 69).
+      EMULATOR_PIN: '{"version":"37.2.12","build":"16428233","sha256":"b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1"}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Prove SDK installation retries and reports infrastructure failures
-        run: python3 tools/test-android-system-image
+      - name: Prove SDK installation retries and exact emulator pinning
+        run: |
+          python3 tools/test-android-system-image
+          python3 tools/test-android-emulator-pin tools/ci/android-system-image
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
@@ -386,13 +390,21 @@ jobs:
         run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
       # Download failures are infrastructure, before any emulator or disposable server starts.
       # Retry all action and build SDK dependencies, without a multi-GB repository image cache.
+      - name: Install the pinned engine loader prerequisite
+        run: |
+          # The verified archive is executed before later ffmpeg provisioning supplies this library.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libpulse0
       - name: Install Android emulator SDK packages (infrastructure, bounded retry)
         shell: bash
         env:
           COMPILE_SDK: ${{ steps.pins.outputs.compile_sdk }}
         run: |
           set -euo pipefail
-          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --action-log "$RUNNER_TEMP/android-sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/android-system-image-install.log"
+          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --emulator-pin "$EMULATOR_PIN" --action-log "$RUNNER_TEMP/android-sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/android-system-image-install.log"
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       # Standard Linux runners expose /dev/kvm to root only; the emulator needs it as the runner user.
       # `udevadm trigger` returns before the rule is applied: MEASURED, one leg of the first run
@@ -443,8 +455,10 @@ jobs:
           emulator-boot-timeout: 600
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: |
+            python3 tools/ci/android-system-image verify-emulator --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN"
           script: |
-            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
+            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN"
             adb reverse tcp:4533 tcp:4533
             ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
             tools/ci/run-connection-android-proofs --root "$RUNNER_TEMP/dulcet-connections-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-android-evidence"
@@ -495,6 +509,8 @@ jobs:
       EMULATOR_ARCH: x86_64
       EMULATOR_BUILD_TOOLS: '37.0.0'
       EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
+      # Bounded rollback: 37.2.13 faults in host EGL/process cleanup (TRAPS 69).
+      EMULATOR_PIN: '{"version":"37.2.12","build":"16428233","sha256":"b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1"}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read toolchain pins
@@ -507,6 +523,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: Use hosted SDK command-line tools
         run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+      - name: Install the pinned engine loader prerequisite
+        run: |
+          # The verified archive is executed before later ffmpeg provisioning supplies this library.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libpulse0
       - name: Install Android emulator SDK packages (infrastructure, bounded retry)
         timeout-minutes: 10
         shell: bash
@@ -515,7 +539,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/discover-android"
-          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --action-log "$RUNNER_TEMP/discover-android/sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/discover-android/sdk-install.log"
+          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --emulator-pin "$EMULATOR_PIN" --action-log "$RUNNER_TEMP/discover-android/sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/discover-android/sdk-install.log"
       - name: Enable KVM for the emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -548,8 +572,10 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: |
+            python3 tools/ci/android-system-image verify-emulator --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN"
           script: |
-            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
+            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN"
             ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-android/fixture" -- tools/ci/run-discover-wishlist-proofs android
       - name: Upload native proof and captures
         if: ${{ always() }}
