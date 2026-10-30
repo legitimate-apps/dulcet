@@ -338,14 +338,7 @@ import UIKit
                 }.map { "\($0.elementType.rawValue):\($0.identifier):selected=\($0.isSelected):enabled=\($0.isEnabled):\($0.frame)" }
                     .joined(separator: "; ")
                 let sidebarSelected = nodes.contains { $0.identifier == "wishlist.destination" && $0.isSelected }
-                // Native adaptable tabs expose buttons in the top bar and cells in the
-                // expanded iPad sidebar. Both retain the tab identity and selection.
-                let libraryTabSelected = nodes.contains {
-                    ($0.elementType == .button || $0.elementType == .cell) && $0.isSelected
-                    && $0.identifier == "dulcet.tab.library" }
-                    || nodes.filter { $0.elementType == .tabBar }.contains { tab in
-                        descendants(tab).contains { $0.elementType == .button && $0.isSelected && $0.label == "Library" }
-                    }
+                let libraryTabSelected = libraryIsSelected(in: nodes)
                 if sidebarSelected || libraryTabSelected, nodes.contains(where: {
                     $0.identifier == "wishlist.refresh" && $0.isEnabled && presented($0, in: root)
                 }) { return }
@@ -379,6 +372,21 @@ import UIKit
             Thread.sleep(forTimeInterval: 0.25)
         } while ProcessInfo.processInfo.systemUptime - started < 180
         XCTFail("Wishlist activation must present content; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s; navigation=\(lastNavigation)")
+    }
+    /// Adaptable tabs expose buttons in the top bar and cells in the expanded sidebar.
+    func libraryIsSelected(in nodes: [XCUIElementSnapshot]) -> Bool {
+        nodes.contains {
+            ($0.elementType == .button || $0.elementType == .cell) && $0.isSelected
+                && $0.identifier == "dulcet.tab.library"
+        } || nodes.filter { $0.elementType == .tabBar }.contains { tab in
+            descendants(tab).contains {
+                $0.elementType == .button && $0.isSelected && $0.label == "Library"
+            }
+        }
+    }
+    func libraryIsSelected() -> Bool {
+        guard let root = try? app.snapshot() else { return false }
+        return libraryIsSelected(in: descendants(root))
     }
     func capture(_ name: String) throws {
 #if os(macOS)
@@ -915,8 +923,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
             XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
         } else {
             // Native adaptable tabs retain Library while its Wishlist page is pushed.
-            let library = app.buttons["dulcet.tab.library"].firstMatch
-            XCTAssertTrue(library.isSelected, "Wishlist must retain the selected native Library destination")
+            XCTAssertTrue(libraryIsSelected(), "Wishlist must retain the selected native Library destination")
             XCTAssertTrue(app.navigationBars["Wishlist"].firstMatch.exists,
                           "The Library stack must present the Wishlist page")
         }
@@ -928,8 +935,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         activate(row.buttons["wishlist.metadata"].firstMatch)
         let album = app.staticTexts["discover.album.title"].firstMatch
         XCTAssertTrue(album.waitForExistence(timeout: 30))
-        let library = app.buttons["dulcet.tab.library"].firstMatch
-        XCTAssertTrue(sidebar.exists && sidebar.isSelected || library.exists && library.isSelected,
+        XCTAssertTrue(sidebar.exists && sidebar.isSelected || libraryIsSelected(),
                       "A Wishlist metadata page keeps its native destination selected")
         let window = app.windows.firstMatch
         let original = window.frame
