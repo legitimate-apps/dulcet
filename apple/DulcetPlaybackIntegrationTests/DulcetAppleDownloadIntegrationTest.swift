@@ -103,6 +103,52 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         }
     }
 
+    func testStrictDownloadRedirectWaitsForItsDestinationAndRejectsLoops() async throws {
+        let audioURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "navidrome-reference", withExtension: "mp3"))
+        let audio = try Data(contentsOf: audioURL)
+        for rejectLoop in [false, true] {
+            let target = try ProductionPathLoopbackServer(audio: audio, holdStreams: true)
+            let source = try ProductionPathLoopbackServer(audio: audio, answersIdentity: true,
+                mediaEnding: .complete, redirectAfterFirstStream: rejectLoop ? .loop : .destination(target.baseURL))
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-redirect-download-\(UUID())")
+            let databaseName = "dulcet-redirect-download-\(UUID()).db"
+            let controller = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root,
+                sessionConfiguration: .ephemeral)
+            defer {
+                controller.disconnect(); source.stop(); target.stop()
+                try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(databaseName)
+            }
+            controller.configure(account: DulcetPlaybackAccount(providerInstanceID: "loopback-provider",
+                normalizedServerURL: source.baseURL.absoluteString, username: "fixture", password: "fixture",
+                allowLocalHTTP: true, credentialGeneration: 1))
+            controller.setAutomaticDownloadsEnabled(false)
+            let track = rejectionTrack("redirect-download")
+            controller.requestDownload(track)
+            if rejectLoop {
+                try await waitUntil(timeout: .seconds(5), failureMessage: "refused strict download redirect did not finish") {
+                    [.interrupted, .failed].contains(controller.status(for: track.id))
+                }
+                XCTAssertGreaterThan(source.requestQueries.count, 2, "the strict replacement must exercise the redirect limit")
+                XCTAssertEqual(target.requestQueries.count, 0)
+                XCTAssertNil(controller.offlinePlaybackAsset(for: track))
+                XCTAssertEqual(controller.offlineLibraryStorage.downloadBytes, 0)
+            } else {
+                try await waitUntil(timeout: .seconds(5), failureMessage: "strict download redirect never reached its destination") {
+                    target.requestQueries.count == 1
+                }
+                XCTAssertEqual(source.requestQueries.count, 2, "only the strict replacement redirects")
+                XCTAssertNil(controller.offlinePlaybackAsset(for: track), "a held destination has supplied no bytes to promote")
+                XCTAssertFalse([.downloaded, .interrupted, .failed].contains(controller.status(for: track.id)))
+                target.releaseStreams()
+                try await waitUntil(timeout: .seconds(5), failureMessage: "redirected strict download did not promote its complete response") {
+                    controller.status(for: track.id) == .downloaded
+                }
+                XCTAssertNotNil(controller.offlinePlaybackAsset(for: track))
+                XCTAssertEqual(controller.offlineLibraryStorage.downloadBytes, Int64(audio.count))
+            }
+        }
+    }
+
     func testAnUnknownLengthDeliveryCannotStartReplacementBeforeAccountAuthority() async throws {
         let server = try ProductionPathLoopbackServer(audio: Data("ID3socket-delivery".utf8), mediaEnding: .chunkBoundary)
         defer { server.stop() }
@@ -2508,6 +2554,8 @@ private final class RejectionPlaybackEngine: DulcetCorePlaybackEngine, @unchecke
 
 final class ProductionPathLoopbackServer: @unchecked Sendable {
     enum MediaEnding: CaseIterable { case complete, chunkBoundary, midChunk }
+    enum MediaRedirect { case destination(URL), loop }
+    private let redirectAfterFirstStream: MediaRedirect?
     private let mediaEnding: MediaEnding?
     private let audio: Data
     private let answersIdentity: Bool
@@ -2565,7 +2613,9 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
     }
 
     init(audio: Data, answersIdentity: Bool = false, holdStreams: Bool = false, autoplay: Bool = false,
-         mediaEnding: MediaEnding? = nil, holdAfterFirstStream: Bool = false) throws {
+         mediaEnding: MediaEnding? = nil, holdAfterFirstStream: Bool = false,
+         redirectAfterFirstStream: MediaRedirect? = nil) throws {
+        self.redirectAfterFirstStream = redirectAfterFirstStream
         self.holdAfterFirstStream = holdAfterFirstStream
         self.mediaEnding = mediaEnding
         self.audio = audio
@@ -2678,6 +2728,17 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
         rangeStorage.append(rangeHeader)
         queryStorage.append(request.split(separator: " ").dropFirst().first.map(String.init) ?? "")
         lock.unlock()
+
+        if let redirectAfterFirstStream, lock.withLock({ queryStorage.count > 1 }) {
+            let destination: URL
+            switch redirectAfterFirstStream {
+            case let .destination(url): destination = url
+            case .loop: destination = baseURL.appendingPathComponent("rest/download.view")
+            }
+            let response = Data("HTTP/1.1 302 Found\r\nLocation: \(destination.absoluteString)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
 
         if let mediaEnding {
             var response = Data("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".utf8)

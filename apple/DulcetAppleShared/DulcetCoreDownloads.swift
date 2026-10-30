@@ -26,15 +26,19 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             let completion = DulcetUncheckedSendable(completionHandler)
             MainActor.assumeIsolated {
                 guard let client = owner?.client, let source = response.url, let target = request.url else {
-                    completion.value(nil); return
+                    task.cancel(); completion.value(nil); return
                 }
                 let decision = client.evaluateRedirect(sourceUrl: source.absoluteString,
                     proposedUrl: target.absoluteString, redirectsAlreadyFollowed: Int32(redirects))
                 redirects += 1
                 switch decision.kind {
                 case "preserve": completion.value(request)
-                case "strip": completion.value(request.removingDownloadQueryItems(named: Set(decision.queryItemNamesToStrip)))
-                default: completion.value(nil)
+                case "strip":
+                    guard let sanitized = request.removingDownloadQueryItems(named: Set(decision.queryItemNamesToStrip)) else {
+                        task.cancel(); completion.value(nil); return
+                    }
+                    completion.value(sanitized)
+                default: task.cancel(); completion.value(nil)
                 }
             }
         }
