@@ -30,7 +30,7 @@ concurrency:
 jobs:
   capture-soak:
     name: capture-soak (${{ inputs.pair_count }} independent pairs)
-    runs-on: macos-latest
+    runs-on: xcode-27
     # MEASURED 2026-09-03: a 30-pair soak on pre-instrumentation `main` finished in ~40 minutes.
     # The same 30 pairs after the layout diagnostics landed reached 58.7 minutes with no artifact
     # written, and the job was lost to this timeout -- the per-control frame and font-metric
@@ -54,6 +54,12 @@ jobs:
       TZ: UTC
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
 
       # This calls the same detector used below. If a known one-pixel difference is not reported as
       # a divergence with retained forensics, no paid capture samples are drawn.

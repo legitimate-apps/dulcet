@@ -123,8 +123,10 @@ public struct DulcetDiscoverStatus: Sendable {
         })
     }
     func remove(_ key: String) {
+        DulcetUIProofMarkers.detail("wishlist.model.remove", context: "key=\(key) active=\(active)")
         mutationError = nil
         operations.append(reader.remove(rowKey: key) { [weak self] result in
+            DulcetUIProofMarkers.detail("wishlist.remove.result", context: "result=\(result)")
             guard let self, self.active else { return }
             if case let .failure(error) = result, error.code != "cancelled" { self.mutationError = error }
         })

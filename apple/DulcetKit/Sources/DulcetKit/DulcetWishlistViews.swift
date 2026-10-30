@@ -142,7 +142,10 @@ public struct DulcetWishlistView: View {
         }.font(.caption).accessibilityElement(children: .combine)
     }
     private func remove(_ row: DulcetWishRow) -> some View {
-        Button(DulcetStrings.discoverRemoveWish, systemImage: "bookmark.slash") { model.remove(row.key) }
+        Button(DulcetStrings.discoverRemoveWish, systemImage: "bookmark.slash") {
+            DulcetUIProofMarkers.detail("wishlist.remove", context: "key=\(row.key)")
+            model.remove(row.key)
+        }
             .disabled(model.publication?.access.canRemoveWish != true)
             .accessibilityIdentifier("wishlist.remove")
     }

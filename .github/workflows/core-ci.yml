@@ -59,19 +59,19 @@ jobs:
         run: python3 tools/verify-playback-phase-parity
       - name: Prove the hang watchdog dumps a stuck JVM and stops it
         run: python3 tools/ci/run-with-thread-dump --self-test
+      - name: Prove only the SchemaCrawler comparator crash is retried
+        run: python3 tools/ci/retry-sqldelight-migration --self-test
       # The watchdog ends this step at 11 minutes, inside the job's cap, after printing a thread dump
       # of every JVM: a hung core test then names itself instead of leaving only a cancellation.
       - name: Build, test, and audit dependency licences
-        run: >-
-          python3 tools/ci/run-with-thread-dump 660 --
-          ./gradlew --no-daemon
-          --max-workers=2
-          :core:verifySqlDelightMigration
-          :core:allMetadataJar
-          :core:jvmTest
-          :core:testAndroidHostTest
-          :core:bundleAndroidMainAar
-          :core:licensee
+        run: |
+          python3 tools/ci/run-with-thread-dump 660 -- bash -e -c '
+            python3 tools/ci/retry-sqldelight-migration -- \
+              ./gradlew --no-daemon --console=plain --max-workers=2 :core:verifySqlDelightMigration
+            ./gradlew --no-daemon --max-workers=2 \
+              :core:allMetadataJar :core:jvmTest :core:testAndroidHostTest \
+              :core:bundleAndroidMainAar :core:licensee
+          '
       - name: Install pinned server test media tools
         run: |
           . /etc/os-release
