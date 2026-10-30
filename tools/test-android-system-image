@@ -8,8 +8,11 @@ import sys
 import tempfile
 import time
 import unittest
+import tomllib
 
 TOOL = (Path(__file__).parent / 'ci/android-system-image').resolve()
+PINS = tomllib.loads((TOOL.parents[2] / 'gradle/libs.versions.toml').read_text())['versions']
+VERSION, BUILD = PINS['android-emulator'], PINS['android-emulator-build']
 FAKE_SDKMANAGER = r'''#!/usr/bin/env python3
 from pathlib import Path
 import json, os, subprocess, sys, time
@@ -269,7 +272,7 @@ class ImageControl(unittest.TestCase):
         self.assertEqual(self.attempts(), 1)
         emulator = self.sdk / 'emulator/emulator'
         emulator.parent.mkdir(parents=True, exist_ok=True)
-        emulator.write_text("#!/bin/sh\necho 'Android emulator version 37.2.12.0 (build_id 16428233)'\n")
+        emulator.write_text(f"#!/bin/sh\necho 'Android emulator version {VERSION}.0 (build_id {BUILD})'\n")
         emulator.chmod(0o755)
         avd = Path(self.env['ANDROID_AVD_HOME']) / 'test.avd'
         avd.mkdir(parents=True)
@@ -283,16 +286,16 @@ class ImageControl(unittest.TestCase):
         self.assertIn('api=34 target=google_apis abi=x86_64 avd=test', result.stdout)
         self.assertEqual(self.attempts(), 1)
 
-    def test_latest_emulator_cannot_silently_replace_the_pin(self):
+    def test_different_emulator_version_cannot_silently_replace_the_pin(self):
         self.prepare_boot()
         (self.sdk / 'emulator/emulator').write_text(
-            "#!/bin/sh\necho 'Android emulator version 37.2.13.0 (build_id 16538613)'\n")
+            f"#!/bin/sh\necho 'Android emulator version 0.0.0.0 (build_id {BUILD})'\n")
         self.assert_failure(self.invoke('verify-booted'), 'emulator-version-mismatch')
 
     def test_same_version_with_different_build_is_rejected(self):
         self.prepare_boot()
         (self.sdk / 'emulator/emulator').write_text(
-            "#!/bin/sh\necho 'Android emulator version 37.2.12.0 (build_id 1)'\n")
+            f"#!/bin/sh\necho 'Android emulator version {VERSION}.0 (build_id 1)'\n")
         self.assert_failure(self.invoke('verify-booted'), 'emulator-version-mismatch')
 
     def test_tv_normal_install_and_boot_identity(self):
