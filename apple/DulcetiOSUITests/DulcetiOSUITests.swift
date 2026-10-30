@@ -5920,12 +5920,14 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
         guard let width = settledWindowWidth(window, expecting: "regular", matching: { $0 > 700 }) else { return }
         XCTAssertGreaterThan(width, 700, "This proof requires a regular-width iPad")
+        // The layout fixture opens Account on launch. Reach Library first so its
+        // navigation is not covered by the modal whose presentation this test proves.
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else { return }
         let legacySidebar = window.buttons["dulcet.sidebar.library"].firstMatch
         let nativeSidebar = window.descendants(matching: .any)["dulcet.tab.library"].firstMatch
         let sidebar = legacySidebar.exists ? legacySidebar : nativeSidebar
         XCTAssertTrue(sidebar.waitForExistence(timeout: 10) && sidebar.isHittable,
             "Regular width must expose the Library destination")
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else { return }
         let libraryTitle = app.navigationBars.staticTexts["Library"].firstMatch
         XCTAssertTrue(libraryTitle.waitForExistence(timeout: 10) && libraryTitle.isHittable,
             "The selected content page must be visible before opening Account")
