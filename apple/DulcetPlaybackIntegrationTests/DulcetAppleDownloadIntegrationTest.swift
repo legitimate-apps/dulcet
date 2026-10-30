@@ -128,7 +128,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
                 try await waitUntil(timeout: .seconds(5), failureMessage: "refused strict download redirect did not finish") {
                     [.interrupted, .failed].contains(controller.status(for: track.id))
                 }
-                XCTAssertGreaterThan(source.requestQueries.count, 2, "the strict replacement must exercise the redirect limit")
+                // One initial download, one strict replacement, and five allowed redirect hops.
+                XCTAssertEqual(source.requestQueries.count, 7, "the strict replacement must reach the five-redirect policy limit")
                 XCTAssertEqual(target.requestQueries.count, 0)
                 XCTAssertNil(controller.offlinePlaybackAsset(for: track))
                 XCTAssertEqual(controller.offlineLibraryStorage.downloadBytes, 0)

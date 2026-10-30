@@ -50,8 +50,11 @@ active-idle-timeout controls remain in the socket suite.
 `testStrictDownloadRedirectWaitsForItsDestinationAndRejectsLoops` drives the actual shared
 controller and its foreground verification delegate. The initial chunked download triggers strict
 replacement; only that replacement redirects. A held cross-origin destination cannot promote an
-offline file before its bytes arrive. A redirect loop reaches the policy limit and must finish as
-interrupted/failed, with no offline asset or stored download bytes, within five seconds.
+offline file before its bytes arrive. The loop must make exactly seven source media requests:
+the initial download, the strict replacement, and five allowed redirect hops. The next redirect
+response is refused at the policy limit. It must finish as interrupted/failed, with no offline
+asset or stored download bytes, within five seconds. An earlier transport failure cannot satisfy
+the exact request-count assertion.
 
 ## Local validation
 
@@ -64,6 +67,8 @@ All local Xcode runs used `-parallel-testing-enabled NO`.
 | Entire native DulcetKit package, corrected transport | 427 tests across 23 suites passed, 0 failed, 0 skipped. |
 | Shared download controller, corrected transport but original download delegate | 1 test failed: refused redirect loop did not finish within five seconds. |
 | Shared download controller, corrected delegate plus adjacent chunked, restored identity and cancellation controls | 4 passed, 0 failed, 0 skipped. The redirect test includes held-destination success and loop refusal. |
+| Download redirect test with exact seven-request boundary | 1 passed, 0 failed, 0 skipped. Both held-destination success and refusal at the five-redirect policy limit ran. |
+| Same test, temporary fixture mutation returning HTTP 500 on source media request three | 1 failed, 0 skipped, at the exact-count assertion: `3` is not equal to `7`. All other assertions passed; the mutation was removed. This early-hop failure would satisfy the former `> 2` request-count check. |
 
 The callback ledger uses the protocol's serial queue as its observation boundary, so this failure
 is deterministic and does not depend on repeating hosted-runner timing. The real URLSession tests
