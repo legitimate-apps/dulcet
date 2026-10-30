@@ -80,7 +80,7 @@ jobs:
     name: apple-platform
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.platform == 'true' }}
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 105
     # The required job downloads this leg's artifacts by the attempt that PRODUCED them. See there.
     outputs:
@@ -419,11 +419,12 @@ jobs:
       # This boots no app. Require both positive acknowledgments and carry that exact device on.
       - name: First-boot and settle the platform iPhone before native media tests
         id: platform_iphone_destination
-        timeout-minutes: 15
+        # 11-minute boot deadline, five-minute service settle, device queries and startup.
+        timeout-minutes: 20
         run: |
           set -o pipefail
           python3 tools/ci/isolate-simulator \
-            --phase platform-iphone-first-boot --keep-name "iPhone 17 Pro" --settle | \
+            --phase platform-iphone-first-boot --keep-name "iPhone 18 Pro" --settle | \
             tee "$RUNNER_TEMP/dulcet-platform-iphone-startup.log"
           python3 - "$RUNNER_TEMP/dulcet-platform-iphone-startup.log" <<'PY'
           import os
@@ -557,7 +558,8 @@ jobs:
           # the iPad's first boot, and require the empty booted-device list before proceeding.
           python3 tools/ci/isolate-simulator --phase platform-before-ipad --none --require-isolation
       - name: Boot iPadOS simulator before the layout launch
-        timeout-minutes: 6
+        # The shared 11-minute boot deadline plus bounded inventory queries and startup.
+        timeout-minutes: 19
         env:
           IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
         run: |
@@ -568,7 +570,8 @@ jobs:
           # launch budget into an explicit prerequisite. Do not install or launch Dulcet here: the
           # UI test must still exercise a cold product launch, and a product launch failure must
           # remain a failure rather than being disguised by an app warm-up.
-          if ! xcrun simctl bootstatus "$IPAD_UDID" -b; then
+          if ! python3 tools/ci/isolate-simulator --phase platform-ipad-first-boot \
+            --keep "$IPAD_UDID" --require-isolation; then
             echo "::error title=iPadOS simulator prerequisite failed::CoreSimulator did not finish booting; the layout test did not run"
             exit 1
           fi
@@ -733,7 +736,7 @@ jobs:
         # starved host (see the next step), and isolation is the mechanism the host-contention
         # finding supports. It prints `SIMULATOR ISOLATION ... isolated=true|false` and marks the
         # host-pressure record with the phase.
-        run: python3 tools/ci/isolate-simulator --phase compact-iphone --keep-name "iPhone 17 Pro"
+        run: python3 tools/ci/isolate-simulator --phase compact-iphone --keep-name "iPhone 18 Pro"
       - name: Verify the compact shell keeps the album and opens Now Playing from the bar
         # 12 was inherited from `Verify iPhone uses the full display` and was too small. OBSERVED on
         # run 35985802454: the step was killed at 12.05 minutes, seconds after its test had passed
@@ -763,7 +766,7 @@ jobs:
             -project apple/Dulcet.xcodeproj \
             -scheme DulcetiOS \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
             -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-ios-compact-nav.xcresult" \
             -parallel-testing-enabled NO \
@@ -889,7 +892,7 @@ jobs:
     name: apple-conformance-core
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 170
     outputs:
       attempt: ${{ github.run_attempt }}
@@ -1040,7 +1043,7 @@ jobs:
           -project apple/Dulcet.xcodeproj
           -scheme DulcetiOS
           -configuration Debug
-          -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+          -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'
           -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData"
       - name: Build the iOS shell for the iPadOS conformance legs
         timeout-minutes: 10
@@ -1122,14 +1125,16 @@ jobs:
       # Pays each device's FIRST boot before any proof's clock, as apple-conformance-ipad-iphone does.
       # OBSERVED in run 37142077432 on main: the composite's library-sync phases paid them instead.
       # The iPhone's took 222.4 s at load1 up to 574, and right after the iPad's, `simctl list`
-      # timed out at 120 s and failed the step. 20 bounds three first boots (158 to 222 s each,
-      # OBSERVED) plus the tool's own 120 s shutdown bound.
+      # timed out at 120 s and failed the step. Xcode 27 run 40547199270 completed this whole
+      # prerequisite in 592s. Its 20-minute envelope retains room above 1.5 times that witness;
+      # each device has its own monotonic boot deadline and streams its migration stages.
+      # This existing whole-phase cap takes precedence over the sum of per-device budgets.
       - name: First-boot the iPhone, iPadOS and tvOS simulators before the timed proofs
         timeout-minutes: 20
         env:
           IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
         run: |
-          python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 17 Pro"
+          python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 18 Pro"
           python3 tools/ci/isolate-simulator --phase first-boot-ipad --keep "$IPAD_UDID"
           python3 tools/ci/isolate-simulator --phase first-boot-tvos --keep-name "Apple TV 4K (3rd generation)"
           python3 tools/ci/isolate-simulator --phase first-boot-done --none
@@ -1524,14 +1529,14 @@ jobs:
           # variables are stripped into the runner process, where the test independently rejects
           # anything except the disposable loopback Navidrome. Each named test gets its own
           # xcresult because the execution guard requires exactly one individual result.
-          python3 tools/ci/isolate-simulator --phase download-iphone --keep-name "iPhone 17 Pro"
+          python3 tools/ci/isolate-simulator --phase download-iphone --keep-name "iPhone 18 Pro"
           TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true \
             xcodebuild test \
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOSDownloadIntegration \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDownloadIntegrationDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-download-conf51.xcresult" \
               -parallel-testing-enabled NO \
@@ -1551,7 +1556,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOSDownloadIntegration \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDownloadIntegrationDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-download-conf52.xcresult" \
               -parallel-testing-enabled NO \
@@ -1656,7 +1661,7 @@ jobs:
           # locally on one simulator, same command, prefix the only difference:
           # 18 IllegalStateException without it, 0 with it.
           conformance_sim="$(xcrun simctl create \
-            dulcet-conformance com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
+            dulcet-conformance com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro)"
           # Boots it, shuts down anything else, and waits for `bootstatus -b` before any clock starts.
           python3 tools/ci/isolate-simulator --phase conformance-ios --keep "$conformance_sim"
           # Link in its OWN Gradle JVM, which exits before the suite starts. The single-use Gradle
@@ -2162,7 +2167,7 @@ jobs:
     name: apple-conformance-${{ matrix.device }}
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 145
     strategy:
       fail-fast: false
@@ -2272,7 +2277,7 @@ jobs:
           -project apple/Dulcet.xcodeproj
           -scheme DulcetiOS
           -configuration Debug
-          -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+          -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'
           -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData"
       - name: Build the iOS shell for the iPadOS conformance legs
         if: ${{ matrix.device == 'ipad' }}
@@ -2541,7 +2546,7 @@ jobs:
           # playlist proof became the first launch on a fresh iPhone simulator and timed out
           # launching the app (run 37121886722); this file also records an older launch flake
           # (runs 33420584120, 33457633113).
-          python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 17 Pro"
+          python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 18 Pro"
           # The app's own reader and reachability lines, printed after the proof (tools/ci/app-log).
           python3 tools/ci/app-log start ios-search
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
@@ -2551,7 +2556,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOS \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
               -parallel-testing-enabled NO \
@@ -2578,7 +2583,7 @@ jobs:
             --base-url http://127.0.0.1:4533 \
             --title "UI Playback Canary" \
             --record "$RUNNER_TEMP/iphone-canary-before.json"
-          python3 tools/ci/isolate-simulator --phase playback-iphone --keep-name "iPhone 17 Pro"
+          python3 tools/ci/isolate-simulator --phase playback-iphone --keep-name "iPhone 18 Pro"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -2586,7 +2591,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOS \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
               -parallel-testing-enabled NO \
@@ -2611,7 +2616,7 @@ jobs:
           # renames it from its page and reads the new name back from the server, then deletes it:
           # playlists are not media, so the counted corpus the phases after this read is unchanged.
           # The lyrics proof plays the corpus's embedded synced lyrics and waits for a lit line.
-          python3 tools/ci/isolate-simulator --phase playlist-iphone --keep-name "iPhone 17 Pro"
+          python3 tools/ci/isolate-simulator --phase playlist-iphone --keep-name "iPhone 18 Pro"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -2619,7 +2624,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOS \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
               -parallel-testing-enabled NO \
@@ -2633,7 +2638,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-playlist-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
-          python3 tools/ci/isolate-simulator --phase lyrics-iphone --keep-name "iPhone 17 Pro"
+          python3 tools/ci/isolate-simulator --phase lyrics-iphone --keep-name "iPhone 18 Pro"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -2641,7 +2646,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOS \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-lyrics.xcresult" \
               -parallel-testing-enabled NO \
@@ -2675,7 +2680,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOS \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-paused-previous.xcresult" \
               -parallel-testing-enabled NO \
@@ -2696,7 +2701,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOS \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-np-heart.xcresult" \
               -parallel-testing-enabled NO \
@@ -2724,7 +2729,7 @@ jobs:
             --runtime native \
             --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
             --base-url http://127.0.0.1:4533
-          python3 tools/ci/isolate-simulator --phase skip-probe-iphone --keep-name "iPhone 17 Pro"
+          python3 tools/ci/isolate-simulator --phase skip-probe-iphone --keep-name "iPhone 18 Pro"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -2732,7 +2737,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOS \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-skip-probe.xcresult" \
               -parallel-testing-enabled NO \
@@ -2753,7 +2758,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOS \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5.xcresult" \
               -parallel-testing-enabled NO \
@@ -2774,7 +2779,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetiOS \
               -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title.xcresult" \
               -parallel-testing-enabled NO \
@@ -2905,7 +2910,7 @@ jobs:
     name: discover-wishlist-macos
     needs: [apple-plan, apple-platform]
     if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
     outputs:
       attempt: ${{ github.run_attempt }}
@@ -2975,8 +2980,9 @@ jobs:
     name: discover-wishlist-iphone
     needs: [apple-plan, apple-conformance-ipad-iphone]
     if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
-    runs-on: macos-26
-    timeout-minutes: 95
+    runs-on: xcode-27
+    # Add the provisional startup allowance to the existing build/proof envelope.
+    timeout-minutes: 120
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -3016,7 +3022,11 @@ jobs:
         run: tools/ci/run-discover-wishlist-proofs iphone --build-for-testing
       - name: Drive Discover and Wishlist through the native iphone app
         # Includes cold simulator startup and the five measured multi-launch UI proofs.
-        timeout-minutes: 45
+        # Run 40547199270 spent 15m46s before native execution, passed four cases
+        # in 25m47s, then reached the 45m envelope during case five. 70m is
+        # ceil(1.5 * 45 / 5) * 5 above that censored observation; final-head
+        # execution must validate it. Individual assertion deadlines stay unchanged.
+        timeout-minutes: 70
         env:
           DULCET_DISCOVER_PREBUILT: "true"
         run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-iphone/fixture" -- tools/ci/run-discover-wishlist-proofs iphone
@@ -3049,9 +3059,9 @@ jobs:
     name: discover-wishlist-ipad
     needs: [apple-plan, discover-wishlist-macos]
     if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
-    runs-on: macos-26
-    # Preserve the existing build/proof budget plus the separate six-minute destination step.
-    timeout-minutes: 101
+    runs-on: xcode-27
+    # Add the provisional 30-minute startup/proof allowance; retain destination discovery.
+    timeout-minutes: 131
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -3097,9 +3107,11 @@ jobs:
         timeout-minutes: 20
         run: tools/ci/run-discover-wishlist-proofs ipad --build-for-testing
       - name: Drive Discover and Wishlist through the native ipad app
-        # Startup took nine minutes and the first four cases took 33 on a hosted iPad.
-        # Leave time for the fifth case and finalization without changing assertion deadlines.
-        timeout-minutes: 60
+        # Run 40547199270 spent 18m18s in startup, then passed four cases in 30m19s
+        # before the 60m step limit interrupted the fifth. 90m is ceil(1.5 * 60 / 5) * 5
+        # above that censored observation, pending final-head validation. Assertions retain
+        # their individual deadlines; main run 40442634538 completed this step in 46m47s.
+        timeout-minutes: 90
         env:
           DULCET_DISCOVER_PROOF_UDID: ${{ steps.discover_ipad_destination.outputs.udid }}
           DULCET_DISCOVER_PREBUILT: "true"

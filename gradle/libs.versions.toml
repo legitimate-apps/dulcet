@@ -2,7 +2,7 @@
 kotlin = "2.4.10"
 gradle = "9.5.0"
 android-gradle-plugin = "9.1.0"
-xcode = "26.4.1"
+xcode = "27.0"
 xcodegen = "2.46.0"
 jdk = "21"
 ktor = "3.5.2"

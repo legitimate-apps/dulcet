@@ -168,13 +168,13 @@ if [ "$mode" = counted-simulators ]; then
     export TEST_RUNNER_DULCET_LYRICS_FAULT_PROXY_URL="$proxy_url"
     allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300)
     iphone=(-project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug
-        -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+        -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'
         -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" -parallel-testing-enabled NO "${allowance[@]}")
     ipad=(-project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug
         -destination "platform=iOS Simulator,id=$ipad_udid"
         -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" -parallel-testing-enabled NO "${allowance[@]}")
 
-    python3 tools/ci/isolate-simulator --phase reader-counted-iphone --keep-name "iPhone 17 Pro"
+    python3 tools/ci/isolate-simulator --phase reader-counted-iphone --keep-name "iPhone 18 Pro"
     xcodebuild test-without-building "${iphone[@]}" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-ios-reader-conf76.xcresult" \
         -only-testing:DulcetKeychainIOSTests/DulcetReaderCountedAppTests/testConf76ACachedOpenPublishesBeforeAnyAnswerOnIPhone 2>&1 |
@@ -364,7 +364,7 @@ if [ "$mode" = ipados ]; then
     exit 0
 fi
 
-python3 tools/ci/isolate-simulator --phase reader-iphone --keep-name "iPhone 17 Pro"
-ui_proof ios "$RUNNER_TEMP/DulcetiOSDerivedData" 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+python3 tools/ci/isolate-simulator --phase reader-iphone --keep-name "iPhone 18 Pro"
+ui_proof ios "$RUNNER_TEMP/DulcetiOSDerivedData" 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest' \
     testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone \
     "$RUNNER_TEMP/dulcet-ios-reader-junit/TEST-DulcetiOSUITests.xml"

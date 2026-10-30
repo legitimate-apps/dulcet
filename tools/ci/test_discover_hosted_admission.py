@@ -10,6 +10,23 @@ HERE = Path(__file__).resolve().parent
 
 
 class HostedAdmissionTests(unittest.TestCase):
+    def test_template_matches_selected_sdk_and_requested_device(self):
+        from discover_hosted_admission import hosted_simulator_template
+        runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0'
+        phone = {'name': 'iPhone 18 Pro', 'udid': 'PHONE', 'isAvailable': True,
+                 'deviceTypeIdentifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro'}
+        inventory = {'devices': {runtime: [phone],
+            'com.apple.CoreSimulator.SimRuntime.iOS-27-1': [{**phone, 'udid': 'NEWER'}]}}
+        for version in ('27.0', runtime):
+            self.assertEqual((runtime, phone), hosted_simulator_template(inventory, 'iPhone 18 Pro', version))
+        self.assertEqual('NEWER', hosted_simulator_template(inventory, 'iPhone 18 Pro', '27.1')[1]['udid'])
+        for version, name in [('27.2', 'iPhone 18 Pro'), ('27.0', 'iPad Pro')]:
+            with self.assertRaises(RuntimeError):
+                hosted_simulator_template(inventory, name, version)
+        for unusable in ({**phone, 'isAvailable': False}, {**phone, 'deviceTypeIdentifier': None}):
+            with self.assertRaises(RuntimeError):
+                hosted_simulator_template({'devices': {runtime: [unusable]}}, 'iPhone 18 Pro', '27.0')
+
     def admission(self, owner, output):
         path = HERE / 'discover_hosted_admission.py'
         self.assertTrue(path.exists(), 'Discover hosted proofs have no pressure admission or diagnostics')

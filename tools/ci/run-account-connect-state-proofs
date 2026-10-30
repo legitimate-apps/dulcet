@@ -31,7 +31,7 @@ set -euo pipefail
 : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
 
 allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900)
-iphone='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+iphone='platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'
 tv='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'
 
 mode="${1:-}"
@@ -100,7 +100,7 @@ macos)
         DulcetMacAccountConnectStatesAppTest
     ;;
 iphone)
-    python3 tools/ci/isolate-simulator --phase account-states-iphone --keep-name "iPhone 17 Pro"
+    python3 tools/ci/isolate-simulator --phase account-states-iphone --keep-name "iPhone 18 Pro"
     xcodebuild test-without-building "${ios[@]}" \
         -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-ios-account-states.xcresult" \
