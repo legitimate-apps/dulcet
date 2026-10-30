@@ -100,7 +100,7 @@ final class DulcetWindowWidthSettlementTests: XCTestCase {
     }
 }
 
-final class DulcetiOSUITests: XCTestCase {
+final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// Server cleanup a test registers once it has made something on the disposable server; run
     /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
     /// comes from XCTest's Swift overlay, which `tools/typecheck-xcuitest-sources` cannot resolve.
@@ -323,7 +323,7 @@ final class DulcetiOSUITests: XCTestCase {
         app.tabBars.buttons["Search"].firstMatch.tap()
         XCTAssertTrue(app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5),
                       "The Search tab must show search")
-        XCTAssertTrue(bar.waitForExistence(timeout: 5) && playerElementIsHittable(bar),
+        XCTAssertTrue(bar.waitForExistence(timeout: 5) && self.playerElementIsHittable(bar),
                       "The now-playing bar must stay on screen on another tab")
 
         bar.tap()
@@ -1027,7 +1027,7 @@ final class DulcetiOSUITests: XCTestCase {
         while !surface.contains(where: \.exists), Date() < deadline {
             Thread.sleep(forTimeInterval: 0.25)
         }
-        if !surface.contains(where: \.exists), bar.exists, playerElementIsHittable(bar) {
+        if !surface.contains(where: \.exists), bar.exists, self.playerElementIsHittable(bar) {
             print("DULCET NOW PLAYING RETAP the first tap on the bar presented nothing in 15 s")
             bar.tap()
         }
@@ -2650,7 +2650,7 @@ final class DulcetiOSUITests: XCTestCase {
                 // XCTest can reject an element-to-element drag before sending any touch
                 // when it hit-tests the covered bar (hosted iPhone activities, 2026-10-18).
                 let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                    bar.exists && playerElementIsHittable(bar)
+                    bar.exists && self.playerElementIsHittable(bar)
                 }, object: nil)
                 guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
                     XCTFail("The bar must be hittable before preparing each native-menu drag")
@@ -5154,7 +5154,7 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func visiblePlayerButton(_ label: String, in app: XCUIApplication) -> XCUIElement? {
         app.buttons.matching(NSPredicate(format: "label == %@", label))
-            .allElementsBoundByIndex.first { playerElementIsHittable($0) }
+            .allElementsBoundByIndex.first { self.playerElementIsHittable($0) }
     }
 
     /// Returns to the proof's song through actual transport presses, then leaves it paused so
@@ -5477,7 +5477,7 @@ final class DulcetiOSUITests: XCTestCase {
                 let frame = snapshot.frame
                 return frame.width > 0 && frame.height > 0 && frame.maxX <= queueFrame.minX
                     && frame.minY >= title.frame.minY && windowFrame.contains(frame)
-                    && snapshot.identifier != "dulcet.debug.ui-markers" && playerElementIsHittable($0)
+                    && snapshot.identifier != "dulcet.debug.ui-markers" && self.playerElementIsHittable($0)
             }
         let lowest = playerColumn.max { $0.frame.maxY < $1.frame.maxY }
         let playerBottom = lowest?.frame.maxY ?? .nan
@@ -7075,7 +7075,7 @@ extension DulcetiOSUITests {
             up.press(forDuration: 0.05, thenDragTo: up.withOffset(CGVector(dx: 0, dy: -65)),
                      withVelocity: .slow, thenHoldForDuration: 0.5)
             XCTAssertTrue(title.waitForNonExistence(timeout: 3), "An early release must return to the mini-player")
-            XCTAssertTrue(playerElementIsHittable(bar))
+            XCTAssertTrue(self.playerElementIsHittable(bar))
             bar.tap()
             XCTAssertTrue(title.waitForExistence(timeout: 5))
             let down = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
