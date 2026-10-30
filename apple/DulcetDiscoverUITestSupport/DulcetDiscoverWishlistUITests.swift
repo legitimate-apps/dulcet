@@ -665,7 +665,25 @@ import UIKit
                 let later = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "2026-02-01")).firstMatch
                 XCTAssertTrue(later.waitForExistence(timeout: 10)); activate(later)
                 let selectedEdition = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "2026-02-01 · 12 tracks"), object: edition)
-                XCTAssertEqual(XCTWaiter.wait(for: [selectedEdition], timeout: 30), .completed,
+                let editionResult = XCTWaiter.wait(for: [selectedEdition], timeout: 30)
+                if editionResult != .completed {
+                    let hierarchy = XCTAttachment(string: app.debugDescription)
+                    hierarchy.name = "edition-timeout-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+                    let screen = XCTAttachment(screenshot: app.screenshot())
+                    screen.name = "edition-timeout-screen"; screen.lifetime = .keepAlways; add(screen)
+                    if let snapshot = try? app.snapshot() {
+                        var lines: [String] = []
+                        func visit(_ node: XCUIElementSnapshot, _ path: String) {
+                            lines.append("\(path) type=\(node.elementType.rawValue) id=\(node.identifier.debugDescription) label=\(node.label.debugDescription) value=\(String(describing: node.value)) frame=\(node.frame) children=\(node.children.count)")
+                            for (i, child) in node.children.enumerated() { visit(child, path + "/\(i)") }
+                        }
+                        visit(snapshot, "root")
+                        let attachment = XCTAttachment(string: lines.joined(separator: "\n"))
+                        attachment.name = "edition-timeout-snapshot"; attachment.lifetime = .keepAlways; add(attachment)
+                        print("EDITION SNAPSHOT " + lines.joined(separator: "\n"))
+                    }
+                }
+                XCTAssertEqual(editionResult, .completed,
                                "The accessible edition menu must describe the selected release with its date and track count")
                 print("DISCOVER_LARGEST_EDITION selected=true frame=\(edition.frame)")
                 reveal(wish)

@@ -232,7 +232,7 @@ def parse_id3v24_text(path: Path) -> dict[str, str]:
 
 
 # Lyrics fixtures (spec §18.4, CONF-42). Attached to EXISTING tracks so the scanner-visible media
-# count stays 314: sidecars are not media files, and embedded lyrics are tags. Each shape the
+# count stays unchanged: sidecars are not media files, and embedded lyrics are tags. Each shape the
 # reference server reads is present once, and one track keeps none as the control.
 SYNCED_SIDECAR_LRC = (
     "[ar:Dulcet Fixtures]\n"
@@ -290,8 +290,8 @@ def main() -> None:
     encode(tools, ogg_probe, duration=plain_lyrics_duration, frequency=523, title="Ogg Probe", track="1")
     encode(tools, m4a_probe, duration=1.0, frequency=587, title="M4A Probe", track="2")
 
-    # The playback corpus needs whole seconds on the wire: Navidrome omits a
-    # sub-second track's truncated zero duration, so both reader adapters refuse it.
+    # Positive-duration playback controls retain whole seconds on the wire. The deliberate
+    # sub-second canary below exercises playback when Navidrome omits its zero duration.
     multi_disc_paths: list[tuple[Path, int, int]] = []
     for disc in (1, 2):
         for track in (1, 2):
@@ -357,6 +357,12 @@ def main() -> None:
     encode(
         tools, ui_playback_canary, duration=31.0, frequency=0, title="UI Playback Canary",
         album="Threshold Boundary", track="3", silence=True,
+    )
+
+    durationless_canary = root / "Durationless" / "01 - Durationless Playback Canary.flac"
+    encode(
+        tools, durationless_canary, duration=0.9, frequency=440, title="Durationless Playback Canary",
+        album="Durationless", track="1",
     )
 
     lyrics_sidecars = [
@@ -493,6 +499,14 @@ def main() -> None:
         duration=31.0,
     )
 
+    durationless_tags, observed_durationless_duration, _ = assert_media(
+        tools, durationless_canary,
+        expected_tags={"title": "Durationless Playback Canary", "album": "Durationless", "track": "1"},
+        duration=0.9,
+    )
+    if not 0 < observed_durationless_duration < 1:
+        raise SystemExit(f"durationless playback canary must be sub-second: {observed_durationless_duration}")
+
     observed_paging_ffprobe_tracks: list[int] = []
     for index in (1, 150, 300):
         observed_paging_tags, _, _ = assert_media(
@@ -512,8 +526,8 @@ def main() -> None:
         path for path in root.rglob("*")
         if path.is_file() and path.suffix.lower() in FORMATS and ".templates" not in path.parts
     ]
-    if len(scanner_files) != 314:
-        raise SystemExit(f"expected 314 scanner-visible media files, generated {len(scanner_files)}")
+    if len(scanner_files) != 315:
+        raise SystemExit(f"expected 315 scanner-visible media files, generated {len(scanner_files)}")
     scanner_extensions = sorted({path.suffix.lower() for path in scanner_files})
     if scanner_extensions != sorted(FORMATS):
         raise SystemExit(f"generated file-extension set mismatch: {scanner_extensions}")
@@ -574,6 +588,12 @@ def main() -> None:
                 "duration_seconds": round(observed_ui_playback_duration),
                 "silent": True,
             },
+        },
+        "durationless_playback_canary": {
+            "title": durationless_tags["title"],
+            "album": durationless_tags["album"],
+            "duration_seconds": round(observed_durationless_duration, 3),
+            "server_duration_field_present": False,
         },
         "lyrics": {
             "plain_fixture": {

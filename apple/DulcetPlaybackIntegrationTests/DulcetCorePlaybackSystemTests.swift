@@ -12,6 +12,35 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     /// process, so a fixed provider would let one test's queue decide what another test sees.
     private let provider = "system-provider-\(UUID().uuidString)"
 
+    func testUnknownServerDurationReachesTheQueueAndDecoderDurationReachesPresentation() async throws {
+        let databaseName = "durationless-model-\(UUID().uuidString).db"
+        addTeardownBlock {
+            let directory = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/databases")
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(databaseName + suffix))
+            }
+        }
+        let fixture = makeFixture(tracks: ["a", "b"], duration: nil, databaseName: databaseName)
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let attempt = try await fixture.waitForPrepare(rawID: "a")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.durationMilliseconds, -1)
+        fixture.emit(.ready(attemptID: attempt, duration: nil, seekability: .unknown))
+        fixture.emit(.playbackProgressBegan(attemptID: attempt, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
+        let unknown = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertNil(unknown.duration)
+        XCTAssertNil(unknown.remaining)
+        XCTAssertNil(unknown.progressFraction)
+        fixture.emit(.durationChanged(attemptID: attempt, duration: 40))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.duration == .seconds(40) }
+        let known = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(known.duration, .seconds(40))
+        XCTAssertEqual(known.remaining, .seconds(39))
+        XCTAssertEqual(known.progressFraction, 0.025)
+        XCTAssertEqual(known.sessionID, unknown.sessionID)
+    }
+
     /// Spec §12.5: the quality for the network reaches each resolve. A change replaces a preload
     /// resolved at the old quality, so the next item plays at the new one, and never restarts or
     /// re-prepares what is playing. The choice is saved in the core's stored form.
@@ -1733,7 +1762,9 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         artwork: Data? = nil,
         recordStatuses: Bool = false,
         sourceContainer: DulcetAudioContainer = .mp3,
-        downloadController: (any DulcetDownloadControlling)? = nil
+        downloadController: (any DulcetDownloadControlling)? = nil,
+        duration: Duration? = .seconds(120),
+        databaseName: String = ":memory:"
     ) -> Fixture {
         let tracks = rawIDs.map { rawID in
             DulcetTrack(
@@ -1741,7 +1772,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
                 title: "Track \(rawID)",
                 credits: [],
                 albumTitle: "System album",
-                duration: .seconds(120),
+                duration: duration,
                 sourceContainer: sourceContainer,
                 mediaSourceID: nil,
                 artwork: DulcetArtwork(
@@ -1751,7 +1782,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
                 )
             )
         }
-        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        let queue = ApplePlaybackQueueClient(databaseName: databaseName)
         let engine = RecordingCommandEngine()
         let fetcher = RecordingArtworkFetcher(data: artwork)
         let controller = DulcetCorePlaybackController(
@@ -1759,7 +1790,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
             engine: engine,
             catalog: tracks,
             downloadController: downloadController,
-            artworkFetcher: artwork == nil ? nil : fetcher
+            artworkFetcher: artwork == nil ? nil : fetcher,
+            identityDatabaseName: databaseName
         )
         controller.configure(account: account(provider))
         // The store's data source installs the controller's single presentation handler. Tests
