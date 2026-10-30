@@ -1642,7 +1642,7 @@ final class DulcetiOSUITests: XCTestCase {
         print("DULCET SKIP PROBE AX5 HEADER catalog-initially-reachable=\(run.catalogInitiallyReachable)"
             + " catalog-swipes=\(run.catalogSwipes) row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
         XCTAssertFalse(run.catalogInitiallyReachable,
-                       "The cold largest-text Library must exercise reaching its below-fold catalog")
+                       "The cold largest-text Browse page must exercise reaching its below-fold catalog")
         XCTAssertGreaterThan(run.catalogSwipes, 0,
                              "The catalog must be reached by actual touch scrolling")
         XCTAssertGreaterThanOrEqual(run.rowSwipes, 1,
@@ -1767,20 +1767,19 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         guard requireProofMarkers(in: app),
-              openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
+              openDestination("Browse", sidebarIdentifier: "dulcet.sidebar.browse", in: app, compact: true) else {
             return nil
         }
-        // Library's category rows and Shuffle All explanation can fill several screens at
-        // accessibility sizes. Reach its lazy catalog before searching for the probe album;
-        // waiting for an unrealized tile cannot reveal it. Both scroll phases stay bounded.
+        // Browse owns the server catalog. Its category rows can put Recently Added below
+        // the fold at accessibility sizes; reach the shelf through actual touch scrolling.
         let albums = app.buttons.matching(identifier: "dulcet.library.album")
         let album = albums.matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
         let firstAlbum = albums.firstMatch
         let catalogInitiallyReachable = firstAlbum.exists && firstAlbum.isHittable
-        let catalogHeading = app.otherElements["dulcet.reader.home.recentlyAdded"]
-            .staticTexts["Recently Added"].firstMatch
-        guard catalogHeading.waitForExistence(timeout: 30),
-              let headingSwipes = scrollIntoViewCountingSwipes(
+        let catalogHeading = app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch
+        // A native List may not materialize this shelf until it scrolls into view.
+        _ = catalogHeading.waitForExistence(timeout: 5)
+        guard let headingSwipes = scrollIntoViewCountingSwipes(
                 catalogHeading, in: app, probingBlockingSystemAlerts: false,
                 minimumSpaceBelow: app.windows.firstMatch.frame.height / 2
               ) else {
@@ -1794,7 +1793,7 @@ final class DulcetiOSUITests: XCTestCase {
             firstAlbum, in: app, probingBlockingSystemAlerts: false,
             maximumSwipes: 6 - headingSwipes
         ), firstAlbum.exists, firstAlbum.isHittable else {
-            XCTFail("Touch scrolling must reveal the Library's actual album catalog: " + app.debugDescription)
+            XCTFail("Touch scrolling must reveal Browse's actual album catalog: " + app.debugDescription)
             return nil
         }
         let catalogSwipes = headingSwipes + tileSwipes

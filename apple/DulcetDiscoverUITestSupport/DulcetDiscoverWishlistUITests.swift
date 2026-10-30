@@ -324,8 +324,10 @@ import UIKit
             if let root = try? app.snapshot() {
                 let nodes = descendants(root)
                 let sidebarSelected = nodes.contains { $0.identifier == "wishlist.destination" && $0.isSelected }
-                // sidebarAdaptable uses toolbar buttons on iPad, outside a tabBar node.
-                let libraryTabSelected = nodes.contains { $0.elementType == .button && $0.isSelected
+                // Native adaptable tabs expose buttons in the top bar and cells in the
+                // expanded iPad sidebar. Both retain the tab identity and selection.
+                let libraryTabSelected = nodes.contains {
+                    ($0.elementType == .button || $0.elementType == .cell) && $0.isSelected
                     && $0.identifier == "dulcet.tab.library" }
                     || nodes.filter { $0.elementType == .tabBar }.contains { tab in
                         descendants(tab).contains { $0.elementType == .button && $0.isSelected && $0.label == "Library" }
