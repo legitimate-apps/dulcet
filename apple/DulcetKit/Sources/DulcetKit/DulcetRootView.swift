@@ -510,6 +510,7 @@ private struct DulcetKeyboardShortcuts: View {
 
 /// Native tab chrome owns the accessory and adapts to a sidebar on iPad.
 private struct DulcetCompactShell: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable var store: DulcetPresentationStore
     @Binding var lastTab: DulcetSidebarDestination
     let onOpenPlayer: () -> Void
@@ -520,7 +521,7 @@ private struct DulcetCompactShell: View {
         if #available(iOS 26.1, *) {
             modernTabs
                 .tabViewStyle(.sidebarAdaptable)
-                .tabViewSearchActivation(.searchTabSelection)
+                .tabViewSearchActivation(horizontalSizeClass == .compact ? .searchTabSelection : .automatic)
                 .tabViewBottomAccessory(isEnabled: store.showsNowPlayingBar) {
                     DulcetNowPlayingBar(store: store, onOpen: onOpenPlayer)
                         .dulcetQueueDropTarget(store: store, cornerRadius: 12)
@@ -556,6 +557,7 @@ private struct DulcetCompactShell: View {
             } label: { tabLabel(.search) }
         }
         .searchable(text: $store.searchQuery, isPresented: $searchPresented, prompt: DulcetStrings.searchPrompt)
+        .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
         .onSubmit(of: .search) {
             store.librarySession?.rememberSearch(store.searchQuery)
         }

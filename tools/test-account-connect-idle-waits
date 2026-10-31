@@ -168,6 +168,9 @@ final class XCUIApplication: NSObject {
     var accountBacks = 0
     var phoneKeyboardFixture = false
     var phoneKeyboardVisible = false
+    var nativeSearchPresented = false
+    var nativeSearchCloses = 0
+    var searchFields: ElementQuery { ElementQuery(app: self, scope: "search-field") }
     var keyboards: ElementQuery { ElementQuery(app: self, scope: "keyboard") }
     var collectionViews: ElementQuery { ElementQuery(app: self, scope: "form") }
     func snapshot() throws -> XCUIElementSnapshot {
@@ -215,6 +218,7 @@ struct Element {
                      "presence polling must come from the same snapshot as geometry")
         precondition(key != "Sign Out" || !app.awaitingConnection,
                      "Sign Out must not traverse Library before Connection is opened")
+        if scope == "search-field" || key == "Close" { return app.nativeSearchPresented }
         // Captured iPad AX: the identifier belongs to the Button, while its text child has
         // only label "Connection". A text query must not invent that child's identifier.
         if key == "dulcet.account.open" { return app.nativeAccountFlow && !app.accountPresented }
@@ -307,6 +311,8 @@ struct Element {
     }
     var frame: CGRect {
         precondition(!app.forbidLiveGeometry, "geometry polling must not re-resolve live queries")
+        if scope == "search-field" { return CGRect(x: 10, y: 450, width: 300, height: 48) }
+        if key == "Close" { return CGRect(x: 330, y: 450, width: 48, height: 48) }
         if key == "window" { return CGRect(x: 0, y: 0, width: 400, height: 800) }
         if app.swipes > 0 {
             let positions = [300.0, 200.0, 100.0]
@@ -319,6 +325,12 @@ struct Element {
     func waitForExistence(timeout: TimeInterval) -> Bool { exists }
     func waitForNonExistence(timeout: TimeInterval) -> Bool { !exists }
     func tap() {
+        if key == "Close", app.nativeSearchPresented {
+            app.nativeSearchPresented = false
+            app.nativeSearchCloses += 1
+            return
+        }
+        precondition(!app.nativeSearchPresented, "end native search before navigating behind its presentation")
         if scope == "navigation-button", key == "Account" {
             precondition(app.accountPresented && app.accountPage != "Account")
             app.accountPage = "Account"; app.accountBacks += 1; return
@@ -429,6 +441,13 @@ struct Check {
         precondition(proof.openDestination("Search", sidebarIdentifier: "search", in: app, compact: true))
         precondition(app.selectedTab == "Search" && app.navigationTaps == 1)
         print("compact destination / observed selection: PASS")
+        let searchApp = XCUIApplication()
+        searchApp.selectedTab = "Search"
+        searchApp.nativeSearchPresented = true
+        precondition(proof.openDestination("Library", sidebarIdentifier: "library", in: searchApp, compact: true))
+        precondition(searchApp.nativeSearchCloses == 1 && searchApp.selectedTab == "Library"
+                     && searchApp.navigationTaps == 1)
+        print("native compact search / actual Close before destination selection: PASS")
         app.selectedTab = "Connection"
         app.ignoredNavigationTaps = 1
         precondition(proof.openDestination("Search", sidebarIdentifier: "search", in: app, compact: true))

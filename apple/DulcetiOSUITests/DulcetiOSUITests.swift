@@ -325,6 +325,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         app.tabBars.buttons["Search"].firstMatch.tap()
         XCTAssertTrue(dulcetSearchField(in: app).waitForExistence(timeout: 5),
                       "The Search tab must show search")
+        // Immediate native search presents the keyboard over the bottom accessory. End
+        // search and visit another content tab before judging the player's visibility.
+        guard openDestination("Listen Now", sidebarIdentifier: "dulcet.sidebar.listenNow", in: app, compact: true) else { return }
         XCTAssertTrue(bar.waitForExistence(timeout: 5) && self.playerElementIsHittable(bar),
                       "The now-playing bar must stay on screen on another tab")
 
@@ -346,7 +349,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         XCTAssertTrue(bar.waitForExistence(timeout: 5), "The bar must remain after the player closes")
 
         // 4. Each tab keeps its own navigation stack. The album opened under Library is still
-        //    open when Library is chosen again from Search, and choosing Library while it is the
+        //    open when Library is chosen again from Listen Now, and choosing Library while it is the
         //    selected tab returns it to the grid, as every tab bar does. This is the per-tab form
         //    of choosing a sidebar destination again, which a compact window once handled by
         //    stranding the person on an empty column.
@@ -364,12 +367,12 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         app.tabBars.buttons["Search"].firstMatch.tap()
         XCTAssertTrue(dulcetSearchField(in: app).waitForExistence(timeout: 5),
                       "The Search tab must show search")
-        libraryTab.tap()
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return }
         let gridKept = album.waitForExistence(timeout: 5) && !title.exists
         XCTAssertTrue(gridKept, "Library must come back on the grid it was left on")
         // Observed values, not a verdict: a line printed after a failed assertion must not read
         // as a pass.
-        print("DULCET COMPACT SHELL OBSERVED bar-on-search=\(bar.exists)"
+        print("DULCET COMPACT SHELL OBSERVED bar-after-native-search=\(bar.exists)"
             + " album-kept=\(albumKept) reselect-popped=\(reselectPopped) grid-shown=\(gridShown)"
             + " grid-kept=\(gridKept)")
     }
@@ -978,6 +981,20 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     private func openDestination(
         _ tabTitle: String, sidebarIdentifier: String, in app: XCUIApplication, compact: Bool
     ) -> Bool {
+        if tabTitle != "Search" {
+            let field = app.searchFields.firstMatch
+            let closeSearch = app.buttons["Close"].firstMatch
+            // The system's compact Search close control shares the field's row. It ends
+            // editing and restores native navigation; hiding the keyboard alone does not.
+            if field.exists, closeSearch.exists, closeSearch.isHittable,
+               abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
+                closeSearch.tap()
+                guard field.waitForNonExistence(timeout: 10) else {
+                    XCTFail("Native search must close before selecting \(tabTitle)")
+                    return false
+                }
+            }
+        }
         if tabTitle == "Connection" {
             if app.navigationBars["Account"].firstMatch.exists { return true }
             let close = app.buttons["dulcet.account.close"].firstMatch
