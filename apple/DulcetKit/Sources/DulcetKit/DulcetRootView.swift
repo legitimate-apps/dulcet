@@ -303,6 +303,11 @@ private struct DulcetTVSectionNavigation: View {
                     }
                     .navigationDestination(for: DulcetReaderRoute.self) { route in
                         DulcetReaderRouteView(route: route).environment(\.dulcetReaderPage, route)
+                            // These full-screen pages hide the navigation bar. Keep Menu
+                            // bound to the visible stored route rather than leaving the app.
+                            .dulcetOnExitCommand(perform: store.canGoBackInLibrary ? {
+                                store.goBackInLibrary()
+                            } : nil)
                     }
                 }
                 .tabItem {
