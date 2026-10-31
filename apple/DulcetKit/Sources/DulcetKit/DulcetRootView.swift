@@ -556,13 +556,21 @@ private struct DulcetCompactShell: View {
                 tabPage(.search, systemAccessory: hasSystemAccessory)
             } label: { tabLabel(.search) }
         }
-        .searchable(text: $store.searchQuery, isPresented: $searchPresented, prompt: DulcetStrings.searchPrompt)
+        .searchable(text: $store.searchQuery, isPresented: Binding(
+            get: { store.selectedDestination == .search && searchPresented },
+            set: { searchPresented = $0 }
+        ), prompt: DulcetStrings.searchPrompt)
         .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
         .onSubmit(of: .search) {
             store.librarySession?.rememberSearch(store.searchQuery)
             // Automatic activation keeps the regular-width Search tab selected when
             // editing ends. Restore its navigation without discarding the results.
             if horizontalSizeClass == .regular { searchPresented = false }
+        }
+        .onChange(of: store.selectedDestination) { _, destination in
+            // Native Search dismissal can restore a content tab before its field's
+            // binding updates. Never carry active search into that restored page.
+            if destination != .search { searchPresented = false }
         }
         .onChange(of: store.searchFocusRequested) { _, requested in
             if requested {
