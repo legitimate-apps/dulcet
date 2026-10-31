@@ -1837,13 +1837,36 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             + " swipes=\(catalogSwipes) tile-hittable=\(firstAlbum.isHittable)")
         // The shelf is horizontal. At accessibility sizes the third fixture cover is
         // outside the window even after its shelf is vertically visible.
-        let shelf = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
+        let shelf = app.descendants(matching: .any)["dulcet.reader.home.recentlyAdded"]
+            .scrollViews.firstMatch
+        guard shelf.waitForExistence(timeout: 5) else {
+            XCTFail("Recently Added must expose its horizontal shelf: " + app.debugDescription)
+            return nil
+        }
         for _ in 0..<6 {
             if album.exists, window.frame.contains(CGPoint(x: album.frame.midX, y: album.frame.midY)),
                album.isHittable { break }
             guard shelf.exists else { break }
-            if album.exists, album.frame.midX < window.frame.minX { shelf.swipeRight() }
-            else { shelf.swipeLeft() }
+            // A full-velocity swipe can jump over the middle cover and oscillate back past
+            // it. Move half a cover slowly, within the actual shelf, so each pass advances.
+            let visible = shelf.frame.intersection(window.frame)
+            guard !visible.isEmpty else { break }
+            let movesRight = album.exists && album.frame.midX < visible.minX
+            let distance = min(visible.width * 0.35,
+                               max(44, (album.exists ? album.frame.width : visible.width) / 2))
+            let fromX = movesRight ? visible.minX + visible.width * 0.3
+                : visible.maxX - visible.width * 0.3
+            let toX = fromX + (movesRight ? distance : -distance)
+            print("DULCET SKIP PROBE SHELF target-x=\(album.exists ? album.frame.midX : -1)"
+                + " drag=\(toX - fromX)")
+            window.coordinate(withNormalizedOffset: CGVector(
+                dx: (fromX - window.frame.minX) / window.frame.width,
+                dy: (visible.midY - window.frame.minY) / window.frame.height))
+                .press(forDuration: 0.1, thenDragTo:
+                    window.coordinate(withNormalizedOffset: CGVector(
+                        dx: (toX - window.frame.minX) / window.frame.width,
+                        dy: (visible.midY - window.frame.minY) / window.frame.height)),
+                    withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 0.3)
         }
         guard scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
             XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
