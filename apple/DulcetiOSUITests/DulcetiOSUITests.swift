@@ -1479,10 +1479,17 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             field.tap()
             field.typeText("\n")
             XCTAssertTrue(albumResult.exists, "Submitting regular Search must retain its results")
-            // An inactive toolbar field may collapse to its native Search button.
-            // Reopen it to observe the retained query, then finish editing again.
+            // Wait for the submitted field to finish collapsing before the helper
+            // decides whether it needs to open the native toolbar Search button.
+            guard field.waitForNonExistence(timeout: 5) else {
+                XCTFail("Submitting regular Search must dismiss its active field")
+                return
+            }
             let resumedField = dulcetSearchField(in: app)
-            XCTAssertTrue(resumedField.waitForExistence(timeout: 5))
+            guard resumedField.waitForExistence(timeout: 5) else {
+                XCTFail("The native Search button must reopen the retained query")
+                return
+            }
             resumedField.tap()
             XCTAssertEqual(resumedField.value as? String, "Dou", "Submitting regular Search must retain its query")
             resumedField.typeText("\n")
