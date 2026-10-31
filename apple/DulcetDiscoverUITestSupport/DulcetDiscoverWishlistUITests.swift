@@ -328,6 +328,7 @@ import UIKit
 #endif
         let started = ProcessInfo.processInfo.systemUptime
         var requestedLibrary = false
+        var lazyRowScrolls = 0
         var lastNavigation = ""
         repeat {
             if let root = try? app.snapshot() {
@@ -362,6 +363,15 @@ import UIKit
                     } else {
                         activate(control)
                     }
+                } else if libraryTabSelected,
+                          nodes.contains(where: { $0.elementType == .navigationBar && $0.identifier == "Library" }),
+                          ProcessInfo.processInfo.systemUptime - started >= 5,
+                          lazyRowScrolls < 6 {
+                    // The Library Form only materializes nearby rows. Its reserved error status
+                    // can put Wishlist beyond the first page at accessibility text sizes.
+                    // Search with real bounded scrolling before requiring the row's snapshot.
+                    scrollContent(up: true, nodes: nodes)
+                    lazyRowScrolls += 1
                 } else if !requestedLibrary, nodes.contains(where: {
                     ($0.identifier == "dulcet.tab.library" || $0.elementType == .tabBar) && presented($0, in: root)
                 }) {
