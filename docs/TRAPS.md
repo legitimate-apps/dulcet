@@ -888,3 +888,18 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     The native proof records switch values/frame and app state. Capture those app lines across
     the proof, including failure, preserving its exact exit status. Keep assertions, native taps
     and testcase deadlines intact; a later green run alone does not prove a first-miss cause.
+
+76. **A cached Browse link can move while a restored route reconnects.** OBSERVED 2026-10-31:
+    conformance 41203389375's iPad depth proof restored its disposable route, selected Browse
+    and immediately resolved Recently Added's See All from the cached page. The retained
+    recording shows the offline banner disappearing and the link moving upward before the
+    synthesized tap; the recorded point then lies in the album row. The final hierarchy is
+    an unrelated album detail, so the expected album-list assertion correctly failed.
+    A fixture's network acknowledgment is not a reader reconnect acknowledgment. This proof's
+    second online album opening now requires the actual Online footer, disappearance of the
+    Reconnect control and the named link within the link's existing 30-second wait. Ordinary
+    cached/offline openings keep their existing behavior. Native input, album assertions and
+    testcase deadlines stay intact. `tools/test-library-reconnect-readiness` executes the actual
+    second opening through link activation: old source fails six of thirteen controls, while
+    the corrected source passes all thirteen, including delayed/failed reconnect and unchanged
+    cached/phone flows. That host control does not replace the next simulator proof.
