@@ -7,5 +7,6 @@ for output, key in (
     ("jdk", "jdk"),
     ("xcode", "xcode"),
     ("compile_sdk", "android-compile-sdk"),
+    ("android_emulator_build", "android-emulator-build"),
 ):
     print(f"{output}={versions[key]}")

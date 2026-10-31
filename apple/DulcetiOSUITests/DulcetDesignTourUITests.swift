@@ -14,7 +14,7 @@ import XCTest
 /// Each shot is an attachment named `<nn>-<screen>`. A screen that could not be reached is still
 /// photographed, as `<nn>-<screen>-UNREACHED`, and recorded as a failure, and the tour continues:
 /// one broken screen must not cost the reviewer every later one.
-final class DulcetDesignTourUITests: XCTestCase {
+final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     private struct TourServer {
         let url: String
         let username: String
@@ -492,7 +492,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         closePlayer(in: app)
         // Paused, from the now-playing bar, for the rest of the tour: the simulator's audio is the host's.
         let pause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
-        if pause.waitForExistence(timeout: 3), pause.label == "Pause", pause.isHittable { pause.tap() }
+        if pause.waitForExistence(timeout: 3), pause.label == "Pause", self.playerElementIsHittable(pause) { pause.tap() }
 
         step("playlists", app) {
             self.openPlaylists(in: app, compact: compact)

@@ -100,7 +100,7 @@ final class DulcetWindowWidthSettlementTests: XCTestCase {
     }
 }
 
-final class DulcetiOSUITests: XCTestCase {
+final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// Server cleanup a test registers once it has made something on the disposable server; run
     /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
     /// comes from XCTest's Swift overlay, which `tools/typecheck-xcuitest-sources` cannot resolve.
@@ -325,7 +325,7 @@ final class DulcetiOSUITests: XCTestCase {
         app.tabBars.buttons["Search"].firstMatch.tap()
         XCTAssertTrue(app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5),
                       "The Search tab must show search")
-        XCTAssertTrue(bar.waitForExistence(timeout: 5) && bar.isHittable,
+        XCTAssertTrue(bar.waitForExistence(timeout: 5) && self.playerElementIsHittable(bar),
                       "The now-playing bar must stay on screen on another tab")
 
         bar.tap()
@@ -1049,7 +1049,7 @@ final class DulcetiOSUITests: XCTestCase {
         while !surface.contains(where: \.exists), Date() < deadline {
             Thread.sleep(forTimeInterval: 0.25)
         }
-        if !surface.contains(where: \.exists), bar.exists, bar.isHittable {
+        if !surface.contains(where: \.exists), bar.exists, self.playerElementIsHittable(bar) {
             print("DULCET NOW PLAYING RETAP the first tap on the bar presented nothing in 15 s")
             bar.tap()
         }
@@ -2677,7 +2677,7 @@ final class DulcetiOSUITests: XCTestCase {
                 // XCTest can reject an element-to-element drag before sending any touch
                 // when it hit-tests the covered bar (hosted iPhone activities, 2026-10-18).
                 let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                    bar.exists && bar.isHittable
+                    bar.exists && self.playerElementIsHittable(bar)
                 }, object: nil)
                 guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
                     XCTFail("The bar must be hittable before preparing each native-menu drag")
@@ -3597,8 +3597,7 @@ final class DulcetiOSUITests: XCTestCase {
         // filtered to the one really on screen: the bar and the player both carry a play/pause,
         // and an offscreen match has no frame to tap (OBSERVED: kAXErrorCannotComplete).
         func playerButton(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+            visiblePlayerButton(label, in: app)
         }
         let pauseDeadline = Date().addingTimeInterval(15)
         var pause = playerButton("Pause")
@@ -3713,8 +3712,7 @@ final class DulcetiOSUITests: XCTestCase {
         guard playFromSearch("Thirty One Seconds", in: app, compact: compact) else { return }
         guard openNowPlayingFromBar(in: app, expectingTitle: "Thirty One Seconds") else { return }
         func playerButton(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+            visiblePlayerButton(label, in: app)
         }
         let pause = playerButton("Pause")
         XCTAssertNotNil(pause, "Now Playing must offer Pause: " + app.debugDescription)
@@ -4411,8 +4409,7 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func holdLyricsPlayback(in app: XCUIApplication) -> Bool {
         func visibleTransport(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { !$0.frame.isEmpty && $0.isHittable }
+            visiblePlayerButton(label, in: app)
         }
         if let pause = visibleTransport("Pause") { pause.tap() }
         let held = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -5201,18 +5198,11 @@ final class DulcetiOSUITests: XCTestCase {
         return stars
     }
 
-    /// The tappable player control labelled `label`. The hidden bar carries a second transport
-    /// row whose copies can leave between the query and a read of one of them; a lazily resolved
-    /// element's `frame` then records "Failed to get matching snapshot" as a test failure
-    /// (OBSERVED on main's hosted run 38666950484, element at index 1). Each candidate is read
-    /// through one throwing snapshot first, so a departed copy is skipped, and hittability is
-    /// asked only of a drawn, enabled one.
+    /// Re-query all transport copies, skipping departed or untappable hidden-bar copies.
     @MainActor
     private func visiblePlayerButton(_ label: String, in app: XCUIApplication) -> XCUIElement? {
-        app.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex.first { element in
-            guard let snapshot = try? element.snapshot(), snapshot.frame.width > 0, snapshot.isEnabled else { return false }
-            return element.isHittable
-        }
+        app.buttons.matching(NSPredicate(format: "label == %@", label))
+            .allElementsBoundByIndex.first { self.playerElementIsHittable($0) }
     }
 
     /// Returns to the proof's song through actual transport presses, then leaves it paused so
@@ -5472,8 +5462,7 @@ final class DulcetiOSUITests: XCTestCase {
         // on an iPad Pro 13-inch simulator before this pause: the first Next landed on the third
         // track, because the second had already started.
         func playerButton(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+            visiblePlayerButton(label, in: app)
         }
         let playerPause = playerButton("Pause")
         XCTAssertNotNil(playerPause, "The full-screen player must offer Pause while the album plays")
@@ -5522,10 +5511,11 @@ final class DulcetiOSUITests: XCTestCase {
         // 1376-point window, far below the footer.
         let playerColumn = (app.staticTexts.allElementsBoundByIndex + app.buttons.allElementsBoundByIndex)
             .filter {
-                let frame = $0.frame
+                guard let snapshot = try? $0.snapshot() else { return false }
+                let frame = snapshot.frame
                 return frame.width > 0 && frame.height > 0 && frame.maxX <= queueFrame.minX
                     && frame.minY >= title.frame.minY && windowFrame.contains(frame)
-                    && $0.identifier != "dulcet.debug.ui-markers" && $0.isHittable
+                    && snapshot.identifier != "dulcet.debug.ui-markers" && self.playerElementIsHittable($0)
             }
         let lowest = playerColumn.max { $0.frame.maxY < $1.frame.maxY }
         let playerBottom = lowest?.frame.maxY ?? .nan
@@ -5544,8 +5534,7 @@ final class DulcetiOSUITests: XCTestCase {
         // The player's own Next: the window also carries zero-size keyboard-shortcut buttons
         // with the same label, which a first match can land on.
         func playerNext() -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", "Next Track"))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+            visiblePlayerButton("Next Track", in: app)
         }
         XCTAssertNotNil(playerNext(), "The full-screen player must offer Next")
         playerNext()?.tap()
@@ -7152,7 +7141,7 @@ extension DulcetiOSUITests {
             up.press(forDuration: 0.05, thenDragTo: up.withOffset(CGVector(dx: 0, dy: -65)),
                      withVelocity: .slow, thenHoldForDuration: 0.5)
             XCTAssertTrue(title.waitForNonExistence(timeout: 3), "An early release must return to the mini-player")
-            XCTAssertTrue(bar.isHittable)
+            XCTAssertTrue(self.playerElementIsHittable(bar))
             bar.tap()
             XCTAssertTrue(title.waitForExistence(timeout: 5))
             let down = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
