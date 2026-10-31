@@ -134,7 +134,8 @@ internal fun MyLibraryHome(
         when {
             view == MyLibraryView.Downloaded -> DeviceSongs(account, session, actions, true, null)
             view == MyLibraryView.Playlists -> PlaylistsList(account, session, actions)
-            current == null || current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing ->
+            current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
+                current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty()) ->
                 StatementText("…", "mylibrary.loading")
             publication?.isEmpty() == true -> MyLibraryEmpty(openBrowse)
             else -> when (view) {

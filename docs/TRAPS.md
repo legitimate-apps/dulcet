@@ -929,3 +929,17 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     after a copied pending snapshot: the old assertion fails and the completion-aware read
     succeeds: old 18 tests / one failure, fixed 18 / zero. The proxy's production fixture
     behavior remains unchanged.
+
+79. **A My Library refresh retains cached rows; its loading state must not remove them.**
+    OBSERVED 2026-10-31: the core publishes `Syncing` with the existing album, artist and song
+    lists while its server read is suspended. Both Android My Library homes replaced those lists
+    with a loading placeholder for every `Syncing` publication; they also hid optimistic content
+    in `Never`. The placeholder now requires all three lists to be empty. Initial empty reads still
+    load, completed empty libraries still show the empty state, and cached content remains usable
+    after a failed refresh. Frozen Compose controls exercise retained IDs and actual row actions,
+    including TV focus and center-key activation: old phone **6 tests / 4 failures**, old TV
+    **6 / 3**; fixed **6 / 0** on each. Related phone **19 / 0** and TV **12 / 0** include the
+    unchanged wire/relaunch integration and existing screen tests. Core CI 41213409349 observed a
+    cached album present at its readiness check but absent at the next tap; the publication at that
+    instant was not retained, so its exact interleaving remains unobserved. The held-publication
+    regression proves the disappearance mechanism without a tap retry or a longer readiness wait.

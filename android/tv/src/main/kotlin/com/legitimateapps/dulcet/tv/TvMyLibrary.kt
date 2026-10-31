@@ -98,7 +98,8 @@ internal fun TvMyLibraryHome(
         item { TvLibraryPins(account, session, playback, navigator); TvConnectionNotices(session, accountNotices = true) }
         val current = publication
         when {
-            current == null || current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing ->
+            current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
+                current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty()) ->
                 item { TvStatement("…", "mylibrary.loading") }
             current.tvIsEmpty() -> item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
