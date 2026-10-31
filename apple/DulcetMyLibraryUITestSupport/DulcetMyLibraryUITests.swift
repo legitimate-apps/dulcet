@@ -642,6 +642,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 closeSearch.tap()
                 XCTAssertTrue(field.waitForNonExistence(timeout: 10), "Close native Search before changing destination")
                 guard !field.exists else { return }
+            } else if UIDevice.current.userInterfaceIdiom == .pad, field.exists, field.isHittable {
+                field.tap()
+                field.typeText("\n")
             }
         }
         // A saved/debug connection can leave Account presented above the landing page.

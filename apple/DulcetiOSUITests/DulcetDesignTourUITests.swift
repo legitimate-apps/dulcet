@@ -1010,6 +1010,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
                 closeSearch.tap()
                 guard field.waitForNonExistence(timeout: 10) else { return false }
+            } else if !compact, field.exists, field.isHittable {
+                field.tap()
+                field.typeText("\n")
             }
         }
         if tab == "Connection" {

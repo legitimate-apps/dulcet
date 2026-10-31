@@ -560,6 +560,9 @@ private struct DulcetCompactShell: View {
         .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
         .onSubmit(of: .search) {
             store.librarySession?.rememberSearch(store.searchQuery)
+            // Automatic activation keeps the regular-width Search tab selected when
+            // editing ends. Restore its navigation without discarding the results.
+            if horizontalSizeClass == .regular { searchPresented = false }
         }
         .onChange(of: store.searchFocusRequested) { _, requested in
             if requested {

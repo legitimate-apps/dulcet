@@ -993,6 +993,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                     XCTFail("Native search must close before selecting \(tabTitle)")
                     return false
                 }
+            } else if !compact, field.exists, field.isHittable {
+                // iPad has no compact Close button. Submit through the real field to
+                // finish editing and restore the native destination controls.
+                field.tap()
+                field.typeText("\n")
             }
         }
         if tabTitle == "Connection" {
@@ -1469,6 +1474,19 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                 + app.debugDescription)
         let albumRank = albumResult.exists ? albumResult.identifier : "<none>"
         _ = dismissKeyboardIfPresent(in: app)
+
+        if !compact {
+            field.tap()
+            field.typeText("\n")
+            XCTAssertTrue(albumResult.exists, "Submitting regular Search must retain its results")
+            // An inactive toolbar field may collapse to its native Search button.
+            // Reopen it to observe the retained query, then finish editing again.
+            let resumedField = dulcetSearchField(in: app)
+            XCTAssertTrue(resumedField.waitForExistence(timeout: 5))
+            resumedField.tap()
+            XCTAssertEqual(resumedField.value as? String, "Dou", "Submitting regular Search must retain its query")
+            resumedField.typeText("\n")
+        }
 
         // 4. The automatic reconnect already completed; leave the fixture as it was found.
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {

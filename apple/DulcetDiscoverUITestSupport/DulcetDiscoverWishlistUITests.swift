@@ -140,6 +140,9 @@ import UIKit
                abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
                 activate(closeSearch)
                 XCTAssertTrue(field.waitForNonExistence(timeout: 10), "Close native Search before changing destination")
+            } else if UIDevice.current.userInterfaceIdiom == .pad, field.exists, field.isHittable {
+                field.tap()
+                field.typeText("\n")
             }
         }
         let close = app.buttons["dulcet.account.close"].firstMatch

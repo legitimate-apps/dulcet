@@ -172,6 +172,8 @@ final class XCUIApplication: NSObject {
     var nativeSearchPresented = false
     var nativeSearchAutoActivates = false
     var nativeSearchCloses = 0
+    var regularSearch = false
+    var nativeSearchSubmissions = 0
     var searchFields: ElementQuery { ElementQuery(app: self, scope: "search-field") }
     var keyboards: ElementQuery { ElementQuery(app: self, scope: "keyboard") }
     var collectionViews: ElementQuery { ElementQuery(app: self, scope: "form") }
@@ -220,7 +222,9 @@ struct Element {
                      "presence polling must come from the same snapshot as geometry")
         precondition(key != "Sign Out" || !app.awaitingConnection,
                      "Sign Out must not traverse Library before Connection is opened")
-        if scope == "search-field" || key == "Close" { return app.nativeSearchPresented }
+        if scope == "search-field" { return app.nativeSearchPresented }
+        if key == "Close" { return app.nativeSearchPresented && !app.regularSearch }
+        if app.regularSearch && app.nativeSearchPresented && (scope == "tab" || scope == "sidebar") { return false }
         if scope == "tab", key == "Search", app.nativeSearchAutoActivates, app.nativeSearchPresented { return false }
         // Captured iPad AX: the identifier belongs to the Button, while its text child has
         // only label "Connection". A text query must not invent that child's identifier.
@@ -331,7 +335,13 @@ struct Element {
     var label: String { key == "dulcet.account-connect.primary-action" ? "Sign In" : "Sign Out" }
     func waitForExistence(timeout: TimeInterval) -> Bool { exists }
     func waitForNonExistence(timeout: TimeInterval) -> Bool { !exists }
+    func typeText(_ text: String) {
+        precondition(scope == "search-field" && app.regularSearch && app.nativeSearchPresented && text == "\n")
+        app.nativeSearchSubmissions += 1
+        app.nativeSearchPresented = false
+    }
     func tap() {
+        if scope == "search-field", app.regularSearch, app.nativeSearchPresented { return }
         if key == "Close", app.nativeSearchPresented {
             app.nativeSearchPresented = false
             app.nativeSearchCloses += 1
@@ -456,6 +466,19 @@ struct Check {
         precondition(searchApp.nativeSearchCloses == 1 && searchApp.selectedTab == "Library"
                      && searchApp.navigationTaps == 1)
         print("native compact search / actual Close before destination selection: PASS")
+        for tour in [false, true] {
+            let regular = XCUIApplication()
+            regular.regularSearch = true
+            regular.selectedTab = "Search"
+            regular.nativeSearchPresented = true
+            precondition(!regular.tabBars.buttons["Library"].exists && !regular.buttons["Close"].exists)
+            let opened = tour
+                ? proof.openDesignTourDestination("Library", sidebar: "library", in: regular, compact: false)
+                : proof.openDestination("Library", sidebarIdentifier: "library", in: regular, compact: false)
+            precondition(opened && regular.nativeSearchSubmissions == 1 && regular.nativeSearchCloses == 0
+                         && !regular.nativeSearchPresented && regular.selectedTab == "Library")
+        }
+        print("native regular Search / actual Return before destination selection: PASS")
         for tour in [false, true] {
             let immediate = XCUIApplication()
             immediate.nativeSearchAutoActivates = true
