@@ -28,7 +28,7 @@ public struct DulcetPlaybackMenuState: Sendable, Hashable {
         case .previous:
             return nowPlaying.canGoPrevious
         case .seekForward, .seekBackward:
-            return nowPlaying.seekability == .seekable
+            return nowPlaying.seekability == .seekable && nowPlaying.duration != nil
         case .playPause, .toggleShuffle, .cycleRepeat:
             return true
         }
@@ -51,7 +51,7 @@ public struct DulcetPlaybackMenuState: Sendable, Hashable {
             return .cycleRepeat
         case .seekForward:
             return .seek(min(
-                nowPlaying.current.duration,
+                nowPlaying.duration ?? nowPlaying.elapsed,
                 nowPlaying.elapsed + Self.seekInterval
             ))
         case .seekBackward:

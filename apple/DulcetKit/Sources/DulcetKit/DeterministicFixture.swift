@@ -425,7 +425,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
                 shuffle: current.shuffleEnabled
             )
         case let .seek(position):
-            playing = current.replacing(isPlaying: current.isPlaying, elapsed: min(current.current.duration, max(.zero, position)))
+            playing = current.replacing(isPlaying: current.isPlaying, elapsed: min(current.duration ?? position, max(.zero, position)))
         case .next, .previous, .setShuffle, .cycleRepeat, .retry:
             break
         }

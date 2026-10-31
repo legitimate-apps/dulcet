@@ -450,7 +450,6 @@ internal fun TvSearchResult(
     onMoveUp: (() -> Unit)? = null,
     onActivate: () -> Unit,
 ) {
-    val playable = result.type != SearchResultType.Track || result.duration != null
     var adding by remember { mutableStateOf(false) }
     if (addition != null) TvAddToUpNext(if (adding) addition else null) { adding = false }
     Row(
@@ -459,7 +458,7 @@ internal fun TvSearchResult(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Card(
-            onClick = { if (playable) onActivate() },
+            onClick = onActivate,
             modifier = Modifier
                 .weight(1f)
                 .focusRequester(focusRequester)
@@ -468,7 +467,7 @@ internal fun TvSearchResult(
                     // is kept from seeing it: it clicked on the release of a press this handler had also
                     // acted on, and every result opened twice (Back then left a duplicate on top).
                     if (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter) {
-                        if (event.type == KeyEventType.KeyUp && playable) onActivate()
+                        if (event.type == KeyEventType.KeyUp) onActivate()
                         return@onPreviewKeyEvent true
                     }
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -506,7 +505,7 @@ internal fun TvSearchResult(
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(libraryResources().trackDisplayTitle(result.title), style = MaterialTheme.typography.titleLarge, maxLines = 1,
                         overflow = TextOverflow.Ellipsis)
-                    Text(listOfNotNull(stringResource(result.type.label()), note, stringResource(com.legitimateapps.dulcet.shared.R.string.library_duration_required).takeIf { !playable }).joinToString(" · "),
+                    Text(listOfNotNull(stringResource(result.type.label()), note).joinToString(" · "),
                         style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }

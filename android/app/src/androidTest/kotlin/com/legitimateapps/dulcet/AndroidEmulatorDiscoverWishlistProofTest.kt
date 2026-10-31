@@ -637,10 +637,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun query(value:String) {awaitTag("discover.search.field");compose.onNodeWithTag("discover.search.field").performTextReplacement(value)}
     private fun openWishlist(){if(exists("player.close"))click("player.close");click("library.open");click("wishlist.open");awaitTag("wishlist.surface")}
     private fun reconnect(activity:ActivityScenario<MainActivity>) {
+        // LibraryLifecycle.ON_START initiates reconnect. Callers wait for its server/UI
+        // outcome; a manual fallback can retire between observing its tag and clicking it.
         activity.moveToState(Lifecycle.State.CREATED);activity.moveToState(Lifecycle.State.RESUMED)
-        if(exists("library.reconnect"))click("library.reconnect")
-        else if(exists("library.connection.retry"))click("library.connection.retry")
-        else if(exists("wishlist.refresh"))click("wishlist.refresh")
     }
     private fun addAccountThroughUi(url:String,user:String,password:String) {
         beginAccountThroughUi(url,user,password)
