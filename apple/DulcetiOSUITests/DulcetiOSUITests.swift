@@ -1809,6 +1809,16 @@ final class DulcetiOSUITests: XCTestCase {
         let catalogSwipes = headingSwipes + tileSwipes
         print("DULCET SKIP PROBE CATALOG initially-reachable=\(catalogInitiallyReachable)"
             + " swipes=\(catalogSwipes) tile-hittable=\(firstAlbum.isHittable)")
+        // The shelf is horizontal. At accessibility sizes the third fixture cover is
+        // outside the window even after its shelf is vertically visible.
+        let shelf = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
+        for _ in 0..<6 {
+            if album.exists, window.frame.contains(CGPoint(x: album.frame.midX, y: album.frame.midY)),
+               album.isHittable { break }
+            guard shelf.exists else { break }
+            if album.exists, album.frame.midX < window.frame.minX { shelf.swipeRight() }
+            else { shelf.swipeLeft() }
+        }
         guard scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
             XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
                 + "tools/seed-skip-probe: " + app.debugDescription)
