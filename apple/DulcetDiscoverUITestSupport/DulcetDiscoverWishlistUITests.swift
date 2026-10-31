@@ -223,7 +223,11 @@ import UIKit
 #endif
         XCTAssertTrue(everywhere.waitForExistence(timeout: 15), "Missing Search Everywhere scope: " + app.debugDescription)
         activate(everywhere)
+#if os(iOS)
+        let field = dulcetSearchField(in: app, identifier: "discover.query")
+#else
         let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "discover.query", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+#endif
         if !field.exists {
             // Switching scopes is the public way to return from a retained metadata stack.
             activate(app.buttons["Your server"].firstMatch); activate(everywhere)
@@ -556,7 +560,11 @@ import UIKit
         let revision = try scenario("delayed-old-query")
         try search("old")
         try effect("delayed-old-query", revision: revision, flag: "held")
+#if os(iOS)
+        let field = dulcetSearchField(in: app, identifier: "discover.query")
+#else
         let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "discover.query", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+#endif
         activate(field)
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "Fixture")
 #if os(iOS)

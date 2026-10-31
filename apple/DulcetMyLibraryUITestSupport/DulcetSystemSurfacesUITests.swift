@@ -59,7 +59,11 @@ final class DulcetSystemSurfacesUITests: XCTestCase {
         let app = try connectedApp(proofFlag: "DULCET_WIDGET_HOST_PROOF")
         let sidebar = app.descendants(matching: .any)["dulcet.sidebar.search"].firstMatch
         if sidebar.exists { sidebar.tap() } else { app.tabBars.buttons["Search"].tap() }
+#if os(iOS)
+        let search = dulcetSearchField(in: app)
+#else
         let search = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+#endif
         XCTAssertTrue(search.waitForExistence(timeout: 10), app.debugDescription)
         search.tap()
         search.typeText("UI Playback Canary")

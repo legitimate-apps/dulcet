@@ -595,11 +595,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         step("search-landing", app) {
             self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact)
-                && app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+                && dulcetSearchField(in: app).waitForExistence(timeout: 10) && self.settle(app)
         }
         step("search", app) {
             guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
-            let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+            let field = dulcetSearchField(in: app)
             guard field.waitForExistence(timeout: 10) else { return false }
             field.tap()
             field.typeText("Threshold")
@@ -608,7 +608,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return self.settle(app)
         }
         step("search-recents", app) {
-            let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+            let field = dulcetSearchField(in: app)
             guard field.exists else { return false }
             field.tap(); field.typeText("\n")
             field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
@@ -616,7 +616,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
         }
         step("search-empty", app) {
-            let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+            let field = dulcetSearchField(in: app)
             guard field.exists else { return false }
             field.tap(); field.typeText("BaselineAbsentQuery75319")
             self.dismissKeyboard(in: app)

@@ -323,7 +323,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                       "The bar must offer Next")
 
         app.tabBars.buttons["Search"].firstMatch.tap()
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(dulcetSearchField(in: app).waitForExistence(timeout: 5),
                       "The Search tab must show search")
         XCTAssertTrue(bar.waitForExistence(timeout: 5) && self.playerElementIsHittable(bar),
                       "The now-playing bar must stay on screen on another tab")
@@ -362,7 +362,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                         + app.debugDescription)
         // The grid is now the Library tab's page, so a round trip must not bring the album back.
         app.tabBars.buttons["Search"].firstMatch.tap()
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(dulcetSearchField(in: app).waitForExistence(timeout: 5),
                       "The Search tab must show search")
         libraryTab.tap()
         let gridKept = album.waitForExistence(timeout: 5) && !title.exists
@@ -1410,7 +1410,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
             return
         }
-        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+        let field = dulcetSearchField(in: app)
         guard field.waitForExistence(timeout: 5) else {
             XCTFail("The search field must exist: " + app.debugDescription)
             return
@@ -2488,7 +2488,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
               let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: true),
               openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
-        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+        let field = dulcetSearchField(in: app)
         guard field.waitForExistence(timeout: 10) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return
@@ -4252,7 +4252,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
             return false
         }
-        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+        let field = dulcetSearchField(in: app)
         guard field.waitForExistence(timeout: 10) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return false
@@ -5587,7 +5587,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // The sidebar keeps each destination as it was left: Library comes back on the album
         // after Search, and choosing Library while it is showing returns it to the grid.
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: false),
-              app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch.waitForExistence(timeout: 5) else {
+              dulcetSearchField(in: app).waitForExistence(timeout: 5) else {
             XCTFail("Search must be reachable from the sidebar")
             return
         }
@@ -5672,7 +5672,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             compact: windowExpectation == .compactWidth
         ) else { return }
 
-        let searchField = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+        let searchField = dulcetSearchField(in: app)
         // MEASURED before the tab bar replaced the compact sidebar: 38 of 38 successful CI
         // executions resolved this on the first poll. Exhausting the budget means the Search
         // destination never rendered.
@@ -6770,7 +6770,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: true,
                                         extraArguments: ["-dulcet-debug-download-handoff", namespace]),
               openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
-        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+        let field = dulcetSearchField(in: app)
         guard field.waitForExistence(timeout: 10) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return
