@@ -5,7 +5,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
-import kotlin.time.Clock
 
 /** One account's durable state and server deadline, owned and retired by LibraryReaderSession. */
 internal class DiscoverAccount(
@@ -14,12 +13,14 @@ internal class DiscoverAccount(
     private val fulfilled:()->Unit,
 ) {
     val store=DiscoverStore(database,reader.cache.serverId)
-    private val lifetime=reader.captureRequestAuthorization()
+    private var lifetime=reader.captureRequestAuthorization()
     private var retired=false
     private val clients=mutableSetOf<SessionDiscoverClient>()
     private val lock=Mutex()
     private var extensionRevision=-1L
-    private val backoff=DiscoverBackoff({Clock.System.now().toEpochMilliseconds()})
+    private val backoff=DiscoverBackoff(reader.cache::now,reader.config.monotonic) { wait ->
+        if(active() && store.pendingCount()!=0L) reader.retryWishesAfter(wait)
+    }
     private var extensions:Map<String,Set<Int>>?=try {
         store.read("capabilities")?.let {bytes -> Json.parseToJsonElement(bytes.decodeToString()).jsonObject.mapValues {(_,v)->v.jsonArray.map {it.jsonPrimitive.int}.toSet()} }
     } catch (_:Exception) {null}
@@ -27,8 +28,8 @@ internal class DiscoverAccount(
     private fun active()=!retired && lifetime()
     private fun gates():DiscoverFeatureAccess = if(active()) access else access.copy(
         error=DiscoverFailure("identity-changed",null,false),canSearch=false,canReadWishlist=false,canAddWish=false,canRemoveWish=false,canRejectMatch=false)
-    private val restWishlist=RestWishlistTransport(reader)
-    private val restDiscover=RestDiscoverTransport(reader)
+    private val restWishlist=RestWishlistTransport(reader,reader.cache::now)
+    private val restDiscover=RestDiscoverTransport(reader,reader.cache::now)
     private val wishlistTransport=object:WishlistTransport {
         override suspend fun snapshot(filter:WishFilter):DiscoverResult<WishListSnapshot> = gated({it.canReadWishlist}) {restWishlist.snapshot(filter)}
         override suspend fun wish(id:String):DiscoverResult<DiscoverWish> = gated({it.canReadWishlist}) {restWishlist.wish(id)}
@@ -49,7 +50,7 @@ internal class DiscoverAccount(
         override suspend fun playlist(mbid:String,cursor:String?,limit:Int)=gated({it.canSearch}) {restDiscover.playlist(mbid,cursor,limit)}
         override suspend fun artwork(artworkId:String)=gated({it.canSearch}) {restDiscover.artwork(artworkId)}
     }
-    val outbox=WishOutbox(store,wishlistTransport,::gates,::active,{reader.canSend},backoff=backoff,changed=::changed)
+    val outbox=WishOutbox(store,wishlistTransport,::gates,::active,{reader.canSend},backoff=backoff,changed=::changed,captureAuthorization=reader::captureRequestAuthorization)
     private fun changed(){clients.toList().forEach {it.publish()}}
     private suspend fun detect(force:Boolean=false) = lock.withLock {
         if(!active()) {changed();return@withLock}
@@ -68,19 +69,30 @@ internal class DiscoverAccount(
         changed()
     }
     private suspend fun <T> gated(allowed:(DiscoverFeatureAccess)->Boolean,work:suspend ()->DiscoverResult<T>):DiscoverResult<T> {
+        val authorized=reader.captureRequestAuthorization()
         detect()
-        if(!active()) return failed("identity-changed")
+        if(!active() || !authorized()) return failed("identity-changed")
         val gates=gates()
         if(!allowed(gates)) return DiscoverResult.Failed(gates.error ?: DiscoverFailure("unsupported",null,false))
         backoff.error()?.let {return DiscoverResult.Failed(it)}
         val answer=work()
-        if(!active()) return failed("identity-changed")
+        if(!active() || !authorized()) return failed("identity-changed")
         if(answer is DiscoverResult.Failed) backoff.note(answer.error)
         return answer
     }
     suspend fun flush(){
         if(store.pendingCount()==0L || !active() || !reader.canSend) return
         withContext(OutboxRequests) {detect();outbox.flush()}
+        // A read may have imposed this deadline before the first wish was queued.
+        if(active() && store.pendingCount()!=0L) backoff.remaining()?.let(reader::retryWishesAfter)
+    }
+    /** The durable namespace stays bound; only validated reader authority is renewed. */
+    fun reauthorize(){
+        if(retired || active()) return
+        clients.toList().forEach {it.retireRequests()}
+        lifetime=reader.captureRequestAuthorization()
+        clients.toList().forEach {it.renewRequests()}
+        backoff.remaining()?.let {if(store.pendingCount()!=0L)reader.retryWishesAfter(it)}
     }
     fun revalidate(){
         if(retired) return
@@ -91,7 +103,7 @@ internal class DiscoverAccount(
         reader.checkConfined()
         return SessionDiscoverClient().also {if(!retired)clients+=it else it.close()}
     }
-    fun close(){retired=true;clients.toList().forEach {it.close()};outbox.close()}
+    fun close(){retired=true;reader.cancelWishRetry();clients.toList().forEach {it.close()};outbox.close()}
     private fun <T> failed(code:String):DiscoverResult<T> = DiscoverResult.Failed(DiscoverFailure(code,null,false))
 
     private inner class SessionDiscoverClient:DiscoverClient {
@@ -106,16 +118,31 @@ internal class DiscoverAccount(
         private var homeTicket=0L
         private var shelves=emptyList<DiscoverShelfState>()
         private val homeOperations=mutableListOf<DiscoverOperation>()
-        private val homeWishes=WishlistReader(store,wishlistTransport,outbox,::gates,{!closed&&active()},changed=::publish)
+        private fun newHomeWishes()=WishlistReader(store,wishlistTransport,outbox,::gates,{!closed&&active()},changed=::publish)
+        private var homeWishes=newHomeWishes()
         private var homeWishlistJob:Job?=null
         private fun home():DiscoverHome? = if(!visibleHome) null else DiscoverHome(shelves,recentDiscoverWishes(homeWishes.rows),homeWishes.loading,homeWishes.settled,homeWishes.error)
         private var visibleWishlist=false
         private var filter=WishFilter()
         private var refreshing:Job?=null
-        private val wishlist=WishlistReader(store,wishlistTransport,outbox,::gates,{!closed&&active()},
+        private fun newWishlist()=WishlistReader(store,wishlistTransport,outbox,::gates,{!closed&&active()},
             onFulfilled={fulfilled()},changed=::publish)
-        private val search=DiscoverSearch(scope,discoverTransport,store,backoff,{reader.online},{!closed&&active()}) {text,value ->query=text;groups=value;publish()}
-        private val pages=DiscoverPages(scope,discoverTransport,store,{reader.online},{!closed&&active()},backoff)
+        private fun newSearch()=DiscoverSearch(scope,discoverTransport,store,backoff,{reader.online},{!closed&&active()}) {text,value ->query=text;groups=value;publish()}
+        private fun newPages()=DiscoverPages(scope,discoverTransport,store,{reader.online},{!closed&&active()},backoff)
+        private var wishlist=newWishlist()
+        private var search=newSearch()
+        private var pages=newPages()
+        private var renewed=false
+        fun retireRequests(){
+            refreshing?.cancel();operations.toList().forEach {it.cancel()}
+            homeTicket++
+            homeOperations.toList().forEach {it.cancel()};homeOperations.clear()
+            homeWishlistJob?.cancel();homeWishlistJob=null
+            search.close();pages.close();wishlist.close();homeWishes.close()
+        }
+        fun renewRequests(){
+            wishlist=newWishlist();search=newSearch();pages=newPages();homeWishes=newHomeWishes();renewed=true
+        }
         override fun observe(listener:(DiscoverPublication)->Unit):DiscoverRegistration {
             reader.checkConfined()
             if(!closed){listeners+=listener;deliver(listener)}
@@ -200,11 +227,12 @@ internal class DiscoverAccount(
             reader.checkConfined()
             val operation=CommandOperation(completion);operations+=operation
             if(closed){operation.cancel();return operation}
+            val authorized=reader.captureRequestAuthorization()
             operation.job=scope.launch {
                 try {
                     detect()
-                    operation.finish(if(active())work() else failed("identity-changed"))
-                    if(active()) scope.launch {flush()}
+                    operation.finish(if(active() && authorized())work() else failed("identity-changed"))
+                    if(active() && authorized()) scope.launch {flush()}
                 } catch(cancelled:CancellationException){operation.cancel()}
                   catch(_:Exception){operation.finish(DiscoverResult.Failed(DiscoverFailure("storage",null,true)))}
             }
@@ -217,12 +245,15 @@ internal class DiscoverAccount(
                 // Library, ordinary reconnects on an unsupported server must add no probe.
                 // Explicit requests still redetect; unresolved answers still retry here.
                 val unresolved=access.detection!="known"
-                if(query.isNotEmpty() && (unresolved || access.discoverAvailable))search.revalidate()
+                if(query.isNotEmpty() && (unresolved || access.discoverAvailable)) {
+                    if(renewed)search.setQuery(query) else search.revalidate()
+                }
+                renewed=false
                 if(visibleWishlist && (unresolved || access.wishlistAvailable))refreshWishlist(filter)
                 if(visibleHome && (unresolved || access.discoverAvailable))refreshHome()
             }else {
                 if(!active()) {
-                    search.close();pages.close();homeWishes.close()
+                    retireRequests()
                     shelves=emptyList()
                     groups=groups.map {it.copy(loading=false,error=DiscoverFailure("identity-changed",null,false))}
                 }

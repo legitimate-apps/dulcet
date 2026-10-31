@@ -137,6 +137,60 @@ class DiscoverShelvesTest {
         navClient.close();parent.closeDiscoverClients();nav.closeDiscoverClients()
     }
 
+    @Test fun homeShelvesPlaylistsAndRecentWishesRecoverWithValidatedReaderAuthority() = readerTest {env ->
+        val ordinary=DiscoverSessionWire()
+        var recovered=false;var wishlistReads=0;var shelfReads=0;var epoch:Long?=0
+        val summary="""{"id":"public-mix","title":"Public mix","trackCount":1}"""
+        val wire=object:LibraryEndpointTransport by ordinary {
+            override suspend fun request(endpoint:String,parameters:Map<String,String>):LibraryEndpointResponse {
+                val child=when(endpoint) {
+                    "getDulcetDiscoverShelf" -> {
+                        shelfReads++
+                        if(parameters["id"]=="publicPlaylists") "\"dulcetDiscoverPlaylists\":{\"playlist\":[$summary]}"
+                        else "\"dulcetDiscover\":"+discoverPageJson()
+                    }
+                    "getDulcetWishlist" -> {
+                        wishlistReads++
+                        "\"dulcetWishlist\":{\"wish\":[${wishJson(if(recovered) "renewed-wish" else "initial-wish")}]}"
+                    }
+                    "searchDulcetDiscoverPlaylists" -> "\"dulcetDiscoverPlaylists\":{\"playlist\":[$summary]}"
+                    "getDulcetDiscoverPlaylist" -> "\"dulcetDiscoverPlaylist\":{\"summary\":$summary,\"entries\":{\"entry\":[{\"position\":1,\"item\":$discoverItemJson}]}}"
+                    else -> return ordinary.request(endpoint,parameters)
+                }
+                return LibraryEndpointResponse(200,discoverEnvelope(child),"https://fixture.invalid?<redacted>")
+            }
+        }
+        val parent=LibraryReaderSession(com.legitimateapps.dulcet.database.DulcetDatabase(env.driver),env.store.bind(ReaderEnv.BINDING),wire,
+            backgroundScope,config=LibraryReaderConfig(monotonic=testScheduler.timeSource),formPost=false,foreground=false,
+            identityAuthorization={epoch},validateServerIdentity={null})
+        parent.reader.connect()
+        val client=parent.openDiscoverClient();val pubs=mutableListOf<DiscoverPublication>()
+        client.observe {pubs+=it};client.refreshHome();runCurrent()
+        assertEquals("initial-wish",pubs.last().home!!.recentWishes.single().wish!!.id)
+        assertTrue(shelfReads>=6)
+        val wishlistReadsBefore=wishlistReads
+        assertTrue(wishlistReadsBefore>0)
+        epoch=null;parent.reader.rejectServerIdentity();runCurrent()
+        assertEquals("identity-changed",pubs.last().access.error?.code)
+        assertTrue(pubs.last().home!!.shelves.isEmpty())
+        recovered=true;epoch=1
+        assertIs<ReaderConnectionOutcome.Read>(parent.reader.reconnect());runCurrent()
+        val home=assertNotNull(pubs.last().home)
+        assertEquals(discoverShelfIds,home.shelves.map {it.id})
+        assertTrue(home.shelves.all {it.page!=null && !it.loading && it.error==null})
+        assertTrue(shelfReads>=12)
+        assertTrue(wishlistReads>wishlistReadsBefore,"accepted recovery must refresh the home wishes reader too")
+        assertTrue(home.wishesSettled);assertNull(home.wishesError)
+        assertEquals("renewed-wish",home.recentWishes.single().wish!!.id)
+        var list:DiscoverResult<DiscoverPlaylistList>?=null
+        client.playlists("",null){list=it};runCurrent()
+        assertEquals("public-mix",assertIs<DiscoverResult.Value<DiscoverPlaylistList>>(list).value.items.single().id)
+        var page:DiscoverResult<DiscoverPlaylist>?=null
+        client.playlist("public-mix",null){page=it};runCurrent()
+        assertEquals(1,assertIs<DiscoverResult.Value<DiscoverPlaylist>>(page).value.entries.single().position)
+        client.close();parent.closeDiscoverClients()
+    }
+
     @Test fun homeCacheReadFailurePublishesStorageWithoutEscapingReader() = readerTest {env ->
         val wire=DiscoverSessionWire()
         val parent=LibraryReaderSession(com.legitimateapps.dulcet.database.DulcetDatabase(env.driver),env.store.bind(ReaderEnv.BINDING),wire,

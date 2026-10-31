@@ -88,3 +88,25 @@ budget. It still requires the clipped scroll viewport, live hittability, center
 activation and the playlist's first entry. Other searches retain their established
 behavior. This change and the Wishlist scope correction require the authorized
 second conformance dispatch on the final head.
+
+## Integration with wish retry recovery
+
+The merge of main `2bf89f73` retains #400's request-authority capture, validated
+same-reader renewal, reader-owned retry timer and cancellation, monotonic server
+deadline, and growing client floor with acceptance reset. Discover home's shelf
+operations and home-wishes reader now retire and renew with the other client
+readers. Retirement invalidates the home ticket before cancelling its work.
+
+`DiscoverShelvesTest.homeShelvesPlaylistsAndRecentWishesRecoverWithValidatedReaderAuthority`
+fails on a simple combined resolution because the closed home-wishes reader never
+refreshes after acceptance. The resolved integration requires a new wishlist read
+and changed recent-wish ID, all six settled shelves, and successful public
+playlist list and page reads on the same client after reconnect.
+
+Merged-tree XML results: 120 focused JVM tests and 1,334 full JVM tests, each with
+zero failures, errors or skips. Native iOS simulator test sources compile;
+DulcetiOS, DulcetMac and DulcetTV `build-for-testing` pass (3/3). UI typechecking
+passes for five directories and 21 source entries; parity validates 44 feature
+rows and CI policy validates 13 workflows. Local Apple checks compile without
+executing simulator tests. Hosted Discover results on the merged head are still
+required.
