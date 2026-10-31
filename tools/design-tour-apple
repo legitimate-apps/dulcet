@@ -409,8 +409,10 @@ if want iphone; then
       run_ios_variant "iphone-$appearance-$size" "$IPHONE" "$appearance" "$category" portrait
     done
   done
-  run_ios_variant iphone-light-reduce-transparency "$IPHONE" light UICTContentSizeCategoryL portrait
+  # Reduce Transparency is enabled through Settings and persists on this shared device.
+  # Photograph contrast on its own first; transparency is the final phone variant.
   run_ios_variant iphone-light-increase-contrast "$IPHONE" light UICTContentSizeCategoryL portrait
+  run_ios_variant iphone-light-reduce-transparency "$IPHONE" light UICTContentSizeCategoryL portrait
   [[ $KEEP_SIMULATOR -eq 1 ]] || xcrun simctl shutdown "$IPHONE"
 fi
 if want ipad; then

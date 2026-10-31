@@ -21,6 +21,10 @@ on:
         description: Include the separate personal Library and Discover fixture tour
         type: boolean
         default: true
+      batch_iphone:
+        description: Reuse one hosted build for the five foundation iPhone review variants
+        type: boolean
+        default: false
       supplement_only:
         description: Reshoot the finite Library and Discover tour without the general tour
         type: boolean
@@ -67,6 +71,7 @@ jobs:
         env:
           REQUESTED_DEVICE: ${{ inputs.device }}
           REQUESTED_PHASE: ${{ inputs.phase }}
+          BATCH_IPHONE: ${{ inputs.batch_iphone || false }}
         run: |
           python3 - <<'PYTHON'
           import json, os
@@ -87,6 +92,8 @@ jobs:
                       "mobile-mac": {"iphone", "ipad", "mac"},
                       "iphone": {"iphone"}, "ipad": {"ipad"}, "mac": {"mac"}, "tvos": {"tvos"}}
           selected = [v for v in variants if v["device"] in families[requested]]
+          if os.environ["REQUESTED_PHASE"] == "foundation" and os.environ["BATCH_IPHONE"] == "true" and any(v["device"] == "iphone" for v in selected):
+              selected = [dict(device="iphone", variant="iphone-batch")] + [v for v in selected if v["device"] != "iphone"]
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               print("capture_matrix=" + json.dumps({"include": selected}), file=output)
           PYTHON
@@ -165,7 +172,10 @@ jobs:
           BASELINE_REF: ${{ inputs.baseline_ref }}
           PAIRED_VARIANTS: ${{ inputs.paired_variants }}
         run: |
-          if [[ "$CAPTURE_DEVICE" == iphone || "$CAPTURE_DEVICE" == ipad ]]; then
+          if [[ "$CAPTURE_VARIANT" == iphone-batch ]]; then
+            unset DULCET_DESIGN_TOUR_VARIANT
+            export DULCET_DESIGN_TOUR_SKIP_VARIANTS='iphone-light-xxl iphone-light-accessibility-l iphone-dark-xxl iphone-dark-accessibility-l iphone-dark-accessibility-xxxl'
+          elif [[ "$CAPTURE_DEVICE" == iphone || "$CAPTURE_DEVICE" == ipad ]]; then
             export DULCET_DESIGN_TOUR_VARIANT="$CAPTURE_VARIANT"
           fi
           DULCET_FFMPEG="$(command -v ffmpeg)"
