@@ -1003,6 +1003,15 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
 
     @MainActor
     private func openDestination(_ tab: String, sidebar: String, in app: XCUIApplication, compact: Bool) -> Bool {
+        if tab != "Search" {
+            let field = app.searchFields.firstMatch
+            let closeSearch = app.buttons["Close"].firstMatch
+            if field.exists, closeSearch.exists, closeSearch.isHittable,
+               abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
+                closeSearch.tap()
+                guard field.waitForNonExistence(timeout: 10) else { return false }
+            }
+        }
         if tab == "Connection" {
             if app.navigationBars["Account"].firstMatch.exists,
                app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch.exists { return true }
@@ -1023,6 +1032,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 return app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
             }
             let account = app.navigationBars.buttons["dulcet.account.open"].firstMatch
+            if !account.exists, !app.tabBars.buttons["Connection"].firstMatch.exists,
+               app.tabBars.buttons["Listen Now"].firstMatch.exists {
+                guard openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact) else { return false }
+            }
             if !account.exists, legacySidebar.exists, legacySidebar.isHittable { legacySidebar.tap(); return settle(app) }
             guard account.waitForExistence(timeout: 10), account.isHittable else { return false }
             account.tap()
@@ -1035,6 +1048,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             _ = settle(app, seconds: 1.2)
         }
         let nativeTab = app.tabBars.buttons[tab].firstMatch
+        if tab == "Search", app.searchFields.firstMatch.exists { return true }
         // The system exposes the same Tab as a Button on phone and a Cell in iPad's sidebar.
         let nativeSidebar = app.descendants(matching: .any)[sidebar.replacingOccurrences(of: "dulcet.sidebar.", with: "dulcet.tab.")].firstMatch
         let legacySidebar = app.descendants(matching: .any)[sidebar].firstMatch
@@ -1042,7 +1056,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         guard let button = [nativeTab, nativeSidebar, legacySidebar].first(where: { $0.exists && $0.isHittable }) else { return false }
         button.tap()
         if tab == "Library" || tab == "Browse" { button.tap() }
-        return waitFor(timeout: 5, { button.isSelected }) && settle(app, seconds: 1.2)
+        return waitFor(timeout: 5, {
+            (tab == "Search" && app.searchFields.firstMatch.exists) || (button.exists && button.isSelected)
+        }) && settle(app, seconds: 1.2)
     }
 
     @MainActor

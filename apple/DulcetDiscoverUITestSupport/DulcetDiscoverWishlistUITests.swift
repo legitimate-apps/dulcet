@@ -133,16 +133,27 @@ import UIKit
     }
     @discardableResult func select(_ section: String) -> XCUIElement {
 #if os(iOS)
+        if section != "search" {
+            let field = app.searchFields.firstMatch
+            let closeSearch = app.buttons["Close"].firstMatch
+            if field.exists, closeSearch.exists, closeSearch.isHittable,
+               abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
+                activate(closeSearch)
+                XCTAssertTrue(field.waitForNonExistence(timeout: 10), "Close native Search before changing destination")
+            }
+        }
         let close = app.buttons["dulcet.account.close"].firstMatch
         if section == "settings" {
             if close.exists { return close }
             let account = app.buttons["dulcet.account.open"].firstMatch
+            if !account.exists { select("listenNow") }
             XCTAssertTrue(account.waitForExistence(timeout: 30) && account.isHittable)
             activate(account)
             XCTAssertTrue(close.waitForExistence(timeout: 10))
             return account
         }
         if close.exists { activate(close); XCTAssertTrue(close.waitForNonExistence(timeout: 10)) }
+        if section == "search", app.searchFields.firstMatch.exists { return app.searchFields.firstMatch }
 #endif
 #if os(macOS)
         let row = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
@@ -198,11 +209,13 @@ import UIKit
         var destination = select("search")
         let everywhere = app.buttons["Everywhere"].firstMatch
 #if os(iOS)
-        // The selected Search tab or sidebar row identifies the destination before using Back.
+        // Immediate Search replaces its circle with a field; standard tabs retain selection.
         var selected = false
         for attempt in 0..<3 {
             if attempt > 0 { destination = select("search") }
-            let selection = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: destination)
+            let selection = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+                app.searchFields.firstMatch.exists || (destination.exists && destination.isSelected)
+            }, object: nil)
             if XCTWaiter.wait(for: [selection], timeout: 15) == .completed {
                 selected = true
                 break

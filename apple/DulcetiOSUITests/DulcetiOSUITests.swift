@@ -1000,6 +1000,10 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             let close = app.buttons["dulcet.account.close"].firstMatch
             if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
             let account = app.buttons["dulcet.account.open"].firstMatch
+            if !account.exists, !app.tabBars.buttons["Connection"].firstMatch.exists,
+               app.tabBars.buttons["Listen Now"].firstMatch.exists {
+                guard openDestination("Listen Now", sidebarIdentifier: "dulcet.sidebar.listenNow", in: app, compact: compact) else { return false }
+            }
             if account.exists {
                 guard account.isHittable else { return false }
                 account.tap()
@@ -1010,6 +1014,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         let close = app.buttons["dulcet.account.close"].firstMatch
         if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
+        if tabTitle == "Search", app.searchFields.firstMatch.exists { return true }
         let tab = app.tabBars.buttons[tabTitle].firstMatch
         let nativeSidebar = app.descendants(matching: .any)[sidebarIdentifier.replacingOccurrences(of: "dulcet.sidebar.", with: "dulcet.tab.")].firstMatch
         let legacySidebar = app.buttons[sidebarIdentifier].firstMatch
@@ -1019,12 +1024,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         // Re-selecting the current native tab resets its navigation stack. Keep an
         // existing selection and let callers use Back before opening their category.
-        if row.isSelected { return true }
+        func destinationReached() -> Bool {
+            if tabTitle == "Search", app.searchFields.firstMatch.exists { return true }
+            return row.exists && row.isSelected
+        }
+        if destinationReached() { return true }
         for _ in 0..<2 {
-            row.tap()
+            if row.exists, row.isHittable { row.tap() }
             let deadline = Date().addingTimeInterval(3)
             repeat {
-                if row.isSelected { return true }
+                if destinationReached() { return true }
                 Thread.sleep(forTimeInterval: 0.1)
             } while Date() < deadline
         }

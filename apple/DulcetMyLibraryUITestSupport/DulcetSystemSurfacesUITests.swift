@@ -70,6 +70,14 @@ final class DulcetSystemSurfacesUITests: XCTestCase {
         let song = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.search.result.' AND label CONTAINS 'UI Playback Canary'")).firstMatch
         XCTAssertTrue(song.waitForExistence(timeout: 30), app.debugDescription)
         song.tap()
+        // Immediate native Search keeps its keyboard over the bottom accessory. End
+        // that presentation before exercising the same visible player controls.
+        let closeSearch = app.buttons["Close"].firstMatch
+        if search.exists, closeSearch.exists, closeSearch.isHittable,
+           abs(closeSearch.frame.midY - search.frame.midY) < search.frame.height {
+            closeSearch.tap()
+            XCTAssertTrue(search.waitForNonExistence(timeout: 10), "Close Search before activating the player")
+        }
         try assertCanaryAdvances(in: app)
         let transport = app.buttons["dulcet.mini-player.play-pause"]
         XCTAssertEqual(transport.label, "Pause")
@@ -173,6 +181,13 @@ final class DulcetSystemSurfacesUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 20))
         let catalog = app.buttons["dulcet.library.album"].firstMatch
         XCTAssertTrue(catalog.waitForExistence(timeout: 40), "The disposable catalog must load before system execution: " + app.debugDescription)
+#if os(iOS)
+        let closeAccount = app.buttons["dulcet.account.close"].firstMatch
+        if closeAccount.exists {
+            closeAccount.tap()
+            XCTAssertTrue(closeAccount.waitForNonExistence(timeout: 10), "Dismiss Account before system playback and search")
+        }
+#endif
 
         return app
     }

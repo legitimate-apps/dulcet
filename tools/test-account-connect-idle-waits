@@ -53,7 +53,7 @@ open_destination = declaration('    private func openDestination(', navigation_s
 tour_path = 'apple/DulcetiOSUITests/DulcetDesignTourUITests.swift'
 tour_source = (subprocess.check_output(['git', 'show', f'{args.navigation_source_ref}:{tour_path}'], cwd=ROOT, text=True)
                if args.navigation_source_ref else (ROOT / tour_path).read_text())
-tour_destination = declaration('    private func openDestination(', tour_source).replace('func openDestination(', 'func openDesignTourDestination(', 1)
+tour_destination = declaration('    private func openDestination(', tour_source).replace('openDestination(', 'openDesignTourDestination(')
 scroll = method('scrollIntoView')
 keyboard_dismiss = method('dismissKeyboardIfPresent')
 if args.mutant == 'keyboard-sheet-dismiss':
@@ -161,6 +161,7 @@ final class XCUIApplication: NSObject {
     var ignoredNavigationTaps = 0
     var navigationTaps = 0
     var nativeAccountFlow = false
+    var nativeAccountNeedsRoot = false
     var accountPresented = false
     var accountOpens = 0
     var accountCloses = 0
@@ -169,6 +170,7 @@ final class XCUIApplication: NSObject {
     var phoneKeyboardFixture = false
     var phoneKeyboardVisible = false
     var nativeSearchPresented = false
+    var nativeSearchAutoActivates = false
     var nativeSearchCloses = 0
     var searchFields: ElementQuery { ElementQuery(app: self, scope: "search-field") }
     var keyboards: ElementQuery { ElementQuery(app: self, scope: "keyboard") }
@@ -219,9 +221,13 @@ struct Element {
         precondition(key != "Sign Out" || !app.awaitingConnection,
                      "Sign Out must not traverse Library before Connection is opened")
         if scope == "search-field" || key == "Close" { return app.nativeSearchPresented }
+        if scope == "tab", key == "Search", app.nativeSearchAutoActivates, app.nativeSearchPresented { return false }
         // Captured iPad AX: the identifier belongs to the Button, while its text child has
         // only label "Connection". A text query must not invent that child's identifier.
-        if key == "dulcet.account.open" { return app.nativeAccountFlow && !app.accountPresented }
+        if key == "dulcet.account.open" {
+            return app.nativeAccountFlow && !app.accountPresented
+                && (!app.nativeAccountNeedsRoot || app.selectedTab == "Listen Now")
+        }
         if key == "dulcet.account.close" { return app.nativeAccountFlow && app.accountPresented }
         if key == "Account" {
             return app.nativeAccountFlow && app.accountPresented
@@ -238,6 +244,7 @@ struct Element {
         return key == "Sign Out" && (scope == "root" ? !app.awaitingConnection && app.state != "signed-out" : scope == "sheet" && app.confirmationExists)
     }
     var isSelected: Bool {
+        precondition(exists, "selected state cannot resolve a native tab replaced by its search field")
         // A missed synthetic tap uses up this attempt's wait, without a real sleep.
         AccountWaitClock.offset += 4
         return app.selectedTab == key
@@ -348,6 +355,7 @@ struct Element {
             app.navigationTaps += 1
             if app.ignoredNavigationTaps > 0 { app.ignoredNavigationTaps -= 1 }
             else { app.selectedTab = key }
+            if key == "Search", app.nativeSearchAutoActivates { app.nativeSearchPresented = true }
             return
         }
         if key == "moving-button" {
@@ -448,6 +456,29 @@ struct Check {
         precondition(searchApp.nativeSearchCloses == 1 && searchApp.selectedTab == "Library"
                      && searchApp.navigationTaps == 1)
         print("native compact search / actual Close before destination selection: PASS")
+        for tour in [false, true] {
+            let immediate = XCUIApplication()
+            immediate.nativeSearchAutoActivates = true
+            let opened = tour
+                ? proof.openDesignTourDestination("Search", sidebar: "search", in: immediate, compact: true)
+                : proof.openDestination("Search", sidebarIdentifier: "search", in: immediate, compact: true)
+            precondition(opened && immediate.nativeSearchPresented && immediate.navigationTaps == 1)
+            precondition(!immediate.tabBars.buttons["Search"].exists,
+                         "the field must be the positive acknowledgment after the native tab disappears")
+        }
+        print("native Search replaces its tab / main and tour positive destination acknowledgment: PASS")
+        for tour in [false, true] {
+            let pushed = XCUIApplication()
+            pushed.nativeAccountFlow = true
+            pushed.nativeAccountNeedsRoot = true
+            pushed.selectedTab = "Library"
+            let opened = tour
+                ? proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: pushed, compact: true)
+                : proof.openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: pushed, compact: true)
+            precondition(opened && pushed.navigationTaps == 1 && pushed.accountOpens == 1
+                         && pushed.selectedTab == "Listen Now" && pushed.accountPresented)
+        }
+        print("root-only Account / return through native Listen Now before opening: PASS")
         app.selectedTab = "Connection"
         app.ignoredNavigationTaps = 1
         precondition(proof.openDestination("Search", sidebarIdentifier: "search", in: app, compact: true))

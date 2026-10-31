@@ -634,6 +634,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     @MainActor private func selectDestination(_ section: String) {
 #if os(iOS)
+        if section != "search" {
+            let field = app.searchFields.firstMatch
+            let closeSearch = app.buttons["Close"].firstMatch
+            if field.exists, closeSearch.exists, closeSearch.isHittable,
+               abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
+                closeSearch.tap()
+                XCTAssertTrue(field.waitForNonExistence(timeout: 10), "Close native Search before changing destination")
+                guard !field.exists else { return }
+            }
+        }
         // A saved/debug connection can leave Account presented above the landing page.
         // Its underlying tab frames remain queryable but cannot receive the tap.
         let accountClose = app.buttons["dulcet.account.close"].firstMatch
@@ -655,6 +665,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
 #endif
         }
+#if os(iOS)
+        if section == "search", app.searchFields.firstMatch.exists { return }
+#endif
         let control = destination(section)
         XCTAssertTrue(control.waitForExistence(timeout: 30), "Missing destination \(section)")
 #if os(tvOS)
@@ -702,22 +715,27 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #if os(iOS)
         // Adaptable tabs can be top-bar Buttons or sidebar Cells on iPad. Observe
         // the destination returned by the native query instead of assuming the legacy
-        // sidebar identifier exists. A tap is acknowledged only by selected state.
+        // sidebar identifier exists. Immediate Search replaces its tab button with a field.
+        // Other destinations still require the selected state of their existing control.
+        func destinationReached() -> Bool {
+            if section == "search", app.searchFields.firstMatch.exists { return true }
+            return control.exists && control.isSelected
+        }
         let deadline = Date().addingTimeInterval(10)
         var retries = 0
         repeat {
             let remaining = max(0, deadline.timeIntervalSince(Date()))
-            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in destinationReached() }, object: nil)
             if XCTWaiter.wait(for: [selected], timeout: min(3, remaining)) == .completed { return }
             guard Date() < deadline else { break }
-            if retries < 2, Date() < deadline {
+            if retries < 2, Date() < deadline, control.exists, control.isHittable {
                 retries += 1
                 print("MY LIBRARY IOS unacknowledged-destination-tap target=\(section) retry=\(retries)")
                 activateDestination(control)
-                if control.isSelected { return }
+                if destinationReached() { return }
             }
         } while Date() < deadline
-        XCTAssertTrue(control.isSelected, "The native destination tap must select \(section): \(app.debugDescription)")
+        XCTAssertTrue(destinationReached(), "The native destination tap must select \(section): \(app.debugDescription)")
 #endif
 #if os(macOS)
         // A macOS List does not write its selection binding when its selected row is clicked
