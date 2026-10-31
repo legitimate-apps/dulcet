@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Process controls for the deterministic capture supervisor; no AppKit/window access."""
+"""Real process controls with receipt-driven time; no AppKit or scheduler-speed assertions."""
 import contextlib
 import importlib.machinery
 import importlib.util
@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -21,36 +22,130 @@ module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.
 loader.exec_module(module)
 PHASE = "print('DULCET_CAPTURE_PHASE stage=bitmap-draw monotonicNs=1',flush=True); "
 PASS = "print('DULCET CAPTURE PASS images=70',flush=True); "
+WAIT = "while True: time.sleep(1)\n"
+
+
+def wait_until(predicate, description):
+    # This is a generous containment guard, not a measured pass criterion. A failed
+    # handshake reports which boundary wasn't reached instead of silently hanging CI.
+    end = time.monotonic() + 60
+    while not predicate():
+        if time.monotonic() >= end:
+            raise AssertionError(f'process-control handshake did not arrive: {description}')
+        time.sleep(0.01)
+
+
+class ReceiptClock:
+    """Advance only after real flushed output/readiness, independently of host scheduling."""
+    def __init__(self, root, mode=None, jump=60):
+        self.root, self.mode, self.jump = root, mode, jump
+        self.started = time.monotonic()
+        self.stopped = False
+        self.armed = False
+        self.last_value = 0
+
+    def text(self, name):
+        path = self.root / name
+        return path.read_text() if path.exists() else ''
+
+    def pid(self):
+        match = re.search(r'DULCET_CAPTURE_HOST_EXEC pid=(\d+)', self.text('diagnostics/console.log'))
+        return int(match[1]) if match else None
+
+    def __call__(self):
+        if time.monotonic() - self.started > 60:
+            raise AssertionError(f'process-control guard expired mode={self.mode} '
+                                 f'console={self.text("diagnostics/console.log")[-2000:]}')
+        receipts = self.text('diagnostics/phase-receipts.jsonl').splitlines()
+        if self.mode == 'healthy':
+            # Every real accepted receipt advances 50 virtual seconds: each gap stays
+            # below 60 while total execution exceeds it. No timed child sleeps required.
+            self.last_value = len(receipts) * 50
+            return self.last_value
+        ready = bool(receipts)
+        if self.mode == 'pre-main':
+            ready = (self.root / 'ready').exists() and self.pid() is not None
+        elif self.mode == 'closed-output':
+            ready = ready and (self.root / 'ready').exists()
+        elif self.mode == 'chatter':
+            ready = ready and 'unrelated stderr' in self.text('diagnostics/console.log')
+        elif self.mode == 'stopped':
+            if ready and not self.stopped:
+                pid = self.pid()
+                if pid:
+                    observed, status = os.waitpid(pid, os.WUNTRACED | os.WNOHANG)
+                    self.stopped = observed == pid and os.WIFSTOPPED(status)
+            ready = ready and self.stopped
+        if self.mode and ready:
+            self.armed = True
+            self.last_value = self.jump
+            if self.mode == 'before-deadline':
+                (self.root / 'release').touch()
+        return self.last_value
 
 
 class CaptureSupervisorTest(unittest.TestCase):
-    def run_probe(self, script, *, real_diagnostics=False, inactivity=1.0):
+    def run_probe(self, script, *, mode=None, jump=60, real_diagnostics=False, inspect=None):
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / 'diagnostics'
-            # Keep launch, exact PID, exec, pipes, inactivity clock, signals and reap real.
+            root = Path(directory)
+            clock = ReceiptClock(root, mode, jump)
             diagnostic = contextlib.nullcontext() if real_diagnostics else mock.patch.object(
                 module, 'collect_diagnostics', return_value={'control': 'sample-requested'})
-            with diagnostic, contextlib.redirect_stdout(io.TextIOWrapper(io.BytesIO(), write_through=True)):
-                started = time.monotonic()
-                result = module.supervise(Path(sys.executable), ['-c', script], output,
-                                          inactivity=inactivity, cleanup_grace=0.15)
-                elapsed = time.monotonic() - started
-            record = json.loads((output / 'host-result.json').read_text())
-            files = {p.name: p.read_text() for p in output.iterdir()}
-            self.assertLess(elapsed, 5 if not real_diagnostics else 20)
-            return result, record, files
+            # Every fixture receives a private working directory for readiness and descendant PIDs.
+            script = 'import os,time; os.chdir(' + repr(directory) + '); ' + script
+            try:
+                with diagnostic, contextlib.redirect_stdout(io.TextIOWrapper(io.BytesIO(), write_through=True)):
+                    result = module.supervise(Path(sys.executable), ['-c', script], root / 'diagnostics',
+                                              clock=clock)
+                record = json.loads((root / 'diagnostics/host-result.json').read_text())
+                files = {p.name: p.read_text() for p in (root / 'diagnostics').iterdir()}
+                if mode:
+                    self.assertTrue(clock.armed or mode == 'healthy', f'handshake not exercised: {mode}')
+                if inspect:
+                    inspect(root)
+                return result, record, files
+            finally:
+                # Only PIDs created and reported by this fixture. A guard failure also takes
+                # this path, so it cannot leave a sleeping/stopped child or inherited pipe owner.
+                child_pid = clock.pid()
+                pids = []
+                if child_pid:
+                    try:
+                        # A reaped child's PID can be reused; only signal it while waitpid
+                        # still identifies it as our live child.
+                        if os.waitpid(child_pid, os.WNOHANG)[0] == 0:
+                            pids.append(child_pid)
+                    except ChildProcessError:
+                        pass
+                if (root / 'descendant').exists():
+                    pids.append(int((root / 'descendant').read_text()))
+                for pid in pids:
+                    if pid:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        try:
+                            os.waitpid(pid, os.WNOHANG)
+                        except ChildProcessError:
+                            pass
 
     def test_old_direct_command_waits_while_supervisor_fails_and_names_stage(self):
-        script = 'import time; ' + PHASE + 'time.sleep(60)'
-        old = subprocess.Popen([sys.executable, '-c', script], stdout=subprocess.DEVNULL)
+        script = 'import time; ' + PHASE + '\n' + WAIT
+        old = subprocess.Popen([sys.executable, '-c', script], stdout=subprocess.PIPE)
         try:
-            with self.assertRaises(subprocess.TimeoutExpired):
-                old.wait(timeout=0.4)
+            # Readiness proves the old command actually entered its blocking body.
+            import selectors
+            ready = selectors.DefaultSelector()
+            ready.register(old.stdout, selectors.EVENT_READ)
+            self.assertTrue(ready.select(timeout=60), 'old-command readiness handshake absent')
+            ready.close()
+            self.assertIn(b'stage=bitmap-draw', old.stdout.readline())
             self.assertIsNone(old.poll(), 'old direct invocation did not reproduce the blocked wait')
         finally:
-            old.kill()
-            old.wait(timeout=2)
-        result, record, files = self.run_probe(script)
+            module.stop_child(old)
+            old.stdout.close()
+        result, record, files = self.run_probe(PHASE + '\n' + WAIT, mode='blocked')
         self.assertEqual(124, result)
         self.assertEqual('bitmap-draw', record['lastStage'])
         self.assertTrue(record['timedOut'])
@@ -59,39 +154,44 @@ class CaptureSupervisorTest(unittest.TestCase):
         self.assertIn(f"DULCET_CAPTURE_HOST_EXEC pid={record['pid']}", files['console.log'])
         self.assertIn('"stage": "bitmap-draw"', files['phase-receipts.jsonl'])
 
-    def test_sigstop_is_killed_without_unbounded_reap(self):
-        script = 'import os,signal; ' + PHASE + 'os.kill(os.getpid(),signal.SIGSTOP)'
-        result, record, _ = self.run_probe(script)
+    def test_sigstop_is_observed_before_deadline_and_killed(self):
+        script = 'import signal; ' + PHASE + 'os.kill(os.getpid(),signal.SIGSTOP)'
+        result, record, _ = self.run_probe(script, mode='stopped')
         self.assertEqual(124, result)
         self.assertIn(record['childExit'], (-signal.SIGTERM, -signal.SIGKILL))
         self.assertTrue(record['reaped'])
 
-    def test_pre_main_wait_has_launch_stage_and_reported_exact_pid(self):
-        result, record, _ = self.run_probe('import time; time.sleep(60)')
+    def test_pre_main_wait_has_launch_stage_after_readiness_handshake(self):
+        result, record, _ = self.run_probe("open('ready','w').close()\n" + WAIT, mode='pre-main')
         self.assertEqual(124, result)
         self.assertEqual('launch-before-main', record['lastStage'])
 
     def test_valid_phase_progress_can_exceed_inactivity_total(self):
-        script = ("import time; "
-                  "[(print('DULCET_CAPTURE_PHASE stage=render-complete monotonicNs='+str(i),flush=True),"
-                  "time.sleep(0.35)) for i in range(6)]; " + PASS)
-        result, record, _ = self.run_probe(script)
+        script = ("[print('DULCET_CAPTURE_PHASE stage=render-complete monotonicNs='+str(i),flush=True) "
+                  "for i in range(6)]; " + PASS)
+        result, record, files = self.run_probe(script, mode='healthy')
         self.assertEqual(0, result, record)
         self.assertFalse(record['timedOut'])
         self.assertTrue(record['completionObserved'])
-        self.assertGreater(record['elapsedSeconds'], 1.0)
+        self.assertEqual(6, len(files['phase-receipts.jsonl'].splitlines()))
+        self.assertGreater(record['elapsedSeconds'], module.INACTIVITY_SECONDS)
+        self.assertEqual(50, record['maximumProgressGapSeconds'])
+
+    def test_just_before_deadline_still_accepts_completion(self):
+        script = PHASE + "\nwhile not os.path.exists('release'): time.sleep(0.01)\n" + PASS
+        result, record, _ = self.run_probe(script, mode='before-deadline', jump=59.999)
+        self.assertEqual(0, result, record)
+        self.assertFalse(record['timedOut'])
 
     def test_closed_output_does_not_hide_live_blocked_child(self):
-        script = 'import os,time; ' + PHASE + 'os.close(1); os.close(2); time.sleep(60)'
-        result, record, _ = self.run_probe(script)
+        script = PHASE + "os.close(1); os.close(2); open('ready','w').close()\n" + WAIT
+        result, record, _ = self.run_probe(script, mode='closed-output')
         self.assertEqual(124, result)
         self.assertTrue(record['reaped'])
 
     def test_stderr_chatter_cannot_extend_deadline(self):
-        script = ('import sys,time; ' + PHASE +
-                  "[(print('unrelated stderr',file=sys.stderr,flush=True),time.sleep(0.04)) "
-                  "for i in range(500)]")
-        result, record, files = self.run_probe(script)
+        script = 'import sys; ' + PHASE + "\nwhile True: print('unrelated stderr',file=sys.stderr,flush=True)\n"
+        result, record, files = self.run_probe(script, mode='chatter')
         self.assertEqual(124, result)
         self.assertIn('unrelated stderr', files['console.log'])
         self.assertEqual('bitmap-draw', record['lastStage'])
@@ -107,54 +207,64 @@ class CaptureSupervisorTest(unittest.TestCase):
         self.assertEqual(0, record['childExit'])
         self.assertFalse(record['completionObserved'])
 
-    @unittest.skipUnless(hasattr(os, 'fork'), 'pipe inheritance control requires fork')
-    def test_exit_does_not_wait_for_grandchild_pipe_eof(self):
-        # The grandchild self-exits after one second. The supervisor must return before that,
-        # grading its direct child without acquiring or signalling any other process.
-        script = ('import os,time; ' + PHASE + PASS +
-                  "pid=os.fork(); time.sleep(1) if pid == 0 else None; os._exit(0)")
-        result, record, _ = self.run_probe(script)
-        self.assertEqual(0, result, record)
-        self.assertLess(record['elapsedSeconds'], 0.7)
-
-    @unittest.skipUnless(hasattr(os, 'fork'), 'pipe inheritance control requires fork')
-    def test_exit_drain_is_bounded_even_when_grandchild_keeps_writing(self):
-        script = ('import os,time\n' + PHASE + PASS + '\n'
+    def inherited_pipe_probe(self, noisy):
+        body = ("while True: os.write(1,b'noise\\n'*100)" if noisy else 'signal.pause()')
+        script = ('import signal\n' + PHASE + PASS + '\n'
                   'pid=os.fork()\n'
                   'if pid == 0:\n'
                   ' try:\n'
-                  '  end=time.monotonic()+1\n'
-                  '  while time.monotonic()<end: os.write(1,b"noise\\n"*100)\n'
-                  ' except BrokenPipeError: pass\n'
+                  '  ' + body + '\n'
+                  ' except BrokenPipeError:\n'
+                  "  open('pipe-closed','w').close()\n"
+                  '  signal.pause()\n'
                   ' os._exit(0)\n'
+                  "open('descendant','w').write(str(pid))\n"
                   'os._exit(0)\n')
-        result, record, _ = self.run_probe(script)
+        def inspect(root):
+            wait_until(lambda: (root / 'descendant').exists(), 'descendant PID')
+            pid = int((root / 'descendant').read_text())
+            os.kill(pid, 0)  # Still alive: return cannot have depended on its exit/EOF.
+            if noisy:
+                wait_until(lambda: (root / 'pipe-closed').exists(), 'writer observed closed pipe')
+        result, record, _ = self.run_probe(script, inspect=inspect)
         self.assertEqual(0, result, record)
-        self.assertLess(record['elapsedSeconds'], 0.7)
+        self.assertTrue(record['reaped'])
+
+    @unittest.skipUnless(hasattr(os, 'fork'), 'pipe inheritance control requires fork')
+    def test_exit_does_not_wait_for_grandchild_pipe_eof(self):
+        self.inherited_pipe_probe(noisy=False)
+
+    @unittest.skipUnless(hasattr(os, 'fork'), 'pipe inheritance control requires fork')
+    def test_exit_drain_is_bounded_even_when_grandchild_keeps_writing(self):
+        self.inherited_pipe_probe(noisy=True)
 
     def test_unreapable_child_cleanup_is_bounded_and_reportable(self):
         child = mock.Mock(pid=12345)
         child.poll.return_value = None
-        child.wait.side_effect = subprocess.TimeoutExpired('control', 0.01)
+        child.wait.side_effect = subprocess.TimeoutExpired('control', 2)
         with mock.patch.object(module, 'signal_child') as send:
-            self.assertFalse(module.stop_child(child, grace=0.01))
+            self.assertFalse(module.stop_child(child))
         self.assertEqual([mock.call(child, signal.SIGTERM), mock.call(child, signal.SIGKILL)],
                          send.call_args_list)
-        self.assertEqual([mock.call(timeout=0.01), mock.call(timeout=0.01)],
-                         child.wait.call_args_list)
+        self.assertEqual([mock.call(timeout=2), mock.call(timeout=2)], child.wait.call_args_list)
 
-    def test_diagnostic_timeout_bounds_cleanup(self):
-        with tempfile.TemporaryDirectory() as directory:
-            result = module.diagnostic_command(
-                [sys.executable, '-c', 'import time; time.sleep(60)'],
-                Path(directory) / 'probe.log', timeout=0.05)
-            self.assertEqual('timeout', result)
-            self.assertIn('reaped=True', (Path(directory) / 'probe.log').read_text())
+    def test_diagnostic_timeout_bounds_cleanup_without_scheduler_assumption(self):
+        child = mock.Mock(pid=12345)
+        child.wait.side_effect = subprocess.TimeoutExpired('control', 5)
+        child.poll.return_value = None
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(module.subprocess, 'Popen', return_value=child), \
+                mock.patch.object(module, 'signal_child') as send:
+            destination = Path(directory) / 'probe.log'
+            self.assertEqual('timeout', module.diagnostic_command(['/fixture'], destination))
+            self.assertIn('reaped=False', destination.read_text())
+        self.assertEqual([mock.call(timeout=5), mock.call(timeout=0.25), mock.call(timeout=0.25)],
+                         child.wait.call_args_list)
+        self.assertEqual(2, send.call_count)
 
     @unittest.skipUnless(sys.platform == 'darwin', 'usable stacks require macOS sample')
     def test_supported_host_records_stack_of_its_exact_blocked_process(self):
-        result, record, files = self.run_probe('import time; ' + PHASE + 'time.sleep(60)',
-                                             real_diagnostics=True)
+        result, record, files = self.run_probe(PHASE + '\n' + WAIT, mode='blocked', real_diagnostics=True)
         self.assertEqual(124, result)
         self.assertIn(str(record['pid']), files['process.log'])
         self.assertIn('Call graph:', files['sample.log'])

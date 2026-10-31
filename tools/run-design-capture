@@ -81,7 +81,8 @@ def collect_diagnostics(pid, output):
     return results
 
 
-def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_grace=2):
+def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_grace=2,
+              clock=time.monotonic):
     output.mkdir(parents=True, exist_ok=False)
     # Popen(binary) can itself wait on its exec-error pipe before returning a PID. Launch a
     # tiny Python trampoline first: it reports the PID then execs the binary in that SAME PID.
@@ -90,7 +91,7 @@ def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_
         [sys.executable, "-c", TRAMPOLINE, str(binary), *arguments],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
     )
-    started = last_progress = time.monotonic()
+    started = last_progress = clock()
     stage = "launch-before-main"
     last_phase_line = None
     completed = False
@@ -110,7 +111,7 @@ def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_
             line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
             match = PHASE.fullmatch(line)
             if match:
-                now = time.monotonic()
+                now = clock()
                 maximum_gap = max(maximum_gap, now - last_progress)
                 last_progress = now
                 stage = match[1]
@@ -122,7 +123,7 @@ def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_
                 completed = True
 
         while True:
-            now = time.monotonic()
+            now = clock()
             if child.poll() is not None:
                 # A descendant may retain AND continuously write the pipe. Bound both time and
                 # bytes rather than draining until readiness disappears or waiting for EOF.
@@ -172,8 +173,8 @@ def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_
     selector.close()
     child.stdout.close()
     reaped = stop_child(child, cleanup_grace) if timed_out else child.poll() is not None
-    maximum_gap = max(maximum_gap, time.monotonic() - last_progress)
-    elapsed = time.monotonic() - started
+    maximum_gap = max(maximum_gap, clock() - last_progress)
+    elapsed = clock() - started
     result = 124 if timed_out else child.returncode
     if not timed_out and result == 0 and not completed:
         result = 1

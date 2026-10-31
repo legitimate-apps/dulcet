@@ -71,8 +71,15 @@ Additional controls cover SIGSTOP, silence before `main`, healthy phase progress
 past the total inactivity interval, unrelated stderr, closed output while alive,
 quiet and continuously writing inherited pipes, missing completion, nonzero exit
 after PASS, bounded diagnostic/reap failure, and a usable macOS stack from the exact
-sleeping child. The tests scale the inactivity interval to one second; production
-uses sixty seconds.
+sleeping child. The process controls inject a monotonic clock while keeping the
+production sixty-second interval. Virtual time advances only after real flushed
+receipts or readiness handshakes: startup and scheduler delays do not consume an
+artificial one-second deadline. Boundary controls check 59.999 and 60 seconds;
+healthy receipts advance fifty seconds each, exceeding the total interval while
+preserving progress. Inherited-pipe controls check descendant liveness and pipe
+closure rather than subsecond execution speed. Handshakes have a sixty-second
+containment guard that reports the missing boundary and cleans up fixture PIDs.
+Production always uses the real monotonic clock.
 
 The real hosted capture pair remains the rendering and byte-determinism proof.
 
@@ -84,4 +91,5 @@ processes exited zero with 70 JPEGs each (68 rendered references, two pinned con
 checks. Run A took 37.190 seconds with a maximum receipt gap of 0.578 seconds;
 run B took 36.659 seconds with a maximum gap of 0.173 seconds. This validates the
 instrumented pair on this host; required CI still supplies the hosted-runner proof.
-The 13 supervisor controls also passed on this host, and the capture product compiled.
+The capture product compiled. After removing scheduler-speed assertions, all 14
+supervisor controls passed on this host.
