@@ -209,7 +209,18 @@ public final class DulcetPresentationStore {
     private var savedReaderPaths: [DulcetSidebarDestination: [DulcetReaderRoute]] = [:] {
         didSet { navigationWrite(oldSavedPaths: String(describing: oldValue)) }
     }
+    var discoverNavigation = DulcetDiscoverNavigation()
+    var wishlistScrollKey: String?
+    #if !os(tvOS)
+    public func openWishlist(rowKey: String? = nil) {
+        wishlistScrollKey = rowKey
+        showReaderPage(.wishlist)
+    }
+    #endif
     public func resetReaderNavigation() {
+        discoverNavigation.close()
+        wishlistScrollKey = nil
+        if selectedDestination == .discover { selectDestination(.library) }
         let previousWriter = navigationWriter
         navigationWriter = "resetReaderNavigation"
         defer { navigationWriter = previousWriter }
@@ -227,7 +238,12 @@ public final class DulcetPresentationStore {
     public var myLibraryAvailable: Bool { librarySession?.myLibrary.availability == .available }
     public var isReaderDestination: Bool { selectedDestination == .listenNow || selectedDestination == .library || selectedDestination == .browse }
     public func destinations(_ base: [DulcetSidebarDestination]) -> [DulcetSidebarDestination] {
-        base.flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
+#if os(tvOS)
+        base.filter { $0 != .discover }.flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
+#else
+        base.filter { $0 != .discover || librarySession?.discoverPublication?.access.discoverAvailable == true }
+            .flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
+#endif
     }
     public private(set) var readerPath: [DulcetReaderRoute] = [] {
         didSet { navigationWrite(oldPath: String(describing: oldValue)) }
@@ -406,6 +422,11 @@ public final class DulcetPresentationStore {
         guard !isApplyingSourceSnapshot else {
             navigationBindingReceipt("navigate(to:).guard", oldPath: String(describing: readerPath),
                 newPath: String(describing: readerPath), outcome: "drop:applyingSourceSnapshot requested=\(destination)")
+            return
+        }
+        if destination == .discover {
+            if selectedDestination == .discover { discoverNavigation.path = [] }
+            selectDestination(destination)
             return
         }
         if (destination == .listenNow || destination == .library || destination == .browse), readerOwnsLibrary {

@@ -63,17 +63,31 @@ internal class DiscoverPages(
         if(op is PageOperation<*> && !op.done) albumOperations.getOrPut(mbid){mutableSetOf()}.add(op)
         return op
     }
+    fun cachedShelf(id: String): DiscoverShelfPage? = store.read(shelfKey(id, null, 12))?.let {
+        runCatching { Json.decodeFromString(DiscoverShelfPage.serializer(), it.decodeToString()).let { page -> page.copy(age=page.age.copy(fromDeviceCache=true)) } }.getOrNull()
+    }
+    private fun shelfKey(id: String, cursor: String?, limit: Int) = "shelf:${id.length}:$id:${cursor?.let { "${it.length}:$it" } ?: "null"}:$limit"
+    private fun listKey(type: String, id: String, cursor: String?) = shelfKey("$type:$id", cursor, 20)
+    fun shelf(id: String, cursor: String?, completion: (DiscoverResult<DiscoverShelfPage>)->Unit, limit: Int = 20): DiscoverOperation = json(
+        shelfKey(id,cursor,limit), DiscoverShelfPage.serializer(), {it.copy(age=it.age.copy(fromDeviceCache=true))}, completion,
+        cachedFailure={value,error -> value.copy(age=value.age.copy(fromDeviceCache=true),refreshError=error)}) {transport.shelf(id,cursor,limit)}
+    fun playlists(query: String, cursor: String?, completion: (DiscoverResult<DiscoverPlaylistList>)->Unit): DiscoverOperation = json(
+        listKey("playlists",query,cursor), DiscoverPlaylistList.serializer(), {it.copy(age=it.age.copy(fromDeviceCache=true))}, completion,
+        cachedFailure={value,error -> value.copy(age=value.age.copy(fromDeviceCache=true),refreshError=error)}) {transport.playlists(query,cursor)}
+    fun playlist(mbid: String, cursor: String?, completion: (DiscoverResult<DiscoverPlaylist>)->Unit): DiscoverOperation = json(
+        listKey("playlist",mbid,cursor), DiscoverPlaylist.serializer(), {it.copy(age=it.age.copy(fromDeviceCache=true))}, completion,
+        cachedFailure={value,error -> value.copy(age=value.age.copy(fromDeviceCache=true),refreshError=error)}) {transport.playlist(mbid,cursor)}
     fun artwork(artworkId: String,completion: (DiscoverResult<ByteArray>)->Unit): DiscoverOperation = request(
         "artwork:$artworkId",true,{bytes -> if(!validDiscoverArtwork(bytes)) invalidDiscover();bytes},
         {bytes -> if(!validDiscoverArtwork(bytes)) invalidDiscover();bytes},{it},completion,{true}) {transport.artwork(artworkId)}
     fun close() {closed=true;operations.toList().forEach {it.cancel()};albumOperations.clear()}
 
     private fun <T> json(key: String,serializer: KSerializer<T>,cached: (T)->T,completion: (DiscoverResult<T>)->Unit,
-        valid: ()->Boolean = {true},fetch: suspend ()->DiscoverResult<T>): DiscoverOperation = request(key,false,
-            {Json.decodeFromString(serializer,it.decodeToString())},{Json.encodeToString(serializer,it).encodeToByteArray()},cached,completion,valid,fetch)
+        valid: ()->Boolean = {true},cachedFailure: (T,DiscoverFailure)->T = {value,_ -> cached(value)},fetch: suspend ()->DiscoverResult<T>): DiscoverOperation = request(key,false,
+            {Json.decodeFromString(serializer,it.decodeToString())},{Json.encodeToString(serializer,it).encodeToByteArray()},cached,completion,valid,cachedFailure,fetch)
 
     private fun <T> request(key: String,artwork: Boolean,decode: (ByteArray)->T,encode: (T)->ByteArray,cached: (T)->T,
-        completion: (DiscoverResult<T>)->Unit,valid: ()->Boolean,fetch: suspend ()->DiscoverResult<T>): DiscoverOperation {
+        completion: (DiscoverResult<T>)->Unit,valid: ()->Boolean,cachedFailure: (T,DiscoverFailure)->T = {value,_ -> cached(value)},fetch: suspend ()->DiscoverResult<T>): DiscoverOperation {
         val op=PageOperation(completion)
         operations.add(op)
         if(closed || !active() || !valid()) {op.cancel();return op}
@@ -91,7 +105,7 @@ internal class DiscoverPages(
                     fetched
                 }
                 if(!active() || !valid() || closed) op.cancel()
-                else op.finish(if(result is DiscoverResult.Failed && saved!=null) DiscoverResult.Value(saved) else result)
+                else op.finish(if(result is DiscoverResult.Failed && saved!=null) DiscoverResult.Value(cachedFailure(saved,result.error)) else result)
             } catch (cancelled: CancellationException) {op.cancel()}
               catch (failure: DiscoverWireFailure) {op.finish(DiscoverResult.Failed(failure.failure))}
               catch (_: Exception) {op.finish(DiscoverResult.Failed(DiscoverFailure("storage",null,true)))}

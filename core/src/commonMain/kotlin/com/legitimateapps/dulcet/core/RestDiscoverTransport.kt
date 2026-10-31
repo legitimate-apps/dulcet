@@ -30,6 +30,28 @@ internal class RestDiscoverTransport(
     override suspend fun albumTracks(mbid: String, releaseId: String, cursor: String?, limit: Int) = wire.result {
         page(wire.read("getDulcetDiscoverAlbumTracks", pageParameters(cursor, limit) + mapOf("mbid" to mbid, "releaseId" to releaseId)).discoverObj("dulcetDiscover"), "song")
     }
+    override suspend fun shelf(id: String, cursor: String?, limit: Int) = wire.result {
+        if (id !in discoverShelfIds) invalidDiscover()
+        val response = wire.read("getDulcetDiscoverShelf", pageParameters(cursor, limit) + ("id" to id))
+        val playlists = id == "publicPlaylists"
+        val body = response.discoverObj(if (playlists) "dulcetDiscoverPlaylists" else "dulcetDiscover")
+        DiscoverShelfPage(id, if (playlists) emptyList() else body.discoverRows("item").map(::item),
+            if (playlists) body.discoverRows("playlist").map(::summary) else emptyList(), body.discoverText("nextCursor"), age(body))
+    }
+    override suspend fun playlists(query: String, cursor: String?, limit: Int) = wire.result {
+        val body = wire.read("searchDulcetDiscoverPlaylists", pageParameters(cursor, limit) + ("query" to query)).discoverObj("dulcetDiscoverPlaylists")
+        DiscoverPlaylistList(body.discoverRows("playlist").map(::summary), body.discoverText("nextCursor"), age(body))
+    }
+    override suspend fun playlist(mbid: String, cursor: String?, limit: Int) = wire.result {
+        val body = wire.read("getDulcetDiscoverPlaylist", pageParameters(cursor, limit) + ("mbid" to mbid)).discoverObj("dulcetDiscoverPlaylist")
+        val entries = body.discoverObj("entries")
+        DiscoverPlaylist(summary(body.discoverObj("summary")), entries.discoverRows("entry").map {
+            DiscoverPlaylistEntry(it.discoverInteger("position")?.takeIf { value -> value > 0 } ?: invalidDiscover(), item(it.discoverObj("item")))
+        }, entries.discoverText("nextCursor"), age(entries))
+    }
+    private fun summary(body: JsonObject) = DiscoverPlaylistSummary(body.discoverRequired("id"), body.discoverRequired("title"),
+        body.discoverText("creator"), body.discoverInteger("trackCount"))
+    private fun age(body: JsonObject) = DiscoverAge(body.discoverTime("fetchedAt"), body.discoverLong("ageSeconds"), wall(), body.discoverFlag("stale") ?: false, false)
     override suspend fun artwork(artworkId: String): DiscoverResult<ByteArray> = wire.result {
         val response = reader.sendBinary("getDulcetDiscoverCoverArt", mapOf("id" to artworkId), DISCOVER_ART_LIMIT)
         val bytes = response.body

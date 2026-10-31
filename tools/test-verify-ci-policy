@@ -2036,7 +2036,7 @@ print('Job environment runner-context rejection: 1/1')
 
 # Native Discover selectors require their own matching finalized-xcresult emission.
 import shlex
-association_namespace={'re':re,'shlex':shlex,'Path':Path}
+association_namespace={'re':re,'shlex':shlex,'Path':Path,'sys':sys,'__file__':str(VERIFIER)}
 functions=[n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name in {'code_before_comment','evidence_commands','method_emission_associations'}]
 exec(compile(ast.Module(body=functions,type_ignores=[]),str(VERIFIER),'exec'),association_namespace)
 associate=association_namespace['method_emission_associations']
@@ -2049,6 +2049,19 @@ for mode,suite in [('iphone','DulcetDiscoverWishlistUITests'),('ipad','DulcetDis
         assert associate(bad+emission,cited)==set(),bad
     assert associate(invoke+emission.replace(suite,'OtherSuite'),cited)==set()
 print('Native Discover selector/emission controls: 18/18, all three idioms and five negative mutations each')
+for mode,suite,method in [
+    ('iphone','DulcetDiscoverWishlistUITests','testIPhoneDiscoverShelvesLargestTextPagesAndSources'),
+    ('ipad','DulcetDiscoverWishlistIPadUITests','testIPadDiscoverShelvesSidebarCompactResizeAndBack'),
+    ('macos','DulcetMacDiscoverWishlistAppTest','testDiscoverShelvesMixedPagingAndShelfWish')]:
+    cited={method:{suite},'testBusyStaleAndNavidromeControl':{suite}}
+    emission='\npython3 tools/swift-testing-junit proof.xcresult report.xml '+suite
+    invoke='run: tools/ci/with-discover-wishlist-fixture -- tools/ci/run-discover-wishlist-proofs '
+    assert associate(invoke+'--shelves '+mode+emission,cited)=={(suite,method)}
+    assert associate(invoke+mode+' --shelves'+emission,cited)=={(suite,method)}
+    assert associate(invoke+mode+emission,cited)=={(suite,'testBusyStaleAndNavidromeControl')}
+    assert associate(invoke+'--shelves --build-for-testing '+mode+emission,cited)==set()
+print('Native shelf selector/emission controls: 12/12, flag placement, compile-only rejection and separate legacy inventories')
+
 
 # A baseline red must not suppress a separately planned native proof; the aggregate stays red.
 condition_functions=[n for n in ast.parse(VERIFIER.read_text()).body if isinstance(n,ast.FunctionDef) and n.name in {'discover_native_condition_errors','job_spans','job_properties','mapping_entry','nested_mapping','code_before_comment','block_end'}]

@@ -8,6 +8,7 @@ sys.dont_write_bytecode = True
 from discover_process_owner import ProcessOwner
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--self-test',action='store_true')
+p.add_argument('--shelves',action='store_true',help='run the step-3 Discover shelf and public playlist proofs')
 p.add_argument('--build-for-testing',action='store_true',help='compile iPhone/iPad tests without a fixture or simulator boot')
 p.add_argument('mode',nargs='?',choices=['components','sessions','iphone','ipad','mac','macos','android'])
 a=p.parse_args()
@@ -23,7 +24,7 @@ if not a.mode:p.error('mode is required')
 if not a.build_for_testing and os.environ.get('DULCET_DISCOVER_DISPOSABLE')!='true':p.error('run inside tools/ci/with-discover-wishlist-fixture')
 if a.mode=='android':
     helper=str(Path(__file__).resolve().parent/'run-discover-wishlist-android')
-    os.execv(helper,[helper])
+    os.execv(helper,[helper]+(["--shelves"] if a.shelves else []))
 repo=Path(__file__).resolve().parents[2]
 def completed_native_report(bundle, suite, selected, output):
     """Convert only a complete XCTest transcript; never infer execution from a build exit."""
@@ -33,6 +34,9 @@ def completed_native_report(bundle, suite, selected, output):
     if suite.endswith('MacUITests') or suite=='DulcetMacDiscoverWishlistAppTest':expected+=['testMacKeyboardSearchSidebarAndContextRemove','testMacWindowClosureDropsPendingNavigation']
     elif suite.endswith('IPadUITests'):expected+=['testIPadSidebarSelectionSurvivesWishlistDetailAndResize']
     else:expected+=['testIPhoneLargestTextAndVoiceOverLabels']
+    if a.shelves:
+        from discover_proof_report import shelf_tests
+        expected=shelf_tests(a.mode)
     if '/' in selected:expected=[selected.rsplit('/',1)[-1]]
     for path in bundle.rglob('StandardOutputAndStandardError*.txt'):
         transcript=path.read_text(errors='replace')
@@ -150,7 +154,7 @@ def apple_proof(mode):
             raise
     try:
         host_gate()
-        derived=Path(tempfile.gettempdir())/('dulcet-discover-'+mode)
+        derived=Path(tempfile.mkdtemp(prefix='dulcet-discover-macos-')).resolve() if mode=='macos' and not hosted else Path(tempfile.gettempdir())/('dulcet-discover-'+mode)
         action='test-without-building' if os.environ.get('DULCET_DISCOVER_PREBUILT')=='true' else 'test'
         if action=='test-without-building':
             receipt=json.loads((derived/'discover-build.json').read_text())
@@ -236,11 +240,17 @@ def apple_proof(mode):
         env['TEST_RUNNER_DULCET_DISCOVER_CAPTURE_UPLOAD_URL']='http://127.0.0.1:'+str(capture_server.server_address[1])
         env['TEST_RUNNER_DULCET_DISCOVER_EXPECTED_IDIOM']='pad' if mode=='ipad' else 'phone'
         selected=os.environ.get('DULCET_DISCOVER_ONLY_TEST',suite)
+        from discover_proof_report import shelf_tests, selected_tests
+        selected_shelves=shelf_tests(mode) if a.shelves and '/' not in selected else None
+        selected_methods=selected_tests(mode,selected,a.shelves)
         command=['xcodebuild',action,'-project',str(repo/'apple/Dulcet.xcodeproj'),'-scheme','DulcetMac' if mode=='macos' else 'DulcetiOS','-destination','platform=macOS' if mode=='macos' else 'platform=iOS Simulator,id='+udid,'-parallel-testing-enabled','NO','-derivedDataPath',str(derived),'-resultBundlePath',str(output/'proof.xcresult'),'-only-testing:'+target+'/'+selected]
+        if selected_methods:
+            command=[arg for arg in command if not arg.startswith('-only-testing:')]
+            command += ['-only-testing:'+target+'/'+suite+'/'+name for name in selected_methods]
         if mode=='macos':
             # Match the app-hosted Mac proofs: finite disposable tests use ad hoc signing.
             command += ['CODE_SIGN_STYLE=Manual','CODE_SIGN_IDENTITY=-','CODE_SIGN_ENTITLEMENTS=','DEVELOPMENT_TEAM=','PROVISIONING_PROFILE_SPECIFIER=',
-                        '-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','180']
+                        '-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','360' if a.shelves else '180']
             for key in ['SERVER_URL','NAVIDROME_URL','CONTROL_URL','USERNAME','PASSWORD','OTHER_USERNAME','OTHER_PASSWORD','DISPOSABLE']:
                 command.append('DULCET_TEST_DISCOVER_'+key+'='+os.environ['DULCET_DISCOVER_'+key])
             command.append('DULCET_TEST_DISCOVER_CAPTURE_UPLOAD_URL=http://127.0.0.1:'+str(capture_server.server_address[1]))
@@ -302,7 +312,8 @@ def apple_proof(mode):
         acknowledgements=[json.loads(line) for line in (output/'acknowledgements.jsonl').read_text().splitlines()] if (output/'acknowledgements.jsonl').exists() else []
         report=apple_report(mode,json.loads(summary),json.loads(tests),acknowledgements,
             json.loads((output/'fixture-requests.json').read_text()),
-            [selected.rsplit('/',1)[-1]] if '/' in selected else None)
+            [selected.rsplit('/',1)[-1]] if '/' in selected else selected_shelves)
+        if a.shelves:report['proofKind']='shelves'
         verdict=validate_report(report)
         if report['finalized']:
             import xml.etree.ElementTree as ET
@@ -340,6 +351,9 @@ def apple_proof(mode):
         finally:
             # The unique session also covers TERM during build-lease acquisition.
             if not hosted:subprocess.run(['leg-lease','release','--session',session],check=False,timeout=30)
+            if mode=='macos' and not hosted and 'derived' in locals():
+                import shutil
+                shutil.rmtree(derived,ignore_errors=True)
             owner.close()
 
 if a.build_for_testing:sys.exit(apple_build_for_testing(a.mode))

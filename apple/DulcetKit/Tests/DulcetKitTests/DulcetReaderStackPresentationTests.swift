@@ -31,6 +31,23 @@ import Testing
         #expect(presentation.path == ["wishlist"])
     }
 
+    @Test func lateRequestAndBackKeepTheAcknowledgedPrefix() {
+        var presentation = Presentation()
+        presentation.request(.init(context: "account-A/discover", path: []))
+        presentation.appeared("playlists")
+        presentation.request(.init(context: "account-A/discover", path: ["playlists"]))
+        presentation.appeared("playlist")
+        presentation.request(.init(context: "account-A/discover", path: ["playlists", "playlist"]))
+        let firstBack = presentation.wrote(["playlists"])
+        #expect(firstBack)
+        presentation.request(.init(context: "account-A/discover", path: ["playlists"]))
+        let secondBack = presentation.wrote([])
+        #expect(secondBack, "Back from an already shown prefix is a real pop")
+        #expect(presentation.pendingReplay == nil)
+        presentation.request(.init(context: "account-B/discover", path: ["playlists"]))
+        #expect(presentation.presentedRoutes.isEmpty, "An account change never retains acknowledgements")
+    }
+
     @Test func queuedReplayCannotRestoreAnOldAccountOrDestination() {
         for context in ["account-B/library", "account-A/search"] {
             var presentation = Presentation()

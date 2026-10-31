@@ -74,6 +74,7 @@ internal fun PhoneWishlist(
     session: DiscoverWishlistSession,
     openLibrary: (DiscoverLibraryRef) -> Unit,
     back: () -> Unit,
+    initialRowKey: String? = null,
 ) {
     val publication by session.publication.collectAsState()
     val current = publication ?: return
@@ -84,6 +85,16 @@ internal fun PhoneWishlist(
     val filter = WishFilter(kind, state, history)
     LaunchedEffect(session, filter, current.access.canReadWishlist) {
         if (current.access.canReadWishlist) session.refreshWishlist(filter)
+    }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var selected by rememberSaveable(initialRowKey) { mutableStateOf(false) }
+    LaunchedEffect(initialRowKey, current.wishes, current.wishlistSettled) {
+        val index = current.wishes.indexOfFirst { it.key == initialRowKey }
+        if (!selected && index >= 0 && current.wishlistSettled) {
+            listState.scrollToItem(index + (if (current.connection != "online") 1 else 0) +
+                (if (current.wishlistLoading) 1 else 0) + (if (current.wishlistError != null) 1 else 0))
+            selected = true
+        }
     }
     Column(Modifier.fillMaxSize().testTag("wishlist.surface")) {
         TopAppBar(title = { Text(stringResource(R.string.wishlist_title)) }, navigationIcon = {
@@ -105,7 +116,7 @@ internal fun PhoneWishlist(
                 }
             }
         })
-        LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("wishlist.list"), contentPadding = PaddingValues(bottom = 24.dp)) {
+        LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("wishlist.list"), state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
             if (current.connection != "online") item("offline") {
                 WishlistNotice(stringResource(R.string.wishlist_offline), "wishlist.offline") { session.refreshWishlist(filter) }
             }

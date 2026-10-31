@@ -86,7 +86,7 @@ internal class PhonePlaybackRequests {
 
 internal const val PLAYBACK_ENTRY_ALIAS = "com.legitimateapps.dulcet.PlaybackEntry"
 
-private enum class PhoneTab { ListenNow, Search, Library, Browse }
+private enum class PhoneTab { ListenNow, Discover, Search, Library, Browse }
 
 private val routeSaver = listSaver<SnapshotStateList<String>, String>({ it.toList() }, { it.toMutableStateList() })
 private fun List<String>.toMutableStateList() = mutableStateListOf<String>().also { it.addAll(this) }
@@ -128,6 +128,11 @@ internal fun PhoneApp(
     val myLibrarySession = myLibrary ?: library.myLibrary
     val discoverSession = library.discoverWishlist
     val discoverPublication by discoverSession.publication.collectAsState()
+    val discoverMemory = remember(discoverSession) { DiscoverBrowseMemory() }
+    val discoverAvailable = discoverPublication?.access?.discoverAvailable == true
+    LaunchedEffect(discoverPublication?.access) {
+        if (discoverPublication?.access?.detection == "known" && !discoverAvailable && tab == PhoneTab.Discover) { tab = PhoneTab.ListenNow; routes.clear() }
+    }
     val myLibraryPublication by myLibrarySession.state.collectAsState()
     val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
     if (!split && tab == PhoneTab.Browse) tab = PhoneTab.Library
@@ -227,6 +232,13 @@ internal fun PhoneApp(
                 label = { PhoneNavigationLabel("Listen Now") },
                 modifier = Modifier.testTag("listenNow.open"),
             )
+            if (discoverAvailable) NavigationBarItem(
+                selected = tab == PhoneTab.Discover,
+                onClick = { tab = PhoneTab.Discover; routes.clear(); saveTab(preferences, PhoneTab.Discover) },
+                icon = { Icon(DiscoverCompass, null) },
+                label = { PhoneNavigationLabel(stringResource(R.string.discover_home_title)) },
+                modifier = Modifier.testTag("discover.destination"),
+            )
             NavigationBarItem(
                 selected = tab == PhoneTab.Library && routes.isEmpty(),
                 onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
@@ -257,7 +269,17 @@ internal fun PhoneApp(
         // over it, so Back from a playlist returns to the playlists, not to the home rows.
         val saved = rememberSaveableStateHolder()
         when {
-            route == "wishlist" -> PhoneWishlist(discoverSession, openDiscoverLibrary, actions.back)
+            route?.startsWith("discoverShelf:") == true -> saved.SaveableStateProvider(route) {
+                PhoneDiscoverShelf(discoverSession, route.removePrefix("discoverShelf:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum, actions.back, discoverMemory)
+            }
+            route == "discoverPlaylists" -> saved.SaveableStateProvider(route) {
+                PhoneDiscoverPlaylists(discoverSession, { routes += "discoverPlaylist:$it" }, actions.back, discoverMemory)
+            }
+            route?.startsWith("discoverPlaylist:") == true -> saved.SaveableStateProvider(route) {
+                PhoneDiscoverPlaylist(discoverSession, route.removePrefix("discoverPlaylist:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum, actions.back, discoverMemory)
+            }
+            route == "wishlist" || route?.startsWith("wishlist:") == true -> PhoneWishlist(discoverSession, openDiscoverLibrary, actions.back,
+                initialRowKey = route?.takeIf { it.startsWith("wishlist:") }?.removePrefix("wishlist:"))
             route?.startsWith("discoverArtist:") == true -> PhoneDiscoverArtist(discoverSession,
                 route.removePrefix("discoverArtist:"), openDiscoverLibrary, openDiscoverAlbum, actions.back)
             route?.startsWith("discoverAlbum:") == true -> PhoneDiscoverAlbum(discoverSession,
@@ -273,7 +295,12 @@ internal fun PhoneApp(
                     myLibrary = myLibrarySession.takeIf { split })
             route?.startsWith("playlist:") == true ->
                 PlaylistScreen(account, library, route.removePrefix("playlist:"), playingRawId, actions)
-            tab == PhoneTab.ListenNow -> saved.SaveableStateProvider("listenNow") { PhoneListenNow(account, library, actions, playbackState, playback) }
+            tab == PhoneTab.Discover && discoverAvailable -> saved.SaveableStateProvider("discover") {
+                PhoneDiscoverHome(discoverSession, { routes += "discoverShelf:$it" }, { routes += "discoverPlaylists" },
+                    { routes += "discoverPlaylist:$it" }, { routes += "wishlist" }, openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum,
+                    openRecentWish = { routes += "wishlist:$it" })
+            }
+            (tab == PhoneTab.ListenNow || tab == PhoneTab.Discover) -> saved.SaveableStateProvider("listenNow") { PhoneListenNow(account, library, actions, playbackState, playback) }
             tab == PhoneTab.Library && split -> saved.SaveableStateProvider("mylibrary") {
                 MyLibraryHome(account, library, myLibrarySession, actions,
                     openBrowse = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },

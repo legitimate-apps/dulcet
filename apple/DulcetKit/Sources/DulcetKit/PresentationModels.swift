@@ -41,6 +41,7 @@ public enum DulcetPresentationState: String, CaseIterable, Identifiable, Sendabl
 
 public enum DulcetSidebarDestination: String, CaseIterable, Identifiable, Sendable {
     case listenNow
+    case discover
     case library
     case browse
     case search

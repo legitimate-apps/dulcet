@@ -117,6 +117,7 @@ tasks.withType<Test>().configureEach {
         filter {
             excludeTestsMatching("*DiscoverWishlistConformanceTest")
             excludeTestsMatching("*DiscoverWishlistTransportComponentsTest")
+            excludeTestsMatching("*DiscoverShelvesConformanceTest")
         }
     } else {
         outputs.upToDateWhen { false }
