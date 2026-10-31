@@ -3762,6 +3762,26 @@ func theFixtureKeepsLibraryPagesPerDestinationToo() throws {
     #expect(store.snapshot.state == .libraryBrowse)
 }
 
+@Test @MainActor
+func theFixtureKeepsTheChosenContentTabAndItsPlayingAlbum() throws {
+    let source = DulcetDeterministicDataSource(playbackStartNavigation: .stayOnCurrentSurface)
+    let store = DulcetPresentationStore(source: source)
+    let album = try #require(store.snapshot.albums.first { !$0.tracks.isEmpty })
+    store.selectAlbum(album.id)
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    store.navigate(to: .search)
+    store.navigate(to: .listenNow)
+    #expect(store.selectedDestination == .listenNow)
+    #expect(source.currentSnapshot.selectedDestination == .listenNow)
+    #expect(store.libraryPath == [.album(album.id)])
+    #expect(store.showsNowPlayingBar)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+    store.navigate(to: .library)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    store.navigate(to: .library)
+    #expect(store.libraryPath.isEmpty)
+}
+
 // MARK: - Playback start navigation reaches the fixture's shell proofs
 
 @Test @MainActor
