@@ -48,7 +48,6 @@ import com.legitimateapps.dulcet.core.DiscoverFeatureAccess
 import com.legitimateapps.dulcet.core.DiscoverFailure
 import com.legitimateapps.dulcet.core.DiscoverItem
 import com.legitimateapps.dulcet.core.DiscoverLibraryRef
-import com.legitimateapps.dulcet.core.DiscoverOperation
 import com.legitimateapps.dulcet.core.DiscoverResult
 import com.legitimateapps.dulcet.core.WishFilter
 import com.legitimateapps.dulcet.core.WishRow
@@ -195,12 +194,10 @@ private fun WishlistNotice(text: String, tag: String, retry: () -> Unit) {
     }
 }
 
-/** Revoking callbacks never removes an already committed outbox intention. */
+/** Row disposal revokes UI callbacks; accepted mutations remain owned by the account reader. */
 private class WishRowLifetime {
     var active = true
-    private val operations = mutableListOf<DiscoverOperation>()
-    fun own(operation: DiscoverOperation) { if (active) operations += operation else operation.cancel() }
-    fun close() { active = false; operations.forEach(DiscoverOperation::cancel); operations.clear() }
+    fun close() { active = false }
 }
 
 @Composable
@@ -265,9 +262,9 @@ private fun PhoneWishRow(
                                             listenCount = null, primaryType = null, links = emptyList(), wishable = true,
                                             availability = wish.availability)
                                         mutationError = null
-                                        lifetime.own(session.reject(item, local, wish.id) { result ->
+                                        session.reject(item, local, wish.id) { result ->
                                             if (lifetime.active) mutationError = (result as? DiscoverResult.Failed)?.error
-                                        })
+                                        }
                                     },
                                     modifier = Modifier.testTag("wishlist.reject.$index")
                                         .semantics { contentDescription = rejectLabel },
@@ -279,9 +276,9 @@ private fun PhoneWishRow(
                                 onClick = {
                                     open = false
                                     mutationError = null
-                                    lifetime.own(session.remove(row.key) { result ->
+                                    session.remove(row.key) { result ->
                                         if (lifetime.active) mutationError = (result as? DiscoverResult.Failed)?.error
-                                    })
+                                    }
                                 },
                                 modifier = Modifier.testTag("wishlist.remove.$index")
                                     .semantics { contentDescription = removeLabel },
