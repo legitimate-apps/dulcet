@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Replay the actual saved-account relaunch guard against a lazy native Settings Form.
+
+The positive control has a connected account whose Sign Out row is not realized until
+the owning Form is scrolled. Selection and library tiles cannot substitute for Sign Out.
+All native actions other than destination navigation and owning-Form swipes are forbidden.
+This exercises the test's readiness witness, not network reconnection or a simulator.
+"""
+import argparse
+from pathlib import Path
+import subprocess
+import tempfile
+
+
+ROOT = Path(__file__).resolve().parents[1]
+RELATIVE = 'apple/DulcetiOSUITests/DulcetiOSUITests.swift'
+parser = argparse.ArgumentParser(description=__doc__)
+sources = parser.add_mutually_exclusive_group()
+sources.add_argument('--source', type=Path)
+sources.add_argument('--source-ref')
+args = parser.parse_args()
+source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{RELATIVE}'], cwd=ROOT, text=True)
+          if args.source_ref else (args.source or ROOT / RELATIVE).read_text())
+
+
+def method(name):
+    start = source.index('    private func ' + name + '(')
+    opening = source.index('{', start)
+    depth, end = 1, opening + 1
+    while depth:
+        depth += (source[end] == '{') - (source[end] == '}')
+        end += 1
+    return source[start:end].replace('private func', 'func', 1).replace('Date()', 'Clock.now').replace(
+        'Thread.sleep(forTimeInterval:', 'Clock.sleep(forTimeInterval:')
+
+
+failure = source.index('XCTFail("The saved account must reconnect without a tap:')
+guard_start = source.rfind('        guard ', 0, failure)
+condition_end = source.index(' else {', guard_start)
+condition = source[guard_start + len('        guard '):condition_end]
+callsite = ('func actualSecondRelaunchGuard(in app: XCUIApplication, compact: Bool) -> Bool {\n'
+            + 'guard ' + condition + ' else { return false }\nreturn true\n}')
+helpers = ''
+has_helper = '    private func awaitSavedAccountReconnection(' in source
+if has_helper:
+    helper = method('awaitSavedAccountReconnection')
+    brace = helper.index('{')
+    helper = helper[:brace + 1] + '\nhelperEntries += 1\n' + helper[brace + 1:]
+    helpers += helper
+    if 'revealLiveAccountStatus(' in helper:
+        helpers += '\n' + method('revealLiveAccountStatus')
+
+collaborators = r'''
+import Foundation
+enum Clock {
+    static var offset: TimeInterval = 0
+    static var now: Date { Date(timeIntervalSince1970: offset) }
+    static func advance(_ duration: TimeInterval) {
+        precondition(duration >= 0 && duration <= max(0, 30 - offset) + 0.00001,
+                     "A repeated wait cannot extend the original thirty-second budget")
+        offset += duration
+    }
+    static func sleep(forTimeInterval duration: TimeInterval) { advance(duration) }
+}
+final class XCUIApplication {
+    var connected = true
+    var failure = false
+    var formPresent = true
+    var selectedConnection = false
+    var canNavigate = true
+    var neededSwipes = 1
+    var swipes = 0
+    var statusReads = 0
+    var navigationCount = 0
+    var reads = 0
+    var asyncNavigationsRemaining = 0
+    var asyncNavigationsObserved = 0
+    var buttons: Query { Query(app: self, form: false) }
+    var staticTexts: Query { Query(app: self, form: false) }
+    var collectionViews: Query { Query(app: self, form: true) }
+    var debugDescription: String { "independent saved-account readiness fixture" }
+}
+struct Query {
+    let app: XCUIApplication
+    let form: Bool
+    subscript(_ key: String) -> Element { Element(app: app, key: key, form: form) }
+}
+struct Element {
+    let app: XCUIApplication
+    let key: String
+    let form: Bool
+    var firstMatch: Self { self }
+    var exists: Bool {
+        app.reads += 1
+        precondition(app.reads < 500, "Readiness must stop at its original deadline")
+        if key == "dulcet.library.album" || key.hasPrefix("dulcet.account.server.") { return true }
+        if !app.selectedConnection { return false }
+        if form { return app.formPresent && key == "dulcet.account.settingsForm" }
+        if key == "Sign Out" {
+            app.statusReads += 1
+            return app.connected && app.swipes >= app.neededSwipes
+        }
+        if key == "Try Again" { return app.failure }
+        if key == "The server took too long to respond" { return app.failure }
+        return false
+    }
+    func waitForExistence(timeout: TimeInterval) -> Bool {
+        if key == "Sign Out" && app.asyncNavigationsRemaining > 0 {
+            app.asyncNavigationsRemaining -= 1
+            app.asyncNavigationsObserved += 1
+            app.selectedConnection = false
+            Clock.advance(min(timeout, 1))
+            return false
+        }
+        let found = exists
+        if !found { Clock.advance(timeout) }
+        return found
+    }
+    func swipeUp() {
+        precondition(form && key == "dulcet.account.settingsForm" && app.selectedConnection,
+                     "Only the owning Settings Form may reveal account status")
+        app.swipes += 1
+        precondition(app.swipes <= 3, "Readiness must use at most three owning-Form gestures")
+    }
+    func tap() { preconditionFailure("Saved-account readiness cannot tap Connect, Try Again or Sign Out") }
+}
+final class Proof {
+    var helperEntries = 0
+    func openDestination(_ title: String, sidebarIdentifier: String, in app: XCUIApplication, compact: Bool) -> Bool {
+        precondition(title == "Connection" && sidebarIdentifier == "dulcet.sidebar.settings")
+        app.navigationCount += 1
+        precondition(app.navigationCount < 100, "Readiness cannot renew its deadline at every destination visit")
+        app.selectedConnection = app.canNavigate
+        return app.canNavigate
+    }
+__HELPERS__
+__CALLSITE__
+}
+@main struct Controls {
+    static func main() {
+        let name = CommandLine.arguments[1]
+        let app = XCUIApplication()
+        let proof = Proof()
+        var compact = true
+        let expected: Bool
+        switch name {
+        case "lazy-one": app.neededSwipes = 1; expected = true
+        case "lazy-two": app.neededSwipes = 2; expected = true
+        case "lazy-three": app.neededSwipes = 3; expected = true
+        case "already-visible": app.neededSwipes = 0; expected = true
+        case "regular-visible": app.neededSwipes = 0; compact = false; expected = true
+        case "never-connected": app.connected = false; expected = false
+        case "visible-failure": app.connected = false; app.failure = true; expected = false
+        case "missing-form": app.formPresent = false; expected = false
+        case "wrong-destination": app.canNavigate = false; expected = false
+        case "later-navigation": app.asyncNavigationsRemaining = 1; expected = true
+        case "shared-deadline": app.connected = false; expected = false
+        default: fatalError("Unknown immutable readiness fixture")
+        }
+        let actual = proof.actualSecondRelaunchGuard(in: app, compact: compact)
+        var issues: [String] = []
+        if actual != expected { issues.append("actual=\(actual) expected=\(expected)") }
+        if __HAS_HELPER__ && proof.helperEntries != 1 { issues.append("actual relaunch guard must invoke the readiness helper once") }
+        if name.hasPrefix("lazy-"), actual, app.swipes != app.neededSwipes { issues.append("the actual Sign Out status must be revealed") }
+        if name == "already-visible" || name == "regular-visible", app.swipes != 0 { issues.append("visible status cannot need scrolling") }
+        if name == "visible-failure", app.swipes != 0 { issues.append("visible failure must remain untouched") }
+        if name == "missing-form", app.swipes != 0 { issues.append("a missing form cannot be replaced by a global gesture") }
+        if name == "wrong-destination", app.statusReads != 0 || app.swipes != 0 { issues.append("unconfirmed destination cannot authorize a status query") }
+        if name == "later-navigation", app.asyncNavigationsObserved != 1 || app.navigationCount < 2 || !app.selectedConnection {
+            issues.append("later navigation must reopen Connection before connected readiness")
+        }
+        if Clock.offset > 30.00001 { issues.append("the original thirty-second budget must not be extended") }
+        if name == "shared-deadline", Clock.offset < 29.99999 { issues.append("an unavailable status uses the original thirty-second budget") }
+        print("SAVED RECONNECTION \(issues.isEmpty ? "PASS" : "FAIL") case=\(name) actual=\(actual) swipes=\(app.swipes) navigation=\(app.navigationCount) elapsed=\(Clock.offset) issues=\(issues)")
+        exit(issues.isEmpty ? 0 : 1)
+    }
+}
+'''
+cases = ['lazy-one', 'lazy-two', 'lazy-three', 'already-visible', 'regular-visible', 'never-connected',
+         'visible-failure', 'missing-form', 'wrong-destination', 'later-navigation', 'shared-deadline']
+with tempfile.TemporaryDirectory(prefix='dulcet-saved-reconnect-') as temporary:
+    path = Path(temporary)
+    swift = path / 'controls.swift'
+    swift.write_text(collaborators.replace('__HELPERS__', helpers).replace('__CALLSITE__', callsite)
+                     .replace('__HAS_HELPER__', 'true' if has_helper else 'false'))
+    subprocess.run(['xcrun', 'swiftc', '-parse-as-library', str(swift), '-o', str(path / 'controls')], check=True)
+    results = [subprocess.run([str(path / 'controls'), name]).returncode for name in cases]
+    failures = sum(result != 0 for result in results)
+    print(f'SAVED RECONNECTION RESULT tests={len(cases)} failures={failures}', flush=True)
+    raise SystemExit(bool(failures))

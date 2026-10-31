@@ -720,6 +720,14 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     helpers: the old implementation fails the lazy-status positive control, and disconnected,
     failed, missing-Form and wrong-destination controls still refuse readiness. This is host
     control evidence; actual simulator execution remains the conformance leg's responsibility.
+    **OBSERVED 2026-10-31:** conformance 41184138351 passed offline settings and every native
+    AccountStates transition, then its saved-account favourite/relaunch proof queried Sign Out
+    for 30 seconds without scrolling. Its hierarchy shows Connections and credentials at the
+    top of the Form, with no realized status row. That independent relaunch checkpoint must
+    also reveal status. `tools/test-saved-account-reconnection` executes its actual guard:
+    the old source fails four of eleven controls; the bounded helper passes all eleven,
+    requiring Sign Out within the same 30 seconds, at most three Form gestures and no Connect,
+    Try Again or Sign Out tap. Selection and a cached Library tile still cannot prove reconnect.
 
 
 65. **Every independent UI readiness helper must reveal the lazy status it witnesses.**

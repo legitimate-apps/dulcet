@@ -942,6 +942,26 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         return false
     }
 
+    /// Confirms automatic reconnect without submitting or retrying authentication. The saved
+    /// account can already be connected while its lazy Form has not realized Sign Out yet.
+    /// Keep the relaunch proof's original 30-second budget, including navigation and reveals.
+    @MainActor
+    private func awaitSavedAccountReconnection(in app: XCUIApplication, compact: Bool) -> Bool {
+        let signOut = app.buttons["Sign Out"].firstMatch
+        var statusScrollsRemaining = 3
+        let deadline = Date().addingTimeInterval(30)
+        repeat {
+            guard openDestination(
+                "Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: compact
+            ), Date() < deadline else { return false }
+            revealLiveAccountStatus(in: app, compact: compact, remainingScrolls: &statusScrollsRemaining)
+            let remaining = deadline.timeIntervalSince(Date())
+            guard remaining > 0 else { return false }
+            if signOut.waitForExistence(timeout: min(1, remaining)) { return true }
+        } while Date() < deadline
+        return false
+    }
+
     /// Native Form realizes rows as they enter its viewport. Connections and the saved-server
     /// list can put the connected status below a phone's credentials, so reveal it with the
     /// same form gesture a person uses. Arrival alone never proves connection: the caller still
@@ -1386,8 +1406,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let libraryTile = app.buttons["dulcet.library.album"].firstMatch
         XCTAssertTrue(libraryTile.waitForExistence(timeout: 15),
             "A saved account must open straight into its library: " + app.debugDescription)
-        guard openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: compact),
-              app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+        guard awaitSavedAccountReconnection(in: app, compact: compact) else {
             XCTFail("The saved account must reconnect without a tap: " + app.debugDescription)
             return
         }
