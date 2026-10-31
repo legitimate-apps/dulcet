@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 import xml.etree.ElementTree as ET
 
 ATTEMPTS = 3
@@ -154,7 +155,20 @@ def action_request(args, sdk: Path, image_package: str) -> None:
     print('ANDROID IMAGE ACTION REQUEST COMPLETE channel=0', flush=True)
 
 
+def verify_emulator(sdk: Path) -> None:
+    versions = tomllib.loads((Path(__file__).resolve().parents[2] / 'gradle/libs.versions.toml').read_text())['versions']
+    expected_version = versions['android-emulator']
+    expected_build = versions['android-emulator-build']
+    output = run([str(sdk / 'emulator/emulator'), '-version'], 30, capture=True).stdout
+    match = re.search(r'Android emulator version ([0-9.]+) \(build_id ([0-9]+)\)', output)
+    if not match or match.groups() != (expected_version + '.0', expected_build):
+        raise RuntimeError(f'emulator-version-mismatch expected={expected_version}/build_id={expected_build} '
+                           f'observed={match.groups() if match else "unrecognized-version"}')
+    print(f'ANDROID EMULATOR VERIFIED version={expected_version} build_id={expected_build}', flush=True)
+
+
 def verify_booted(args, sdk: Path, package: str, image: Path) -> None:
+    verify_emulator(sdk)
     def adb(*command: str) -> str:
         return run(['adb', '-s', 'emulator-5554', *command], 30, capture=True).stdout.strip()
     api = adb('shell', 'getprop', 'ro.build.version.sdk')

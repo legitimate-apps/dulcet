@@ -619,3 +619,13 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     bottleneck for those failures. Close the experiment as a mitigation candidate, preserving
     its evidence; no further unchanged dispatch or permanent suspension is proposed. #395
     stays measurement-only. Full coverage and matched operations are in the investigation.
+
+57. **An emulator action pin does not pin the Android Emulator engine.** The action installs the
+    moving SDK channel unless given an exact `emulator-build`. OBSERVED 2026-10-30: 37.2.13
+    lost device/console service across Discover and TV jobs; a read-only observer captured QEMU
+    SIGSEGV before cleanup, without host OOM. Later `pm clear`/night-mode errors were consequences.
+    Both engine paths now select the catalog's 37.2.12/build 16428233 archive and verify the actual
+    binary version/build before proofs. Count every fresh-runner attempt when comparing versions.
+    A red `android-test-soak` badge may be an ordinary JVM assertion or a branch-specific emulator
+    diagnostic with its own harness failure; inspect the executed body. Full census, limits and
+    version comparison: [Android emulator reliability](evidence/android-emulator-reliability.md).

@@ -31,6 +31,7 @@ import com.legitimateapps.dulcet.search.conformance.assertUntitledPlayback
 import com.legitimateapps.dulcet.search.conformance.untitledAlbumAudio
 import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import java.util.concurrent.TimeUnit
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Rule
@@ -66,10 +67,11 @@ class TvUntitledAlbumPlayTest {
 
     @Test fun anAlbumWithOnlyBlankOrMissingTitlesPlaysWithLocalizedUntitledMetadata() = exerciseAlbum(false)
     @Test fun anAlbumWithOnlyBlankOrMissingTitlesShufflesWithLocalizedUntitledMetadata() = exerciseAlbum(true)
-    @Test fun anAlbumWithoutDurationsKeepsPlayAndShuffleHidden() = exerciseAlbum(false, false)
+    @Test fun anAlbumWithoutDurationsPlays() = exerciseAlbum(false, false)
+    @Test fun anAlbumWithoutDurationsShuffles() = exerciseAlbum(true, false)
 
-    @Test fun selectingADurationlessRowInAMixedAlbumNeverStartsAnotherSong() = exerciseAlbum(false, rowSelection = true)
-    @Test fun selectingADurationlessRowInAnAlbumWithoutDurationsExplainsWhy() = exerciseAlbum(false, false, rowSelection = true)
+    @Test fun selectingADurationlessRowInAMixedAlbumPlaysThatSong() = exerciseAlbum(false, rowSelection = true)
+    @Test fun selectingADurationlessRowInAnAlbumWithoutDurationsPlaysThatSong() = exerciseAlbum(false, false, rowSelection = true)
 
     private fun exerciseAlbum(shuffle: Boolean, knownDuration: Boolean = true, rowSelection: Boolean = false, enrich: Boolean = false) {
         seedUntitledAlbum(context, account, server, "newest-1")
@@ -101,30 +103,15 @@ class TvUntitledAlbumPlayTest {
         compose.waitForIdle()
         compose.onNodeWithTag("album.title").assertExists()
         compose.onNodeWithTag("album.track.1").assertTextContains(context.getString(com.legitimateapps.dulcet.core.R.string.playback_untitled))
-        if (rowSelection) {
-            compose.onNodeWithTag("album.track.1").assertTextContains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_duration_required))
-            compose.onNodeWithTag("album.track.1").performSemanticsAction(SemanticsActions.RequestFocus)
-            compose.onNodeWithTag("album.track.1").performKeyInput { pressKey(Key.DirectionCenter) }
-            compose.waitForIdle()
-            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
-            assertTrue(controller!!.state.value.queue.isEmpty(), "An explicit filtered selection must never choose another song")
-            compose.onNodeWithTag("album.track.1").assertIsNotEnabled()
-            return
-        }
-        if (!knownDuration) {
-            compose.onNodeWithTag("album.play").assertDoesNotExist()
-            compose.onNodeWithTag("album.shuffle").assertDoesNotExist()
-            assertTrue(controller!!.state.value.queue.isEmpty())
-            return
-        }
         compose.onNodeWithTag("album.play").assertIsEnabled()
         compose.onNodeWithTag("album.shuffle").assertIsEnabled()
-        val action = if (shuffle) "album.shuffle" else "album.play"
+        val action = if (rowSelection) "album.track.1" else if (shuffle) "album.shuffle" else "album.play"
         compose.onNodeWithTag(action).performSemanticsAction(SemanticsActions.RequestFocus)
         compose.onNodeWithTag(action).assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
         compose.waitForIdle()
         await { controller!!.state.value.validatedBytesConsumed > 0 }
         assertUntitledPlayback(context, controller!!, "newest-1", shuffle)
+        if (rowSelection) assertEquals("newest-1-song-2", controller!!.state.value.let { it.queue[checkNotNull(it.currentIndex)].track.rawId }, "The selected unknown-duration song plays")
         assertTrue(shadowOf(context).nextStartedActivity != null, "Playback opens the TV player")
         compose.runOnIdle { playerOpen = true }
         compose.onNodeWithTag("tv.player.title").assertTextEquals(context.getString(com.legitimateapps.dulcet.core.R.string.playback_untitled))

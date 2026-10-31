@@ -161,9 +161,9 @@ public fun AndroidLibraryItem.Track.queueSource(album: AndroidLibraryItem.Album?
     else QueueSourceOf(AndroidQueueSource.Album, albumTitle?.takeIf { it.isNotBlank() } ?: album?.title ?: libraryName, albumRawId)
 }
 
-/** Whether a row may offer Play Next and Add to Queue: the track can play now and has a known duration. */
+/** Whether a row may offer Play Next and Add to Queue: the track can play now. */
 public fun AndroidLibraryItem.Track.canBeQueued(): Boolean =
-    playability != AndroidLibraryPlayability.UnavailableOffline && durationMilliseconds != null
+    playability != AndroidLibraryPlayability.UnavailableOffline
 
 /**
  * One search track added to the queue, attributed to the search (spec §14.1 `sourceContext`), exactly
@@ -184,10 +184,9 @@ public fun queueSearchResult(
 
 internal fun SearchResultItem.toQueueTrack(providerInstanceId: String): AndroidTrack? {
     if (type != SearchResultType.Track) return null
-    val duration = duration ?: return null
     val artist = credits.singleOrNull { it.role == CreditRole.Artist }?.name?.takeIf { it.isNotBlank() }
     return AndroidTrack(providerInstanceId, id.rawId, title, artist, albumTitle?.takeIf { it.isNotBlank() },
-        duration.inWholeMilliseconds, artworkKey = artworkKey, albumRawId = albumRawId)
+        duration?.inWholeMilliseconds, artworkKey = artworkKey, albumRawId = albumRawId)
 }
 
 /** An album whose tracks this device cannot play only because it is offline (§16.14). */

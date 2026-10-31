@@ -3341,7 +3341,7 @@ function `(state, event) -> (state, effects)`:
   un-meet a previously met condition **only while nothing has been submitted**; once `submitted` is
   true it is never retracted. A track whose server duration said 29 s and whose decoded duration says
   31 s becomes eligible; the reverse makes it ineligible only pre-submission.
-- **Duration unknown:** no submission is possible; the session is recorded in diagnostics.
+- **Duration unknown:** a track with no server duration is queueable on every platform; no submission is possible until the decoder reports a duration, and an unknown-duration session is recorded in diagnostics.
 - **Terminal:** `EndedNaturally`, `Skipped`, `FailedAfterPartial` and session finalization each evaluate
   the threshold once. `FailedBeforeStart` never submits. `FailedAfterPartial` ends its attempt and not
   necessarily its session: a retry continues the session (§12.1), accruing onto the same accumulator,
@@ -8086,6 +8086,17 @@ UI step 4; production terms and upstream rights conditions are unchanged.
 Main's queue migration retains schema 13; Discover uses the additive 13-to-14 migration and fixture
 v14. The integration migration proof preserves queue context, pending My Library intents and scoped
 media ownership. Native cells still require the corresponding native proof.
+
+**2026-10-25 - Tracks without server duration play on every platform (#388).**
+
+A track listed by the server remains queueable when its duration is absent, in Library Play,
+Shuffle, track rows and Search on Apple and Android. This supersedes the duration admission rule
+in the 2026-10-24 entry. Positive server metadata is optional; the decoder's Ready and
+DurationChanged events supply the current duration. Unknown-duration sessions accrue progressing
+media time but never submit a play, and finalization diagnoses duration still unknown (§15.2).
+Scrubbing, remaining time, Now Playing duration and transition scheduling wait for a known
+positive duration. The disposable corpus deliberately includes a sub-second FLAC whose duration
+Navidrome omits; the other playback fixtures must retain their positive server durations.
 
 **2026-10-25 — Reuse exact-tree Apple merge proof on main pushes (§21.6, #390).**
 

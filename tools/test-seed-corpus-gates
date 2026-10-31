@@ -74,6 +74,8 @@ def main() -> None:
             self.songs = songs
 
         def subsonic(self, endpoint, *, parameters):
+            if endpoint == "getSong":
+                return {"song": next(song for song in self.songs if song.get("id") == parameters["id"])}
             assert endpoint == "search3"
             start = int(parameters["songOffset"])
             return {"searchResult3": {"song": self.songs[start:start + 200]}}
@@ -88,8 +90,52 @@ def main() -> None:
         except SystemExit as error:
             assert "no positive server duration: last" in str(error), str(error)
         else:
-            raise SystemExit("playback corpus duration gate accepted an unqueueable second-page track")
-    print("PLAYBACK CORPUS CONTROL PASS known=201 missing-duration=rejected zero-duration=rejected")
+            raise SystemExit("playback corpus duration gate accepted a broken positive second-page fixture")
+    fixture = {"title": "Durationless Playback Canary", "album": "Durationless"}
+    canary = {"id": "durationless", **fixture}
+    assert health_check.require_playback_durations(
+        CorpusClient([*songs, canary]), 202, durationless_fixture=fixture,
+    ) == 201
+
+    def require_durationless_rejection(client, expected_count, detail):
+        try:
+            health_check.require_playback_durations(client, expected_count, durationless_fixture=fixture)
+        except SystemExit as error:
+            assert detail in str(error), str(error)
+        else:
+            raise SystemExit(f"durationless playback control failed open: {detail}")
+
+    for duration in (None, 0, 1):
+        require_durationless_rejection(
+            CorpusClient([*songs, {**canary, "duration": duration}]), 202,
+            "durationless playback fixture has a server duration field",
+        )
+    require_durationless_rejection(
+        CorpusClient(songs), 201, "durationless playback fixture count mismatch: expected 1, observed 0",
+    )
+    require_durationless_rejection(
+        CorpusClient([*songs, canary, {**canary, "id": "duplicate"}]), 203,
+        "durationless playback fixture count mismatch: expected 1, observed 2",
+    )
+    require_durationless_rejection(
+        CorpusClient([*songs[:-1], {"id": "last"}, canary]), 202,
+        "no positive server duration: last",
+    )
+
+    class ChangedGetSongClient(CorpusClient):
+        def subsonic(self, endpoint, *, parameters):
+            response = super().subsonic(endpoint, parameters=parameters)
+            if endpoint == "getSong":
+                return {"song": {**response["song"], "duration": 1}}
+            return response
+
+    require_durationless_rejection(
+        ChangedGetSongClient([*songs, canary]), 202,
+        "durationless playback fixture getSong has a server duration field",
+    )
+    print("PLAYBACK CORPUS CONTROL PASS known=201 missing-duration=rejected zero-duration=rejected "
+          "durationless=accepted missing-canary=rejected duplicate-canary=rejected "
+          "canary-duration-null-zero-positive=rejected getSong-duration=rejected")
     require_rejection(
         "mislabeled_container",
         {"format": {"format_name": "wav", "duration": "1.0", "tags": {}}, "streams": []},

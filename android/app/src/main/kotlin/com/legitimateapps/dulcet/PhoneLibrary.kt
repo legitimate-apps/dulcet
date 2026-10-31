@@ -1082,12 +1082,10 @@ internal fun TrackRow(
     rowTagOverride: String? = null,
     onClick: () -> Unit,
 ) {
-    val durationUnknown = track.durationMilliseconds == null
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val resources = libraryResources()
     val downloadLine = download?.status?.takeIf { !it.playsOffline }?.let { LocalContext.current.resources.downloadLine(it) }
     val supporting = if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
-        else if (durationUnknown) resources.getString(SharedR.string.library_duration_required)
         else downloadLine ?: track.artistName
     val rowTag = rowTagOverride ?: favouriteTag?.removeSuffix(".favourite")
     TrackRowVisual(
@@ -1096,7 +1094,7 @@ internal fun TrackRow(
         number = track.trackNumber ?: number,
         modifier = modifier,
         playing = playing,
-        unavailable = unavailable || durationUnknown,
+        unavailable = unavailable,
         trailing = if (track.durationMilliseconds == null && onFavourite == null && onAddToPlaylist == null && download == null && library == null) null else {
             {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1114,7 +1112,6 @@ internal fun TrackRow(
                 }
             }
         },
-        enabled = !durationUnknown,
         onClick = { if (unavailable) onUnavailable() else onClick() },
     )
 }
