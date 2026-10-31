@@ -98,6 +98,27 @@ import Testing
     var removed: [String] = []
     var rejected: [(DulcetDiscoverItem, DulcetDiscoverLibraryRef, String?)] = []
     var albumCompletions: [@MainActor (Result<DulcetDiscoverAlbum, DulcetDiscoverFailure>) -> Void] = []
+    var shelfRequests: [(String, String?)] = []
+    var shelfCompletions: [@MainActor (Result<DulcetDiscoverShelfPage, DulcetDiscoverFailure>) -> Void] = []
+    var playlistRequests: [(String, String?)] = []
+    var playlistCompletions: [@MainActor (Result<DulcetDiscoverPlaylist, DulcetDiscoverFailure>) -> Void] = []
+    var playlistListRequests: [(String, String?)] = []
+    var playlistListCompletions: [@MainActor (Result<DulcetDiscoverPlaylistList, DulcetDiscoverFailure>) -> Void] = []
+    var pageCancellationCount = 0
+    var homeRefreshCount = 0
+    func refreshHome() { homeRefreshCount += 1 }
+    func shelf(id: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverShelfPage, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
+        shelfRequests.append((id, cursor)); shelfCompletions.append(completion)
+        return DulcetDiscoverCancellation { self.pageCancellationCount += 1 }
+    }
+    func playlists(query: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPlaylistList, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
+        playlistListRequests.append((query, cursor)); playlistListCompletions.append(completion)
+        return DulcetDiscoverCancellation { self.pageCancellationCount += 1 }
+    }
+    func playlist(mbid: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPlaylist, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
+        playlistRequests.append((mbid, cursor)); playlistCompletions.append(completion)
+        return DulcetDiscoverCancellation { self.pageCancellationCount += 1 }
+    }
     var albumCancellationCount = 0
     var filters: [DulcetWishFilter] = []
     var myLibraryMembershipMutationCount = 0

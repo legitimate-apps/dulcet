@@ -7961,6 +7961,47 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-27 - Discover destinations, shelves and public playlists on phone, tablet and Mac.**
+
+Step 3 adds Discover between Listen Now and Library on iPhone and Android phone, and to the
+regular-width iPad and Mac sidebars. iPhone now uses five music tabs; Connection moves to a
+toolbar sheet when those destinations are available. Compact iPad uses the tab shell while retaining
+its account-scoped path, query and loaded pages. TV remains outside this step.
+
+Home presents Trending on ListenBrainz (artists, albums and songs), New releases, Artists like
+yours, Public playlists and six Recent wishes. Twelve-item previews retain server order; See all
+appears with a cursor, and full lists request twenty rows through explicit Load more. Public
+playlist pages show source positions, preserve duplicate recordings and explain missing metadata.
+Song, album and artist wishes reuse the durable outbox with shelf or playlist provenance. Scoped
+held items route to the existing library; external artist and album metadata uses the existing
+Discover pages. Cached answers retain their age beside a failed refresh, and empty success has
+separate copy from an unavailable upstream. Credits read Data from MusicBrainz and ListenBrainz.
+The apps continue to use advertised OpenSubsonic extensions with existing authentication.
+
+OBSERVED: Android's six native emulator phases pass against the disposable server, including
+acknowledged shelf faults and a healthy Navidrome absence control. Mac shelf execution is recorded
+in the [integration evidence](../../evidence/discover-shelves-integration.md). iPhone and iPad
+proofs compile but their first native execution remains with hosted apple-ci. Their feature cells
+remain partial with named promotion conditions; this change makes no unobserved UI pass claim.
+
+**2026-10-27: Discover shelf and public playlist client core.**
+
+Step 3 adds account-owned reads for the six Discover shelf IDs, public playlist search/list and
+playlist entries. The existing Discover publication gains an optional home snapshot with independent
+shelf loading/error state and six recent wishes from the default Wishlist snapshot and outbox.
+Home reads twelve rows per shelf; full lists use twenty and explicit opaque continuation cursors.
+Playlist positions preserve source ordering, duplicates and visible unwishable entries without
+recording MBIDs. Failed refreshes preserve cached content, its original age and a typed refresh
+error. Source-bearing wish intents reuse the existing outbox with `shelf` or `playlist` provenance.
+The Android and fixed Objective-C facades expose these reads through the existing reader admission,
+identity, cancellation and main-thread delivery paths. The current client adapter uses advertised
+OpenSubsonic extensions as step 2 does; Dulcet API token authentication is not added by this core
+change. The [step-3 plan](../plans/2026-10-27-discover-shelves.md) locks the shell interface, copy,
+identifiers and routing, and records the approved extension transport. The finite fixture provides
+paginated charts and playlists plus acknowledged mixed, empty, stale and unavailable shelf states.
+[Core evidence](../../evidence/discover-shelves-core.md) is distinct from the four native shell
+proofs, which remain integration work. No platform support cell is promoted by this change.
+
 **2026-10-27 - Apple toolchain uses Xcode 27.0**
 
 Apple build, test, release and soak workflows select GA Xcode 27.0 (27A266a) on the

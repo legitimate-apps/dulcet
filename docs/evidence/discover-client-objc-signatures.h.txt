@@ -216,6 +216,7 @@ __attribute__((swift_name("AppleDiscoverPublication")))
 @property (readonly) NSString *connection __attribute__((swift_name("connection")));
 @property (readonly) int64_t generation __attribute__((swift_name("generation")));
 @property (readonly) int32_t groupCount __attribute__((swift_name("groupCount")));
+@property (readonly) DulcetCoreAppleDiscoverHome * _Nullable home __attribute__((swift_name("home")));
 @property (readonly) DulcetCoreLong * _Nullable pendingChangeCount __attribute__((swift_name("pendingChangeCount")));
 @property (readonly) NSString *providerInstanceId __attribute__((swift_name("providerInstanceId")));
 @property (readonly) NSString *query __attribute__((swift_name("query")));
@@ -280,20 +281,120 @@ __attribute__((swift_name("AppleDiscoverClient")))
 - (void)close __attribute__((swift_name("close()")));
 - (void)loadMoreKind:(NSString *)kind __attribute__((swift_name("loadMore(kind:)")));
 - (DulcetCoreAppleDiscoverSubscription *)observeListener:(id<DulcetCoreAppleDiscoverListener>)listener __attribute__((swift_name("observe(listener:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)playlistMbid:(NSString *)mbid cursor:(NSString * _Nullable)cursor completion:(void (^)(DulcetCoreAppleDiscoverPlaylistResult *))completion __attribute__((swift_name("playlist(mbid:cursor:completion:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)playlistsQuery:(NSString *)query cursor:(NSString * _Nullable)cursor completion:(void (^)(DulcetCoreAppleDiscoverPlaylistListResult *))completion __attribute__((swift_name("playlists(query:cursor:completion:)")));
+- (void)refreshHome __attribute__((swift_name("refreshHome()")));
 - (void)refreshWishlistFilter:(DulcetCoreAppleWishFilter *)filter __attribute__((swift_name("refreshWishlist(filter:)")));
 - (DulcetCoreAppleLibraryReaderOperation *)rejectItem:(DulcetCoreAppleDiscoverItem *)item libraryItem:(DulcetCoreAppleDiscoverLibraryRef *)libraryItem wishId:(NSString * _Nullable)wishId completion:(void (^)(DulcetCoreAppleWishEnqueueResult *))completion __attribute__((swift_name("reject(item:libraryItem:wishId:completion:)")));
+
+/** Cold Wishlist correction needs only its copied target and scoped local reference.
+ * It uses the same Wishlist-only admission, durable command, cancellation and delivery fence
+ * as [reject]; no Discover query or exported item constructor is needed. */
+- (DulcetCoreAppleLibraryReaderOperation *)rejectTargetTarget:(DulcetCoreAppleDiscoverTarget *)target libraryItem:(DulcetCoreAppleDiscoverLibraryRef *)libraryItem wishId:(NSString * _Nullable)wishId completion:(void (^)(DulcetCoreAppleWishEnqueueResult *))completion __attribute__((swift_name("rejectTarget(target:libraryItem:wishId:completion:)")));
 - (DulcetCoreAppleLibraryReaderOperation *)removeRowKey:(NSString *)rowKey completion:(void (^)(DulcetCoreAppleWishEnqueueResult *))completion __attribute__((swift_name("remove(rowKey:completion:)")));
 - (void)setQueryQuery:(NSString *)query __attribute__((swift_name("setQuery(query:)")));
-@end
-
-__attribute__((swift_name("AppleDiscoverListener")))
-@protocol DulcetCoreAppleDiscoverListener
-@required
-- (void)onPublicationPublication:(DulcetCoreAppleDiscoverPublication *)publication __attribute__((swift_name("onPublication(publication:)")));
+- (DulcetCoreAppleLibraryReaderOperation *)shelfId:(NSString *)id cursor:(NSString * _Nullable)cursor completion:(void (^)(DulcetCoreAppleDiscoverShelfPageResult *))completion __attribute__((swift_name("shelf(id:cursor:completion:)")));
 @end
 
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("AppleDiscoverSubscription")))
 @interface DulcetCoreAppleDiscoverSubscription : DulcetCoreBase
 - (void)close __attribute__((swift_name("close()")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverHome")))
+@interface DulcetCoreAppleDiscoverHome : DulcetCoreBase
+- (DulcetCoreAppleWishRow * _Nullable)recentWishAtIndex:(int32_t)index __attribute__((swift_name("recentWishAt(index:)")));
+- (DulcetCoreAppleDiscoverShelfState * _Nullable)shelfAtIndex:(int32_t)index __attribute__((swift_name("shelfAt(index:)")));
+@property (readonly) int32_t recentWishCount __attribute__((swift_name("recentWishCount")));
+@property (readonly) int32_t shelfCount __attribute__((swift_name("shelfCount")));
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable wishesError __attribute__((swift_name("wishesError")));
+@property (readonly) BOOL wishesLoading __attribute__((swift_name("wishesLoading")));
+@property (readonly) BOOL wishesSettled __attribute__((swift_name("wishesSettled")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverPlaylist")))
+@interface DulcetCoreAppleDiscoverPlaylist : DulcetCoreBase
+- (DulcetCoreAppleDiscoverPlaylistEntry * _Nullable)entryAtIndex:(int32_t)index __attribute__((swift_name("entryAt(index:)")));
+@property (readonly) DulcetCoreAppleDiscoverAge *age __attribute__((swift_name("age")));
+@property (readonly) int32_t entryCount __attribute__((swift_name("entryCount")));
+@property (readonly) NSString * _Nullable nextCursor __attribute__((swift_name("nextCursor")));
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable refreshError __attribute__((swift_name("refreshError")));
+@property (readonly) DulcetCoreAppleDiscoverPlaylistSummary *summary __attribute__((swift_name("summary")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverPlaylistEntry")))
+@interface DulcetCoreAppleDiscoverPlaylistEntry : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverItem *item __attribute__((swift_name("item")));
+@property (readonly) int32_t position __attribute__((swift_name("position")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverPlaylistList")))
+@interface DulcetCoreAppleDiscoverPlaylistList : DulcetCoreBase
+- (DulcetCoreAppleDiscoverPlaylistSummary * _Nullable)itemAtIndex:(int32_t)index __attribute__((swift_name("itemAt(index:)")));
+@property (readonly) DulcetCoreAppleDiscoverAge *age __attribute__((swift_name("age")));
+@property (readonly) int32_t itemCount __attribute__((swift_name("itemCount")));
+@property (readonly) NSString * _Nullable nextCursor __attribute__((swift_name("nextCursor")));
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable refreshError __attribute__((swift_name("refreshError")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverPlaylistListResult")))
+@interface DulcetCoreAppleDiscoverPlaylistListResult : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) DulcetCoreAppleDiscoverPlaylistList * _Nullable value __attribute__((swift_name("value")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverPlaylistResult")))
+@interface DulcetCoreAppleDiscoverPlaylistResult : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) DulcetCoreAppleDiscoverPlaylist * _Nullable value __attribute__((swift_name("value")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverPlaylistSummary")))
+@interface DulcetCoreAppleDiscoverPlaylistSummary : DulcetCoreBase
+@property (readonly) NSString * _Nullable creator __attribute__((swift_name("creator")));
+@property (readonly) NSString *id __attribute__((swift_name("id")));
+@property (readonly) NSString *title __attribute__((swift_name("title")));
+@property (readonly) DulcetCoreInt * _Nullable trackCount __attribute__((swift_name("trackCount")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverShelfPage")))
+@interface DulcetCoreAppleDiscoverShelfPage : DulcetCoreBase
+- (DulcetCoreAppleDiscoverItem * _Nullable)itemAtIndex:(int32_t)index __attribute__((swift_name("itemAt(index:)")));
+- (DulcetCoreAppleDiscoverPlaylistSummary * _Nullable)playlistAtIndex:(int32_t)index __attribute__((swift_name("playlistAt(index:)")));
+@property (readonly) DulcetCoreAppleDiscoverAge *age __attribute__((swift_name("age")));
+@property (readonly) NSString *id __attribute__((swift_name("id")));
+@property (readonly) int32_t itemCount __attribute__((swift_name("itemCount")));
+@property (readonly) NSString * _Nullable nextCursor __attribute__((swift_name("nextCursor")));
+@property (readonly) int32_t playlistCount __attribute__((swift_name("playlistCount")));
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable refreshError __attribute__((swift_name("refreshError")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverShelfPageResult")))
+@interface DulcetCoreAppleDiscoverShelfPageResult : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) DulcetCoreAppleDiscoverShelfPage * _Nullable value __attribute__((swift_name("value")));
+@end
+
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("AppleDiscoverShelfState")))
+@interface DulcetCoreAppleDiscoverShelfState : DulcetCoreBase
+@property (readonly) DulcetCoreAppleDiscoverFailure * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) NSString *id __attribute__((swift_name("id")));
+@property (readonly) BOOL loading __attribute__((swift_name("loading")));
+@property (readonly) DulcetCoreAppleDiscoverShelfPage * _Nullable page __attribute__((swift_name("page")));
+@end
+
+@protocol DulcetCoreAppleDiscoverListener
+@required
+- (void)onPublicationPublication:(DulcetCoreAppleDiscoverPublication *)publication __attribute__((swift_name("onPublication(publication:)")));
 @end

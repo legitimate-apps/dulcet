@@ -69,6 +69,13 @@ public class AppleDiscoverClient(private val reader:AppleLibraryReaderClient) {
         operation(completion,{it.appleDiscoverAlbumResult()}) {target,done ->target.album(mbid,releaseId,done)}
     public fun albumTracks(mbid:String,releaseId:String,cursor:String?,completion:(AppleDiscoverPageResult)->Unit):AppleLibraryReaderOperation =
         operation(completion,{it.appleDiscoverPageResult()}) {target,done ->target.albumTracks(mbid,releaseId,cursor,done)}
+    public fun refreshHome()=command {it.refreshHome()}
+    public fun shelf(id:String,cursor:String?,completion:(AppleDiscoverShelfPageResult)->Unit):AppleLibraryReaderOperation =
+        operation(completion,{it.appleDiscoverShelfPageResult()}) {target,done -> target.shelf(id,cursor,done)}
+    public fun playlists(query:String,cursor:String?,completion:(AppleDiscoverPlaylistListResult)->Unit):AppleLibraryReaderOperation =
+        operation(completion,{it.appleDiscoverPlaylistListResult()}) {target,done -> target.playlists(query,cursor,done)}
+    public fun playlist(mbid:String,cursor:String?,completion:(AppleDiscoverPlaylistResult)->Unit):AppleLibraryReaderOperation =
+        operation(completion,{it.appleDiscoverPlaylistResult()}) {target,done -> target.playlist(mbid,cursor,done)}
     public fun artwork(artworkId:String,completion:(AppleDiscoverArtworkResult)->Unit):AppleLibraryReaderOperation =
         operation(completion,{it.appleDiscoverArtworkResult()}) {target,done ->target.artwork(artworkId,done)}
     public fun add(item:AppleDiscoverItem,source:AppleWishSource,completion:(AppleWishEnqueueResult)->Unit):AppleLibraryReaderOperation =

@@ -1,0 +1,26 @@
+<resources>
+    <string name="discover_home_title">Discover</string>
+    <string name="discover_home_refresh">Refresh Discover</string>
+    <string name="discover_trending">Trending on ListenBrainz</string>
+    <string name="discover_new_releases">New releases</string>
+    <string name="discover_similar_artists">Artists like yours</string>
+    <string name="discover_public_playlists">Public playlists</string>
+    <string name="discover_recent_wishes">Recent wishes</string>
+    <string name="discover_see_all">See all</string>
+    <string name="discover_suggestions_credit">Suggestions use ListenBrainz</string>
+    <string name="discover_empty_trending_artists">No trending artists right now.</string>
+    <string name="discover_empty_trending_albums">No trending albums right now.</string>
+    <string name="discover_empty_trending_songs">No trending songs right now.</string>
+    <string name="discover_empty_releases">No new releases right now.</string>
+    <string name="discover_empty_similar">Play or favourite music on your server to find artists like yours.</string>
+    <string name="discover_empty_playlists">No public playlists found.</string>
+    <string name="discover_empty_playlist">This playlist has no songs.</string>
+    <string name="discover_empty_wishes">Your recent wishes will appear here.</string>
+    <string name="discover_shelves_failed">Discovery is temporarily unavailable.</string>
+    <string name="discover_shelves_offline">Connect to your server to explore music.</string>
+    <string name="discover_shelves_age_unknown">Age unavailable</string>
+    <string name="discover_shelves_wish">Wish for %1$s</string>
+    <string name="discover_playlists_query">Search public playlists</string>
+    <string name="discover_playlists_submit">Search playlists</string>
+    <plurals name="discover_playlist_songs"><item quantity="one">%d song</item><item quantity="other">%d songs</item></plurals>
+</resources>
