@@ -917,3 +917,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     depend on the host completing its authenticated requests within a few seconds. The old
     boundary case fails once; the parsed comparison passes the complete seven-test REST class,
     preserving both exact timestamp guards and all user-isolation/membership assertions.
+
+78. **Receiving a proxy response does not join its observation publisher.** OBSERVED
+    2026-10-31: parity 41212700387 received HTTP 200 from a forwarded catalogue read, then
+    immediately observed its pending status 0. The proxy writes the response before returning
+    from forwarding and marking the request answered; the control endpoint runs on another
+    thread. Final-status tests now wait for the expected entries to be marked answered within
+    five seconds, then retain their exact endpoint/status assertions. Pending/held-request
+    controls keep reading immediately. Do not publish an answer before sending it to make a
+    test pass. A real-socket regression pauses after forwarding and releases publication only
+    after a copied pending snapshot: the old assertion fails and the completion-aware read
+    succeeds: old 18 tests / one failure, fixed 18 / zero. The proxy's production fixture
+    behavior remains unchanged.

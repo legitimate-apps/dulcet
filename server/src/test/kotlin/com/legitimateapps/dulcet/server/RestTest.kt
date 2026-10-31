@@ -82,7 +82,7 @@ class RestTest {
         assertEquals(1, alice["songCount"]!!.jsonPrimitive.int)
         assertEquals(albumId, alice["album"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content)
         val firstClock = alice["changed"]!!.jsonPrimitive.content
-        assertEquals(java.time.Instant.ofEpochMilli(wholeSecond).toString(), firstClock, "fixture reaches the whole-second boundary")
+        assertEquals(wholeSecond, java.time.Instant.parse(firstClock).toEpochMilli(), "fixture reaches the whole-second boundary")
         val bob = client.rest("getDulcetLibrary", "bob", "bob-pw")["dulcetLibrary"]!!.jsonObject
         assertEquals(0, bob["albumCount"]!!.jsonPrimitive.int)
         assertNull(bob["album"], "bob's library is his own")
@@ -92,7 +92,7 @@ class RestTest {
         assertEquals("ok", client.rest("removeFromDulcetLibrary", "alice", "alice-pw", "albumId" to albumId).status())
         val after = client.rest("getDulcetLibrary", "alice", "alice-pw", "type" to "album")["dulcetLibrary"]!!.jsonObject
         assertEquals(0, after["albumCount"]!!.jsonPrimitive.int)
-        assertEquals(java.time.Instant.ofEpochMilli(wholeSecond + 1).toString(), after["changed"]!!.jsonPrimitive.content, "removal advances one millisecond despite earlier wall time")
+        assertEquals(wholeSecond + 1, java.time.Instant.parse(after["changed"]!!.jsonPrimitive.content).toEpochMilli(), "removal advances one millisecond despite earlier wall time")
         assertTrue(java.time.Instant.parse(after["changed"]!!.jsonPrimitive.content).isAfter(java.time.Instant.parse(firstClock)), "a removal moves the change clock")
         assertEquals("ok", client.rest("removeFromDulcetLibrary", "alice", "alice-pw", "id" to "gone-from-disk").status(), "removing an unknown id is not an error")
     }
