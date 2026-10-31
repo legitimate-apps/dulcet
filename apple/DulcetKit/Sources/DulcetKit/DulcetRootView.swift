@@ -520,6 +520,7 @@ private struct DulcetCompactShell: View {
         if #available(iOS 26.1, *) {
             modernTabs
                 .tabViewStyle(.sidebarAdaptable)
+                .tabViewSearchActivation(.searchTabSelection)
                 .tabViewBottomAccessory(isEnabled: store.showsNowPlayingBar) {
                     DulcetNowPlayingBar(store: store, onOpen: onOpenPlayer)
                         .dulcetQueueDropTarget(store: store, cornerRadius: 12)
@@ -557,7 +558,6 @@ private struct DulcetCompactShell: View {
         .searchable(text: $store.searchQuery, isPresented: $searchPresented, prompt: DulcetStrings.searchPrompt)
         .onSubmit(of: .search) {
             store.librarySession?.rememberSearch(store.searchQuery)
-            searchPresented = false
         }
         .onChange(of: store.searchFocusRequested) { _, requested in
             if requested {

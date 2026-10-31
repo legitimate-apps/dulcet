@@ -322,22 +322,25 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             preparePlaylist(on: server)
             driveFoundationTour(app, compact: compact)
             if environment["DULCET_DESIGN_TOUR_VARIANT"] == "iphone-light-default" {
-                // Playback can cache the entire short fixture album. Transfer-state proof
-                // needs a fresh store, otherwise an explicit download can complete from cache.
-                let originalArguments = app.launchArguments
-                app.terminate()
-                let transferNamespace = UUID().uuidString
-                for flag in ["-dulcet-debug-account-fixture", "-dulcet-debug-download-handoff"] {
-                    if let index = app.launchArguments.firstIndex(of: flag) { app.launchArguments[index + 1] = transferNamespace }
+                let wantsTransfers = requested.isEmpty || !requested.isDisjoint(with: transferRepair.subtracting(["listen-now-offline"]))
+                if wantsTransfers {
+                    // Playback can cache the entire short fixture album. Transfer-state proof
+                    // needs a fresh store, otherwise an explicit download can complete from cache.
+                    let originalArguments = app.launchArguments
+                    app.terminate()
+                    let transferNamespace = UUID().uuidString
+                    for flag in ["-dulcet-debug-account-fixture", "-dulcet-debug-download-handoff"] {
+                        if let index = app.launchArguments.firstIndex(of: flag) { app.launchArguments[index + 1] = transferNamespace }
+                    }
+                    guard setTourRule(server.url, action: "fail", enabled: true, endpoint: "stream") else { return }
+                    launchInInteractionScope(app)
+                    guard awaitConnection(in: app, compact: compact) else { return }
+                    transferScreens(app, server: server, compact: compact)
+                    app.terminate()
+                    app.launchArguments = originalArguments
+                    launchInInteractionScope(app)
+                    guard awaitConnection(in: app, compact: compact) else { return }
                 }
-                guard setTourRule(server.url, action: "fail", enabled: true, endpoint: "stream") else { return }
-                launchInInteractionScope(app)
-                guard awaitConnection(in: app, compact: compact) else { return }
-                transferScreens(app, server: server, compact: compact)
-                app.terminate()
-                app.launchArguments = originalArguments
-                launchInInteractionScope(app)
-                guard awaitConnection(in: app, compact: compact) else { return }
                 offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
             }
             return
@@ -713,22 +716,16 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             XCTFail("Display & Text Size must expose Reduce Transparency"); return false
         }
         print("DULCET ACCESSIBILITY before switch=\(transparency.value as? String ?? "unknown") runner=\(UIAccessibility.isReduceTransparencyEnabled)")
-        if transparency.value as? String != "1" {
-            // Settings can expose a row-sized Switch wrapper, just like our native Form.
-            // Prefer its actual thumb; otherwise target the switch end of the measured row.
+        // Native Settings exposes a row wrapper and an actual switch. Activate the switch
+        // through XCTest so UIKit can resolve its hit target after navigation settles. A
+        // second event is allowed only after observing that the first left the setting off.
+        var enabled = transparency.value as? String == "1"
+        for attempt in 1...2 where !enabled {
             let thumb = transparency.switches.firstMatch
-            withoutIdleWaits(settings) {
-                if thumb.exists {
-                    _ = self.tapVisibleFrame(thumb, in: settings)
-                } else if let frame = try? transparency.snapshot().frame, !frame.isEmpty {
-                    settings.coordinate(withNormalizedOffset: .zero)
-                        .withOffset(CGVector(dx: frame.maxX - min(40, frame.width / 2) - settings.frame.minX,
-                                             dy: frame.midY - settings.frame.minY)).tap()
-                }
-            }
-        }
-        let enabled = waitFor(timeout: 5) {
-            transparency.value as? String == "1"
+            if thumb.exists && thumb.isHittable { thumb.tap() }
+            else { transparency.tap() }
+            enabled = waitFor(timeout: 5) { transparency.value as? String == "1" }
+            print("DULCET ACCESSIBILITY reduceTransparency attempt=\(attempt) observed=\(enabled)")
         }
         print("DULCET ACCESSIBILITY after switch=\(transparency.value as? String ?? "unknown") runner=\(UIAccessibility.isReduceTransparencyEnabled)")
         shoot(enabled ? "reduce-transparency-enabled" : "reduce-transparency-setting-UNREACHED", settings)
@@ -762,6 +759,19 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("connection-connected", app) {
             destination("Connection", "dulcet.sidebar.settings")
                 && self.awaitConnection(in: app, compact: compact)
+        }
+        let requestedFoundationScreens = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        if requestedFoundationScreens.contains("connection-sign-out") {
+            step("connection-sign-out", app) {
+                let form = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+                let signOut = app.buttons["dulcet.account.signOut"].firstMatch
+                return self.scrollIntoView(signOut, in: app, verticalMargin: 16, scrollContainer: form)
+                    && signOut.isHittable && self.settle(app)
+            }
+            if requestedFoundationScreens == ["connection-sign-out"] { return }
+            let playback = app.buttons["dulcet.account.playback"].firstMatch
+            guard revealSettingsControl(playback, in: app, searchingDown: false) else { return }
         }
         step("settings-quality", app) {
             if nativeAccount {
